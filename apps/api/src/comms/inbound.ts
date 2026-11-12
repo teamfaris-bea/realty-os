@@ -166,6 +166,9 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   // Global lock order step 1: the address lock and, on a tracked number, the intake's own lock set, in ONE sorted call
   // before matching (E323, E324): a tracked call and a signed webhook lead for the same new phone never deadlock
   await lockAddresses(tx, tracked ? [hmac, ...(await intakeLockKeys(tx, deps.envelope, tenantId, tracked.input))] : [hmac]);
+  // b9 review ownership-data/F5: the source again, under the locks and FOR SHARE (turning it off waits for this
+  // transaction). Turned off while this delivery waited: today's untracked path, the text or call is stored, never lost.
+  if (tracked && !(await sourceStillOn(tx, tracked.input.leadSourceId))) tracked = null;
 
   // E60: an agent's own verified alert phone (a USER recipient, not a contact)
   if (e.kind === 'sms') {
@@ -240,6 +243,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   let body = '';
   let autoReply: { name: string; value: string } | null = null;
   let rfcHash: Buffer | null = null;
+  let hasTextParts = false;
   if (e.kind === 'call') {
     callId = ids.next<'CallId'>();
     const handler = await handlerOf(tx, target);
@@ -277,7 +281,12 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     });
     if (!inserted) return { kind: 'duplicate' };
     // R-TWL-11: the declared text parts, pending, and their read job, in the inbound message's own transaction
-    if (e.kind === 'sms' && e.textParts && e.textParts.length > 0) await enqueueTextParts(tx, { messageId, messageRef: e.providerRef, parts: e.textParts });
+    // b9 review sends/F2 (R-TRK-3, E595): with declared text parts, a tracked re-inquiry waits for the job to read them
+    // (a STOP, opt-out language or wrong-number reply only in a part is never an inquiry); the job decides it
+    if (e.kind === 'sms' && e.textParts && e.textParts.length > 0) {
+      await enqueueTextParts(tx, { messageId, messageRef: e.providerRef, parts: e.textParts, ...(tracked ? { trackedLeadSourceId: tracked.input.leadSourceId } : {}) });
+      hasTextParts = true;
+    }
   }
   const inboundSeq = await msgs.bumpInbound(tx, conversationId, target, occurredAt);
 
@@ -375,11 +384,14 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   // source, so the re-inquiry rules decide (R-OWN-20, owner decision D8(2)). Owned, offered and closed people are only
   // threaded. Read under the contact locks taken in step 3; the intake attaches to a contact in `sharing` (same HMAC).
   // A reaction text (a tapback quoting the team's text, D5b: `rx`) is a reply, never a new inquiry (E595).
-  if (tracked && (e.kind === 'call' || (classification.kind === 'none' && !rx))) {
+  // b9 review: an MMS with declared text parts is decided by comms.mms_text once every part is read (sends/F2); the
+  // inquiry attaches to the contact this delivery was threaded on, `target` (ownership-data/F2), and keeps the pond card
+  // (ownership-data/F6: a call or text carries no structured facts).
+  if (tracked && !hasTextParts && (e.kind === 'call' || (classification.kind === 'none' && !rx))) {
     const st = await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${target}`.execute(tx);
     const state = st.rows[0]?.ownership_state;
     if (state === 'in_pond' || state === 'unassigned') {
-      await ingestInquiryInTx(tx, actor, tracked.input, txNow, { envelope: deps.envelope, ids, db: deps.db }, { firstResponse: false, disclosure: 'none' });
+      await ingestInquiryInTx(tx, actor, tracked.input, txNow, { envelope: deps.envelope, ids, db: deps.db }, { firstResponse: false, disclosure: 'none', attachTo: target, keepPondSummary: true });
       await setOwnershipCommand(tx, null);
     }
   }
@@ -514,6 +526,12 @@ export async function recordMissedInboundCall(actor: SystemActor, callId: string
     await missedCallItem(tx, deps.ids, h.userId, c.contact_id, callId, c.status, await contactLabel(tx, c.contact_id), now);
     return true;
   }, { db: deps.db, retries: 2 });
+}
+
+/** b9 review ownership-data/F5: is the tracking number's source still on? Read FOR SHARE, so turning it off waits. */
+export async function sourceStillOn(tx: Tx, leadSourceId: string): Promise<boolean> {
+  const r = await sql<{ active: boolean }>`SELECT active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${leadSourceId}::uuid FOR SHARE`.execute(tx);
+  return r.rows[0]?.active === true;
 }
 
 async function conversationContact(tx: Tx, conversationId: string): Promise<string | null> {

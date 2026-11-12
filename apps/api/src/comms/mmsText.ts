@@ -16,6 +16,8 @@ export const MMS_TEXT_JOB = { kind: 'comms.mms_text', queue: 'default' as const,
 
 /** The one notice an unreadable part gets (E387). `{name}` is the contact's label. */
 export const UNREADABLE_PART_NOTICE = (name: string) => `Part of a text from ${name} couldn't be read. Check the conversation before you text them.`;
+/** b9 review sends/F2: the notice's body when that text came to a tracking number from a pond / unassigned person. */
+export const UNREADABLE_TRACKED_PART_BODY = 'It came to a tracking number, so it was not counted as a new inquiry.';
 /** What the thread shows for a part that has not been read yet. */
 export const PENDING_PART_SENTENCE = "Part of this text hasn't been read yet.";
 
@@ -52,6 +54,11 @@ export interface TextPartJob {
   /** the provider message SID the parts belong to */
   messageRef: string;
   parts: { position: number; ref: string | null }[];
+  /**
+   * b9 review sends/F2 (R-TRK-3, E595): the message came to a tracking number of this ON lead source from a known
+   * person. The R-TRK-3 re-inquiry is decided by the job, once every part is read, never at ingestion.
+   */
+  trackedLeadSourceId?: string;
 }
 
 /**
@@ -72,7 +79,7 @@ export async function enqueueTextParts(tx: Tx, j: TextPartJob): Promise<void> {
   await enqueueJob(tx, {
     queue: MMS_TEXT_JOB.queue,
     kind: MMS_TEXT_JOB.kind,
-    payload: { ...(j.messageId ? { messageId: j.messageId } : {}), ...(j.agentUserId ? { agentUserId: j.agentUserId } : {}), messageRef: j.messageRef.slice(0, 64), parts },
+    payload: { ...(j.messageId ? { messageId: j.messageId } : {}), ...(j.agentUserId ? { agentUserId: j.agentUserId } : {}), messageRef: j.messageRef.slice(0, 64), parts, ...(j.messageId && j.trackedLeadSourceId ? { trackedLeadSourceId: j.trackedLeadSourceId } : {}) },
     dedupeKey: MMS_TEXT_JOB.dedupeKey(key),
   });
 }
