@@ -127,7 +127,7 @@ export const SIGNAL_LEXICON: Readonly<Partial<Record<EscalationClass, readonly S
     t(/\bdo\s+not\s+sell\s+my\b/u, false),
   ],
   ai_declined: [
-    t(/\b(?:don'?t|do\s+not)\s+want\s+to\s+(?:text|talk|chat|speak|deal|message)\s+(?:with|to)\s+(?:a\s+|an\s+|the\s+|your\s+)?(?:bot|robot|ai|a\.i\.|machine|computer|automated\s+\w+|assistant)\b/u, false),
+    t(/\b(?:don'?t|do\s+not)\s+want\s+to\s+(?:text|talk|chat|speak|deal|message)\s+(?:with\s+|to\s+)?(?:a\s+|an\s+|the\s+|your\s+)?(?:bot|robot|ai|a\.i\.|machine|computer|automated\s+\w+|assistant)\b/u, false),
     t(/\bno\s+(?:more\s+)?(?:bots?|robots?|ai)\b/u, false),
     t(/\bnot\s+(?:talking|texting|chatting)\s+(?:to|with)\s+(?:a\s+|an\s+)?(?:bot|robot|ai|machine)\b/u, false),
     t(/\b(?:i\s+)?(?:hate|refuse\s+to\s+talk\s+to)\s+(?:bots?|robots?|ai)\b/u),

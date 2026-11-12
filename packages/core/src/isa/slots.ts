@@ -112,7 +112,7 @@ export function computeOffer(i: OfferInput): Offer | null {
         if (halfDays.has(half)) continue;
         halfDays.add(half);
         chosen.push(slot);
-        break; // the earliest of this window's half-day; the next window may be the other half
+        if (chosen.length >= maxSlots) break;
       }
       if (chosen.length >= maxSlots) break;
     }
@@ -258,6 +258,8 @@ export function matchSlotChoice(text: string, slots: readonly IsaSlot[], zones: 
     // a lone digit at the start counts; a digit elsewhere must follow an index word or "#"
     idxs.add(n);
   }
+  const anyDay = WEEKDAY_RE.some(([re]) => re.test(t)) || MONTH_RE.test(t);
+  if (!anyDay) for (const m of t.matchAll(/(?<![\d:/$#])\b([1-9])\b(?![\d:/]|\s*(?:am|pm|a\.m|p\.m|:))/gu)) idxs.add(Number(m[1]));
   const loneDigit = /^\s*#?\s*([1-9])\s*(?:[.!)]|works?|is\s+(?:good|great|fine|best)|please|pls|thanks?|for\s+me|sounds\s+good)?[\s.!]*$/u.exec(t);
   if (loneDigit !== null) idxs.add(Number(loneDigit[1]));
   const times = namedTimes(t);

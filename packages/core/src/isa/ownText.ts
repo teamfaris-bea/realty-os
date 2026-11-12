@@ -215,7 +215,7 @@ export const BOOLEAN_LEXICON: Readonly<Record<'seller_owns_stated' | 'seller_lis
 });
 
 /** "not_started" is affirmative only as a negated financing step ("haven't talked to a lender"). */
-const NOT_STARTED_RE = /\b(?:haven'?t|have\s+not|not\s+yet|didn'?t|did\s+not|no)\s+(?:yet\s+)?(?:been\s+)?(?:talked|spoken|started|gotten|got|applied|pre[\s-]?approv\w*|looked\s+into\s+financing|financing|lender)/u;
+const NOT_STARTED_RE = /\b(?:haven'?t|have\s+not|not\s+yet|not|didn'?t|did\s+not|no)\s+(?:yet\s+)?(?:been\s+)?(?:talked|spoken|started|gotten|got|applied|pre[\s-]?approv\w*|looked\s+into\s+financing|financing|lender)/u;
 
 const QUAL_CRITERION: Partial<Record<QualField, CriterionKey>> = {
   budget: 'priceMaxCents',
