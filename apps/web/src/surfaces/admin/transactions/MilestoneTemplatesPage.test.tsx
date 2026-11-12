@@ -55,6 +55,6 @@ describe('milestone templates page', () => {
   it('finding 8: the Team Lead queue knows milestone_at_risk (label, plural, filter)', () => {
     expect(TYPES).toContain('milestone_at_risk');
     expect(TYPE_LABEL.milestone_at_risk).toBe('Milestone at risk');
-    expect(TYPE_PLURAL.milestone_at_risk).toBe('Milestones at risk');
+    expect(TYPE_PLURAL.milestone_at_risk).toBe('Dates at risk');
   });
 });
