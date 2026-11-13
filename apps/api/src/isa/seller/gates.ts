@@ -61,7 +61,22 @@ export function compsSuspended(w: Pick<WatchRow, 'comps_suspended_at' | 'comps_r
  * failed or undelivered. V2-A leaves a CMA shared when its email is blocked at dispatch or swept, and a share to a
  * co-seller stamps the lead's CMA without reaching the lead: none of these lifts the lead's suspension.
  */
-export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserActor, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>, w: WatchRow | null): Promise<boolean> {
+export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserActor, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>, w0: WatchRow | null): Promise<boolean> {
+  let w = w0;
+  // b13 review B13-MRG-5: a continuation (controls.ts continueCare) starts a new assignment with a fresh watch and a
+  // fresh machine, and a continuation is none of the three things that clear a suspension (E502). A watch with no
+  // suspension history of its own takes the nearest continued-from watch that has one; the system writes it onto this
+  // watch (comps_suspended_at is a system column), so every later read sees it here.
+  if (w === null || (w.comps_suspended_at === null && w.comps_resumed_at === null)) {
+    const carried = await continuedSuspensionInTx(tx, a.id);
+    if (carried !== null) {
+      if (actor.kind === 'system' && w !== null) {
+        await sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = ${carried} WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
+          AND comps_suspended_at IS NULL AND comps_resumed_at IS NULL`.execute(tx);
+      }
+      w = { ...(w ?? ({} as WatchRow)), comps_suspended_at: carried, comps_resumed_at: null };
+    }
+  }
   if (!compsSuspended(w)) return false;
   const r = (await sql<{ prepared: boolean; shared: boolean }>`SELECT
       EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.created_by_user_id = ${a.ownerUserId}
@@ -77,6 +92,24 @@ export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserAct
       WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
   }
   return false;
+}
+
+/**
+ * b13 review B13-MRG-5: the suspension a continuation carries: the nearest assignment up the continued_from chain (at
+ * most 32 links) whose watch has any suspension history, if that watch is suspended now; null otherwise.
+ */
+async function continuedSuspensionInTx(tx: Tx, assignmentId: string): Promise<Date | null> {
+  const r = await sql<{ comps_suspended_at: Date | null; comps_resumed_at: Date | null }>`WITH RECURSIVE chain (id, depth) AS (
+      SELECT x.continued_from_assignment_id, 1 FROM ai_isa_assignments x
+       WHERE x.tenant_id = app.tenant_id() AND x.id = ${assignmentId} AND x.continued_from_assignment_id IS NOT NULL
+      UNION ALL
+      SELECT x.continued_from_assignment_id, c.depth + 1 FROM chain c JOIN ai_isa_assignments x ON x.tenant_id = app.tenant_id() AND x.id = c.id
+       WHERE x.continued_from_assignment_id IS NOT NULL AND c.depth < 32)
+    SELECT w.comps_suspended_at, w.comps_resumed_at FROM chain c JOIN ai_isa_seller_watch w ON w.tenant_id = app.tenant_id() AND w.assignment_id = c.id
+     WHERE w.comps_suspended_at IS NOT NULL OR w.comps_resumed_at IS NOT NULL
+     ORDER BY c.depth LIMIT 1`.execute(tx);
+  const prev = r.rows[0];
+  return prev && compsSuspended(prev) ? prev.comps_suspended_at : null;
 }
 
 export async function sellerGatesInTx(tx: Tx, actor: SystemActor | UserActor, a: AssignmentRow, now: Instant, kind: SellerKind): Promise<SellerGates> {

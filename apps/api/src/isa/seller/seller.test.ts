@@ -15,7 +15,7 @@ import { watchOf } from './subject.js';
 import { COUNT_SHARE_ENABLED } from './counts.js';
 import { SELLER_RUNTIME, factPlaceholdersInTx, onEscalationInTx, sellerBundleInTx, sellerFactsCurrentInTx, sellerStartRefusalInTx, COMPS_PLACEHOLDER } from './index.js';
 import { type IsaDeps, contextFor, queueIsaMessageInTx } from './isa2Seam.js';
-import { PRINTABLE_STATEMENTS, type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, panel, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
+import { PRINTABLE_STATEMENTS, type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, panel, randomUUID, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 import { runSellerWatchInTx } from './watch.js';
 
 let h: ApiHarness;
@@ -459,6 +459,35 @@ describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts
     await share(toLead, 'sent', true);
     expect(await suspendedNow()).toBe(false);
     expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: 'cma_shared' });
+  });
+});
+
+describe('E502 (b13 review B13-MRG-5): a continuation keeps an unresolved pricing suspension', () => {
+  it('E502: after Continue (the paused assignment ends, a new one continues from it) recent sales stay suspended until a CMA, a share or resume-comps', async () => {
+    const w5 = await sellerWorld(h);
+    const l = await sellerLead(h, w5);
+    await confirm(w5, l);
+    await asSystem(h, w5, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    // the continuation as continueCare writes it (controls.ts): the old assignment ends, a new one continues from it
+    const a2 = randomUUID();
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE ai_isa_assignments SET ended_at = now(), end_reason = 'ended_by_user', ended_by_kind = 'user', state = 'ended' WHERE id = $1`, [l.assignmentId]);
+      await h.su.query(`INSERT INTO ai_isa_assignments (tenant_id, id, contact_id, owner_user_id, optin_id, playbook_version_id, bound_ownership_seq, bound_points, side,
+          started_by_user_id, continued_from_assignment_id, consent_snapshot)
+        SELECT tenant_id, $2, contact_id, owner_user_id, optin_id, playbook_version_id, bound_ownership_seq, bound_points, side, started_by_user_id, id, consent_snapshot
+          FROM ai_isa_assignments WHERE id = $1`, [l.assignmentId, a2]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const l2 = { ...l, assignmentId: a2 };
+    await asSystem(h, w5, l2, async (tx, a) => { const { ensureWatchInTx } = await import('./subject.js'); await ensureWatchInTx(tx, a); });
+    const suspendedNow = () => asSystem(h, w5, l2, async (tx, a, actor) => compsSuspendedNowInTx(tx, actor, a, await watchOf(tx, a.id)));
+    expect(await suspendedNow()).toBe(true);
+    // carried onto the new watch (a system column), so every later read sees it
+    expect((await h.su.query(`SELECT comps_suspended_at IS NOT NULL AS s FROM ai_isa_seller_watch WHERE assignment_id = $1`, [a2])).rows[0]).toEqual({ s: true });
+    expect((await call(w5.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/seller/resume-comps`, {})).status).toBe(200);
+    expect(await suspendedNow()).toBe(false);
   });
 });
 
