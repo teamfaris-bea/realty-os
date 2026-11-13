@@ -35,6 +35,8 @@ import { makeImportHandlers } from './src/imports/handlers.ts';
 import { HandlerRegistry } from './src/worker/registry.ts';
 import { createWorker } from './src/worker/loop.ts';
 import { silentLogger } from './src/worker/observability.ts';
+import { address as cmaAddress, cmaPack, localSales, oneTap as cmaOneTap } from './src/cma/testing.ts';
+import { mlsConnection } from './src/mls/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
 const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN] } });
@@ -119,9 +121,15 @@ const routes = {
     const dupB = must(await call(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Dana', lastName: 'Fox', phones: [phone()], emails: [dupEmail], confirmDistinct: true }), 'dup b').contact.id;
     const dup = (await h.su.query('SELECT id FROM contact_duplicate_candidates WHERE contact_a_id = LEAST($1::uuid, $2::uuid) AND contact_b_id = GREATEST($1::uuid, $2::uuid)', [dupA, dupB])).rows[0].id;
     const imp = must(await call(w.owner, 'POST', '/imports', { source: 'csv', fileName: 'open-house.csv', fileBase64: Buffer.from(csv).toString('base64') }), 'import');
+    // module 72 (web/cma): a fixture MLS feed with synthetic sold homes nearby, a property address for Marco and the
+    // agent's one-tap CMA of it (api/cma's own test helpers; nothing real is configured)
+    const mls = await mlsConnection(h, w.tenantId, w.owner.userId, { pack: cmaPack(), lastSyncedAt: new Date() });
+    await localSales({ h, tenantId: w.tenantId, mls }, 12);
+    await cmaAddress(h, w.tenantId, marco, { kind: 'property', line1: '100 Sample Ave' });
+    const cma = must(await cmaOneTap(agent, marco, { facts: { propertyType: 'single_family', sqft: 1500 } }), 'cma').cma; // E373: not in the MLS history, so the agent enters type and size
     for (const [role, c] of Object.entries(people)) if (c.totpSecret) secrets.set(c.email, c.totpSecret);
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
-    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup, widgetKey: chatWidget.widgetKey } };
+    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup, widgetKey: chatWidget.widgetKey, cmaId: cma.id } };
   },
   /** module 65: runs the queued import jobs (snapshot, dry run) once, as the worker would; fake FUB only */
   async '/drain-imports'() {
@@ -182,6 +190,8 @@ export interface SeedIds {
   duplicateId: string;
   /** the team's website-chat widget key (module 22), for the widget's stand-in page */
   widgetKey: string;
+  /** module 72: the agent's one-tap CMA draft of Marco's home */
+  cmaId: string;
 }
 
 export interface World {
