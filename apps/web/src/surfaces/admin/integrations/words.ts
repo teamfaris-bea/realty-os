@@ -20,8 +20,9 @@ const PACK_NAMES: Record<string, string> = {
   'platform:ads': 'Google Ads budget changes',
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
   'platform:gbp': 'Google Business Profile',
-  'platform:ai_isa': 'AI assistant (ISA) messages',
-  'platform:ai_isa_seller_data': 'AI assistant recent-sales emails',
+  // the AI ISA packs (D12 proposed): staff copy calls it "the assistant", never "AI" (leadAdmin.test.ts copy lint)
+  'platform:ai_isa': "The assistant's ISA texts and emails",
+  'platform:ai_isa_seller_data': "The assistant's recent-sales emails",
 };
 
 export function packName(key: string): string {
