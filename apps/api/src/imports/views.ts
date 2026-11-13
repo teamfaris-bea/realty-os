@@ -367,7 +367,7 @@ export function removedWords(byTable: Record<string, number>): string {
 }
 
 function revertLines(s: StageRow): string[] {
-  const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; keptReasons?: Record<string, number>; removedByTable?: Record<string, number> };
+  const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; reasons?: Record<string, number>; keptReasons?: Record<string, number>; removedByTable?: Record<string, number> };
   const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
   const what = r.removedByTable ? removedWords(r.removedByTable) : `${n(r.removed)} ${r.removed === 1 ? 'row' : 'rows'}`;
   const left = (r.needsDecision ?? 0) === 0 ? 'nothing was left for your decision' : `${n(r.needsDecision)} ${r.needsDecision === 1 ? 'record was' : 'records were'} changed since the import and left for your decision`;
@@ -381,6 +381,17 @@ function revertLines(s: StageRow): string[] {
     );
   }
   if (s.category === 'ownership' && (r.needsDecision ?? 0) > 0) lines.push('Leads someone worked on since the import keep their current owner.');
+  // D9 (b10 review ownership-data/F2): why a person with a CMA stayed, in words
+  const cma = r.reasons?.CMA_PREPARED ?? 0;
+  if (cma > 0) {
+    lines.push(
+      s.category === 'contacts'
+        ? cma === 1
+          ? '1 person has a CMA prepared since the import, so they stay, with the address it cites, for your decision.'
+          : `${n(cma)} people have a CMA prepared since the import, so they stay, with the addresses their CMAs cite, for your decision.`
+        : `${n(cma)} imported ${cma === 1 ? 'record belongs' : 'records belong'} to people with a CMA prepared since the import, so ${cma === 1 ? 'it stays' : 'they stay'} for your decision.`,
+    );
+  }
   const kept = (r.keptReasons?.REVOCATION_KEPT ?? 0) + (r.keptReasons?.DNC_KEPT ?? 0);
   if (kept > 0) lines.push(`${n(kept)} imported opt-outs and do-not-contact flags stay in place.`);
   return lines;

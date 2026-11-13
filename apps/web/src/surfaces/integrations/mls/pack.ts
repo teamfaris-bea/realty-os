@@ -3,10 +3,15 @@
 //
 // R-MLS-2: the pack counts as counsel-reviewed only when EVERY value is marked reviewed; until then no MLS listing
 // reaches a client. The editor says so, and changing a value clears its mark (counsel reviewed the old value).
+// D9: the valuation section (below PackView) is edited apart, with its own stamp; the display editor never sends it.
 // Every value is VERIFY WITH COUNSEL / MLS; nothing here encodes a particular MLS's rules.
 
-/** Fields a licence pack can allow per audience (packages/core listings DISPLAY_FIELDS; the server drops unknown ones). */
-export const DISPLAY_FIELDS = ['mlsNumber', 'status', 'listPrice', 'beds', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'locality', 'photos'] as const;
+/**
+ * Fields a licence pack can allow per audience: packages/core listings DISPLAY_FIELDS, in its order (pack.test.ts checks
+ * they are equal). Restated, not imported, so the phone bundle does not pull core's runtime in (as design/Evidence.tsx).
+ * A field missing here would be dropped from a stored pack on the next save, so the D9 sold fields are listed too.
+ */
+export const DISPLAY_FIELDS = ['mlsNumber', 'status', 'listPrice', 'beds', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'locality', 'photos', 'closePrice', 'closeDate', 'yearBuilt', 'lotSize', 'subdivision'] as const;
 export const LISTING_STATUSES = ['coming_soon', 'active', 'pending', 'sold', 'withdrawn', 'expired'] as const;
 export const PACK_KEYS = ['max_staleness_hours', 'attribution_text', 'disclaimer_text', 'allow_rehost_photos', 'require_listing_brokerage', 'client_fields', 'client_statuses', 'public_fields', 'public_statuses'] as const;
 export type PackKey = (typeof PACK_KEYS)[number];
@@ -24,6 +29,11 @@ export const FIELD_WORDS: Record<string, string> = {
   address: 'Street address',
   locality: 'City, state and ZIP',
   photos: 'Photos',
+  closePrice: 'Sold price',
+  closeDate: 'Sold date',
+  yearBuilt: 'Year built',
+  lotSize: 'Lot size',
+  subdivision: 'Subdivision',
 };
 export const STATUS_WORDS: Record<string, string> = { coming_soon: 'Coming soon', active: 'Active', pending: 'Pending', sold: 'Sold', withdrawn: 'Withdrawn', expired: 'Expired' };
 
@@ -51,12 +61,74 @@ export interface PackValues {
   public_statuses: string[];
 }
 
+// ---- the valuation section (D9; R-CMA-6, R-CMA-7; batch 10 review api-ui/F2) ------------------------------------------
+//
+// What the MLS agreement allows for sold data used in valuations, with its OWN counsel stamp (apps/api/src/mls/admin.ts
+// VALUATION_PACK_KEYS, the PUT body's optional `valuation`). Strictest defaults when missing or unreadable, as core
+// parseLicensePack: no use allowed, the seller's "no automated valuation" choice holds for every client output, no
+// statement. Nothing here ever ticks a use the Owner did not tick. V1 shares nothing built from MLS sales with clients,
+// whatever the section says (D9): the page says so beside the client uses.
+
+export const VALUATION_KEYS = ['agent_cma', 'client_cma', 'automated_notes', 'avm_flag_scope', 'statements'] as const;
+export type ValuationKey = (typeof VALUATION_KEYS)[number];
+export const AVM_SCOPES = ['all_client_outputs', 'internet_display_only'] as const;
+export type AvmScope = (typeof AVM_SCOPES)[number];
+
+/** USPS state, district and territory codes and names: packages/core listings USPS_REGIONS (pack.test.ts checks they are equal). */
+export const USPS_REGIONS: Readonly<Record<string, string>> = Object.freeze({
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware',
+  DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa',
+  KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota',
+  MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey',
+  NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon',
+  PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah',
+  VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  PR: 'Puerto Rico', VI: 'Virgin Islands', GU: 'Guam', AS: 'American Samoa', MP: 'Northern Mariana Islands',
+});
+
+export interface ValuationStatement {
+  /** USPS code */
+  region: string;
+  text: string;
+  minPointSize: number;
+}
+
+export interface ValuationValues {
+  agent_cma: boolean;
+  client_cma: boolean;
+  automated_notes: boolean;
+  avm_flag_scope: AvmScope;
+  statements: ValuationStatement[];
+}
+
+export interface ValuationView {
+  values: ValuationValues;
+  marks: Record<ValuationKey, boolean>;
+  reviewedByCounselAt: string | null;
+  unreviewedCount: number;
+  sentence: string;
+}
+
+/** Said on the page whatever the section holds (D9: sharing is V2's). */
+export const VALUATION_NOT_SHARED = 'Nothing built from MLS sales reaches a client in this version, whatever is recorded here.';
+const NOT_IN_V1 = 'Not available in this version: nothing built from MLS sales reaches a client, whatever this says. Leave it off unless your MLS agreement allows it.';
+
+export const VALUATION_WORDS: Record<ValuationKey, { label: string; hint: string }> = {
+  agent_cma: { label: 'Agents may prepare CMAs from MLS sold data', hint: 'Tick this only if your MLS agreement allows sold data to be used for valuations. Agent-facing only: the agent sees the estimate and nothing is sent to a client. Agent CMAs are refused until it is ticked.' },
+  client_cma: { label: 'CMAs built from MLS sold data may be shared with clients', hint: NOT_IN_V1 },
+  automated_notes: { label: 'Automated home-value notes and seller-update value ranges may carry values built from MLS sold data', hint: NOT_IN_V1 },
+  avm_flag_scope: { label: 'Where a seller’s “no automated valuation” choice applies', hint: 'Some MLS listings say the seller does not want automated valuations shown. The strictest choice holds it for everything that could reach a client.' },
+  statements: { label: 'Valuation statement for each state', hint: 'The statement counsel requires with a value shown to a client in that state, and its smallest type size. None is shipped. Readiness checks for one; nothing is shown to a client in this version.' },
+};
+export const AVM_SCOPE_WORDS: Record<AvmScope, string> = { all_client_outputs: 'Everything that could reach a client (strictest)', internet_display_only: 'Internet display only' };
+
 export interface PackView {
   values: PackValues;
   marks: Record<PackKey, boolean>;
   reviewedByCounselAt: string | null;
   unreviewedCount: number;
   sentence: string;
+  valuation: ValuationView;
 }
 
 export interface MlsConnection {
@@ -77,6 +149,54 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object'
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const list = (v: unknown, allowed: readonly string[]): string[] => (Array.isArray(v) ? allowed.filter((a) => v.includes(a)) : []);
+
+/** The valuation section of GET /admin/mls (or the PUT response), copied field by field; strictest when unreadable. */
+export function pickValuation(raw: unknown): ValuationView {
+  const o = obj(raw);
+  const byKey = new Map<string, { value: unknown; counselReviewed: boolean }>();
+  for (const x of Array.isArray(o.values) ? o.values : []) {
+    const v = obj(x);
+    if (typeof v.key === 'string') byKey.set(v.key, { value: v.value, counselReviewed: v.counselReviewed === true });
+  }
+  const val = (k: ValuationKey) => byKey.get(k)?.value;
+  const scope = val('avm_flag_scope');
+  const raws = val('statements');
+  const statements = (Array.isArray(raws) ? raws : []).flatMap((x): ValuationStatement[] => {
+    const st = obj(x);
+    const size = st.minPointSize;
+    return typeof st.region === 'string' && Object.hasOwn(USPS_REGIONS, st.region) && typeof st.text === 'string' && typeof size === 'number' && Number.isFinite(size) ? [{ region: st.region, text: st.text, minPointSize: size }] : [];
+  });
+  const marks = Object.fromEntries(VALUATION_KEYS.map((k) => [k, byKey.get(k)?.counselReviewed === true])) as Record<ValuationKey, boolean>;
+  return {
+    values: {
+      agent_cma: val('agent_cma') === true,
+      client_cma: val('client_cma') === true,
+      automated_notes: val('automated_notes') === true,
+      avm_flag_scope: scope === 'internet_display_only' ? 'internet_display_only' : 'all_client_outputs',
+      statements,
+    },
+    marks,
+    reviewedByCounselAt: strOrNull(o.reviewedByCounselAt),
+    unreviewedCount: VALUATION_KEYS.filter((k) => !marks[k]).length,
+    sentence: str(o.sentence),
+  };
+}
+
+/** The PUT body's `valuation`: every value with its mark (sent with the display pack as stored; apps/api mls/routes.ts). */
+export function valuationBody(values: ValuationValues, marks: Record<ValuationKey, boolean>): Record<ValuationKey, { value: unknown; counselReviewed: boolean }> {
+  return Object.fromEntries(VALUATION_KEYS.map((k) => [k, { value: values[k], counselReviewed: marks[k] === true }])) as Record<ValuationKey, { value: unknown; counselReviewed: boolean }>;
+}
+
+/** A statement list the server would accept (routes.ts Statement): a known state once each, a text, a size 6–36. */
+export function statementsValid(xs: readonly ValuationStatement[]): boolean {
+  const regions = xs.map((x) => x.region);
+  return new Set(regions).size === regions.length && xs.every((x) => Object.hasOwn(USPS_REGIONS, x.region) && x.text.trim().length > 0 && x.text.trim().length <= 4000 && Number.isFinite(x.minPointSize) && x.minPointSize >= 6 && x.minPointSize <= 36);
+}
+
+export const VALUATION_ERROR_MESSAGES: Record<string, string> = {
+  CONNECTION_NOT_CONNECTABLE: 'This MLS connection is disconnected, so its valuation use cannot be changed. Nothing was saved.',
+  VALIDATION_FAILED: 'Check the valuation use: each state statement needs a state (each state once), a text of at most 4,000 characters and a type size from 6 to 36 points. Nothing was saved.',
+};
 
 export function pickPack(raw: unknown): PackView {
   const o = obj(raw);
@@ -105,6 +225,7 @@ export function pickPack(raw: unknown): PackView {
     // never trust a count over the marks themselves
     unreviewedCount: PACK_KEYS.filter((k) => !marks[k]).length,
     sentence: str(o.sentence),
+    valuation: pickValuation(o.valuation),
   };
 }
 

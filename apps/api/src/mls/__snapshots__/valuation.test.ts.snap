@@ -1,0 +1,1038 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R-AST-13: the changed schemas > R-AST-13 R-TEN-3: GET /admin/mls and the licence-pack PUT carry no confidence, score or tenant id (snapshot) 1`] = `
+{
+  "LicensePackBody": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "allow_rehost_photos": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "attribution_text": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "client_fields": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "items": {
+              "enum": [
+                "mlsNumber",
+                "status",
+                "listPrice",
+                "beds",
+                "baths",
+                "sqft",
+                "propertyType",
+                "description",
+                "listDate",
+                "address",
+                "locality",
+                "photos",
+                "closePrice",
+                "closeDate",
+                "yearBuilt",
+                "lotSize",
+                "subdivision",
+              ],
+              "type": "string",
+            },
+            "maxItems": 17,
+            "type": "array",
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "client_statuses": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "items": {
+              "enum": [
+                "coming_soon",
+                "active",
+                "pending",
+                "sold",
+                "withdrawn",
+                "expired",
+              ],
+              "type": "string",
+            },
+            "maxItems": 6,
+            "type": "array",
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "disclaimer_text": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "max_staleness_hours": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "maximum": 8760,
+                "type": "number",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "public_fields": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "items": {
+              "enum": [
+                "mlsNumber",
+                "status",
+                "listPrice",
+                "beds",
+                "baths",
+                "sqft",
+                "propertyType",
+                "description",
+                "listDate",
+                "address",
+                "locality",
+                "photos",
+                "closePrice",
+                "closeDate",
+                "yearBuilt",
+                "lotSize",
+                "subdivision",
+              ],
+              "type": "string",
+            },
+            "maxItems": 17,
+            "type": "array",
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "public_statuses": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "items": {
+              "enum": [
+                "coming_soon",
+                "active",
+                "pending",
+                "sold",
+                "withdrawn",
+                "expired",
+              ],
+              "type": "string",
+            },
+            "maxItems": 6,
+            "type": "array",
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "require_listing_brokerage": {
+        "additionalProperties": false,
+        "properties": {
+          "counselReviewed": {
+            "type": "boolean",
+          },
+          "value": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "value",
+          "counselReviewed",
+        ],
+        "type": "object",
+      },
+      "valuation": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_cma": {
+            "additionalProperties": false,
+            "properties": {
+              "counselReviewed": {
+                "type": "boolean",
+              },
+              "value": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "value",
+              "counselReviewed",
+            ],
+            "type": "object",
+          },
+          "automated_notes": {
+            "additionalProperties": false,
+            "properties": {
+              "counselReviewed": {
+                "type": "boolean",
+              },
+              "value": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "value",
+              "counselReviewed",
+            ],
+            "type": "object",
+          },
+          "avm_flag_scope": {
+            "additionalProperties": false,
+            "properties": {
+              "counselReviewed": {
+                "type": "boolean",
+              },
+              "value": {
+                "enum": [
+                  "all_client_outputs",
+                  "internet_display_only",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "value",
+              "counselReviewed",
+            ],
+            "type": "object",
+          },
+          "client_cma": {
+            "additionalProperties": false,
+            "properties": {
+              "counselReviewed": {
+                "type": "boolean",
+              },
+              "value": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "value",
+              "counselReviewed",
+            ],
+            "type": "object",
+          },
+          "statements": {
+            "additionalProperties": false,
+            "properties": {
+              "counselReviewed": {
+                "type": "boolean",
+              },
+              "value": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "minPointSize": {
+                      "maximum": 36,
+                      "minimum": 6,
+                      "type": "number",
+                    },
+                    "region": {
+                      "enum": [
+                        "AL",
+                        "AK",
+                        "AZ",
+                        "AR",
+                        "CA",
+                        "CO",
+                        "CT",
+                        "DE",
+                        "DC",
+                        "FL",
+                        "GA",
+                        "HI",
+                        "ID",
+                        "IL",
+                        "IN",
+                        "IA",
+                        "KS",
+                        "KY",
+                        "LA",
+                        "ME",
+                        "MD",
+                        "MA",
+                        "MI",
+                        "MN",
+                        "MS",
+                        "MO",
+                        "MT",
+                        "NE",
+                        "NV",
+                        "NH",
+                        "NJ",
+                        "NM",
+                        "NY",
+                        "NC",
+                        "ND",
+                        "OH",
+                        "OK",
+                        "OR",
+                        "PA",
+                        "RI",
+                        "SC",
+                        "SD",
+                        "TN",
+                        "TX",
+                        "UT",
+                        "VT",
+                        "VA",
+                        "WA",
+                        "WV",
+                        "WI",
+                        "WY",
+                        "PR",
+                        "VI",
+                        "GU",
+                        "AS",
+                        "MP",
+                      ],
+                      "type": "string",
+                    },
+                    "text": {
+                      "maxLength": 4000,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "region",
+                    "text",
+                    "minPointSize",
+                  ],
+                  "type": "object",
+                },
+                "maxItems": 56,
+                "type": "array",
+              },
+            },
+            "required": [
+              "value",
+              "counselReviewed",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "agent_cma",
+          "client_cma",
+          "automated_notes",
+          "avm_flag_scope",
+          "statements",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "max_staleness_hours",
+      "attribution_text",
+      "disclaimer_text",
+      "allow_rehost_photos",
+      "require_listing_brokerage",
+      "client_fields",
+      "client_statuses",
+      "public_fields",
+      "public_statuses",
+    ],
+    "type": "object",
+  },
+  "MlsAdminResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connections": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "clientDisplay": {
+              "type": "boolean",
+            },
+            "clientDisplaySentence": {
+              "type": "string",
+            },
+            "displayName": {
+              "type": "string",
+            },
+            "feedStale": {
+              "type": "boolean",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "lastSyncedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "licensePack": {
+              "additionalProperties": false,
+              "properties": {
+                "reviewedByCounselAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "sentence": {
+                  "type": "string",
+                },
+                "unreviewedCount": {
+                  "type": "number",
+                },
+                "valuation": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reviewedByCounselAt": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "sentence": {
+                      "type": "string",
+                    },
+                    "unreviewedCount": {
+                      "type": "number",
+                    },
+                    "values": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "counselReviewed": {
+                            "type": "boolean",
+                          },
+                          "key": {
+                            "enum": [
+                              "agent_cma",
+                              "client_cma",
+                              "automated_notes",
+                              "avm_flag_scope",
+                              "statements",
+                            ],
+                            "type": "string",
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "boolean",
+                              },
+                              {
+                                "type": "string",
+                              },
+                              {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "minPointSize": {
+                                      "type": "number",
+                                    },
+                                    "region": {
+                                      "type": "string",
+                                    },
+                                    "text": {
+                                      "type": "string",
+                                    },
+                                  },
+                                  "required": [
+                                    "region",
+                                    "text",
+                                    "minPointSize",
+                                  ],
+                                  "type": "object",
+                                },
+                                "type": "array",
+                              },
+                            ],
+                          },
+                        },
+                        "required": [
+                          "key",
+                          "value",
+                          "counselReviewed",
+                        ],
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                  },
+                  "required": [
+                    "values",
+                    "reviewedByCounselAt",
+                    "unreviewedCount",
+                    "sentence",
+                  ],
+                  "type": "object",
+                },
+                "values": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "counselReviewed": {
+                        "type": "boolean",
+                      },
+                      "key": {
+                        "enum": [
+                          "max_staleness_hours",
+                          "attribution_text",
+                          "disclaimer_text",
+                          "allow_rehost_photos",
+                          "require_listing_brokerage",
+                          "client_fields",
+                          "client_statuses",
+                          "public_fields",
+                          "public_statuses",
+                        ],
+                        "type": "string",
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                          {
+                            "type": "null",
+                          },
+                          {
+                            "items": {
+                              "type": "string",
+                            },
+                            "type": "array",
+                          },
+                        ],
+                      },
+                    },
+                    "required": [
+                      "key",
+                      "value",
+                      "counselReviewed",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+              },
+              "required": [
+                "values",
+                "reviewedByCounselAt",
+                "unreviewedCount",
+                "sentence",
+                "valuation",
+              ],
+              "type": "object",
+            },
+            "mlsDataAsOf": {
+              "type": "string",
+            },
+            "nextSyncAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "soldData": {
+              "additionalProperties": false,
+              "properties": {
+                "backfillPending": {
+                  "type": "boolean",
+                },
+                "oldestCloseDate": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "rows": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                "sampleLimit": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                "sentence": {
+                  "type": "string",
+                },
+                "shares": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "avmDisplayAllowed": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "closeDate": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "closePrice": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "contractDate": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "location": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "lotSize": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "saleConditions": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "subdivision": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "yearBuilt": {
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                  },
+                  "required": [
+                    "closePrice",
+                    "closeDate",
+                    "contractDate",
+                    "location",
+                    "yearBuilt",
+                    "lotSize",
+                    "subdivision",
+                    "saleConditions",
+                    "avmDisplayAllowed",
+                  ],
+                  "type": "object",
+                },
+              },
+              "required": [
+                "rows",
+                "sampleLimit",
+                "oldestCloseDate",
+                "shares",
+                "backfillPending",
+                "sentence",
+              ],
+              "type": "object",
+            },
+            "status": {
+              "type": "string",
+            },
+            "statusSentence": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "displayName",
+            "status",
+            "statusSentence",
+            "lastSyncedAt",
+            "nextSyncAt",
+            "mlsDataAsOf",
+            "feedStale",
+            "clientDisplay",
+            "clientDisplaySentence",
+            "licensePack",
+            "soldData",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "connections",
+    ],
+    "type": "object",
+  },
+  "PackViewSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "reviewedByCounselAt": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "sentence": {
+        "type": "string",
+      },
+      "unreviewedCount": {
+        "type": "number",
+      },
+      "valuation": {
+        "additionalProperties": false,
+        "properties": {
+          "reviewedByCounselAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "sentence": {
+            "type": "string",
+          },
+          "unreviewedCount": {
+            "type": "number",
+          },
+          "values": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "counselReviewed": {
+                  "type": "boolean",
+                },
+                "key": {
+                  "enum": [
+                    "agent_cma",
+                    "client_cma",
+                    "automated_notes",
+                    "avm_flag_scope",
+                    "statements",
+                  ],
+                  "type": "string",
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                    },
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "minPointSize": {
+                            "type": "number",
+                          },
+                          "region": {
+                            "type": "string",
+                          },
+                          "text": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "region",
+                          "text",
+                          "minPointSize",
+                        ],
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "key",
+                "value",
+                "counselReviewed",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "values",
+          "reviewedByCounselAt",
+          "unreviewedCount",
+          "sentence",
+        ],
+        "type": "object",
+      },
+      "values": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "counselReviewed": {
+              "type": "boolean",
+            },
+            "key": {
+              "enum": [
+                "max_staleness_hours",
+                "attribution_text",
+                "disclaimer_text",
+                "allow_rehost_photos",
+                "require_listing_brokerage",
+                "client_fields",
+                "client_statuses",
+                "public_fields",
+                "public_statuses",
+              ],
+              "type": "string",
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number",
+                },
+                {
+                  "type": "string",
+                },
+                {
+                  "type": "boolean",
+                },
+                {
+                  "type": "null",
+                },
+                {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+              ],
+            },
+          },
+          "required": [
+            "key",
+            "value",
+            "counselReviewed",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "values",
+      "reviewedByCounselAt",
+      "unreviewedCount",
+      "sentence",
+      "valuation",
+    ],
+    "type": "object",
+  },
+  "SoldCoverageSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "backfillPending": {
+        "type": "boolean",
+      },
+      "oldestCloseDate": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "rows": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "sampleLimit": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "sentence": {
+        "type": "string",
+      },
+      "shares": {
+        "additionalProperties": false,
+        "properties": {
+          "avmDisplayAllowed": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "closeDate": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "closePrice": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "contractDate": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "location": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "lotSize": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "saleConditions": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "subdivision": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "yearBuilt": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "closePrice",
+          "closeDate",
+          "contractDate",
+          "location",
+          "yearBuilt",
+          "lotSize",
+          "subdivision",
+          "saleConditions",
+          "avmDisplayAllowed",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "rows",
+      "sampleLimit",
+      "oldestCloseDate",
+      "shares",
+      "backfillPending",
+      "sentence",
+    ],
+    "type": "object",
+  },
+}
+`;

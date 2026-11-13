@@ -10,7 +10,19 @@
 //     authoritative and the listing is counted once, E81), and core applyDisplayRules(client) shows it.
 // Stale data is never sent: alerts are re-checked here at queue time and the sweep cancels queued ones.
 // Reads run under the caller's RLS (any member may read listings and connection rows).
-import { type DisplayListing, type LicensePack, type ListingFacts, type MlsConnectionId, STRICTEST_LICENSE_PACK, applyDisplayRules, feedStale, packReviewed, parseLicensePack, staleNotice } from '@realty/core/listings';
+//
+// D9 (R-CMA-6, R-CMA-7: the licence-pack and eligibility parts; SECURITY NOTE, ARCHITECTURE §21.8b):
+//   - valuationEligible decides whether a connection's sold data may be used for a valuation use now. agent_cma
+//     needs a live connection and the pack's valuation.agent_cma (a stale feed is not blocked: the CMA says "MLS
+//     data as of …", owner question (h)). client_cma and automated_notes also need the valuation section
+//     counsel-reviewed with a statement for the subject's state, AND the connection client-eligible as above (display
+//     pack reviewed, attribution, disclaimer, fresh feed; FEED_STALE has its own code). Every refusal is a code and
+//     a sentence in words, never a silent empty result.
+//   - clientSoldView renders a mirrored team sale for a client (F4): clientView refuses every mirror (the team row is
+//     authoritative, E81), so a sold mirror is shown only here, as the team row's display plus the mirror's sold
+//     fields, and only when the mirror passes every clientView condition except that refusal and the pack lists the
+//     sold fields and 'sold'. clientView itself is unchanged.
+import { type DisplayListing, EMPTY_VALUATION_FACTS, type LicensePack, type ListingFacts, type MlsConnectionId, type SaleCondition, STRICTEST_LICENSE_PACK, type ValuationFacts, type ValuationUse, applyDisplayRules, feedStale, packReviewed, parseLicensePack, staleNotice, valuationUse } from '@realty/core/listings';
 import type { IanaZone, Instant, ListingId } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -88,7 +100,10 @@ export async function mlsCitySpellings(tx: Tx, cities: readonly string[]): Promi
 /** The listing columns every MLS-aware reader selects (LISTING_COLS) and their row type. */
 export const LISTING_COLS = sql`l.id, l.source, l.mls_number, l.status, l.address_line1, l.address_line2, l.city, l.region, l.postal_code, l.list_price_cents,
   l.beds, l.baths_x10, l.sqft, l.property_type, l.description, l.list_date, l.attributes, l.mls_connection_id, l.mls_modified_at,
-  l.listing_brokerage_name, l.display_allowed, l.team_listing_id, l.last_seen_in_feed_at, l.off_market_at`;
+  l.listing_brokerage_name, l.display_allowed, l.team_listing_id, l.last_seen_in_feed_at, l.off_market_at,
+  l.close_price_cents, l.close_date::text AS close_date, l.purchase_contract_date::text AS purchase_contract_date, l.original_list_price_cents,
+  l.concessions_cents, l.sale_conditions, l.days_on_market, l.latitude_e6, l.longitude_e6, l.geo_cell, l.year_built, l.lot_sqft, l.subdivision_name,
+  l.garage_spaces_x10, l.stories_x10, l.pool_private, l.size_source, l.is_lease, l.avm_display_allowed, l.address_key, l.mls_normalize_version`;
 
 export interface ListingRow {
   id: string;
@@ -115,6 +130,28 @@ export interface ListingRow {
   team_listing_id: string | null;
   last_seen_in_feed_at: Date | null;
   off_market_at: Date | null;
+  // D9 sale and property facts (R-CMA-1); dates as `YYYY-MM-DD` text, bigints as text or numbers
+  close_price_cents: string | number | null;
+  close_date: string | null;
+  purchase_contract_date: string | null;
+  original_list_price_cents: string | number | null;
+  concessions_cents: string | number | null;
+  sale_conditions: string[];
+  days_on_market: number | null;
+  latitude_e6: number | null;
+  longitude_e6: number | null;
+  geo_cell: number | null;
+  year_built: number | null;
+  lot_sqft: string | number | null;
+  subdivision_name: string | null;
+  garage_spaces_x10: number | null;
+  stories_x10: number | null;
+  pool_private: boolean | null;
+  size_source: string | null;
+  is_lease: boolean;
+  avm_display_allowed: boolean;
+  address_key: string | null;
+  mls_normalize_version: number;
 }
 
 /** What the sync keeps of an MLS record beyond the columns (listings.attributes.mls). */
@@ -138,6 +175,33 @@ export function mlsAttributesOf(row: Pick<ListingRow, 'attributes'>): MlsAttribu
 }
 
 const ms = (d: Date | null): Instant | null => (d ? (d.getTime() as Instant) : null);
+const num = (v: string | number | null): number | null => (v === null ? null : Number(v));
+
+/** The stored sale and property facts of a row (team rows: the empty facts; only the MLS sync writes them). */
+export function valuationOfRow(r: ListingRow): ValuationFacts {
+  if (r.source !== 'mls') return EMPTY_VALUATION_FACTS;
+  return {
+    closePriceCents: num(r.close_price_cents),
+    closeDate: r.close_date,
+    contractDate: r.purchase_contract_date,
+    originalListPriceCents: num(r.original_list_price_cents),
+    concessionsCents: num(r.concessions_cents),
+    saleConditions: (r.sale_conditions ?? []) as SaleCondition[],
+    daysOnMarket: r.days_on_market,
+    latitudeE6: r.latitude_e6,
+    longitudeE6: r.longitude_e6,
+    yearBuilt: r.year_built,
+    lotSqft: num(r.lot_sqft),
+    subdivisionName: r.subdivision_name,
+    garageSpacesX10: r.garage_spaces_x10,
+    poolPrivate: r.pool_private,
+    storiesX10: r.stories_x10,
+    sizeSource: r.size_source,
+    isLease: r.is_lease,
+    avmDisplayAllowed: r.avm_display_allowed,
+    unreadable: [],
+  };
+}
 const dateText = (d: Date | string | null): string | null => (d === null ? null : typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
 /** A listings row as core/listings facts. */
@@ -171,6 +235,7 @@ export function factsOfRow(r: ListingRow): ListingFacts {
     teamListingId: r.team_listing_id as ListingId | null,
     lastSeenInFeedAt: ms(r.last_seen_in_feed_at),
     offMarketAt: ms(r.off_market_at),
+    valuation: valuationOfRow(r),
   };
 }
 
@@ -183,4 +248,73 @@ export function clientView(e: MlsEligibility, r: ListingRow): DisplayListing | n
   if (r.source === 'team') return applyDisplayRules(f, STRICTEST_LICENSE_PACK, 'client'); // the pack does not govern team rows
   if (r.mls_connection_id === null || !e.clientIds.includes(r.mls_connection_id) || r.team_listing_id !== null || !r.display_allowed) return null;
   return applyDisplayRules(f, e.pack(r.mls_connection_id)!, 'client');
+}
+
+// ---- valuation use (D9) -------------------------------------------------------------------------------
+
+/**
+ * Where an Owner or Admin records valuation use: module 41's MLS page (apps/web surfaces/integrations, "Valuation use"),
+ * which sends V1-A's PUT /admin/mls/connections/:id/license-pack `valuation` body (batch 10 review api-ui/F2).
+ */
+export const VALUATION_USE_WHERE = 'An Owner or Admin records this from your MLS agreement on the MLS admin page, under Valuation use.';
+
+export type ValuationRefusal = 'NO_MLS_CONNECTION' | 'MLS_NOT_LIVE' | 'PACK_DOES_NOT_ALLOW' | 'VALUATION_NOT_REVIEWED' | 'NO_VALUATION_STATEMENT' | 'MLS_NOT_CLIENT_ELIGIBLE' | 'FEED_STALE';
+
+export const VALUATION_SENTENCE: Readonly<Record<ValuationRefusal, string>> = Object.freeze({
+  NO_MLS_CONNECTION: 'There is no MLS connection to value this home from.',
+  MLS_NOT_LIVE: 'The MLS connection is not live, so its sales cannot be used.',
+  PACK_DOES_NOT_ALLOW: `The MLS licence pack does not record that this use of sold data is allowed. ${VALUATION_USE_WHERE}`,
+  VALUATION_NOT_REVIEWED: 'The valuation part of the MLS licence pack is not marked as reviewed by counsel, so nothing built from MLS sales reaches a client.',
+  NO_VALUATION_STATEMENT: "The MLS licence pack has no valuation statement for this home's state, so nothing built from MLS sales reaches a client.",
+  MLS_NOT_CLIENT_ELIGIBLE: 'MLS data cannot reach clients: the display licence pack is not counsel-reviewed or lacks an attribution or a disclaimer.',
+  FEED_STALE: 'The MLS data is older than the licence pack allows, so nothing built from it reaches a client until the feed is fresh.',
+});
+
+export type ValuationEligibility = { ok: true } | { ok: false; code: ValuationRefusal; sentence: string };
+const refuse = (code: ValuationRefusal): ValuationEligibility => ({ ok: false, code, sentence: VALUATION_SENTENCE[code] });
+
+/**
+ * Whether one connection's sold data may be used for `use` now, for a subject in `region` (R-CMA-6, R-CMA-7: the
+ * licence and eligibility parts). See the header. VERIFY WITH COUNSEL / MLS.
+ */
+export function valuationEligible(e: MlsEligibility, connectionId: string | null, use: ValuationUse, region: string | null, now: Instant): ValuationEligibility {
+  const c = connectionId === null ? undefined : e.connections.find((x) => x.id === connectionId);
+  if (c === undefined) return refuse('NO_MLS_CONNECTION');
+  if (!LIVE.has(c.status)) return refuse('MLS_NOT_LIVE');
+  const u = valuationUse(c.pack, use, region);
+  if (!u.ok) return refuse(u.reason);
+  if (use === 'agent_cma') return { ok: true };
+  if (!packReviewed(c.pack) || c.pack.attributionText === null || c.pack.disclaimerText === null) return refuse('MLS_NOT_CLIENT_ELIGIBLE');
+  if (feedStale(c.lastSyncedAt, now, c.pack)) return refuse('FEED_STALE');
+  return { ok: true };
+}
+
+const SOLD_FIELDS = ['closePrice', 'closeDate'] as const;
+
+/**
+ * The client rendering of a mirrored team sale (F4, E366): the team row's display plus the mirror's sold fields, with
+ * the pack's attribution and disclaimer; null unless the mirror passes every clientView condition but the
+ * team_listing_id refusal and the pack lists the sold fields and 'sold' for clients.
+ */
+export function clientSoldView(e: MlsEligibility, mirror: ListingRow, team: ListingRow): DisplayListing | null {
+  if (mirror.source !== 'mls' || team.source !== 'team' || mirror.team_listing_id !== team.id || mirror.status !== 'sold') return null;
+  if (mirror.mls_connection_id === null || !e.clientIds.includes(mirror.mls_connection_id) || !mirror.display_allowed || mirror.is_lease) return null;
+  const pack = e.pack(mirror.mls_connection_id)!;
+  const rules = pack.audiences.client;
+  if (!rules.statuses.includes('sold') || !SOLD_FIELDS.every((f) => rules.fields.includes(f))) return null;
+  const m = applyDisplayRules({ ...factsOfRow(mirror), teamListingId: null }, pack, 'client');
+  if (m === null) return null;
+  // the team row's display without its (empty) sold fields: only the mirror's shown ones are added
+  const { closePriceCents: _p, closeDate: _d, yearBuilt: _y, lotSqft: _l, subdivisionName: _s, ...t } = applyDisplayRules(factsOfRow(team), STRICTEST_LICENSE_PACK, 'client')!;
+  return {
+    ...t,
+    status: 'sold',
+    attribution: m.attribution,
+    disclaimer: m.disclaimer,
+    closePriceCents: m.closePriceCents ?? null,
+    closeDate: m.closeDate ?? null,
+    ...(m.yearBuilt !== undefined && { yearBuilt: m.yearBuilt }),
+    ...(m.lotSqft !== undefined && { lotSqft: m.lotSqft }),
+    ...(m.subdivisionName !== undefined && { subdivisionName: m.subdivisionName }),
+  };
 }

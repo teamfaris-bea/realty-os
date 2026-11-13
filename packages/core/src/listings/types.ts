@@ -65,6 +65,26 @@ export interface ResoLike {
   readonly InternetAddressDisplayYN?: unknown;
   readonly PhotosCount?: unknown;
   readonly Media?: unknown;
+  // sale and property facts (R-CMA-1)
+  readonly ClosePrice?: unknown;
+  readonly CloseDate?: unknown;
+  readonly PurchaseContractDate?: unknown;
+  readonly OriginalListPrice?: unknown;
+  readonly ConcessionsAmount?: unknown;
+  readonly SpecialListingConditions?: unknown;
+  readonly DaysOnMarket?: unknown;
+  readonly Latitude?: unknown;
+  readonly Longitude?: unknown;
+  readonly YearBuilt?: unknown;
+  readonly LotSizeArea?: unknown;
+  readonly LotSizeUnits?: unknown;
+  readonly LotSizeAcres?: unknown;
+  readonly LotSizeSquareFeet?: unknown;
+  readonly SubdivisionName?: unknown;
+  readonly GarageSpaces?: unknown;
+  readonly PoolPrivateYN?: unknown;
+  readonly Stories?: unknown;
+  readonly InternetAutomatedValuationDisplayYN?: unknown;
   readonly [field: string]: unknown;
 }
 
@@ -96,7 +116,30 @@ export type FactField =
   | 'internetDisplay'
   | 'addressDisplay'
   | 'photosCount'
-  | 'media';
+  | 'media'
+  | 'closePrice'
+  | 'closeDate'
+  | 'contractDate'
+  | 'originalListPrice'
+  | 'concessions'
+  | 'saleConditions'
+  | 'daysOnMarket'
+  | 'latitude'
+  | 'longitude'
+  | 'yearBuilt'
+  | 'lotSizeArea'
+  | 'lotSizeUnits'
+  | 'lotSizeAcres'
+  | 'lotSizeSquareFeet'
+  | 'subdivisionName'
+  | 'garageSpaces'
+  | 'poolPrivate'
+  | 'stories'
+  | 'avmDisplay';
+
+/** RESO SpecialListingConditions, folded (listings.sale_conditions). */
+export type SaleCondition = 'standard' | 'short_sale' | 'reo' | 'auction' | 'probate' | 'other';
+export const SALE_CONDITIONS = ['standard', 'short_sale', 'reo', 'auction', 'probate', 'other'] as const satisfies readonly SaleCondition[];
 
 /** Per-MLS overrides. Everything but the connection is optional and merges over the RESO defaults. */
 export interface FieldMapping {
@@ -110,7 +153,76 @@ export interface FieldMapping {
   readonly propertyTypeMap?: Readonly<Record<string, PropertyType>>;
   /** Key of the URL inside each Media entry (default `MediaURL`). */
   readonly mediaUrlKey?: string;
+  /** Extra SubdivisionName values that mean "none" (vocabulary keys; merged over the defaults). VERIFY WITH MLS. */
+  readonly subdivisionPlaceholders?: readonly string[];
+  /** SpecialListingConditions value → our condition; merged over the defaults. Unknown ⇒ 'other'. */
+  readonly saleConditionMap?: Readonly<Record<string, SaleCondition>>;
+  /** Extra PropertyType values that are leases (vocabulary keys; merged over residentiallease/commerciallease). VERIFY WITH MLS. */
+  readonly leasePropertyTypes?: readonly string[];
 }
+
+/**
+ * The MLS sale and property facts of a listing (R-CMA-1; the S0 listings columns). Every value is null when the
+ * feed did not send it or sent something unreadable or out of the column's bound; such RESO names are listed in
+ * `unreadable`. Team rows carry EMPTY_VALUATION_FACTS (only the MLS sync writes these columns).
+ */
+export interface ValuationFacts {
+  readonly closePriceCents: number | null;
+  /** `YYYY-MM-DD` */
+  readonly closeDate: string | null;
+  /** `YYYY-MM-DD` (RESO PurchaseContractDate) */
+  readonly contractDate: string | null;
+  readonly originalListPriceCents: number | null;
+  readonly concessionsCents: number | null;
+  /** [] = not recorded */
+  readonly saleConditions: readonly SaleCondition[];
+  readonly daysOnMarket: number | null;
+  /** integer microdegrees; both null or both set */
+  readonly latitudeE6: number | null;
+  readonly longitudeE6: number | null;
+  readonly yearBuilt: number | null;
+  /** whole square feet */
+  readonly lotSqft: number | null;
+  /** null for a placeholder ("None", "N/A", …) */
+  readonly subdivisionName: string | null;
+  /** tenths: 2.5 spaces is 25 */
+  readonly garageSpacesX10: number | null;
+  readonly poolPrivate: boolean | null;
+  /** tenths: 1.5 stories is 15 */
+  readonly storiesX10: number | null;
+  /** the RESO field name sqft was read from (null when sqft is null) */
+  readonly sizeSource: string | null;
+  readonly isLease: boolean;
+  /** InternetAutomatedValuationDisplayYN: true only for an explicit yes */
+  readonly avmDisplayAllowed: boolean;
+  /** RESO names present in the record but invalid or out of bound (each dropped to null) */
+  readonly unreadable: readonly string[];
+}
+
+export const EMPTY_VALUATION_FACTS: ValuationFacts = Object.freeze({
+  closePriceCents: null,
+  closeDate: null,
+  contractDate: null,
+  originalListPriceCents: null,
+  concessionsCents: null,
+  saleConditions: Object.freeze([]) as readonly SaleCondition[],
+  daysOnMarket: null,
+  latitudeE6: null,
+  longitudeE6: null,
+  yearBuilt: null,
+  lotSqft: null,
+  subdivisionName: null,
+  garageSpacesX10: null,
+  poolPrivate: null,
+  storiesX10: null,
+  sizeSource: null,
+  isLease: false,
+  avmDisplayAllowed: false,
+  unreadable: Object.freeze([]) as readonly string[],
+});
+
+/** The normalization version stored in listings.mls_normalize_version (1 = before R-CMA-1). */
+export const NORMALIZE_VERSION = 2;
 
 // ---- normalized row -----------------------------------------------------------------------------
 
@@ -151,6 +263,8 @@ export interface ListingFacts {
   readonly teamListingId: ListingId | null;
   readonly lastSeenInFeedAt: Instant | null;
   readonly offMarketAt: Instant | null;
+  /** MLS sale and property facts (R-CMA-1); EMPTY_VALUATION_FACTS for team rows. */
+  readonly valuation: ValuationFacts;
 }
 
 export type ListingsIssueCode = 'MLS_RECORD_INVALID' | 'MLS_FIELD_MISSING' | 'MLS_FIELD_INVALID' | 'MLS_STATUS_UNKNOWN';
@@ -181,6 +295,11 @@ export const DISPLAY_FIELDS = [
   'address',
   'locality',
   'photos',
+  'closePrice',
+  'closeDate',
+  'yearBuilt',
+  'lotSize',
+  'subdivision',
 ] as const;
 export type DisplayField = (typeof DISPLAY_FIELDS)[number];
 
@@ -206,6 +325,31 @@ export interface LicensePack {
   /** Whether a client/public rendering needs the listing brokerage name. Default true. */
   readonly requireListingBrokerage: boolean;
   readonly audiences: { readonly client: AudienceRules; readonly public: AudienceRules };
+  /** Valuation use of the sold data (D9; its own counsel stamp). Strictest by default. */
+  readonly valuation: ValuationLicence;
+}
+
+/** Uses of MLS sold data for values (R-CMA-6, R-CMA-7). */
+export type ValuationUse = 'agent_cma' | 'client_cma' | 'automated_notes';
+
+/**
+ * `license_pack.valuation`: what the MLS agreement allows for valuations, entered by the Owner/Admin from the
+ * agreement and counsel (VERIFY WITH COUNSEL / MLS, V1, V4, V6). Its counsel stamp is its own, so adding it never
+ * changes the display pack's review state (E371).
+ */
+export interface ValuationLicence {
+  /** Agents may prepare CMAs from the sold data (the Owner/Admin's statement from the agreement). */
+  readonly agentCma: boolean;
+  /** CMAs and seller-update value ranges may be shared with clients. */
+  readonly clientCma: boolean;
+  /** Automated home-value notes may carry values built from the sold data. */
+  readonly automatedNotes: boolean;
+  /** Where InternetAutomatedValuationDisplayYN = N on the subject's live listing withholds values (V6). */
+  readonly avmFlagScope: 'all_client_outputs' | 'internet_display_only';
+  /** The required valuation statement per state (USPS code), from counsel. None is shipped. */
+  readonly statements: Readonly<Record<string, { readonly text: string; readonly minPointSize: number }>>;
+  /** When counsel reviewed this section (ISO with offset); null ⇒ no client use. */
+  readonly reviewedByCounselAt: string | null;
 }
 
 // ---- display ----------------------------------------------------------------------------------------
@@ -245,6 +389,11 @@ export interface DisplayListing {
   readonly address?: { readonly line1: string; readonly line2: string | null };
   readonly locality?: { readonly city: string; readonly region: string; readonly postalCode: string };
   readonly photos?: readonly PhotoRef[];
+  readonly closePriceCents?: number | null;
+  readonly closeDate?: string | null;
+  readonly yearBuilt?: number | null;
+  readonly lotSqft?: number | null;
+  readonly subdivisionName?: string | null;
 }
 
 // ---- competing set ----------------------------------------------------------------------------------

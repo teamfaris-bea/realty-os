@@ -18,7 +18,7 @@ import { dbNow, type Tx, withTenantTx } from '../tenantTx.js';
 import { type OwnershipCommandResult, applyOwnershipCommandInTx, defaultIds, derivedCommandId } from './apply.js';
 import { loadPeople } from './context.js';
 import { type FollowupPayload, addChannelDeliveries, applyEffects } from './effects.js';
-import { mergeCommunication } from './merge.js';
+import { type MergeStep, mergeCommunication } from './merge.js';
 import { projectionOf, selectContact } from './rows.js';
 
 interface MergeCommunicationEffect {
@@ -48,7 +48,8 @@ export interface FollowupResult {
   applied: number;
 }
 
-export async function applyOwnershipFollowupInTx(tx: Tx, actor: SystemActor, payload: unknown, opts: { ids?: IdGenerator } = {}): Promise<FollowupResult> {
+/** `mergeSteps`: the other modules' merge steps, run after a deferred communication move (merge.ts MergeStep). */
+export async function applyOwnershipFollowupInTx(tx: Tx, actor: SystemActor, payload: unknown, opts: { ids?: IdGenerator; mergeSteps?: readonly MergeStep[] } = {}): Promise<FollowupResult> {
   const p = parsePayload(payload);
   const ids = opts.ids ?? defaultIds();
   const contactId = p.contactId as ContactId;
@@ -61,7 +62,7 @@ export async function applyOwnershipFollowupInTx(tx: Tx, actor: SystemActor, pay
   let applied = 0;
   for (const e of effects) {
     if (e.kind === 'mergeCommunication') {
-      await mergeCommunication(tx, now, ids, e.survivorId, e.loserId, e.ownerUserId, people, e.previousOwnerUserId);
+      await mergeCommunication(tx, now, ids, e.survivorId, e.loserId, e.ownerUserId, people, e.previousOwnerUserId, opts.mergeSteps);
       applied++;
       continue;
     }
@@ -85,6 +86,6 @@ export async function applyOwnershipFollowupInTx(tx: Tx, actor: SystemActor, pay
 }
 
 /** One follow-up job in its own transaction (what the api/jobs-worker handler runs). */
-export function runOwnershipFollowup(actor: SystemActor, payload: unknown, opts: { ids?: IdGenerator; db?: Database } = {}): Promise<FollowupResult> {
+export function runOwnershipFollowup(actor: SystemActor, payload: unknown, opts: { ids?: IdGenerator; db?: Database; mergeSteps?: readonly MergeStep[] } = {}): Promise<FollowupResult> {
   return withTenantTx(actor, (tx) => applyOwnershipFollowupInTx(tx, actor, payload, opts), { retries: 3, ...(opts.db ? { db: opts.db } : {}) });
 }

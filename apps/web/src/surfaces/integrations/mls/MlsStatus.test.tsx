@@ -1,7 +1,8 @@
 // The MLS page's sync and licence-pack sections (module 41) in jsdom on a scripted API: status, last sync,
 // "MLS data as of", why MLS data does or does not reach clients; the licence-pack editor marks every value
 // reviewed or not, says MLS data cannot reach clients until every value is marked (R-MLS-2), clears a value's
-// mark when the value changes, saves the whole pack with re-auth; a disconnected connection is read-only; the
+// mark when the value changes, saves the whole pack with re-auth; the valuation section (D9, b10 review api-ui/F2) has
+// the strictest defaults, its own marks and save, and says V1 shares nothing; a disconnected connection is read-only; the
 // Spark disconnect asks for re-auth without stacking two dialogs; Owner/Admin only; no axe violations.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -169,6 +170,26 @@ describe('MLS page: sync and licence pack', () => {
     expect(within(s).getByText(/2 of 9 values are not marked yet/)).toBeInTheDocument();
   });
 
+  it('D9: re-saving a stored pack keeps its sold fields (sold price and date, year built, lot size, subdivision) and sends no valuation section', async () => {
+    const sold = ['closePrice', 'closeDate', 'yearBuilt', 'lotSize', 'subdivision'];
+    const stored = mls({ marked: PACK_KEYS });
+    stored.connections[0]!.licensePack = { ...pack(PACK_KEYS, { client_fields: ['status', 'listPrice', ...sold], client_statuses: ['active', 'sold'] }) };
+    const fake = fakeWith(stored).on(PUT, (c) => {
+      const body = c.body as Record<PackKey, { counselReviewed: boolean }>;
+      return { status: 200, body: { licensePack: pack(PACK_KEYS.filter((k) => body[k].counselReviewed)) } };
+    });
+    mount(fake, PATH);
+    const s = await editor();
+    const group = within(s).getByRole('group', { name: 'What clients may see' });
+    for (const label of ['Sold price', 'Sold date', 'Year built', 'Lot size', 'Subdivision']) expect(within(group).getByRole('checkbox', { name: label })).toBeChecked();
+    await userEvent.type(within(s).getByLabelText('Attribution'), ' Updated.');
+    await userEvent.click(within(s).getByRole('button', { name: 'Save licence pack' }));
+    await within(s).findByText(/^Licence pack saved\./);
+    const body = fake.callsTo(PUT)[0]!.body as Record<string, { value: unknown; counselReviewed: boolean }>;
+    expect(body['client_fields']).toEqual({ value: ['status', 'listPrice', ...sold], counselReviewed: true });
+    expect('valuation' in body).toBe(false);
+  });
+
   it('a bad number of hours is caught before any request', async () => {
     const fake = fakeWith(mls());
     mount(fake, PATH);
@@ -214,6 +235,103 @@ describe('MLS page: sync and licence pack', () => {
     await userEvent.click(within(prompt).getByRole('button', { name: 'Confirm' }));
     expect(await screen.findByText('Disconnected. The saved Spark key was removed for good.')).toBeInTheDocument();
     await waitFor(() => expect(fake.callsTo(`POST /admin/integrations/connections/${CONN}/disconnect`)).toHaveLength(2));
+  });
+
+  // ---- the valuation section (D9; b10 review api-ui/F2): the Owner's product path to record valuation use ----------
+
+  const VPUT = PUT;
+  const valuationSection = async () => (await screen.findByRole('heading', { level: 2, name: 'Valuation use' })).closest('section')!;
+  const VMARK = /^Counsel reviewed this valuation value \(/;
+  const vmark = (s: HTMLElement, i: number) => within(s).getAllByRole('checkbox', { name: VMARK })[i]!;
+  const SENT = 'Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.';
+  const valuation = (o: { agent?: boolean; marked?: boolean; statements?: unknown[]; sentence?: string } = {}) => ({
+    values: [
+      { key: 'agent_cma', value: o.agent ?? false, counselReviewed: o.marked ?? false },
+      { key: 'client_cma', value: false, counselReviewed: o.marked ?? false },
+      { key: 'automated_notes', value: false, counselReviewed: o.marked ?? false },
+      { key: 'avm_flag_scope', value: 'all_client_outputs', counselReviewed: o.marked ?? false },
+      { key: 'statements', value: o.statements ?? [], counselReviewed: o.marked ?? false },
+    ],
+    reviewedByCounselAt: o.marked ? '2026-11-12T10:00:00.000Z' : null,
+    unreviewedCount: o.marked ? 0 : 5,
+    sentence: o.sentence ?? SENT,
+  });
+
+  it('D9 b10 api-ui/F2: the valuation section shows the strictest defaults when none is stored: no use ticked, every client output, no statement; it says this version shares nothing', async () => {
+    mount(fakeWith(mls({ marked: PACK_KEYS })), PATH); // a display pack from before D9: no valuation section in the response
+    const s = await valuationSection();
+    for (const name of [/^Agents may prepare CMAs from MLS sold data/, /^CMAs built from MLS sold data may be shared with clients/, /^Automated home-value notes and seller-update value ranges may carry values/]) {
+      expect(within(s).getByRole('checkbox', { name })).not.toBeChecked();
+    }
+    expect(within(s).getByLabelText('Where a seller’s “no automated valuation” choice applies')).toHaveValue('all_client_outputs');
+    expect(within(s).getByText('No state statement yet.')).toBeInTheDocument();
+    expect(within(s).getAllByRole('checkbox', { name: VMARK }).every((b) => !(b as HTMLInputElement).checked)).toBe(true);
+    expect(within(s).getByText('Not reviewed by counsel', { selector: 'p' })).toBeInTheDocument();
+    expect(s).toHaveTextContent(/Nothing built from MLS sales reaches a client in this version/);
+    // the client uses say they are not available in this version
+    expect(s).toHaveTextContent(/Not available in this version: nothing built from MLS sales reaches a client, whatever this says\./);
+    expect(await violations()).toEqual([]);
+  });
+
+  it('D9 b10 api-ui/F2: an Owner records agent CMAs, a state statement and the counsel marks; the PUT carries the stored display pack unchanged plus the valuation section; changing a value clears its mark', async () => {
+    const fake = fakeWith({ connections: [{ ...mls({ marked: PACK_KEYS }).connections[0]!, licensePack: { ...pack(PACK_KEYS), valuation: valuation() } }] }).on(VPUT, (c) => {
+      const body = c.body as { valuation: Record<string, { value: unknown; counselReviewed: boolean }> };
+      const marked = Object.values(body.valuation).every((v) => v.counselReviewed);
+      return { status: 200, body: { licensePack: { ...pack(PACK_KEYS), valuation: valuation({ agent: body.valuation.agent_cma!.value === true, marked, statements: body.valuation.statements!.value as unknown[], sentence: marked ? 'Agents may prepare CMAs. Every valuation value is marked as reviewed by counsel. Nothing built from MLS sales reaches a client in this version.' : SENT }) } } };
+    });
+    mount(fake, PATH);
+    const s = await valuationSection();
+    await userEvent.click(within(s).getByRole('checkbox', { name: /^Agents may prepare CMAs from MLS sold data/ }));
+    await userEvent.click(within(s).getByRole('button', { name: 'Add a state statement' }));
+    await userEvent.selectOptions(within(s).getByLabelText('State'), 'CA');
+    await userEvent.type(within(s).getByLabelText('Statement text'), 'An estimate of value, not an appraisal (test statement).');
+    await userEvent.clear(within(s).getByLabelText('Smallest type size (points)'));
+    await userEvent.type(within(s).getByLabelText('Smallest type size (points)'), '12');
+    for (let i = 0; i < 5; i++) await userEvent.click(vmark(s, i));
+    // a change after marking clears that mark (counsel reviewed the old value)
+    await userEvent.click(within(s).getByRole('checkbox', { name: /^Agents may prepare CMAs from MLS sold data/ }));
+    expect(vmark(s, 0)).not.toBeChecked();
+    expect(within(s).getByText('Changed: mark it again once counsel has reviewed the new value.')).toBeInTheDocument();
+    await userEvent.click(within(s).getByRole('checkbox', { name: /^Agents may prepare CMAs from MLS sold data/ }));
+    await userEvent.click(vmark(s, 0));
+    await userEvent.click(within(s).getByRole('button', { name: 'Save valuation use' }));
+    expect(await within(s).findByText('Valuation use saved. Every valuation value is marked as reviewed by counsel.')).toBeInTheDocument();
+    const body = fake.callsTo(VPUT)[0]!.body as Record<string, { value: unknown; counselReviewed: boolean }> & { valuation: Record<string, { value: unknown; counselReviewed: boolean }> };
+    // the display pack goes back exactly as stored, so its review stamp is kept (the server keeps it when unchanged)
+    for (const k of PACK_KEYS) expect(body[k]).toEqual({ value: VALUES[k], counselReviewed: true });
+    expect(body.valuation).toEqual({
+      agent_cma: { value: true, counselReviewed: true },
+      client_cma: { value: false, counselReviewed: true },
+      automated_notes: { value: false, counselReviewed: true },
+      avm_flag_scope: { value: 'all_client_outputs', counselReviewed: true },
+      statements: { value: [{ region: 'CA', text: 'An estimate of value, not an appraisal (test statement).', minPointSize: 12 }], counselReviewed: true },
+    });
+    expect(within(s).getByText('Every valuation value is marked as reviewed by counsel', { selector: 'p' })).toBeInTheDocument();
+  });
+
+  it('D9 b10 api-ui/F2: a statement without a state, with a size outside 6–36, or a second one for the same state is caught before any request', async () => {
+    const fake = fakeWith({ connections: [{ ...mls().connections[0]!, licensePack: { ...pack(), valuation: valuation() } }] });
+    mount(fake, PATH);
+    const s = await valuationSection();
+    await userEvent.click(within(s).getByRole('button', { name: 'Add a state statement' }));
+    await userEvent.type(within(s).getByLabelText('Statement text'), 'Text.');
+    await userEvent.click(within(s).getByRole('button', { name: 'Save valuation use' }));
+    expect(await within(s).findByRole('alert')).toHaveTextContent('Nothing was saved: every state statement needs a state (each state once), a text and a type size from 6 to 36 points.');
+    await userEvent.selectOptions(within(s).getByLabelText('State'), 'CA');
+    await userEvent.clear(within(s).getByLabelText('Smallest type size (points)'));
+    await userEvent.type(within(s).getByLabelText('Smallest type size (points)'), '40');
+    await userEvent.click(within(s).getByRole('button', { name: 'Save valuation use' }));
+    expect(within(s).getByRole('alert')).toHaveTextContent(/Nothing was saved/);
+    expect(fake.callsTo(VPUT)).toHaveLength(0);
+  });
+
+  it('D9 b10 api-ui/F2: a disconnected connection shows its valuation section read-only', async () => {
+    mount(fakeWith({ connections: [{ ...mls({ status: 'disconnected' }).connections[0]!, licensePack: { ...pack(), valuation: valuation({ agent: true }) } }] }), PATH);
+    const s = await valuationSection();
+    expect(within(s).queryByRole('button', { name: 'Save valuation use' })).toBeNull();
+    expect(within(s).queryByRole('button', { name: 'Add a state statement' })).toBeNull();
+    for (const box of within(s).getAllByRole('checkbox')) expect(box).toBeDisabled();
+    expect(within(s).getByRole('checkbox', { name: /^Agents may prepare CMAs from MLS sold data/ })).toBeChecked();
   });
 
   for (const role of NOT_ADMINS) {

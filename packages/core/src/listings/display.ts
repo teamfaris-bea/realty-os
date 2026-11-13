@@ -11,7 +11,9 @@
 //     4. the listing brokerage is known, unless the pack waives that;
 //     5. the pack allows the listing's status for that audience.
 //   Then only the fields the pack allows for the audience are kept; the street address also needs
-//   InternetAddressDisplayYN. Nothing is allowed by default (licence.ts parses `{}` to "nothing").
+//   InternetAddressDisplayYN. Nothing is allowed by default (licence.ts parses `{}` to "nothing"). The sold
+//   fields (closePrice, closeDate, yearBuilt, lotSize, subdivision; D9) follow the same rule: a stored pack that
+//   does not list them shows none of them.
 // - Photos are URL references unless the pack allows re-hosting (R-MLS-4).
 // - The team's own listings are not MLS data: the pack does not govern them, and they are shown in
 //   full with the "Team" label. VERIFY WITH COUNSEL: a seller's own opt-out of internet display for
@@ -49,6 +51,11 @@ function full(l: ListingFacts, audience: Audience, photoMode: PhotoRef['mode']) 
     address: { line1: l.addressLine1, line2: l.addressLine2 },
     locality: { city: l.city, region: l.region, postalCode: l.postalCode },
     photos: photos(l, photoMode),
+    closePriceCents: l.valuation.closePriceCents,
+    closeDate: l.valuation.closeDate,
+    yearBuilt: l.valuation.yearBuilt,
+    lotSqft: l.valuation.lotSqft,
+    subdivisionName: l.valuation.subdivisionName,
     addressHidden: false,
     omittedFields: [] as DisplayField[],
   };
@@ -106,5 +113,10 @@ export function applyDisplayRules(l: ListingFacts, pack: LicensePack, audience: 
     ...(shown('address') && { address: all.address }),
     ...(shown('locality') && { locality: all.locality }),
     ...(shown('photos') && { photos: all.photos }),
+    ...(shown('closePrice') && { closePriceCents: all.closePriceCents }),
+    ...(shown('closeDate') && { closeDate: all.closeDate }),
+    ...(shown('yearBuilt') && { yearBuilt: all.yearBuilt }),
+    ...(shown('lotSize') && { lotSqft: all.lotSqft }),
+    ...(shown('subdivision') && { subdivisionName: all.subdivisionName }),
   };
 }

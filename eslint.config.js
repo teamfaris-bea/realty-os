@@ -149,6 +149,7 @@ export default tseslint.config(
   {
     files: [
       'packages/core/src/{ownership,priority,ads,portal}/**/*.{ts,tsx}',
+      'packages/core/src/valuation/**/*.{ts,tsx}', // D9 module 70: prediction never feeds pricing (lane V1-B)
       'apps/api/src/{ownership,comms,ads,portal}/**/*.{ts,tsx}',
       'apps/api/src/leads/routing*',
       'apps/api/src/leads/routing*/**/*.{ts,tsx}',
@@ -156,6 +157,7 @@ export default tseslint.config(
       // D12 (AI ISA, R-PRED-4): the AI ISA never reads a prediction
       'apps/api/src/isa/**/*.{ts,tsx}',
       'packages/core/src/isa/**/*.{ts,tsx}',
+      'apps/api/src/cma/**/*.{ts,tsx}', // D9 module 71: valuations read no prediction (R-PRED-4, R-CMA-2)
     ],
     rules: { 'realty/no-prediction-import': 'error' },
   },

@@ -375,6 +375,10 @@ A read-only connector to FBS's Spark RESO Web API (lane `spark-prep`; adapter in
 
 Tests (mock Spark transport only; a network tripwire fails any real outbound call): `apps/api/src/providers/integrations/spark.test.ts` (GET-only, path/host allowlists, redirects, nextLink re-check, paging, cursor resume, backoff and budget, status mapping, size/time caps, kill switch), `apps/api/src/mls/spark/spark.api.test.ts` (roles, re-auth, CSRF, rate limit, cross-tenant RLS, every validation mapping, purge on replace and disconnect, and a canary token searched for in logs, error reports, audit rows, metrics, API responses, every database table and every snapshot file), `apps/api/src/mls/spark/config.test.ts`, `apps/api/src/integrations/keyStatus.test.ts`, `apps/api/src/integrations/architecture.test.ts`, and the web page's tests under `apps/web/src/surfaces/integrations/`.
 
+### 5.2a What is stored (D9, lane V1-A)
+
+Since D9 the sync also stores each record's sale and property facts as `listings` columns: close price and date, contract date, original list price, concessions, sale conditions, days on market, coordinates (integer microdegrees; a generated `geo_cell`), year built, lot size, subdivision, garage spaces, stories, private pool, the size field's source, a lease flag, `InternetAutomatedValuationDisplayYN`, and an address key (DATA_MODEL R-CMA-1). Nothing about a person: these are property and transaction facts. Field-level permission annotations are still applied before normalization (a withheld field is never stored), and annotation keys never reach it. Still read-only, still `$metadata` and `Property` only: no new endpoint, no `$select`. While the one-time backfill is pending the sync reads **one extra page per run** (after a not-full incremental page) until the backfill ends (**VERIFY** the Spark request budget). Codes and counts only are logged (`filled`, `MLS_RECORD_REFUSED_BY_DB`).
+
 ### 5.3 What remains
 
 | Item | Why it is open | Suggested action |
@@ -389,6 +393,7 @@ Tests (mock Spark transport only; a network tripwire fails any real outbound cal
 | **VERIFY** `Core.Permissions` values | Which annotation value withholds a field; anything but an explicit Read withholds it here (strictest) | Confirm with Spark support and the MLS |
 | **VERIFY** `$expand=Media` paging | Whether `$select` inside `$expand` is honoured (off by default) and the largest `$top` with `$expand` (default 100, at most 20 pages per run) | Confirm with Spark support; tune `pageSize` / `expandSelect` |
 | **VERIFY** the living-area field | No `LivingArea` in this feed; the size is read from `BuildingAreaTotal`; which field is the finished living area is unconfirmed | Confirm with the MLS; change `SPARK_FIELD_MAPPING` |
+| **VERIFY** sold-data fields (D9) | Which Closed records and how far back the feed returns, and the real fill rates (V2: GET /admin/mls shows coverage once the backfill ends); what `BuildingAreaTotal` includes (V3); the Lookup values of PropertyType leases, SpecialListingConditions and SubdivisionName placeholders; Stories vs StoriesTotal; whether ConcessionsAmount is seller-paid; the DaysOnMarket rule; coordinate precision and whether (0,0) is used; whether UnparsedAddress carries city, state, ZIP or unit | Confirm with the MLS; mapping overrides (`leasePropertyTypes`, `saleConditionMap`, `subdivisionPlaceholders`, `fields`) exist for each |
 | **VERIFY** the sync interval | 15 minutes per connection (`SYNC_INTERVAL_MS`); the licence may require a refresh cadence | Confirm with the MLS; the pack's `max_staleness_hours` pauses client output when exceeded |
 | Feed sync review | Module 24 writes `listings` (source `mls`) as the system actor only (R-MLS-1, existing RLS) | Reviewed in this lane: no new definer, policy or grant; migration `*_mls_listing_indexes.sql` adds indexes only |
 
@@ -1023,7 +1028,7 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   and the thread view read `message_text_parts`). The one definer change is the narrow MMS keyword-reply exemption of
   `app.messages_dispatch_guard` (ARCHITECTURE §21.27).
 
-## 15. Batch 9 interaction review: web UI and copy (migration `b9_review_ui`; placeholder 0066)
+## 15. Batch 9 interaction review: web UI and copy (migration `0067_b9_review_ui`)
 
 - **Telephony state shown to Owner/Admin (ui/F3).** GET /numbers (`settings.numbers`) and GET /lead-sources/overview
   (`settings.routing`) now carry `telephony`: `live`, `off` or `simulated`, derived only from TELEPHONY_PROVIDER and
@@ -1047,3 +1052,6 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
 - ISA-2b: an email turn needs a DKIM verdict from the RECEIVING provider (never a header or the body). The generic inbound route's `dkim` array is as trusted as the email webhook secret that authenticates it; Postmark verdicts come from the topmost Authentication-Results header whose authserv-id equals `LEAD_EMAIL_AUTHSERV_ID`; SendGrid's from its `dkim` field. Each is VERIFY vendor before launch. No verdict, or a pass for another domain, is not a turn (unverified_sender pause and the R-AST-9 card).
 - ISA-2b: the model never sees listing facts: bundles reach the prompt as structured labels only, and a facts message already sent is replaced by a placeholder in later prompts. Prices, addresses and brokerages are rendered by the server from clientView only.
 - ISA-2b: booking never runs on in-app data alone: the book job's live read is on the offer's own calendar link under the organizer's booking lock (lock 5), and refuses CALENDAR_UNAVAILABLE / SLOT_SOURCE_CHANGED otherwise.
+## 16. CMA reports (D9, modules 70 and 71; S0 migration `*_cma_schema`)
+
+A data-class note for `cma_reports`. **What it holds:** the subject's address and property facts (each with its source: MLS, team or agent), the comps' MLS references and their sold facts, the method version and valuation date, the value and range, the agent's notes and the disclosure fields. Nothing about a person beyond the contact link and the address: no school, demographic, crime or listing-text field can reach the engine (strict schemas, R-CMA-2). **Who reads it:** RLS, staff only: its creator (an active member), whoever sees the contact's detail, and tenant-wide roles; support through RLS only; a client principal reads nothing. A person stores a CMA as themselves; shared and superseded rows never change (the guard trigger, which also refuses the table owner's direct edit). **Erasure:** a contact's erasure deletes its CMAs (the foreign key cascades; `cma.test.ts` R-CMA-8 R-DATA-4); merge moves none. **Retention** beyond erasure is not built (**VERIFY WITH COUNSEL**, C13). **Sharing:** nothing is shared in V1 (no comms path is called); client readiness is computed on every view and never stored (ARCHITECTURE §21.30). V2 (planned in its lane brief): the PDF is served as an attachment with `nosniff`.

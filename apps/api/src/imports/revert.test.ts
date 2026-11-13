@@ -24,6 +24,8 @@ import {
   startFub,
   verify,
 } from './testing.js';
+import { cmaPack } from '../cma/testing.js';
+import { mlsConnection } from '../mls/testing.js';
 
 let ih: ImportsHarness;
 const q = async <T = Record<string, unknown>>(text: string, args: unknown[] = []) => (await ih.h.su.query(text, args)).rows as T[];
@@ -207,6 +209,33 @@ describe('R-IMPORT-10: revert', () => {
     expect(await q("SELECT 1 FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [own.body.contact.id])).toHaveLength(0);
     const rep = stageOf(await batchOf(w.admin, bid), 'contacts').revert as { manual: { reason: string }[] };
     expect(rep.manual).toEqual([expect.objectContaining({ reason: 'PRE_EXISTING_CONTACT' })]);
+  });
+
+  it('R-IMPORT-10 E43 (b10 review ownership-data/F2): a person with a CMA prepared since the import is kept, with the imported address the CMA cites, and listed for a decision with the reason in words', async () => {
+    const { w, b } = await fubWorld('key-cma-f2-0001', 7100);
+    await mlsConnection(ih.h, w.tenantId, w.owner.userId!, { pack: cmaPack(), lastSyncedAt: new Date() });
+    const jane = await contactByName(w.tenantId, 'Jane Doe');
+    const addr = (await q<{ id: string; import_batch_id: string | null }>('SELECT id, import_batch_id FROM contact_addresses WHERE contact_id = $1', [jane.id]))[0]!;
+    expect(addr.import_batch_id).toBe(b.id); // the home the CMA cites came with the import
+    const tap = await call<{ cma: { id: string } }>(w.owner, 'POST', `/contacts/${jane.id}/cma`, { contactAddressId: addr.id, facts: { propertyType: 'single_family', sqft: 1500 } });
+    expect(tap.status).toBe(201);
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/revert`, {})).status).toBe(202);
+    await ih.drain();
+    const nb = await batchOf(w.admin, b.id);
+    expect(nb.status).toBe('reverted');
+    // Jane stays, with the address her CMA cites; the CMA keeps its link
+    expect((await contactByName(w.tenantId, 'Jane Doe')).deleted_at).toBeNull();
+    expect(await q('SELECT id FROM contact_addresses WHERE contact_id = $1', [jane.id])).toEqual([{ id: addr.id }]);
+    expect(await q('SELECT status, contact_address_id FROM cma_reports WHERE contact_id = $1', [jane.id])).toEqual([{ status: 'draft', contact_address_id: addr.id }]);
+    // the people nobody worked on still go
+    expect((await contactByName(w.tenantId, 'Bob Unsub')).deleted_at).not.toBeNull();
+    // listed for a human, with its own reason, and the report says why in words
+    const rep = stageOf(nb, 'contacts').revert as { manual: { sourceRef: string; reason: string }[]; reasons: Record<string, number> };
+    expect(rep.manual).toEqual([expect.objectContaining({ sourceRef: 'fub:people/7101', reason: 'CMA_PREPARED' })]);
+    expect(rep.reasons).toEqual({ CMA_PREPARED: 1 });
+    const lines = (await call<{ categories: { category: string; lines: string[] }[] }>(w.admin, 'GET', `/imports/${b.id}/report`)).body.categories.find((x) => x.category === 'contacts')!.lines;
+    expect(lines[0]).toMatch(/1 record was changed since the import and left for your decision\.$/);
+    expect(lines).toContain('1 person has a CMA prepared since the import, so they stay, with the address it cites, for your decision.');
   });
 
   it('R-IMPORT-10: the revert definer deletes only rows the reverting stage wrote, only for Owner/Admin/system', async () => {

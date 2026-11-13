@@ -65,6 +65,8 @@ export interface Platform {
    * read their fixed windows at this clock instead of the DB clock, so a test can hold a burst inside one window.
    */
   publicPageLimitClock?: Clock;
+  /** Test seam, never set in production: the CMA engine routes' per-route limits (cma/routes.ts) read this clock. */
+  cmaLimitClock?: Clock;
 }
 
 declare module 'fastify' {

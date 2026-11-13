@@ -165,6 +165,7 @@ export const ACTIONS = [
   'ai_isa.resume', // module 75: resume AI care: the lead's owner only (R-ISA-15)
   'ai_isa.control', // module 75: take over or end AI care, and their 10 s undo (✅ | ✅ | T | own | — | —)
   'ai_isa.handoff', // module 75: acknowledge a handoff, resolve a held topic (✅ | ✅ | T | own | — | —)
+  'cma.prepare', // module 71 (D9): prepare, edit or view a CMA (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; R-CMA-6)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -363,6 +364,7 @@ export const AUDIT_ACTIONS = [
   'ai_isa.escalation_resolved', // module 75 (D12 proposed): codes only, never content
   'ai_isa.hold_started', // module 75 (D12 proposed): codes only, never content
   'ai_isa.hold_ended', // module 75 (D12 proposed): codes only, never content
+  'cma.near_match_dismissed', // module 71 (D9): the agent confirmed a live MLS listing is a different home than the CMA's subject (listing ids only; F2)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -686,6 +688,9 @@ const MATRIX: Record<Action, ActionRule> = {
   'ai_isa.resume': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
   'ai_isa.control': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN }, system: ['assistant', 'worker', 'timer'] },
   'ai_isa.handoff': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
+  // Module 71 (D9, DATA_MODEL §8 "Prepare, edit or view a CMA"): ✅ | ✅ | T | O | — | — | —. A person only, never the system;
+  // support reads through RLS only (R-CMA-6).
+  'cma.prepare': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

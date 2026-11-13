@@ -29,9 +29,26 @@ export interface MlsRecordFeed {
   records(cursor: string | null, limit: number): Promise<MlsRecordPage>;
 }
 
+const cents = (c: number | null | undefined) => (c === null || c === undefined ? undefined : (c / 100).toFixed(2));
+
 /** A ResoListing (the Phase 2 adapter shape) as a RESO record. Display flags are absent: never allowed. */
 export function resoOfListing(l: ResoListing): ResoLike {
   return {
+    // D9 sale and property facts, when the adapter carries them
+    ClosePrice: cents(l.closePriceCents),
+    CloseDate: l.closeDate ?? undefined,
+    PurchaseContractDate: l.purchaseContractDate ?? undefined,
+    OriginalListPrice: cents(l.originalListPriceCents),
+    ConcessionsAmount: cents(l.concessionsCents),
+    SpecialListingConditions: l.specialListingConditions ?? undefined,
+    DaysOnMarket: l.daysOnMarket ?? undefined,
+    Latitude: l.latitude ?? undefined,
+    Longitude: l.longitude ?? undefined,
+    YearBuilt: l.yearBuilt ?? undefined,
+    LotSizeSquareFeet: l.lotSizeSquareFeet ?? undefined,
+    SubdivisionName: l.subdivisionName ?? undefined,
+    PropertySubType: l.propertySubType ?? undefined,
+    InternetAutomatedValuationDisplayYN: l.internetAutomatedValuationDisplayYN ?? undefined,
     ListingKey: l.listingKey,
     ListingId: l.listingId,
     StandardStatus: l.standardStatus,

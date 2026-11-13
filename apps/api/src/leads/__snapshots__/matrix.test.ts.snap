@@ -2587,5 +2587,8 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/contacts/:id/ai-isa/undo → ai_isa.control",
   "POST /api/contacts/:id/ai-isa/continue → ai_isa.start",
   "POST /api/contacts/:id/ai-isa/lift-block → ai_isa.start",
+  "POST /api/contacts/:id/cma → cma.prepare",
+  "GET /api/contacts/:id/cmas → cma.prepare",
+  "HEAD /api/contacts/:id/cmas → cma.prepare",
 ]
 `;

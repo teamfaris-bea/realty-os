@@ -3,6 +3,7 @@
 //   GET /listings/:id/competing                       competing listings, agent view       listing.view (every member)
 //   GET /admin/mls                                    MLS connections and licence packs    integration.view (Owner/Admin)
 //   PUT /admin/mls/connections/:id/license-pack       the licence-pack editor              integration.manage (Owner/Admin 🔒)
+//                                                     (+ the optional valuation section, D9; GET also shows sold-data coverage)
 //
 // Every handler runs in the caller's tenant transaction under RLS: another tenant's listing or connection is
 // 404. CSRF and Origin are the global guard's; re-auth comes from integration.manage. Response schemas carry
@@ -10,12 +11,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { DISPLAY_FIELDS, LISTING_STATUSES } from '@realty/core/listings';
-import { actorOf, adminTx } from '../admin/common.js';
+import { DISPLAY_FIELDS, LISTING_STATUSES, USPS_REGIONS } from '@realty/core/listings';
+import { actorOf, adminTx, platformOf } from '../admin/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { listingFacts } from '../workspace/listings.js';
-import { PACK_KEYS, mlsAdminView, saveLicensePack, type PackInput } from './admin.js';
+import { PACK_KEYS, VALUATION_PACK_KEYS, mlsAdminView, saveLicensePack, type PackInput, type ValuationPackInput } from './admin.js';
 import { competingFor } from './competing.js';
 
 const IdParams = z.object({ id: z.uuid() });
@@ -23,6 +24,19 @@ const Text = z.string().trim().min(1).max(4000).nullable();
 const Field = z.enum(DISPLAY_FIELDS);
 const Status = z.enum(LISTING_STATUSES);
 const mark = <T extends z.ZodType>(v: T) => z.object({ value: v, counselReviewed: z.boolean() }).strict();
+const UspsCode = z.enum(Object.keys(USPS_REGIONS) as [string, ...string[]]);
+const Statement = z.object({ region: UspsCode, text: z.string().trim().min(1).max(4000), minPointSize: z.number().min(6).max(36) }).strict();
+
+/** The licence pack's valuation section (D9; its own counsel stamp). Optional in the PUT: omitted ⇒ kept unchanged. */
+export const ValuationPackBody = z
+  .object({
+    agent_cma: mark(z.boolean()),
+    client_cma: mark(z.boolean()),
+    automated_notes: mark(z.boolean()),
+    avm_flag_scope: mark(z.enum(['all_client_outputs', 'internet_display_only'])),
+    statements: mark(z.array(Statement).max(Object.keys(USPS_REGIONS).length).refine((xs) => new Set(xs.map((x) => x.region)).size === xs.length, 'one statement per state')),
+  })
+  .strict();
 
 export const LicensePackBody = z
   .object({
@@ -35,14 +49,31 @@ export const LicensePackBody = z
     client_statuses: mark(z.array(Status).max(LISTING_STATUSES.length)),
     public_fields: mark(z.array(Field).max(DISPLAY_FIELDS.length)),
     public_statuses: mark(z.array(Status).max(LISTING_STATUSES.length)),
+    valuation: ValuationPackBody.optional(),
   })
   .strict();
 
 const PackValue = z.union([z.number(), z.string(), z.boolean(), z.null(), z.array(z.string())]);
+const ValuationValue = z.union([z.boolean(), z.string(), z.array(z.object({ region: z.string(), text: z.string(), minPointSize: z.number() }))]);
 export const PackViewSchema = z.object({
   values: z.array(z.object({ key: z.enum(PACK_KEYS), value: PackValue, counselReviewed: z.boolean() })),
   reviewedByCounselAt: z.string().nullable(),
   unreviewedCount: z.number(),
+  sentence: z.string(),
+  valuation: z.object({
+    values: z.array(z.object({ key: z.enum(VALUATION_PACK_KEYS), value: ValuationValue, counselReviewed: z.boolean() })),
+    reviewedByCounselAt: z.string().nullable(),
+    unreviewedCount: z.number(),
+    sentence: z.string(),
+  }),
+});
+const Share = z.number().int().min(0).max(100);
+export const SoldCoverageSchema = z.object({
+  rows: z.number().int(),
+  sampleLimit: z.number().int(),
+  oldestCloseDate: z.string().nullable(),
+  shares: z.object({ closePrice: Share, closeDate: Share, contractDate: Share, location: Share, yearBuilt: Share, lotSize: Share, subdivision: Share, saleConditions: Share, avmDisplayAllowed: Share }),
+  backfillPending: z.boolean(),
   sentence: z.string(),
 });
 export const MlsAdminResponse = z.object({
@@ -59,6 +90,7 @@ export const MlsAdminResponse = z.object({
       clientDisplay: z.boolean(),
       clientDisplaySentence: z.string(),
       licensePack: PackViewSchema,
+      soldData: SoldCoverageSchema,
     }),
   ),
 });
@@ -106,10 +138,10 @@ async function register(app: FastifyInstance): Promise<void> {
     adminTx(req, (tx, now) => competingFor(tx, req.params.id, now)),
   );
 
-  r.get('/admin/mls', { ...view, schema: { response: { 200: MlsAdminResponse } } }, async (req) => adminTx(req, (tx, now) => mlsAdminView(tx, now)));
+  r.get('/admin/mls', { ...view, schema: { response: { 200: MlsAdminResponse } } }, async (req) => adminTx(req, (tx, now) => mlsAdminView(tx, now, platformOf(req).config.mls)));
 
   r.put('/admin/mls/connections/:id/license-pack', { ...manage, bodyLimit: 64 * 1024, schema: { params: IdParams, body: LicensePackBody, response: { 200: z.object({ licensePack: PackViewSchema }) } } }, async (req) => ({
-    licensePack: await adminTx(req, (tx, now) => saveLicensePack(tx, actorOf(req), req.params.id, req.body as PackInput, now)),
+    licensePack: await adminTx(req, (tx, now) => saveLicensePack(tx, actorOf(req), req.params.id, req.body as PackInput & { valuation?: ValuationPackInput }, now)),
   }));
 }
 

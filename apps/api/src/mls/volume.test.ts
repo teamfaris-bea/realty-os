@@ -3,6 +3,11 @@
 //   - a second tenant sees none of the 500k rows (counts, previews, competing) and the first sees exactly its own;
 //   - saved-search previews and the competing endpoint use the 0041 partial indexes and stay fast;
 //   - saved-search matching of a 1,000-row MLS delta (two sync runs of SYNC_BATCH) finishes well under 60 s.
+//   - D9 (lane V1-A): half the rows are sold history over 24 months (coordinates and subdivisions populated, 2 % leases,
+//     5 % unfilled version-1 rows with null close dates), skewed: one postal code with 40,000 sold rows, one city with
+//     120,000 and one subdivision with 5,000 (the real mix is VERIFY V2). soldCandidates stays under 1.5 s p95 per tier,
+//     skewed areas included, on a 0068_cma_mls_data index with no Seq Scan; below its limit a tier's 12-month count equals the
+//     unlimited count; a backfill page of 500 completes inside one sync run's budget.
 // Within each postal code prices run from $300k to $800k and beds from 1 to 5. Rows are bulk-inserted by the superuser (a load fixture, not an application path); every measured read and
 // the delta sync run as app_user through the module's own functions and routes. Timings are printed; the
 // budgets asserted are deliberately loose so a slow CI box does not flake (VERIFY on production hardware).
@@ -13,11 +18,12 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { type AssistantWorld, assistantWorld, call, listing, ownedContact } from '../assistant/testing.js';
+import { cellsWithin } from '@realty/core/listings';
+import { type SoldQuery, type TierQuery, soldCandidates, tierSql } from './comps.js';
 import { SYNC_BATCH, syncConnection } from './sync.js';
-import { makeDue, mlsConnection, mlsDeps, pagedFeed, reso } from './testing.js';
+import { MLS_VOLUME, makeDue, mlsConnection, mlsDeps, mlsVolumeFixture, pagedFeed, reso, soldReso, splitFeed, startBackfill } from './testing.js';
 
-const ROWS = 500_000;
-const ZIPS = 500; // 1,000 rows per postal code
+const { ROWS, ZIPS, HOT_ZIP, HOT_LAT, HOT_LON } = MLS_VOLUME;
 let h: ApiHarness;
 let w: AssistantWorld;
 let other: TestClient;
@@ -40,16 +46,7 @@ beforeAll(async () => {
   conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { lastSyncedAt: new Date() });
   otherConn = await mlsConnection(h, other.tenantId!, other.userId!, { lastSyncedAt: new Date() });
   const t0 = performance.now();
-  await h.su.query(
-    `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft,
-                           property_type, attributes, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, last_seen_in_feed_at)
-     SELECT $1, gen_random_uuid(), 'mls', 'V' || i, CASE WHEN (i / ${ZIPS}) % 10 = 0 THEN 'pending' ELSE 'active' END, (i % 9000 + 1) || ' Volume St',
-            'City' || (i % 200), 'CA', (94000 + i % ${ZIPS})::text, 30000000 + ((i / ${ZIPS}) % 1000) * 50000, 1 + (i / ${ZIPS}) % 5, 20, 1200 + i % 900,
-            'single_family', '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (i || ' seconds')::interval,
-            'Volume Brokerage (test)', (i / ${ZIPS}) % 10 <> 3, now()
-       FROM generate_series(1, ${ROWS}) i`,
-    [w.tenantId, conn],
-  );
+  await mlsVolumeFixture(h, w.tenantId, conn);
   await h.su.query(
     `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed)
      SELECT $1, gen_random_uuid(), 'mls', 'B' || i, 'active', i || ' Other St', 'City1', 'CA', (94000 + i % ${ZIPS})::text, 40000000, 3, $2, timestamptz '2026-11-01', 'B Brokerage (test)', true
@@ -136,5 +133,69 @@ describe('RLS volume benchmark: 500k MLS rows per tenant', () => {
     expect(matched).toBeGreaterThan(0);
     const dup = await h.su.query("SELECT search_id, listing_id, count(*) FROM saved_search_matches WHERE tenant_id = $1 GROUP BY 1, 2 HAVING count(*) > 1", [w.tenantId]);
     expect(dup.rowCount).toBe(0);
+  }, 300_000);
+
+  // ---- D9 sold data ------------------------------------------------------------------------------------------------
+  const subjectQuery = (tiers: TierQuery[], months = 24): SoldQuery => ({ connectionIds: [conn], propertyType: 'single_family', since: months === 24 ? '2024-11-01' : '2025-11-01', until: '2026-11-01', tiers });
+  const HOT_CELLS_1 = cellsWithin(HOT_LAT + 15_000, HOT_LON - 15_000, 1);
+  const HOT_CELLS_3 = cellsWithin(HOT_LAT + 15_000, HOT_LON - 15_000, 3);
+  const TIERS: [string, TierQuery][] = [
+    ['subdivision (5,000 sold, skewed)', { tier: 'subdivision', names: ['big subdivision'], postalCodes: [HOT_ZIP], cells: HOT_CELLS_3 }],
+    ['1-mi cells (hot area)', { tier: 'cells_1mi', cells: HOT_CELLS_1 }],
+    ['postal code (40,000 sold, skewed)', { tier: 'postal_code', postalCodes: [HOT_ZIP] }],
+    ['3-mi cells (hot area)', { tier: 'cells_3mi', cells: HOT_CELLS_3 }],
+    ['city (120,000 sold, skewed)', { tier: 'city', cities: ['big city'], region: 'CA' }],
+    ['rate pool (hot area)', { tier: 'rate_pool', cells: HOT_CELLS_3, postalCodes: [HOT_ZIP] }],
+    ['postal code (typical)', { tier: 'postal_code', postalCodes: ['94007'] }],
+  ];
+
+  it('R-CMA-2 (D9): soldCandidates p95 < 1.5 s per tier over 500k rows, skewed areas included; each tier plan uses a 0068_cma_mls_data index with no Seq Scan', async () => {
+    for (const [name, tier] of TIERS) {
+      const times: number[] = [];
+      let rows = 0;
+      for (let i = 0; i < 10; i++) {
+        const [r, ms] = await timed(() => withTenantTx(w.agents[0]!.actor(), (tx) => soldCandidates(tx, subjectQuery([tier])), { db: h.database }));
+        rows = r.reads[0]!.rows;
+        expect(r.rows.every((x) => x.close_date !== null && x.status === 'sold' && !x.is_lease)).toBe(true);
+        times.push(ms);
+      }
+      console.info(`[mls volume] soldCandidates ${name}: ${rows} rows, p95 ${Math.round(p95(times))} ms`);
+      expect(rows, name).toBeGreaterThan(0);
+      expect(p95(times), name).toBeLessThan(1500);
+      if (tier.tier === 'rate_pool') continue;
+      const plan = await withTenantTx(w.agents[0]!.actor(), async (tx) => {
+        const s = (await tierSql(tx, subjectQuery([tier]), tier))!;
+        return (await sql<{ 'QUERY PLAN': string }>`EXPLAIN ${s}`.execute(tx)).rows.map((x) => x['QUERY PLAN']).join('\n');
+      }, { db: h.database });
+      expect(plan, `${name}\n${plan}`).toMatch(/listings_mls_sold_(postal|subdivision|cell|city)_idx/);
+      expect(plan, `${name}\n${plan}`).not.toMatch(/Seq Scan/);
+    }
+  }, 600_000);
+
+  it('R-CMA-2 (D9): below its limit, a tier\'s 12-month count equals the unlimited count', async () => {
+    const tier: TierQuery = { tier: 'postal_code', postalCodes: ['94007'] };
+    const r = await withTenantTx(w.agents[0]!.actor(), (tx) => soldCandidates(tx, subjectQuery([tier], 12)), { db: h.database });
+    const all = Number((await h.su.query("SELECT count(*) FROM listings WHERE tenant_id = $1 AND source = 'mls' AND status = 'sold' AND NOT is_lease AND close_date BETWEEN '2025-11-01' AND '2026-11-01' AND postal_code = '94007' AND property_type = 'single_family'", [w.tenantId])).rows[0].count);
+    expect(all).toBeGreaterThan(50);
+    expect(r.reads[0]).toEqual({ tier: 'postal_code', rows: all, limitReached: false });
+    // and the other tenant reads none of it
+    const o = await withTenantTx(other.actor(), (tx) => soldCandidates(tx, subjectQuery(TIERS.map((t) => t[1]))), { db: h.database });
+    expect(o.rows).toEqual([]);
+  }, 120_000);
+
+  it('E372 (D9): a backfill page of 500 version-1 rows completes inside one sync run\'s budget (60 s)', async () => {
+    // the unfilled rows are j % 20 = 1: S1, S21, S41, …, modified at 2026-11-01 + j seconds
+    const page = Array.from({ length: SYNC_BATCH }, (_, k) => {
+      const j = 1 + 20 * k;
+      return soldReso(j, { ListingId: `S${j}`, PostalCode: j <= 40000 ? HOT_ZIP : String(94000 + (j % ZIPS)), ModificationTimestamp: new Date(Date.UTC(2026, 10, 1) + j * 1000).toISOString() });
+    });
+    await startBackfill(h, conn);
+    await makeDue(h, conn);
+    const t0 = performance.now();
+    const r = await syncConnection(mlsDeps(h, { [conn]: splitFeed({ backfill: [{ records: page, more: true }] }) }), w.tenantId as TenantId, conn);
+    const ms = performance.now() - t0;
+    console.info(`[mls volume] backfill page of ${SYNC_BATCH} filled ${r.filled} rows in ${Math.round(ms)} ms`);
+    expect(r).toMatchObject({ outcome: 'synced', filled: SYNC_BATCH, inserted: 0, matched: 0 });
+    expect(ms).toBeLessThan(60_000);
   }, 300_000);
 });

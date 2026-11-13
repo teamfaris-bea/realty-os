@@ -10,14 +10,15 @@
 //             off-MLS, office-exclusive or coming-soon team listing is never shared (TEAM_NOT_ON_MLS).
 //   both      renderBuyerListing succeeds (status and price not omitted, brokerage and attribution present).
 import type { Instant } from '@realty/core/foundation';
-import { feedStale } from '@realty/core/listings';
+import { feedStale, NORMALIZE_VERSION } from '@realty/core/listings';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { clientView, LISTING_COLS, type ListingRow, type MlsEligibility } from '../../mls/eligibility.js';
 import { renderBuyerListing } from '../coreSeam.js';
 
-/** Batch 10's normalization version with the lease flag (NORMALIZE_VERSION = 2 on merge/batch10). */
+/** Batch 10's normalization version, the first that sets the lease flag (core NORMALIZE_VERSION). */
 export const LEASE_CHECKED_NORMALIZE_VERSION = 2;
+void NORMALIZE_VERSION;
 
 export type ShareRefusal = 'MLS_NOT_ELIGIBLE' | 'STATUS_NOT_SHAREABLE' | 'OFF_MARKET' | 'LEASE_UNCHECKED' | 'ROW_STALE' | 'TEAM_NOT_ON_MLS' | 'RENDER_REFUSED' | 'NOT_FOUND';
 
@@ -38,12 +39,12 @@ export interface ShareableFact {
 type Row = ListingRow & { is_lease: boolean; mls_normalize_version: number };
 
 async function rowOf(tx: Tx, id: string): Promise<Row | null> {
-  const r = await sql<Row>`SELECT ${LISTING_COLS}, l.is_lease, l.mls_normalize_version FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.id = ${id}`.execute(tx);
+  const r = await sql<Row>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.id = ${id}`.execute(tx);
   return r.rows[0] ?? null;
 }
 
 async function mirrorOf(tx: Tx, teamId: string): Promise<Row | null> {
-  const r = await sql<Row>`SELECT ${LISTING_COLS}, l.is_lease, l.mls_normalize_version FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls'
+  const r = await sql<Row>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls'
     AND l.team_listing_id = ${teamId} ORDER BY l.mls_modified_at DESC NULLS LAST LIMIT 1`.execute(tx);
   return r.rows[0] ?? null;
 }

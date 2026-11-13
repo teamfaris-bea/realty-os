@@ -8,6 +8,7 @@
 import type { ContactId, IdGenerator } from '@realty/core/foundation';
 import { FOLLOWUP_JOB_KIND, applyOwnershipFollowupInTx } from '@realty/db';
 import { z } from 'zod';
+import { MERGE_STEPS } from '../../mergeSteps.js';
 import { jobPayload, zId, zSafeJson } from '../payload.js';
 import type { TxJobHandler } from '../types.js';
 
@@ -55,7 +56,8 @@ export function ownershipFollowupHandler(opts: { ids?: IdGenerator } = {}): TxJo
     via: 'worker',
     schema: FollowupPayloadSchema,
     async run(ctx, p) {
-      const r = await applyOwnershipFollowupInTx(ctx.tx, ctx.actor, { ...p, contactId: p.contactId as ContactId }, opts.ids ? { ids: opts.ids } : {});
+      // a Team Lead's merge moves its communication here: the API modules' merge steps run with it (mergeSteps.ts)
+      const r = await applyOwnershipFollowupInTx(ctx.tx, ctx.actor, { ...p, contactId: p.contactId as ContactId }, { mergeSteps: MERGE_STEPS, ...(opts.ids ? { ids: opts.ids } : {}) });
       ctx.log.debug('ownership.followup applied', { jobId: ctx.job.id.toString(), count: r.applied });
     },
   };

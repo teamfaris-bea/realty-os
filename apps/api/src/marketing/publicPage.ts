@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { type Instant, type TenantId, MINUTE_MS } from '@realty/core/foundation';
 import { type BrokerageIdentity, type PieceVersion, guardResult, renderPiece } from '@realty/core/marketing';
-import type { ListingFacts } from '@realty/core/listings';
+import { EMPTY_VALUATION_FACTS, type ListingFacts } from '@realty/core/listings';
 import { type Tx, withPreTenant, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { type Limit, enforceLimits } from '../auth/rateLimit.js';
@@ -134,6 +134,7 @@ function factsOf(p: PageRow): ListingFacts {
     teamListingId: null,
     lastSeenInFeedAt: null,
     offMarketAt: null,
+    valuation: EMPTY_VALUATION_FACTS,
   };
 }
 

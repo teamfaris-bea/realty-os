@@ -1,7 +1,7 @@
 // Test fixtures for core/listings: RESO records, mappings, packs and listing facts.
 import { at, type ListingId } from '../../foundation/index.js';
 import { parseLicensePack } from '../licence.js';
-import type { FieldMapping, LicensePack, ListingFacts, MlsConnectionId, ResoLike } from '../types.js';
+import { EMPTY_VALUATION_FACTS, type FieldMapping, type LicensePack, type ListingFacts, type MlsConnectionId, type ResoLike } from '../types.js';
 
 export const CONN = '01900000-0000-7000-8000-00000000c001' as MlsConnectionId;
 export const MAPPING: FieldMapping = { connectionId: CONN };
@@ -51,7 +51,7 @@ export const REVIEWED_PACK: LicensePack = parseLicensePack({
   require_listing_brokerage: true,
   audiences: {
     client: {
-      fields: ['mlsNumber', 'status', 'listPrice', 'beds', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'locality', 'photos'],
+      fields: ['mlsNumber', 'status', 'listPrice', 'beds', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'locality', 'photos', 'closePrice', 'closeDate', 'yearBuilt', 'lotSize', 'subdivision'],
       statuses: ['coming_soon', 'active', 'pending', 'sold'],
     },
     public: { fields: ['status', 'listPrice', 'beds', 'locality', 'photos'], statuses: ['active', 'pending'] },
@@ -86,6 +86,7 @@ export const mls = (o: Partial<ListingFacts> = {}): ListingFacts => ({
   teamListingId: null,
   lastSeenInFeedAt: at('2026-11-01T12:05:00Z'),
   offMarketAt: null,
+  valuation: EMPTY_VALUATION_FACTS,
   ...o,
 });
 
