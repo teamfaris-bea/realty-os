@@ -24,7 +24,7 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from '../admin/lib/ui.js';
 import { LEAD_STAGE_LABEL } from '../people/api.js';
-import { ALERTS_HEADING, type AutoEnrollSetting, type DelayUnit, KIND_LABEL, READ_ONLY_ALERTS, isReadOnlyPlaybook, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
+import { ALERTS_HEADING, type AutoEnrollSetting, type DelayUnit, ISA_POLICY_ELSEWHERE, KIND_LABEL, READ_ONLY_ALERTS, isElsewherePlaybook, isReadOnlyPlaybook, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
 
 const PLAYBOOKS_KEY = ['assistant', 'playbooks'] as const;
 /** The tenant's stage labels (module 57's GET /stage-labels): the same cache Admin → Stage labels refreshes on save. */
@@ -39,7 +39,7 @@ export function PlaybooksPage() {
   const create = useAction<{ templateKey: string }, { playbook: Playbook }>('POST', { invalidate: [[...PLAYBOOKS_KEY]] });
   const allowed = TEMPLATES.filter((t) => t.scope === 'agent' || role === 'owner' || role === 'admin');
   const [pick, setPick] = useState(allowed[0]?.key ?? '');
-  const list = q.data?.playbooks ?? [];
+  const list = (q.data?.playbooks ?? []).filter((p) => !isElsewherePlaybook(p)); // b12 review ui-3
   const team = list.filter((p) => p.scope === 'team' && !isReadOnlyPlaybook(p));
   const mine = list.filter((p) => p.scope === 'agent' && !isReadOnlyPlaybook(p));
   const alerts = list.filter(isReadOnlyPlaybook); // module 26 (review ui/F2): read-only here
@@ -122,7 +122,8 @@ export function PlaybookPage() {
       <StatusLine text={status} />
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
-      {p ? (
+      {p && isElsewherePlaybook(p) ? <Notice tone="info">{ISA_POLICY_ELSEWHERE}</Notice> : null}
+      {p && !isElsewherePlaybook(p) ? (
         <>
           <div>
             <h2 className="text-[22px] font-semibold text-ink">{p.name}</h2>

@@ -3,14 +3,14 @@
 // approves exactly the reviewed version (its contentSha256) with the attestation the approver saw,
 // blocks approval while there are problems or unsaved edits, saves edits as a new draft without
 // dropping fields it does not show, and offers approval only to the people allowed to approve.
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ID, FakeFetch, leadAdminApp } from '../admin/lib/testing.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { err } from '../../shell/testing/fakeApi.js';
 import { applyDraft } from './PlaybooksPage.js';
-import { ALERTS_HEADING, KIND_LABEL, READ_ONLY_ALERTS, isReadOnlyPlaybook, stepsOf, approvalAttestation, autoEnrollRefusal, delayText, mayApprove, placeholdersIn, playbookState, splitDelay, workingVersion } from './playbooks.js';
+import { ALERTS_HEADING, ISA_POLICY_ELSEWHERE, KIND_LABEL, READ_ONLY_ALERTS, isReadOnlyPlaybook, stepsOf, approvalAttestation, autoEnrollRefusal, delayText, mayApprove, placeholdersIn, playbookState, splitDelay, workingVersion } from './playbooks.js';
 
 const SHA = 'a'.repeat(64);
 const step: PlaybookStepView = {
@@ -290,6 +290,20 @@ describe('b7 ui/F2: trigger playbooks are read-only here (R-AST-4)', () => {
     expect(screen.queryByRole('button', { name: 'Approve and run' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Save/ })).toBeNull();
     expect(document.body.textContent).not.toMatch(/undefined|\btrigger\b/);
+  });
+
+  it('b12 review ui-3 (R-ISA-2): the assistant\'s ISA team policy is never listed or opened here as a playbook: no raw kind, no editor or revoke, never beside the "stops the moment a client replies" notice', async () => {
+    const isa = playbook({ id: 'pbI', kind: 'ai_isa', scope: 'team', ownerUserId: null, name: 'AI assistant', templateKey: null, approvedVersionId: 'v1', versions: [version({ status: 'approved', steps: { kind: 'ai_isa' } as never })] });
+    const fake = new FakeFetch().on('GET /playbooks', { status: 200, body: { playbooks: [playbook(), isa] } });
+    leadAdminApp(fake, '/settings/playbooks', 'owner');
+    expect(await screen.findByRole('link', { name: /Stay in touch/ })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/ai_isa|AI assistant/);
+    cleanup();
+    leadAdminApp(fakeFor(isa), '/settings/playbooks/pbI', 'owner');
+    expect(await screen.findByText(ISA_POLICY_ELSEWHERE)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and run' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revoke|Stop/ })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/ai_isa|stops the moment a client replies/);
   });
 
   it('b7 ui/F2: the list puts trigger playbooks under their own read-only heading with a label, never the raw kind', async () => {

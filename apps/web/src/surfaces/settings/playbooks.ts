@@ -36,6 +36,8 @@ export const KIND_LABEL: Record<string, string> = {
   // module 26 (batch 7 review ui/F2): kept read-only on this page until module 26 has its own editor
   trigger: 'Alerts',
   voice_answering: 'Call answering',
+  // b12 review ui-3: never listed here (ELSEWHERE_KINDS); a label so no raw kind ever shows
+  ai_isa: "The assistant's ISA policy",
 };
 
 /**
@@ -49,6 +51,18 @@ export const READ_ONLY_ALERTS = "These playbooks can't be changed, approved or s
 
 export function isReadOnlyPlaybook(p: Pick<Playbook, 'kind'>): boolean {
   return READ_ONLY_KINDS.includes(p.kind);
+}
+
+/**
+ * b12 review ui-3 (R-ISA-2, D12 proposed): the assistant's ISA team policy is a team playbook kind in the database, but
+ * it is not a set of messages and its rules differ (it is opt-in and keeps replying), so this page never lists it, and
+ * opening it says only where it belongs: no editor, approval, stop or stage, and never beside the playbook notice.
+ */
+export const ELSEWHERE_KINDS: readonly string[] = ['ai_isa'];
+export const ISA_POLICY_ELSEWHERE = "This is the assistant's ISA team policy, not a playbook: it can't be changed, approved or stopped on this page.";
+
+export function isElsewherePlaybook(p: Pick<Playbook, 'kind'>): boolean {
+  return ELSEWHERE_KINDS.includes(p.kind);
 }
 
 /** The built-in starting points (api/assistant templates.ts) and who may create each. */
