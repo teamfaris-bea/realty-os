@@ -129,7 +129,7 @@ describe('Listing agent control (b11 review api-ui/F8)', () => {
 
   it('R-OWN-22 (web; b11 merge review F1): a proxy 502 with no JSON body (it can come after the API committed) reads the same: not confirmed, never "nothing was saved"', async () => {
     let committed = false;
-    app('owner', listing(), (f) =>
+    const fake = app('owner', listing(), (f) =>
       f
         .on(`GET /listings/${LISTING}`, () => ({ status: 200, body: { listing: listing(committed ? { listingAgentUserId: RIO } : {}) } }))
         .on(`PATCH /listings/${LISTING}/agent`, () => {
@@ -144,5 +144,7 @@ describe('Listing agent control (b11 review api-ui/F8)', () => {
     expect(await within(s).findByText(NOT_CONFIRMED)).toBeInTheDocument();
     expect(await currentAgent(s, 'Rio Reyes')).toBeInTheDocument();
     expect(within(s).queryByText(/nothing was saved/)).toBeNull();
+    // a 502 is retryable for reads, but the change is not sent again behind the person's back
+    expect(fake.callsTo(`PATCH /listings/${LISTING}/agent`)).toHaveLength(1);
   });
 });
