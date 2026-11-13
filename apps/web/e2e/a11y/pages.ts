@@ -113,6 +113,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/documents/:documentId/dates', roles: ALL, url: (i) => `/documents/${i.documentId}/dates` },
   // module 55 (lane phase3-staff): the Google Ads page (the sweep's tenant has platform:ads uncleared: its dark state)
   { path: '/ads', roles: ADMINS, url: at('/ads') },
+  // module 55 item 12: Google Business Profile (every staff role reads reviews; the sweep's world has platform:gbp
+  // uncleared, so it sweeps the honest dark state)
+  { path: '/gbp', roles: ALL, url: at('/gbp') },
 ];
 
 /** Screens outside the app frame (signed out). */

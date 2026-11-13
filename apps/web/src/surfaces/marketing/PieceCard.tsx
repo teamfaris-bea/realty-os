@@ -96,6 +96,7 @@ const FILE_NAME: Record<string, string> = {
   open_house_invite: 'open-house-invite.txt',
   marketplace_export: 'marketplace-listing.txt',
   flyer: 'flyer.txt',
+  gbp_post: 'business-profile-post.txt',
 };
 
 export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }: { piece: PieceView; publishingCleared: boolean; headingLevel?: 2 | 3; extra?: ReactNode }) {
@@ -194,7 +195,8 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
 
   const draft = piece.status === 'draft';
   const live = piece.status === 'approved' || piece.status === 'published' || piece.status === 'exported';
-  const social = piece.kind === 'social_post';
+  // a social post and a Business Profile post (module 53/55: its gbp_location option) publish through the server's options
+  const social = piece.kind === 'social_post' || piece.kind === 'gbp_post';
   const publishable = social && live ? piece.publishOptions.filter((o) => o.kind === 'publish') : [];
   // "Approve this version first" is the Approve button's job; the other export reasons are said in the server's words
   const exportOnly = social && live ? piece.publishOptions.filter((o): o is Extract<typeof o, { kind: 'export' }> => o.kind === 'export' && o.reason !== 'NOT_APPROVED' && !(o.reason === 'ALREADY_LIVE' && piece.publications.some((p) => p.posted && p.connectionId === o.connectionId))) : [];
