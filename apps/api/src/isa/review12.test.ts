@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { command } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
@@ -336,38 +336,67 @@ describe('b12 recheck R7: a provider "sent" is no proof of reach, so 2 undeliver
   });
 });
 
-describe('b12 recheck R2: the overdue escalation follows the lead\'s current owner, like the card (R-ISA-30; E525)', () => {
-  it('R-ISA-30 E525: a handoff to a1 whose lead moves on to a0 escalates, when overdue, to a0\'s Team Lead, not a1\'s', async () => {
-    const { runOwnershipCommand } = await import('../leads/ownership.js');
-    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
-    const [u0, u1] = [a0.userId!, a1.userId!];
-    // a1 leads with a Team Lead of their own (Team B); a0 stays on Team A under w.teamLead
+describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the card now (R-ISA-30; E525, E521)', () => {
+  /** a1 leads with a Team Lead of their own (Team B); a0 stays on Team A under w.teamLead. Restored after `fn`. */
+  async function twoTeams(fn: (tl2: TestClient) => Promise<void>) {
+    const [u0, u1] = [w.agents[0]!.userId!, w.agents[1]!.userId!];
     const tl2 = await h.invite(w.owner, 'team_lead');
-    const teamB = await call<{ team: { id: string } }>(w.owner, 'POST', '/teams', { name: 'Team B' });
+    const teamB = await call<{ team: { id: string } }>(w.owner, 'POST', '/teams', { name: `Team B ${randomUUID().slice(0, 8)}` });
     expect(teamB.status).toBe(201);
     const teamA = (members: string[]) => call(w.owner, 'PUT', `/teams/${w.teamId}/members`, { members: [...members.map((userId) => ({ userId, isLead: false })), { userId: w.teamLead!.userId!, isLead: true }] });
     expect((await teamA([u0])).status).toBe(200);
     expect((await call(w.owner, 'PUT', `/teams/${teamB.body.team.id}/members`, { members: [{ userId: u1, isLead: false }, { userId: tl2.userId!, isLead: true }] })).status).toBe(200);
     try {
-      const l = await isaLead(h, a0);
-      expect((await startCare(a0, l.id)).status).toBe(200);
-      await runIsa(h, w.tenantId);
-      const ids = depsFromPlatform(h.app.platform).ids;
-      const move = (to: string) => runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: to as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids });
-      expect((await move(u1)).ok).toBe(true);
-      await runIsa(h, w.tenantId);
-      const [ho] = await handoffs([l.id]);
-      expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
-      expect(ho!.sla_class).not.toBe('none');
-      expect((await move(u0)).ok).toBe(true);
-      await runIsa(h, w.tenantId, 1);
-      expect(await cards([l.id])).toEqual([expect.objectContaining({ user_id: a0.userId, state: 'open' })]);
-      expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 0, escalated: 1 });
-      const to = (await h.su.query<{ user_id: string }>(`SELECT user_id FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = $1`, [l.id])).rows.map((r) => r.user_id);
-      expect(to).toEqual([w.teamLead!.userId]);
+      await fn(tl2);
     } finally {
       await call(w.owner, 'PUT', `/teams/${teamB.body.team.id}/members`, { members: [] });
       await teamA([u0, u1]);
     }
+  }
+  /** Care on a0's lead ends owner_change when it moves to a1 (the handoff's frozen recipient), then it moves back to a0. */
+  async function handedToA1ThenBack() {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const ids = depsFromPlatform(h.app.platform).ids;
+    const move = (to: string) => runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: to as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids });
+    expect((await move(a1.userId!)).ok).toBe(true);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
+    expect(ho!.sla_class).not.toBe('none');
+    expect((await move(a0.userId!)).ok).toBe(true);
+    await runIsa(h, w.tenantId, 1);
+    expect(await cards([l.id])).toEqual([expect.objectContaining({ user_id: a0.userId, state: 'open' })]);
+    return { l, ho: ho! };
+  }
+  const overdueTo = async (contactId: string) => (await h.su.query<{ user_id: string }>(`SELECT user_id FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = $1`, [contactId])).rows.map((r) => r.user_id);
+
+  it('R-ISA-30 E525: a handoff to a1 whose lead moves on to a0 escalates, when overdue, to a0\'s Team Lead, not a1\'s', async () => {
+    await twoTeams(async () => {
+      const { l, ho } = await handedToA1ThenBack();
+      expect(await ageAndSweep(ho.id)).toMatchObject({ met: 0, escalated: 1 });
+      expect(await overdueTo(l.id)).toEqual([w.teamLead!.userId]);
+    });
+  });
+
+  it('R-ISA-30 E521 (b12 recheck R8): a handoff to a1 whose lead moves to a0 and then to the pond escalates to the card\'s holder, a0\'s Team Lead, not a1\'s', async () => {
+    await twoTeams(async (tl2) => {
+      const { l, ho } = await handedToA1ThenBack();
+      // a0 releases the lead: the pending card and its action go to the previous owner's Team Lead (rehomeHandbacks)
+      expect((await command(w.agents[0]!, l.id, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+      await runIsa(h, w.tenantId, 1);
+      expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).not.toBe('owned');
+      expect(await cards([l.id])).toEqual([expect.objectContaining({ user_id: w.teamLead!.userId, state: 'open' })]);
+      expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: w.teamLead!.userId, status: 'proposed' })]);
+      // (the sweep is tenant-wide: an earlier case's handoff may reach its second level in the same sweep)
+      expect((await ageAndSweep(ho.id)).escalated).toBeGreaterThanOrEqual(1);
+      expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+      const to = await overdueTo(l.id);
+      expect(to, 'not the frozen recipient\'s Team Lead').not.toContain(tl2.userId);
+      expect(to).toEqual([w.teamLead!.userId]);
+    });
   });
 });

@@ -163,6 +163,25 @@ function nextStepsFor(h: Handoff, callbackAllowed: boolean): string[] {
 }
 
 /**
+ * Who an overdue handoff alerts (R-ISA-30, E521). An owner (the lead's current owner, or the frozen recipient when no
+ * card holder is known): their Team Lead, then Owner/Admin. An unowned lead's card already sits with the previous
+ * owner's Team Lead or an Owner/Admin (handoffTarget, rehomeHandbacks, the merge): that holder is level 1 (every
+ * Owner/Admin when the holder is one, or is no longer active), then the holder and Owner/Admin (b12 recheck R8).
+ */
+async function overdueTargets(tx: Tx, r: { owner: string | null; holder: string | null; frozen: string }, level: number): Promise<string[]> {
+  if (r.owner === null && r.holder !== null) {
+    const active = (await handoffRecipients(tx, r.holder)).primary !== null;
+    const admins = await adminUserIds(tx);
+    if (level === 1 && active && !admins.includes(r.holder)) return [r.holder];
+    return [...new Set([...(active ? [r.holder] : []), ...admins])];
+  }
+  const anchor = r.owner ?? r.frozen;
+  const rec = await handoffRecipients(tx, anchor);
+  const tl = (await teamLeadOf(tx, anchor))?.user_id ?? null;
+  return level === 1 && tl !== null ? [tl] : rec.escalation;
+}
+
+/**
  * The deadline job (R-ISA-30): a human touch since the handoff (R-OWN-14's touch, contacts.last_human_touch_at)
  * clears it; "Got it" never does. A breach notifies the team lead (level 1), then Owner/Admin (level 2).
  */
@@ -171,13 +190,16 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
   let escalated = 0;
   // b12 review B12X-3: the touch is read on the record the person lives on now (a merged-away record takes none).
   // b12 recheck R2: the escalation follows that record's current owner, as the pending card does (rehomeHandbacks, the
-  // merge); only an unowned record falls back to the frozen recipient, then the assignment's owner
-  const rows = await sql<{ id: string; contact_id: string; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string; touched: Date | null }>`
+  // merge). b12 recheck R8: an unowned record follows whoever holds the card now (the handoff action's owner, which
+  // rehomeHandbacks and the merge keep current); only with no action owner does it fall back to the frozen recipient,
+  // then the assignment's owner
+  const rows = await sql<{ id: string; contact_id: string; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; frozen_user_id: string; touched: Date | null }>`
     SELECT h.id, c.id AS contact_id, h.created_at, h.sla_due_at, h.sla_escalation_level,
-           COALESCE(CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END, h.recipient_user_id, a.owner_user_id) AS owner_user_id,
-           c.last_human_touch_at AS touched
+           CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id, x.owner_user_id AS holder_user_id,
+           COALESCE(h.recipient_user_id, a.owner_user_id) AS frozen_user_id, c.last_human_touch_at AS touched
       FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
       JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
+      LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
      WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' ORDER BY h.sla_due_at LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
     if (r.touched !== null && r.touched.getTime() >= r.created_at.getTime()) {
@@ -189,10 +211,8 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
     // level 1 at the deadline; level 2 one more deadline-length later
     const span = r.sla_due_at.getTime() - r.created_at.getTime();
     if (r.sla_escalation_level === 1 && now < r.sla_due_at.getTime() + span) continue;
-    const rec = await handoffRecipients(tx, r.owner_user_id);
-    const tl = (await teamLeadOf(tx, r.owner_user_id))?.user_id ?? null;
     const level = r.sla_escalation_level + 1;
-    const targets = level === 1 && tl !== null ? [tl] : rec.escalation;
+    const targets = await overdueTargets(tx, { owner: r.owner_user_id, holder: r.holder_user_id, frozen: r.frozen_user_id }, level);
     const label = (await contactLabel(tx, r.contact_id)) ?? 'A lead';
     for (const userId of targets) {
       await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_overdue', priority: 'critical', title: `AI handoff not picked up: ${label}`.slice(0, 120), body: null,
