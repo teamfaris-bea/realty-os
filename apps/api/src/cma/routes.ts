@@ -11,8 +11,11 @@
 // not see is authorized on the facts of the record its merge chain ends at, when the caller sees that one, which lists
 // it (R-CMA-8; batch 10 review db-public/F1, batch 11 review ownership-data/F1): its creator, whom 0061's creator
 // branch shows the row, and the survivor's agent and Team Lead, whom 0077's root-survivor branch shows it. Nobody edits
-// such a CMA (409 CONTACT_MERGED). ISA and TC have none; support reads through RLS only (no route). A contact whose
-// detail the caller cannot see, an invisible CMA, another tenant's id and every denial are 404 (R-PERM-5). Bodies are strict and carry no tenant id; the tenant is the session's (R-TEN-3).
+// such a CMA: PATCH is 409 CONTACT_MERGED for its creator and a tenant-wide role, and 404 for every other reader (the
+// survivor's agent and Team Lead when they did not create it), as for any draft that is not theirs (0061's update
+// policy and the locked read admit only the creator or a tenant-wide role). ISA and TC have none; support reads through RLS only (no route).
+// A contact whose detail the caller cannot see, an invisible CMA, another tenant's id and every denial are 404
+// (R-PERM-5). Bodies are strict and carry no tenant id; the tenant is the session's (R-TEN-3).
 //
 // Limits (batch 10 review api-ui/F5): the three routes that run V1-B's engine synchronously (one soldCandidates read,
 // then prepareCma with its back-test: about 300 ms for 2,000 candidates) count every authorized call against a

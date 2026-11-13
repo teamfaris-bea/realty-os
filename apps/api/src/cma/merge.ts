@@ -1,17 +1,20 @@
 // api/cma's merge rules for open drafts (R-CMA-8, F15; batch 10 review and re-review ownership-data/F4).
 //
 // A merge moves no CMA: the survivor lists the merged-away records' CMAs and api/cma refuses their edits
-// (CONTACT_MERGED). But one creator keeps one open draft per home (address key) across the person. Two writes keep it,
-// each run as a tenant-wide actor, because the creator's own RLS cannot trace a record merged into a record that was
-// itself merged away later (contacts RLS hides the closed middle record, and its merged_in events with it):
-//   - cmaMergeStep, the merge step (packages/db ownership/merge.ts MergeStep: inline for the system, Owner or Admin; in
-//     the ownership.followup for a Team Lead), in the merge's move transaction;
-//   - supersedeCreatorsDraftsAcrossPerson, after a one-tap or prepare (routes.ts), as the tenant's system actor right
-//     after the caller's transaction.
-// Only draft -> superseded, which 0061's guard allows; 0061's update policy admits a tenant-wide actor;
+// (CONTACT_MERGED). But one creator keeps one open draft per home (address key) across the person's records (within one
+// record, per address row: F15, b11 merge review F2). Three passes keep it:
+//   - cmaMergeStep (below), the merge step (packages/db ownership/merge.ts MergeStep: inline for the system, Owner or
+//     Admin; in the ownership.followup for a Team Lead), in the merge's move transaction, as the tenant-wide actor;
+//   - service.ts supersedeMergedAwayDrafts, in the caller's own transaction after a one-tap or prepare: the caller's own
+//     drafts on the records merged into the contact, along chains through 0075's definer tree (app.contact_merge_tree_ids),
+//     so past a closed middle record too since the batch 11 merge; 0061's update policy admits their creator;
+//   - supersedeCreatorsDraftsAcrossPerson (below), right after that transaction (routes.ts), as the tenant's system
+//     actor: independent of the caller's policies, and it also sees a merge that committed before it starts.
+// The two here: only draft -> superseded, which 0061's guard allows; 0061's update policy admits a tenant-wide actor;
 // app.contact_person_ids (0043) sees every record of the person for one. Every other draft stays as it was (a
 // merged-away record's only draft for a home stays open: V2-A may share it to the survivor). Idempotent. No SECURITY
-// DEFINER is involved (0061's smoke test holds that none names cma_reports).
+// DEFINER names cma_reports (0061's smoke test, rls_smoke_cma.sql, holds that none does; 0075's helpers, which the
+// caller's pass reads, return contact ids only).
 import type { MergeStep, Tx } from '@realty/db';
 import { sql } from 'kysely';
 
@@ -46,10 +49,11 @@ export const cmaMergeStep: MergeStep = async (tx, survivorId, loserId) => {
 /**
  * After a one-tap or prepare stored or kept the open draft `draftId` of a live contact: its creator's other open drafts
  * for the same home on the other records of that contact's person (records merged into it, along chains) are
- * superseded (re-review ownership-data/F4). Run as the tenant's system actor (routes.ts): the caller's own trace
- * (service.ts supersedeMergedAwayDrafts, inside their transaction) stops at a closed middle record. Keyed on the draft
- * alone: only that draft's creator's drafts are touched, only while the draft is open and its contact live, and
- * nothing is read back to the caller.
+ * superseded (re-review ownership-data/F4). Run as the tenant's system actor (routes.ts), after the caller's own pass
+ * (service.ts supersedeMergedAwayDrafts, inside their transaction, over 0075's definer tree since the batch 11 merge), so
+ * the rule does not rest on the caller's policies and also covers a merge that committed after that pass read. Keyed on
+ * the draft alone: only that draft's creator's drafts are touched, only while the draft is open and its contact live,
+ * and nothing is read back to the caller.
  */
 export async function supersedeCreatorsDraftsAcrossPerson(tx: Tx, draftId: string): Promise<void> {
   await sql`
