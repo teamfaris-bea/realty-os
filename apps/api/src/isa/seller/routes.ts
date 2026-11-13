@@ -21,7 +21,7 @@ import { actorOf, platformOf } from '../../workspace/common.js';
 import { EmptyBody, IdParams } from '../schemas.js';
 import { clientReadiness, mlsEligibility, nearMatches, readinessConnections } from './cmaSeam.js';
 import { COUNT_SENTENCE, marketCountsInTx } from './counts.js';
-import { assignmentSubjectLinkInTx, compsSuspended, sellerGatesInTx } from './gates.js';
+import { assignmentSubjectLinkInTx, compsSuspendedNowInTx, sellerGatesInTx } from './gates.js';
 import { type AssignmentRow, liveAssignmentOf } from './isa2Seam.js';
 import * as S from './schemas.js';
 import { confirmationCodes, currentSubjectInTx, ensureWatchInTx, watchOf } from './subject.js';
@@ -51,7 +51,8 @@ export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, 
   const blockers = r.share.blockers.map((b) => ({ code: b.code, sentence: b.sentence }));
   const packWaits = blockers.some((b) => b.code === 'PLATFORM_NOT_CLEARED');
   const gates = sellerSide(a) ? await sellerGatesInTx(tx, viewer, a, now, 'competition') : null;
-  const compsOk = sellerSide(a) && codes.length === 0 && blockers.length === 0 && !compsSuspended(w) && (w?.last_comps_check?.codes.length ?? 1) === 0;
+  const suspended = sellerSide(a) ? await compsSuspendedNowInTx(tx, viewer, a, w) : false;
+  const compsOk = sellerSide(a) && codes.length === 0 && blockers.length === 0 && !suspended && (w?.last_comps_check?.codes.length ?? 1) === 0;
   const compsSentence = compsOk
     ? 'Can share recent sales: yes, by email, the complete set only.'
     : packWaits
@@ -82,7 +83,7 @@ export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, 
     lastCompsCheck: w?.last_comps_check ? { codes: w.last_comps_check.codes, checkedAt: w.last_comps_check.checked_at } : null,
     capabilities: { comps: { available: compsOk, sentence: compsSentence }, competition: { available: gates !== null && gates.codes.length === 0, sentence: gates !== null && gates.codes.length === 0 ? 'Can share new competing listings (asking prices).' : 'Can share competing listings: no — confirm the home first.' } },
     link: { effect: link.effect, code: link.code, sentence: link.sentence, listingIds: link.listingIds },
-    suspension: { suspended: compsSuspended(w), sentence: compsSuspended(w) ? SUSPENSION_SENTENCE : null },
+    suspension: { suspended, sentence: suspended ? SUSPENSION_SENTENCE : null },
     watch: { lastRunAt: w?.last_run_at?.toISOString() ?? null, sentence: WATCH_SENTENCE },
     counts,
     factsSent: sent.map((x) => ({ factKind: x.fact_kind, listingId: x.listing_id, sentAt: x.created_at.toISOString() })),

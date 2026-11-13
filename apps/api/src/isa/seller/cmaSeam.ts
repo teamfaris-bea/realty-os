@@ -57,3 +57,9 @@ export function statementProminence(minPointSize: number): StatementRendering {
   const pointSize = Math.max(12, minPointSize);
   return { ok: false, code: 'CMA_STATEMENT_NOT_RENDERABLE', pointSize };
 }
+
+/** The stored price of a fact's kind (H3's re-check): the sale price for a sold fact, else the asking price. */
+export function storedPriceOf(row: ListingRow, kind: string | null): string | null {
+  const v = kind === 'sold' ? row.close_price_cents : row.list_price_cents;
+  return v === null || v === undefined ? null : String(v);
+}

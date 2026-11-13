@@ -30,6 +30,7 @@ import { documentHandlers } from '../../documents/handlers.js';
 import { adsHandlers } from '../../ads/handlers.js';
 import { homeownerHandlers } from '../../homeowner/handlers.js';
 import { isaHandlers } from '../../isa/handlers.js';
+import { sellerHandlers } from '../../isa/seller/handlers.js';
 import { voiceHandlers } from '../../voice/handlers.js';
 import { gbpHandlers } from '../../gbp/handlers.js';
 
@@ -59,6 +60,7 @@ export const handlers: JobHandler<unknown>[] = [
   ...adsHandlers,
   ...homeownerHandlers,
   ...isaHandlers,
+  ...sellerHandlers,
   ...voiceHandlers,
   ...gbpHandlers,
   // registry: add new entries above this line

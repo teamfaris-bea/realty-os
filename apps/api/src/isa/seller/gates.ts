@@ -44,6 +44,26 @@ export function compsSuspended(w: Pick<WatchRow, 'comps_suspended_at' | 'comps_r
   return w.comps_resumed_at === null || w.comps_resumed_at.getTime() < w.comps_suspended_at.getTime();
 }
 
+/**
+ * E502 and owner question 10: a suspension clears only on the owner's own CMA for the contact created or re-run after
+ * it (an unchanged re-tap stores nothing, cma/service.ts oneTap), a CMA shared after it (V2-A), or the owner's
+ * resume-comps. A generic resolve does not clear it. The system records the CMA resume; a user's read only computes it.
+ */
+export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserActor, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>, w: WatchRow | null): Promise<boolean> {
+  if (!compsSuspended(w)) return false;
+  const r = (await sql<{ prepared: boolean; shared: boolean }>`SELECT
+      EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.created_by_user_id = ${a.ownerUserId}
+                AND GREATEST(c.created_at, c.updated_at) > ${w!.comps_suspended_at}) AS prepared,
+      EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${w!.comps_suspended_at}) AS shared`.execute(tx)).rows[0]!;
+  const reason = r.shared ? 'cma_shared' : r.prepared ? 'cma_prepared' : null;
+  if (reason === null) return true;
+  if (actor.kind === 'system') {
+    await sql`UPDATE ai_isa_seller_watch SET comps_resumed_at = now(), comps_resumed_reason = ${reason}, comps_resumed_by_user_id = ${a.ownerUserId}
+      WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
+  }
+  return false;
+}
+
 export async function sellerGatesInTx(tx: Tx, actor: SystemActor | UserActor, a: AssignmentRow, now: Instant, kind: SellerKind): Promise<SellerGates> {
   const codes: string[] = [];
   const subject = await currentSubjectInTx(tx, a.contactId, now);
@@ -58,7 +78,7 @@ export async function sellerGatesInTx(tx: Tx, actor: SystemActor | UserActor, a:
   const e = await mlsEligibility(tx, now);
   if (e.clientIds.length === 0) codes.push('MLS_CLIENT_DISPLAY_OFF');
   if (kind === 'comps') {
-    if (compsSuspended(watch)) codes.push('COMPS_SUSPENDED');
+    if (await compsSuspendedNowInTx(tx, actor, a, watch)) codes.push('COMPS_SUSPENDED');
     if (a.boundPoints.email === undefined) codes.push('NO_BOUND_EMAIL');
   }
   return { codes: [...new Set(codes)], subject, watch };
