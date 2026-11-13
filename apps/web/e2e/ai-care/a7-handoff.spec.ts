@@ -52,7 +52,9 @@ test('J1 E521: start (2 taps) → the AI message is labelled → AGENT → the h
   const pkg = await stack.sql<{ n: number; lines: number }>(`SELECT jsonb_array_length(package->'unansweredInbound') AS n, jsonb_array_length(package->'commitments') AS lines FROM ai_isa_handoffs WHERE contact_id = $1`, [lead.id]);
   if (pkg[0]!.n > 0) await expect(card).toContainText(/message(s)? from them (has|have) no answer/);
   else await expect(card).not.toContainText('no answer');
-  if (pkg[0]!.lines > 0) await expect(card).toContainText(/Lines the AI wrote with this handoff.*“.+”/);
+  // batch 13 isa-4 F8: the holding line it wrote with the handoff is on the card, asserted unconditionally
+  expect(pkg[0]!.lines, 'the handoff carries the line the AI wrote').toBeGreaterThan(0);
+  await expect(card).toContainText(/Lines the AI wrote with this handoff.*“.+”/);
   await expect(card.getByRole('timer')).toBeVisible();
   await expect(card).toContainText("Got it doesn't meet the deadline: a call, text or email to Jane from you or a collaborator does.");
   await expectNoCode(page);

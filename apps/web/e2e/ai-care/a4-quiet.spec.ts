@@ -1,6 +1,7 @@
 // a4-quiet (J5; E511; R-ISA-29): a lead whose explicit zone is in quiet hours writes; the reply waits. The panel says
 // "Next AI message planned for {viewer time} ({their time}, their time)" from the turn's not_before, in the viewer's
-// zone (never UTC), and the thread labels a scheduled AI message "Scheduled by … for {time}" when there is one.
+// zone (never UTC), and the thread labels the scheduled AI message "Scheduled by … for {time}" (both asserted, never
+// behind an if: batch 13 isa-4 F8).
 // Phone 390×844 and desktop 1440×900. Fakes only.
 import { expect, test } from 'playwright/test';
 import type { JourneyStack } from '../journeys/stack.js';
@@ -34,16 +35,18 @@ test('J5 E511: the planned next AI message is said in the viewer\'s time with th
   await signInAs(page, stack, w.agents[0]!);
   await page.goto(`${stack.webUrl}/contacts/${lead.id}`);
   const next = page.getByRole('region', { name: 'Next AI message' });
-  if (t[0]?.not_before && Date.parse(t[0].not_before) > Date.now()) {
-    await expect(next).toContainText(/Next AI message planned for .+ \(.+, their time\)/);
-    await expect(next).toContainText(/Next AI message planned for [^(]+ E[SD]T \(/);
-    await expect(next).not.toContainText('UTC');
-  }
+  // batch 13 isa-4 F8: the lead wrote inside closedZone(), so the reply waits: asserted, never skipped
+  expect(t[0]?.not_before, 'the reply turn waits for the window').toBeTruthy();
+  expect(Date.parse(t[0]!.not_before!)).toBeGreaterThan(Date.now());
+  await expect(next).toContainText(/Next AI message planned for .+ \(.+, their time\)/);
+  await expect(next).toContainText(/Next AI message planned for [^(]+ E[SD]T \(/);
+  await expect(next).not.toContainText('UTC');
   await expect(page.locator('main')).toContainText(`Their time zone was set on the person: ${lead.zone}`);
   expect(await axe(page)).toEqual([]);
   await page.goto(`${stack.webUrl}/contacts/${lead.id}/thread`);
   const scheduled = await stack.sql<{ id: string }>(`SELECT id FROM messages WHERE contact_id = $1 AND initiator = 'assistant' AND status = 'scheduled'`, [lead.id]);
-  if (scheduled.length > 0) await expect(page.locator(`li[id="${scheduled[0]!.id}"]`)).toContainText(/Scheduled by .*AI assistant for /);
+  expect(scheduled.length, 'the AI reply is a scheduled message').toBeGreaterThan(0);
+  await expect(page.locator(`li[id="${scheduled[0]!.id}"]`)).toContainText(/Scheduled by .*AI assistant for /);
   // every AI message the turns route covers reads as the AI assistant's, never as a person
   const ai = await stack.sql<{ id: string }>(`SELECT message_id AS id FROM ai_isa_turns WHERE contact_id = $1 AND message_id IS NOT NULL`, [lead.id]);
   for (const m of ai) await expect(page.locator(`li[id="${m.id}"]`)).toContainText(/(Sent|Scheduled|Queued|Written) by .*AI assistant/);
