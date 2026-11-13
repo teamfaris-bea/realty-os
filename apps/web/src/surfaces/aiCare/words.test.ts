@@ -9,8 +9,10 @@ import { errorMessages as shellMessages } from '../../shell/errorMessages.js';
 import { surface } from './index.js';
 import { HANDOFF_CLOSED_REASONS, SLA_CLASSES } from './api.js';
 import { isaContract } from './testing.js';
+import { escalationOf } from './Feed.js';
 import {
   ALWAYS_HUMAN,
+  CARE_STATE_WORDS,
   CLOSED_REASON_WORDS,
   SLA_HAS_DEADLINE,
   BLOCK_REASONS,
@@ -34,6 +36,8 @@ import {
   TURN_STATUSES,
   TURN_TRIGGERS,
   blockWords,
+  bookedWhen,
+  bookedWords,
   decisionCodeWords,
   endWords,
   escalationSentence,
@@ -69,6 +73,7 @@ const all = (): string[] => [
   ...Object.values(END_WORDS), ...Object.values(PAUSE_WORDS), ...Object.values(ESCALATION_WORDS).flatMap((e) => [e.topic, e.sentence]), ...Object.values(BLOCK_WORDS),
   ...Object.values(TRIGGER_WORDS), ...Object.values(STATUS_WORDS), ...Object.values(DECISION_CODE_WORDS), ...Object.values(CHAIN_CODE_WORDS), ...Object.values(NEXT_STEP_WORDS),
   ...Object.values(NOTE_WORDS), ...Object.values(CONFIRMATION_WORDS), ...Object.values(ISA_ERROR_MESSAGES), ...Object.values(TEAM_PAGE_MESSAGES),
+  ...Object.values(CARE_STATE_WORDS), ...(['booked_after_end', 'booked_not_handed_back'] as const).flatMap((t) => [bookedWords(t, null), bookedWords(t, 'Tue Nov 17, 3:00–3:30 PM ET')]),
 ];
 
 describe('R-ISA-22 words (module 76)', () => {
@@ -115,6 +120,20 @@ describe('R-ISA-22 words (module 76)', () => {
     expect(noteWords('IN_FLIGHT:01900000-0000-7000-8000-000000000001')).not.toMatch(/0190/);
     expect(noteWords('CONFIRMATION_NOT_SENT')).toMatch(/confirm by hand/);
     expect(noteWords('SOMETHING_NEW')).toBe(OTHER_CHECK);
+  });
+
+  it('R-ISA-22 (batch 13 isa-4 F1): every booking card code ISA-2b writes has its own words, and the booked time comes from its sentence', () => {
+    const book = readFileSync(join(ROOT, 'apps/api/src/isa/booking/book.ts'), 'utf8');
+    const codes = [...new Set([...book.matchAll(/'(AI_ISA_BOOKED_[A-Z_]+)'/g)].map((m) => m[1]!))].sort();
+    expect(codes).toEqual(['AI_ISA_BOOKED_AFTER_END', 'AI_ISA_BOOKED_NOT_HANDED_BACK']);
+    for (const c of codes) expect(escalationOf({ reasons: [{ code: c, label: 'x' }] }).type, c).not.toBeNull();
+    expect(escalationOf({ reasons: [{ code: 'AI_ISA_BRAND_NEW', label: 'x' }] }).type).toBeNull();
+    // the sentence the time is read from (bookedCardInTx)
+    expect(book).toContain('`Booked ${when} after AI care ended; the confirmation was not sent: confirm or cancel it yourself.`');
+    expect(bookedWhen('Booked Tue Nov 17, 3:00–3:30 PM ET after AI care ended; the confirmation was not sent: confirm or cancel it yourself.')).toBe('Tue Nov 17, 3:00–3:30 PM ET');
+    expect(bookedWhen('Booked the agreed time after AI care ended; the confirmation was not sent.')).toBeNull();
+    expect(bookedWhen('Something else')).toBeNull();
+    expect(bookedWords('booked_not_handed_back', null)).not.toMatch(/ended|paused/);
   });
 
   it('R-ISA-22: no sentence matches a code pattern, and an unknown code becomes "Another check"', () => {

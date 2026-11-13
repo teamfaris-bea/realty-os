@@ -20,7 +20,7 @@ import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useViewer } from './Controls.js';
 import { localTime } from './time.js';
-import { SLA_HAS_DEADLINE, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, bookedWhen, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -107,17 +107,26 @@ function ActivityBody({ card, row }: { card: FeedCard; row: ListRow | null }) {
   );
 }
 
-/** "AI_ISA_HOLD_TOPIC:pricing_negotiation" → { type, class } */
-export function escalationOf(card: Pick<FeedCard, 'reasons'>): { type: 'hold_topic' | 'check_this' | null; cls: string } {
-  const code = card.reasons.find((r) => r.code.startsWith('AI_ISA_'))?.code ?? '';
+export type EscalationType = 'hold_topic' | 'check_this' | 'booked_after_end' | 'booked_not_handed_back' | null;
+
+/**
+ * "AI_ISA_HOLD_TOPIC:pricing_negotiation" → { type, class }. ISA-2b's booking cards (isa/booking/book.ts bookedCardInTx)
+ * carry AI_ISA_BOOKED_AFTER_END or AI_ISA_BOOKED_NOT_HANDED_BACK with the booked time in their sentence (batch 13 isa-4
+ * F1); any other code is an unknown check (type null), said as "Another check" with no claim.
+ */
+export function escalationOf(card: Pick<FeedCard, 'reasons'>): { type: EscalationType; cls: string; when: string | null } {
+  const r = card.reasons.find((x) => x.code.startsWith('AI_ISA_'));
+  const code = r?.code ?? '';
+  if (code === 'AI_ISA_BOOKED_AFTER_END') return { type: 'booked_after_end', cls: '', when: bookedWhen(r?.label) };
+  if (code === 'AI_ISA_BOOKED_NOT_HANDED_BACK') return { type: 'booked_not_handed_back', cls: '', when: bookedWhen(r?.label) };
   const m = /^AI_ISA_(HOLD_TOPIC|CHECK_THIS):([a-z_]+)$/.exec(code);
-  return m ? { type: m[1] === 'HOLD_TOPIC' ? 'hold_topic' : 'check_this', cls: m[2]! } : { type: null, cls: '' };
+  return m ? { type: m[1] === 'HOLD_TOPIC' ? 'hold_topic' : 'check_this', cls: m[2]!, when: null } : { type: null, cls: '', when: null };
 }
 
 function EscalationBody({ card, viewer, ownerName }: { card: FeedCard; viewer: ViewerInfo; ownerName: string | null }) {
   const contactId = card.contact?.id ?? '';
   const panel = usePanel(contactId);
-  const { type, cls } = escalationOf(card);
+  const { type, cls, when } = escalationOf(card);
   const resolve = useIsaAction<{ class: string }, { cleared: string }>('POST', { kind: 'resolve', contactId });
   const [line, setLine] = useState<string | null>(null);
   const p = panel.data;
@@ -147,6 +156,31 @@ function EscalationBody({ card, viewer, ownerName }: { card: FeedCard; viewer: V
         ) : null}
         {target && !ended ? <AiCareControls target={target} /> : null}
         {line ? <p className="text-[14px]">{line}</p> : null}
+        <OpenThread contactId={contactId} />
+      </>
+    );
+  if (type === 'booked_after_end' || type === 'booked_not_handed_back') {
+    // batch 13 isa-4 F1: what was booked and where to confirm or cancel it; the state care is in comes from the panel
+    // (care ended before the booking, or the booking paused it), never assumed
+    const state = p ? stateOfPanel(p) : null;
+    const now = state === null || (type === 'booked_after_end' && state === 'ended') ? null : CARE_STATE_WORDS[state];
+    return (
+      <>
+        <p className="text-[15px] text-ink">{bookedWords(type, when)}</p>
+        {now ? <p className="text-[15px] text-ink">{now}</p> : null}
+        <Link to="/tasks" className="inline-flex min-h-tap items-center text-[15px] font-medium text-accent underline">
+          Confirm or cancel it in Tasks
+        </Link>
+        {target && !ended ? <AiCareControls target={target} /> : null}
+        <OpenThread contactId={contactId} />
+      </>
+    );
+  }
+  if (type === null)
+    return (
+      <>
+        <p className="text-[15px] text-ink">{OTHER_CHECK}.</p>
+        {target && !ended ? <AiCareControls target={target} /> : null}
         <OpenThread contactId={contactId} />
       </>
     );

@@ -129,6 +129,29 @@ export const escalationSentence = (c: string) => (ESCALATION_WORDS as Record<str
 export const endWords = (r: string | null | undefined) => (r ? ((END_WORDS as Record<string, string>)[r] ?? OTHER_CHECK) : OTHER_CHECK);
 export const pauseWords = (r: string | null | undefined) => (r ? ((PAUSE_WORDS as Record<string, string>)[r] ?? OTHER_CHECK) : OTHER_CHECK);
 
+// ---- ISA-2b's booking cards (isa/booking/book.ts bookedCardInTx; batch 13 isa-4 F1) ---------------------------------
+
+/**
+ * The booked time from the card's own sentence ("Booked {time} after AI care ended; …"): core formatSlot's line in the
+ * organizer's zone with its zone label. Null when the sentence has no time (the API's "the agreed time") or changed.
+ */
+export function bookedWhen(label: string | null | undefined): string | null {
+  const t = /^Booked (.+?) after AI care ended;/.exec(label ?? '')?.[1] ?? null;
+  return t === null || t === 'the agreed time' ? null : t;
+}
+/** What a booking card says: AFTER_END is a booking after care ended; NOT_HANDED_BACK is one care did not hand back (it pauses care). */
+export function bookedWords(type: 'booked_after_end' | 'booked_not_handed_back', when: string | null): string {
+  const at = when ? ` for ${when}` : '';
+  const then = 'The confirmation was not sent: confirm or cancel it yourself.';
+  return type === 'booked_after_end' ? `An appointment was booked${at} after AI care ended. ${then}` : `An appointment was booked${at}. ${then}`;
+}
+/** The state care is in now, from the panel (never assumed from a card). */
+export const CARE_STATE_WORDS: Record<'live' | 'paused' | 'ended', string> = {
+  live: 'AI care is on.',
+  paused: 'AI care is paused, so nobody is following up automatically.',
+  ended: 'AI care has ended.',
+};
+
 /** A handoff reason is an end reason; an escalation handoff may carry the class instead. */
 export function handoffWhy(reason: string, escalation?: string | null): string {
   if (escalation) return escalationSentence(escalation);

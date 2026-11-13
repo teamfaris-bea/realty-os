@@ -95,6 +95,36 @@ describe('AI care feed cards (module 76)', () => {
     expect(fake.callsTo(`POST /ai-isa/escalations/${ISA_IDS.assignment}/resolve`)[0]!.body).toEqual({ class: 'pricing_negotiation' });
   });
 
+  it('E521 (batch 13 isa-4 F1): a booked-after-end card says care ended and an appointment was booked, with the time and where to confirm or cancel it; never "AI care is paused"', async () => {
+    const label = 'Booked Tue Nov 17, 3:00–3:30 PM ET after AI care ended; the confirmation was not sent: confirm or cancel it yourself.';
+    const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_BOOKED_AFTER_END', label }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    isaApp(feedOf([esc]).on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel({ state: 'ended' }) }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_escalation');
+    expect(await within(c).findByText('An appointment was booked for Tue Nov 17, 3:00–3:30 PM ET after AI care ended. The confirmation was not sent: confirm or cancel it yourself.')).toBeInTheDocument();
+    expect(within(c).getByRole('link', { name: 'Confirm or cancel it in Tasks' })).toHaveAttribute('href', '/tasks');
+    expect(c.textContent).not.toMatch(/AI care is paused|something to check|Check this/);
+    expect(c.textContent).not.toMatch(/\b[A-Z]{2,}_[A-Z_]+\b/);
+  });
+
+  it('E521 (batch 13 isa-4 F1): a booked-not-handed-back card says an appointment was booked and the state care is in now, never that care ended', async () => {
+    const label = 'Booked Tue Nov 17, 3:00–3:30 PM ET after AI care ended; the confirmation was not sent: confirm or cancel it yourself.';
+    const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_BOOKED_NOT_HANDED_BACK', label }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    isaApp(feedOf([esc]).on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel({ state: 'paused', pauseReason: 'check_this' } as never) }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_escalation');
+    expect(await within(c).findByText('An appointment was booked for Tue Nov 17, 3:00–3:30 PM ET. The confirmation was not sent: confirm or cancel it yourself.')).toBeInTheDocument();
+    expect(await within(c).findByText('AI care is paused, so nobody is following up automatically.')).toBeInTheDocument();
+    expect(within(c).getByRole('link', { name: 'Confirm or cancel it in Tasks' })).toHaveAttribute('href', '/tasks');
+    expect(c.textContent).not.toMatch(/after AI care ended|something to check|Check this/);
+  });
+
+  it('R-ISA-22 (batch 13 isa-4 F1): an unknown escalation code reads "Another check." with no claim that care is paused', async () => {
+    const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_BRAND_NEW', label: 'x' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    isaApp(feedOf([esc]), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_escalation');
+    expect(await within(c).findByText('Another check.')).toBeInTheDocument();
+    expect(c.textContent).not.toMatch(/AI care is paused|something to check/);
+  });
+
   it('R-ISA-3: the activity card says what happens to their reply only while care is live', async () => {
     const act = card({ itemType: 'ai_isa_activity', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_ACTIVITY', label: 'x' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
     const v = isaApp(feedOf([act], { live: true }), '/', 'agent');
