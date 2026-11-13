@@ -63,13 +63,14 @@ describe('Integrations page', () => {
     expect(screen.queryByText(/Meta messaging/)).toBeNull();
   });
 
-  it('b10 review api-ui/F3 D9: the platform:cma pack is named, never "Another feature", and its line says client CMAs are not built in this version', async () => {
+  it('b10 review api-ui/F3 D9, b13 audit V2B-1: the platform:cma pack is named for what is built behind it, never "Another feature" or "a later version", and shows the API\'s line as sent', async () => {
     const body = integrations();
-    const sentence = 'Client CMAs and seller value ranges: not built in this version, so nothing built from MLS sales reaches a client; they would also wait for counsel review (pack 2026.11.0, not yet reviewed).';
+    const sentence = 'Client CMAs, seller value ranges and in-house home-value notes stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed). In-house home-value notes also need the Home-value notes pack (not reviewed yet).';
     body.platformPacks.push({ key: 'platform:cma', version: '2026.11.0', reviewed: false, sentence });
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body }), PAGE_PATH);
     const section = (await screen.findByRole('heading', { level: 2, name: 'Counsel review' })).closest('section')!;
-    expect(within(section).getByText('Client CMAs and seller value ranges (a later version)')).toBeInTheDocument();
+    expect(within(section).getByText('Client CMAs, seller value ranges and in-house home-value notes')).toBeInTheDocument();
+    expect(within(section).queryByText(/a later version/)).toBeNull();
     expect(within(section).getByText(sentence)).toBeInTheDocument();
     expect(within(section).queryByText('Another feature')).toBeNull();
   });

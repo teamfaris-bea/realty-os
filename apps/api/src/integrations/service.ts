@@ -121,7 +121,7 @@ export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters, ml
       sentence: serviceSentence(s, adapters, mls),
       connections: rows.filter((r) => r.kind === s.kind).map((r) => connectionView(r, packs)),
     })),
-    platformPacks: packs.map((p) => ({ key: p.key, version: p.version, reviewed: p.reviewedByCounselAt !== null, sentence: packSentence(p) })),
+    platformPacks: packs.map((p) => ({ key: p.key, version: p.version, reviewed: p.reviewedByCounselAt !== null, sentence: packSentence(p, packs) })),
     perUser: PER_USER_SERVICES.map((x) => ({ ...x })),
   };
 }

@@ -9,8 +9,9 @@ export const LEAD_SOURCES_PAGE_PATH = '/admin/lead-sources';
 
 /**
  * platform:* review pack → what waits on it (mirrors the API catalog's PACK_GATES, checked by words.test.ts; unknown
- * keys get a generic name; batch 11 sends-gates/F5, api-ui/F6). platform:meta is never shown (D2). platform:cma's
- * capability is V2's (D9: V1 shares nothing), so its name says so (batch 10 review api-ui/F3).
+ * keys get a generic name; batch 11 sends-gates/F5, api-ui/F6). platform:meta is never shown (D2). platform:cma names
+ * everything built behind it since batch 13 (V2-A client CMAs, V2-B seller value ranges and in-house notes), the API
+ * catalog's own words, with no "(a later version)" (b13 audit V2B-1; batch 10 review api-ui/F3 named it for V1).
  */
 const PACK_NAMES: Record<string, string> = {
   'platform:fair_housing': 'Publishing marketing (fair-housing rules)',
@@ -20,7 +21,7 @@ const PACK_NAMES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
-  'platform:cma': 'Client CMAs and seller value ranges (a later version)',
+  'platform:cma': 'Client CMAs, seller value ranges and in-house home-value notes',
   'platform:ads': 'Google Ads budget changes',
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
   'platform:gbp': 'Google Business Profile',

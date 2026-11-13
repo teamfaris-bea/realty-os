@@ -27,6 +27,11 @@ interface View {
   platformPacks: { key: string; reviewed: boolean; sentence: string }[];
 }
 
+/** b13 audit V2B-1: the platform:cma name, and the clause each of the two home-value packs adds about the other. */
+const CMA_LINE = 'Client CMAs, seller value ranges and in-house home-value notes';
+const CMA_ALSO = 'In-house home-value notes also need the Home-value notes pack';
+const AVM_ALSO = 'In-house home-value notes from recent MLS sales also need the Client CMAs, seller value ranges and in-house home-value notes pack';
+
 async function list(c: TestClient = owner): Promise<View> {
   return (await call<View>(c, 'GET', '/admin/integrations')).body;
 }
@@ -74,21 +79,29 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);
-      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : p.key === 'platform:cma' || p.key === 'platform:ai_isa_seller_data' ? /would also wait for counsel review \(pack \S+, not yet reviewed\)\.$/ : / stays off: awaiting counsel review/);
+      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : p.key === 'platform:ai_isa_seller_data' ? /would also wait for counsel review \(pack \S+, not yet reviewed\)\.$/ : / stays off: awaiting counsel review/);
     }
-    // module 71 (D9, F8): the platform:cma pack names what waits on it; b10 review api-ui/F3: and says that V1 has none
-    // of it, so neither its review state nor a later clearance reads as client CMAs being available
-    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toBe('Client CMAs, seller value ranges and in-house home-value notes: not built in this version, so nothing built from MLS sales reaches a client; they would also wait for counsel review (pack 2026.11.0, not yet reviewed).');
+    // module 71 (D9, F8): the platform:cma pack names what waits on it. Batch 13 (V2-A, V2-B) builds all three, so the
+    // line no longer says "not built" (b13 audit V2B-1, Honest UI), and it names the second pack in-house notes need
+    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toBe(`${CMA_LINE} stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed). ${CMA_ALSO} (not reviewed yet).`);
+    expect(v.platformPacks.find((p) => p.key === 'platform:avm')!.sentence).toMatch(new RegExp(`^Home-value notes stays off: awaiting counsel review \\(pack \\S+, not yet reviewed\\)\\. ${AVM_ALSO} \\(not reviewed yet\\)\\.$`));
   });
 
-  it('b10 review api-ui/F3 D9: once counsel review of platform:cma is recorded, its line still says client CMAs are not built in this version', async () => {
+  it('b13 audit V2B-1 R-CMA-10 R-INT-6 D9: once counsel review of platform:cma is recorded, its line says cleared (client CMAs, seller value ranges and in-house notes are built) and that in-house notes also wait for platform:avm; platform:avm cleared alone says in-house notes also wait for platform:cma', async () => {
+    const pack = async (key: string) => (await list()).platformPacks.find((x) => x.key === key)!;
     try {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-11-12T00:00:00Z' WHERE key = 'platform:cma' AND status = 'published'");
-      const p = (await list()).platformPacks.find((x) => x.key === 'platform:cma')!;
-      expect(p).toMatchObject({ reviewed: true, sentence: 'Client CMAs, seller value ranges and in-house home-value notes: not built in this version, so nothing built from MLS sales reaches a client; counsel reviewed the pack on 2026-11-12 (pack 2026.11.0).' });
-      expect(p.sentence).not.toMatch(/cleared/);
-    } finally {
+      const p = await pack('platform:cma');
+      expect(p).toMatchObject({ reviewed: true, sentence: `${CMA_LINE}: cleared by counsel on 2026-11-12 (pack 2026.11.0). ${CMA_ALSO} (not reviewed yet).` });
+      expect(p.sentence).not.toMatch(/not built|nothing built from MLS sales reaches a client/);
+      expect((await pack('platform:avm')).sentence).toMatch(new RegExp(`${AVM_ALSO}, which counsel reviewed on 2026-11-12\\.$`));
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-11-13T00:00:00Z' WHERE key = 'platform:avm' AND status = 'published'");
+      expect((await pack('platform:cma')).sentence).toBe(`${CMA_LINE}: cleared by counsel on 2026-11-12 (pack 2026.11.0). ${CMA_ALSO}, which counsel reviewed on 2026-11-13.`);
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma' AND status = 'published'");
+      // platform:avm alone: "cleared", and never without saying that in-house notes (production's source) also wait for platform:cma
+      expect((await pack('platform:avm')).sentence).toMatch(new RegExp(`^Home-value notes: cleared by counsel on 2026-11-13 \\(pack \\S+\\)\\. ${AVM_ALSO} \\(not reviewed yet\\)\\.$`));
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key IN ('platform:cma', 'platform:avm') AND status = 'published'");
     }
   });
 

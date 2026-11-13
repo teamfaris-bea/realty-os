@@ -52,8 +52,12 @@ describe('pack names (R-INT-6)', () => {
     expect(packName('platform:ai_isa_seller_data')).toBe("The assistant's recent-sales emails (a later version)");
   });
 
-  it('D9: platform:cma is named for what waits on it, and says it is not in this version (V1 shares nothing)', () => {
-    expect(packName('platform:cma')).toBe('Client CMAs and seller value ranges (a later version)');
+  it('D9 R-CMA-10 b13 audit V2B-1: platform:cma is named for everything built behind it (V2-A client CMAs, V2-B seller value ranges and in-house notes), never "a later version", and matches the API catalog\'s line', () => {
+    expect(packName('platform:cma')).toBe('Client CMAs, seller value ranges and in-house home-value notes');
+    expect(keysOf('NOT_BUILT_PACKS')).not.toContain('platform:cma');
+    const start = catalog.indexOf('export const PACK_GATES');
+    const line = catalog.slice(start, catalog.indexOf('};', start)).match(/^\s*'platform:cma': '([^']*)'/m)![1];
+    expect(packName('platform:cma')).toBe(line);
   });
 });
 

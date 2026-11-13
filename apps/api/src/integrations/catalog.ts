@@ -124,13 +124,14 @@ export const VENDOR_CHECKED_PACKS: readonly string[] = ['platform:voice', 'platf
 export const NEVER_CLEARED_PACKS: readonly string[] = ['platform:meta'];
 
 /**
- * Packs whose capability is not built in this version (D9: V1 shares nothing built from MLS sales; client CMAs and
- * seller value ranges are V2's), with why nothing reaches a client. Their line never reads "stays off" or "cleared", so
- * neither the review state nor a recorded clearance reads as the capability being available (batch 10 review
- * api-ui/F3). The web names them in apps/web/src/surfaces/admin/integrations/words.ts PACK_NAMES.
+ * Packs whose capability is not built in this version, with why nothing reaches a client. Their line never reads
+ * "stays off" or "cleared", so neither the review state nor a recorded clearance reads as the capability being
+ * available (batch 10 review api-ui/F3). The web names them in apps/web/src/surfaces/admin/integrations/words.ts
+ * PACK_NAMES. platform:cma left this list in batch 13 (b13 audit V2B-1): V2-A builds client CMAs (the share email and
+ * its PDF) and V2-B builds seller value ranges and in-house home-value notes, all behind it, so its line says
+ * "stays off" until counsel review is recorded and "cleared" after, as any built capability's does.
  */
 export const NOT_BUILT_PACKS: Readonly<Record<string, string>> = {
-  'platform:cma': 'nothing built from MLS sales reaches a client',
   // b12 review ui-pack-isa-1/ui-2 (D12 proposed): the assistant's recent-sales emails are ISA-3's; nothing in this
   // version writes a shared sold fact, and the guard also needs platform:cma (0080 ISA_SELLER_DATA_NOT_CLEARED)
   'platform:ai_isa_seller_data': 'no recent sales are emailed to a seller',
@@ -154,6 +155,16 @@ export const PACK_GATES: Record<string, string> = {
   'platform:ai_isa': "The assistant's ISA texts and emails",
   'platform:ai_isa_seller_data': "The assistant's recent-sales emails",
   'platform:gbp': 'Google Business Profile',
+};
+
+/**
+ * b13 audit V2B-1 (R-CMA-10, R-INT-6): in-house home-value notes (production's AvmProvider, InHouseAvm) need both
+ * platform:avm and platform:cma, so each pack's line names the other and says whether counsel has reviewed it. Without
+ * it, "Home-value notes: cleared" (platform:avm alone) would read as notes going out while InHouseAvm requests nothing.
+ */
+export const PACK_ALSO_NEEDS: Readonly<Record<string, { pack: string; what: string }>> = {
+  'platform:cma': { pack: 'platform:avm', what: 'In-house home-value notes' },
+  'platform:avm': { pack: 'platform:cma', what: 'In-house home-value notes from recent MLS sales' },
 };
 
 /**
@@ -186,9 +197,20 @@ export const PER_USER_SERVICES = [
 /**
  * The pack's state in words, matching what the database clears (`app.platform_cleared`, R-INT-6): it says
  * "cleared" only when the pack is, so a vendor-checked pack stays off until `rules.vendor_ready_at` is set even
- * after counsel review, and a never-cleared pack (D2) never reads as awaiting review or as cleared.
+ * after counsel review, and a never-cleared pack (D2) never reads as awaiting review or as cleared. A pack in
+ * PACK_ALSO_NEEDS adds the second pack its capability needs, with that pack's review state when `all` holds it.
  */
-export function packSentence(p: PlatformPack): string {
+export function packSentence(p: PlatformPack, all: readonly PlatformPack[] = []): string {
+  const base = packStateSentence(p);
+  const also = PACK_ALSO_NEEDS[p.key];
+  if (also === undefined) return base;
+  const other = all.find((x) => x.key === also.pack);
+  const otherName = PACK_GATES[also.pack] ?? also.pack;
+  const state = other === undefined ? ' reviewed by counsel' : other.reviewedByCounselAt === null ? ' (not reviewed yet)' : `, which counsel reviewed on ${other.reviewedByCounselAt.slice(0, 10)}`;
+  return `${base} ${also.what} also need the ${otherName} pack${state}.`;
+}
+
+function packStateSentence(p: PlatformPack): string {
   const what = PACK_GATES[p.key] ?? 'This capability';
   const reviewedOn = p.reviewedByCounselAt === null ? null : p.reviewedByCounselAt.slice(0, 10);
   if (NEVER_CLEARED_PACKS.includes(p.key)) {
