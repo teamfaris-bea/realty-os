@@ -430,7 +430,9 @@ export async function prepare(tx: Tx, actor: UserActor, now: Instant, b: Prepare
   if (b.subject.kind === 'contact_address' && contactId === null) throw new AppError('VALIDATION_FAILED', { reason: 'CONTACT_REQUIRED' });
   const { write } = await compute(tx, now, { subject: b.subject, contactId, purpose: b.purpose, inspection: b.inspection ?? 'none', inspectedOn: b.inspectedOn ?? null, notes: null, disclosure: NO_DISCLOSURE, include: [], exclude: [], nearMatchDismissed: [] });
   // an explicit prepare supersedes the caller's open drafts for this contact and address, a draft whose address was
-  // deleted and put back included (F15: one open draft per home)
+  // deleted and put back included (F15: on one record, one open draft per address row; an entered or listing subject
+  // names none, so its draft and a one-tap draft of an address row at the same street both stay open, b11 merge review
+  // F2); on the person's other records the home is the address key (supersedeMergedAwayDrafts, cma/merge.ts)
   if (contactId !== null) {
     for (const d of await myOpenDrafts(tx, contactId, write.contactAddressId)) await supersede(tx, d.id);
     await supersedeMergedAwayDrafts(tx, contactId, write);
