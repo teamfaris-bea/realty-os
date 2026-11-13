@@ -12,6 +12,7 @@
 // messages, so a re-run never re-sends (E7); the reconcile and copy steps check state under lock.
 import { jobPayload, zId } from '../worker/payload.js';
 import { COMMS_DISPATCH, COMMS_RECONCILE, type MessagePayload } from '../worker/contracts.js';
+import type { AlertSink } from '../worker/observability.js';
 import type { JobHandler, StandaloneJobHandler } from '../worker/types.js';
 import { z } from 'zod';
 import { dispatchOutbound, reconcileOutbound } from './dispatch.js';
@@ -28,6 +29,21 @@ type DepsFor = (providers: Providers) => CommsDeps;
 
 const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers });
 
+/** The error's name and code only (a Postgres SQLSTATE, a crypto code): never its message, which may quote a value. */
+const faultCode = (e: unknown): string => {
+  const x = e as { name?: unknown; code?: unknown } | null;
+  const name = typeof x?.name === 'string' && /^[A-Za-z]{1,60}$/.test(x.name) ? x.name : 'Error';
+  const code = typeof x?.code === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(x.code) ? `:${x.code}` : '';
+  return `${name}${code}`;
+};
+
+/** b14: a fault comms turns into a recorded outcome (a sign-in link seal that cannot be read) pages through the job's
+ *  alert sink (WORKER_ERROR, codes only), unless the deps already carry a reporter. */
+function reporting(d: CommsDeps, ctx: { alerts: AlertSink; actor: { tenantId: string } }): CommsDeps {
+  if (d.errorReporter) return d;
+  return { ...d, errorReporter: { capture: (e, c) => ctx.alerts.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: ctx.actor.tenantId, details: { step: c?.code ?? 'comms', error: faultCode(e) } }) } };
+}
+
 export function dispatchHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHandler<MessagePayload> {
   return {
     kind: COMMS_DISPATCH.kind,
@@ -37,7 +53,7 @@ export function dispatchHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHa
     via: 'worker',
     schema: COMMS_DISPATCH.schema,
     async run(ctx, p) {
-      const r = await dispatchOutbound(p.messageId, depsFor(ctx.providers), { tenantId: ctx.actor.tenantId });
+      const r = await dispatchOutbound(p.messageId, reporting(depsFor(ctx.providers), ctx), { tenantId: ctx.actor.tenantId });
       if (r.kind === 'not_due') return { retryAt: r.due };
       ctx.log.info('dispatch', { kind: COMMS_DISPATCH.kind, jobId: ctx.job.id.toString(), code: r.kind });
     },
@@ -53,7 +69,7 @@ export function reconcileHandler(depsFor: DepsFor = defaultDeps): StandaloneJobH
     via: 'provider',
     schema: COMMS_RECONCILE.schema,
     async run(ctx, p) {
-      const r = await reconcileOutbound(p.messageId, depsFor(ctx.providers), ctx.actor.tenantId);
+      const r = await reconcileOutbound(p.messageId, reporting(depsFor(ctx.providers), ctx), ctx.actor.tenantId);
       if (r.kind === 'retry') return { retryAt: r.at };
     },
   };

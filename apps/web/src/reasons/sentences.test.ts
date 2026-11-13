@@ -162,6 +162,24 @@ describe('provider codes from the real adapters (Twilio, SMTP, SES, Mailgun)', (
   });
 });
 
+describe('module 45 sign-in links (b14 to-do): a link that never reached a provider is never worded as a provider rejection', () => {
+  it('PORTAL_LINK_UNAVAILABLE (the seal expired or is gone) says nothing was sent because the link had expired, by email and by text', () => {
+    for (const channel of ['email', 'sms']) {
+      // the server records no provider code; an older row may still carry the reason as its provider code
+      for (const providerErrorCode of [null, 'PORTAL_LINK_UNAVAILABLE']) {
+        const line = messageStatus({ status: 'failed', statusReason: 'PORTAL_LINK_UNAVAILABLE', providerErrorCode, channel }, 'Gus');
+        expect(line).toEqual({ text: 'Not sent: the sign-in link had expired, so nothing was sent. They can ask for a new one.', tone: 'failed' });
+        expect(line!.text).not.toMatch(/rejected|carrier|provider/);
+      }
+    }
+  });
+  it('PORTAL_LINK_SEAL_ERROR (the link could not be read) says nothing was sent and that the error was reported', () => {
+    for (const channel of ['email', 'sms']) {
+      expect(messageStatus({ status: 'failed', statusReason: 'PORTAL_LINK_SEAL_ERROR', providerErrorCode: null, channel }, 'Gwen')).toEqual({ text: "Not sent: the sign-in link couldn't be read, so nothing was sent. The error was reported.", tone: 'failed' });
+    }
+  });
+});
+
 describe('telephony safeguards (lane telephony-safeguards): the sentences the agent sees', () => {
   it('R-TWL-1: a text the kill switch refused says exactly "Live texting and calling are off on this deployment."', () => {
     expect(messageStatus({ status: 'failed', statusReason: 'TELEPHONY_LIVE_OFF', providerErrorCode: 'TELEPHONY_LIVE_OFF', channel: 'sms' }, 'Ana')).toEqual({ text: 'Live texting and calling are off on this deployment.', tone: 'failed' });

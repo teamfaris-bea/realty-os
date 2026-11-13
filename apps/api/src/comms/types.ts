@@ -4,6 +4,7 @@ import type { ActionCategory, Channel, GateDecision, Initiator, Purpose } from '
 import type { IdGenerator, Instant } from '@realty/core/foundation';
 import type { Database } from '@realty/db';
 import type { EnvelopeService } from '../crypto/envelope.js';
+import type { ErrorReporter } from '../observability/errors.js';
 import type { Providers } from '../providers/index.js';
 
 /**
@@ -26,6 +27,12 @@ export interface CommsDeps {
   telephonyDailyCap?: boolean;
   /** R-ISA-25: AI_ISA_LIVE_SENDS=false refuses AI ISA messages on a non-fake adapter of that channel (fakes are unaffected). */
   aiIsaLiveOff?: { sms: boolean; email: boolean };
+  /**
+   * Where comms reports a fault it turns into a recorded outcome instead of throwing (b14: a sign-in link seal that
+   * cannot be read fails PORTAL_LINK_SEAL_ERROR and is reported here). The API passes the platform's error reporter;
+   * the comms worker handlers raise a WORKER_ERROR alert. Codes and ids only in the context, never message content.
+   */
+  errorReporter?: Pick<ErrorReporter, 'capture'>;
 }
 
 /** What a send-time gate evaluation is about (buildGateInput). Never carries a plaintext address. */

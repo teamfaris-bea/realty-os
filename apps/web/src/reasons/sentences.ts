@@ -319,6 +319,9 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
       if (reason === 'TELEPHONY_LIVE_OFF') return { text: 'Live texting and calling are off on this deployment.', tone: 'failed' };
       if (reason === 'SENDER_NOT_VERIFIED') return { text: "Not delivered: the team's number isn't verified for texting. The Owner has been told.", tone: 'failed' };
       if (m.status === 'failed' && reason === 'MEDIA_UNAVAILABLE') return { text: 'Not sent: the photos or videos were no longer available', tone: 'failed' };
+      // module 45 (b14): a client's sign-in link that failed before any provider was called, never worded as a rejection
+      if (m.status === 'failed' && reason === 'PORTAL_LINK_UNAVAILABLE') return { text: 'Not sent: the sign-in link had expired, so nothing was sent. They can ask for a new one.', tone: 'failed' };
+      if (m.status === 'failed' && reason === 'PORTAL_LINK_SEAL_ERROR') return { text: "Not sent: the sign-in link couldn't be read, so nothing was sent. The error was reported.", tone: 'failed' };
       // module 22: a chat reply is delivered by the website chat, not a carrier
       const service = ch === 'email' ? 'email service' : ch === 'web_chat' ? 'website chat' : 'phone service';
       const rejected = ch === 'email' ? 'the email service rejected it' : ch === 'web_chat' ? "the website chat couldn't deliver it" : 'the carrier rejected it';

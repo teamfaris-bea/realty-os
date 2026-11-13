@@ -407,33 +407,49 @@ type SendOutcome = { ok: true; provider: 'telephony' | 'email' | 'web_chat'; ref
 
 /** The failure reason of a link whose seal is gone (expired after 15 minutes, or deleted): nothing is sent. */
 export const PORTAL_LINK_UNAVAILABLE = 'PORTAL_LINK_UNAVAILABLE';
+/** The failure reason of a link whose seal could not be read (a database, key or decryption fault, not an expiry):
+ *  nothing is sent, and the fault is reported (b14: never recorded like an expired link, never silent). */
+export const PORTAL_LINK_SEAL_ERROR = 'PORTAL_LINK_SEAL_ERROR';
+/** Failures decided here before any provider was called: recorded with no provider_error_code (honest UI, b14). */
+const LOCAL_LINK_FAILURES: ReadonlySet<string> = new Set([PORTAL_LINK_UNAVAILABLE, PORTAL_LINK_SEAL_ERROR]);
 /** The envelope AAD of a sealed link: bound to its message, so a copy moved to another message does not open. */
 export const portalLinkSealAad = (messageId: string) => ({ table: 'portal_link_seals', column: 'url_enc', rowId: messageId });
 /** The text the client gets: the stored line, then the link (its own paragraph in an email). */
 export const renderSealedLink = (line: string, url: string, channel: 'sms' | 'email'): string => (channel === 'email' ? `${line}\n\n${url}` : `${line} ${url}`);
 
-/** The text a provider sends (or a reconcile looks up) for `m`: its body, or for a sign-in link the rendered link; null
- *  when the link's seal cannot be read (gone, expired, not this message's: never sent without its link). */
-async function providerText(deps: CommsDeps, tenantId: string, m: msgs.MessageRow): Promise<string | null> {
-  if (m.actionCategory !== 'portal_login_link') return m.body;
+/** The text a provider sends (or a reconcile looks up) for `m`: its body, or for a sign-in link the rendered link.
+ *  unavailable: the seal is gone, expired, or not this message's (never sent without its link). error: the seal could
+ *  not be read (b14: reported through deps.errorReporter, code and message id only; never swallowed as an expiry). */
+async function providerText(deps: CommsDeps, tenantId: string, m: msgs.MessageRow): Promise<{ kind: 'text'; text: string } | { kind: 'unavailable' } | { kind: 'error' }> {
+  if (m.actionCategory !== 'portal_login_link') return { kind: 'text', text: m.body };
+  let url: string | null;
   try {
-    const url = await asSystem(deps, tenantId, 'worker', async (tx) => {
+    url = await asSystem(deps, tenantId, 'worker', async (tx) => {
       const r = await sql<{ c: Uint8Array | null }>`SELECT portal.link_for_send(${m.id}::uuid) AS c`.execute(tx);
       const sealed = r.rows[0]?.c ?? null;
       if (sealed === null) return null;
       const t = tenantId as TenantId;
       return Buffer.from(await deps.envelope.inTx(tx, t).decrypt(t, portalLinkSealAad(m.id), new Uint8Array(sealed))).toString('utf8');
     });
-    return url === null ? null : renderSealedLink(m.body, url, m.channel === 'email' ? 'email' : 'sms');
-  } catch {
-    return null;
+  } catch (e) {
+    deps.errorReporter?.capture(e, { code: PORTAL_LINK_SEAL_ERROR, level: 'error' });
+    return { kind: 'error' };
   }
+  return url === null ? { kind: 'unavailable' } : { kind: 'text', text: renderSealedLink(m.body, url, m.channel === 'email' ? 'email' : 'sms') };
+}
+
+/** The reconcile's lookup hint: exactly the text the provider got, else the stored line (the link's seal is gone, or
+ *  could not be read: that fault is reported by providerText). */
+async function lookupText(deps: CommsDeps, tenantId: string, m: msgs.MessageRow): Promise<string> {
+  const rendered = await providerText(deps, tenantId, m);
+  return rendered.kind === 'text' ? rendered.text : m.body;
 }
 
 async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): Promise<SendOutcome> {
   const m = plan.m;
-  const text = await providerText(deps, tenantId, m);
-  if (text === null) return { ok: false, kind: 'not_configured', code: PORTAL_LINK_UNAVAILABLE };
+  const rendered = await providerText(deps, tenantId, m);
+  if (rendered.kind !== 'text') return { ok: false, kind: 'not_configured', code: rendered.kind === 'error' ? PORTAL_LINK_SEAL_ERROR : PORTAL_LINK_UNAVAILABLE };
+  const text = rendered.text;
   try {
     if (plan.channel === 'sms') {
       const account = await asSystem(deps, tenantId, 'worker', (tx) => telephonyAccount(tx, deps.envelope, tenantId));
@@ -504,7 +520,9 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
     // opt-out, never retried, never reconciled. R-TWL-9: an unverified sender (30032 / 30034) is SENDER_NOT_VERIFIED.
     const unverified = plan.channel === 'sms' && isSenderNotVerified(out.code);
     const reason = optedOut ? 'PROVIDER_OPTED_OUT' : unverified ? SENDER_NOT_VERIFIED : out.code === TELEPHONY_LIVE_OFF ? TELEPHONY_LIVE_OFF : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
-    await msgs.markFailed(tx, m.id, reason, out.code);
+    // b14: a sign-in link that failed before any provider was called carries no provider code (the staff thread would
+    // word it as a provider rejection); its reason says what happened
+    await msgs.markFailed(tx, m.id, reason, out.code !== null && LOCAL_LINK_FAILURES.has(out.code) ? null : out.code);
     if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'failed');
     if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'failed', decisionId: null, messageId: m.id });
     if (optedOut) await recordProviderOptOut(tx, deps, tenantId, m, now);
@@ -577,7 +595,7 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
       // vendors without submit idempotency keys (Twilio) find the submit by sender, recipient, body and time
       // module 45 (b14 F2): a sign-in link is looked up by its rendered text; once its seal is gone (15 minutes) it is
       // looked up by the stored line, which matches nothing, and ends DISPATCH_UNKNOWN_UNRESOLVED (the link has expired)
-      found = account ? await deps.providers.telephony.lookupMessage(account, m.id, { from: m.fromAddress, to: m.toAddress, body: (await providerText(deps, tenantId, m)) ?? m.body, dispatchedAt: m.dispatchedAt }) : null;
+      found = account ? await deps.providers.telephony.lookupMessage(account, m.id, { from: m.fromAddress, to: m.toAddress, body: await lookupText(deps, tenantId, m), dispatchedAt: m.dispatchedAt }) : null;
     }
   } catch {
     found = null;

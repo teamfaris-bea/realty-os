@@ -25,7 +25,7 @@ export function aiIsaLiveOff(c: { aiIsaLiveSends: boolean; providers: { telephon
 }
 
 export function depsFromPlatform(p: Platform): CommsDeps {
-  return { db: p.db, providers: p.providers, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret, telephonyDailyCap: p.config.providers.telephony === 'twilio', aiIsaLiveOff: aiIsaLiveOff(p.config) };
+  return { db: p.db, providers: p.providers, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret, telephonyDailyCap: p.config.providers.telephony === 'twilio', aiIsaLiveOff: aiIsaLiveOff(p.config), errorReporter: p.errorReporter };
 }
 
 let runtime: Omit<CommsDeps, 'providers'> | null = null;

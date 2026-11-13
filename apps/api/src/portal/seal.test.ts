@@ -9,9 +9,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { freshReauth } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { dispatchOutbound, reconcileOutbound, renderSealedLink } from '../comms/dispatch.js';
+import { dispatchHandler } from '../comms/handlers.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import type { CommsDeps } from '../comms/types.js';
 import type { EmailRequest, SubmitHint, TelephonyAccount } from '../providers/types.js';
+import { memoryAlerts } from '../worker/observability.js';
 import { systemActor } from '../worker/systemActor.js';
 import { portalLinkUrl } from './shared/copy.js';
 import { deliverLinks, linkBackstopInTx, linkExpireInTx } from './signin/links.js';
@@ -53,6 +55,7 @@ type Row = { id: string; status: string; status_reason: string | null; body: str
 const linkRows = async (contactId: string) =>
   (await h.su.query<Row>(`SELECT id, status, status_reason, body, channel FROM messages WHERE action_category = 'portal_login_link' AND contact_id = $1 ORDER BY created_at`, [contactId])).rows;
 const rowOf = async (id: string) => (await h.su.query<Row>('SELECT id, status, status_reason, body, channel FROM messages WHERE id = $1', [id])).rows[0];
+const providerCode = async (id: string) => (await h.su.query<{ c: string | null }>('SELECT provider_error_code AS c FROM messages WHERE id = $1', [id])).rows[0]!.c;
 const seals = async (messageId: string) => Number((await h.su.query<{ n: string }>('SELECT count(*) AS n FROM portal_link_seals WHERE message_id = $1', [messageId])).rows[0]!.n);
 /** The stored body holds neither the link nor its token. */
 function expectNoLink(body: string, token?: string | null) {
@@ -236,6 +239,60 @@ describe('b14 F2: the sign-in URL never enters messages.body (R-PORTAL-11, E684)
     expect(m).toMatchObject({ status: 'failed', status_reason: 'PORTAL_LINK_UNAVAILABLE' });
     expectNoLink(m!.body, links[0]!.token);
     expect(h.providers.email.sent.length).toBe(before);
+    // b14 to-do: no provider was called, so no provider error is recorded (the staff thread would word it as one)
+    expect(await providerCode(m!.id)).toBeNull();
+  });
+
+  it('b14 to-do: a seal that cannot be read (a broken seal path, not an expiry) sends nothing, fails PORTAL_LINK_SEAL_ERROR with no provider code, and is reported', async () => {
+    const c = await invited('Gwen');
+    const before = h.providers.email.sent.length;
+    const reported: { err: unknown; code: string | undefined }[] = [];
+    const links = await requestPortalLogin(slug, c.email, { db: h.database });
+    await deliverLinks({
+      comms: { ...deps(), errorReporter: { capture: (err, ctx) => void reported.push({ err, code: ctx?.code }) } },
+      webOrigin: origin(),
+      log: quiet,
+      beforeInlineDispatch: async (messageId) => {
+        // the seal is there and current, but its bytes do not open (as an AAD, encoding or key-ring regression would)
+        await h.su.query(`UPDATE portal_link_seals SET url_enc = decode(repeat('ab', 40), 'hex') WHERE message_id = $1`, [messageId]);
+      },
+    }, links);
+    const [m] = await linkRows(c.id);
+    expect(m).toMatchObject({ status: 'failed', status_reason: 'PORTAL_LINK_SEAL_ERROR' });
+    expect(await providerCode(m!.id)).toBeNull();
+    expectNoLink(m!.body, links[0]!.token);
+    expect(h.providers.email.sent.length).toBe(before);
+    expect(reported.map((r) => r.code)).toEqual(['PORTAL_LINK_SEAL_ERROR']);
+    expect(reported[0]!.err).toBeInstanceOf(Error);
+  });
+
+  it('b14 to-do: in the worker (comms.dispatch, whose deps carry no reporter) the same fault raises a WORKER_ERROR alert with codes only', async () => {
+    const c = await invited('Gail');
+    const links = await requestPortalLogin(slug, c.email, { db: h.database });
+    const alerts = memoryAlerts();
+    const { errorReporter: _platformReporter, ...workerDeps } = deps();
+    await deliverLinks({
+      comms: deps(),
+      webOrigin: origin(),
+      log: quiet,
+      beforeInlineDispatch: async (messageId) => {
+        await h.su.query(`UPDATE portal_link_seals SET url_enc = decode(repeat('ab', 40), 'hex') WHERE message_id = $1`, [messageId]);
+        // the queued comms.dispatch job wins the race (one TX1 wins; the inline dispatch then finds it final)
+        const ctx = {
+          actor: sys(),
+          now: Date.now(),
+          providers: h.providers,
+          job: { id: 1n, kind: 'comms.dispatch', queue: 'default', attempts: 1 },
+          log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, child: () => ctx.log },
+          alerts,
+          withTx: <T>(fn: (tx: never, now: never) => Promise<T>) => withTenantTx(sys(), fn as never, { db: h.database }),
+        };
+        await (dispatchHandler(() => workerDeps) as unknown as { run: (c: unknown, p: unknown) => Promise<void> }).run(ctx, { messageId });
+      },
+    }, links);
+    const [m] = await linkRows(c.id);
+    expect(m).toMatchObject({ status: 'failed', status_reason: 'PORTAL_LINK_SEAL_ERROR' });
+    expect(alerts.alerts).toEqual([{ severity: 'P2', code: 'WORKER_ERROR', tenantId: w.tenantId, details: { step: 'PORTAL_LINK_SEAL_ERROR', error: expect.stringMatching(/^[A-Za-z]+(:[A-Za-z0-9_]+)?$/) } }]);
   });
 
   it('F2 R-GATE-14: a blocked link (do-not-contact) never held the link and leaves no seal', async () => {
