@@ -110,7 +110,9 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
     };
   });
 
-  r.get('/files/:token', { ...client(STREAMS), schema: { params: S.FileParams } }, async (req, reply) => {
+  // b14 audit F8: no HEAD route. Fastify would expose one running this handler, which redeems the single-use token and
+  // audits a download that never happened; a HEAD (a download manager's probe) is 404 and leaves the token unused.
+  r.get('/files/:token', { ...client(STREAMS), exposeHeadRoute: false, schema: { params: S.FileParams } }, async (req, reply) => {
     const token = req.params.token;
     if (!STREAM_TOKEN.test(token)) throw new AppError('NOT_FOUND');
     const c = clientOf(req);

@@ -53,8 +53,7 @@
     {
       "path": "/api/portal/files/:token",
       "methods": [
-        "GET",
-        "HEAD"
+        "GET"
       ],
       "secrets": [
         "token"

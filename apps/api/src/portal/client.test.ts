@@ -216,6 +216,22 @@ describe('R-PORTAL-17 downloads (E649)', () => {
     expect(audits.rows.map((r) => r.action).sort()).toEqual(['portal.document_downloaded', 'portal.document_stream_issued']);
   });
 
+  it('E649 (b14 F8): a HEAD on a download URL never redeems the single-use token (no download audited); the GET after it still downloads, once', async () => {
+    const s = await setup();
+    const url = json<{ url: string }>(await s.pc.post(`/api/portal/documents/${s.itemId}/stream-token`)).url;
+    const audited = async () => Number((await h.su.query<{ n: string }>(`SELECT count(*) AS n FROM audit_log WHERE tenant_id = $1 AND action = 'portal.document_downloaded' AND entity_id = $2`, [w.tenantId, s.doc.id])).rows[0]!.n);
+    const head = await s.pc.request('HEAD', url);
+    expect(head.statusCode).toBe(404);
+    expect(head.body).not.toContain('PDF'); // nothing of the file
+    expect(await audited()).toBe(0);
+    expect((await h.su.query('SELECT 1 FROM portal_stream_tokens WHERE portal_item_id = $1 AND used_at IS NOT NULL', [s.itemId])).rowCount).toBe(0);
+    const dl = await s.pc.get(url);
+    expect(dl.statusCode).toBe(200);
+    expect(Buffer.compare(dl.rawPayload, Buffer.from(s.doc.bytes))).toBe(0);
+    expect(await audited()).toBe(1);
+    expect((await s.pc.get(url)).statusCode).toBe(404);
+  });
+
   it('E649: a reused token, one past 60 s, and a document unshared, an item retracted or a grant revoked before the download are 404 with nothing streamed', async () => {
     const s = await setup();
     const token = async () => json<{ url: string }>(await s.pc.post(`/api/portal/documents/${s.itemId}/stream-token`)).url;
