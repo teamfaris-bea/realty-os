@@ -41,7 +41,8 @@ export class FakeFetch {
     const path = url.replace(/^\/api/, '');
     const method = (init?.method ?? 'GET').toUpperCase();
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]));
-    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+    // a JSON body is parsed; any other body (a FormData upload) is kept as it is, so a test can read its fields
+    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : (init?.body ?? undefined);
     const call = { method, path, headers, body };
     this.calls.push(call);
     const key = `${method} ${path}`;

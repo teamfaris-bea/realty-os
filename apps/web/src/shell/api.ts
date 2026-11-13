@@ -87,9 +87,22 @@ export class ApiClient {
   }
 
   async request<T>(method: HttpMethod, path: string, body?: unknown, o: RequestOptions = {}): Promise<T> {
+    return this.send<T>(method, path, body === undefined ? null : { json: body }, o);
+  }
+
+  /**
+   * A multipart POST (module 55's document uploads): the same CSRF header, credentials, error parsing and abort
+   * handling as every other call, and no content-type header, so the browser writes the multipart boundary. The form
+   * carries only the fields the route reads; never a command id.
+   */
+  upload<T>(path: string, form: FormData, o: RequestOptions = {}): Promise<T> {
+    return this.send<T>('POST', path, { form }, o);
+  }
+
+  private async send<T>(method: HttpMethod, path: string, payload: { json: unknown } | { form: FormData } | null, o: RequestOptions): Promise<T> {
     if (!path.startsWith('/')) throw new TypeError(`api path must start with "/": ${path}`);
     const headers: Record<string, string> = { accept: 'application/json' };
-    if (body !== undefined) headers['content-type'] = 'application/json';
+    if (payload !== null && 'json' in payload) headers['content-type'] = 'application/json';
     if (method !== 'GET' && this.csrf) headers['x-csrf-token'] = this.csrf;
     let res: Response;
     try {
@@ -97,7 +110,7 @@ export class ApiClient {
         method,
         headers,
         credentials: 'same-origin',
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(payload === null ? {} : 'json' in payload ? { body: JSON.stringify(payload.json) } : { body: payload.form }),
         ...(o.signal ? { signal: o.signal } : {}),
       });
     } catch (e) {
