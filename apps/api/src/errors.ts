@@ -419,6 +419,7 @@ export const ERROR_STATUS = {
   REPLY_STALE: 409, // the review changed at Google after the draft was written (E466)
   REPLY_IN_PROGRESS: 409, // a reply to this review is being posted right now (E464)
   COACHING_TRENDS_SCOPE: 404, // trends of members the caller may not read (R-COACH-8)
+  CMA_SUBJECT_ADDRESS_GONE: 409, // the draft's contact address was deleted (S0 keeps the draft open with no address), so it cannot be re-run; prepare a new CMA (details.sentence; F15)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

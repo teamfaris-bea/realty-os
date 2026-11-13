@@ -7,7 +7,11 @@ import { NORMALIZE_VERSION } from '@realty/core/listings';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { type AssistantWorld, assistantWorld, call, messagesOf, ownedContact } from '../assistant/testing.js';
+import { withTenantTx } from '@realty/db';
+import { cancelIneligibleMlsAlertsInTx, sendDueAlertsInTx } from '../assistant/searches.js';
+import { listingFollowers } from '../nurture/repos.js';
 import { NURTURE_JOBS } from '../nurture/types.js';
+import { systemActor } from '../worker/systemActor.js';
 import { SparkError } from '../providers/integrations/spark.js';
 import { FILLING_SENTENCE } from './admin.js';
 import { SYNC_BATCH, syncConnection } from './sync.js';
@@ -162,6 +166,39 @@ describe('E360: a lease is never a sale, nor an alert (F3-lease)', () => {
     const matched = (await h.su.query<{ listing_id: string }>('SELECT listing_id FROM saved_search_matches WHERE search_id = $1', [searchId])).rows.map((x) => x.listing_id);
     expect(matched).toEqual([(await rowOf('M3603'))['id']]);
     expect(await alertsOf(contactId)).toHaveLength(1);
+  });
+
+  it('E360 F3-lease (b10 review ownership-data/F1): matches recorded before the lease flag (version-1 rows the backfill then flags as leases) are never alerted, a queued digest holding one is canceled, and neither makes anyone a nurture follower', async () => {
+    const zip = '94364';
+    const { contactId, searchId } = await activeSearch(zip);
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { lastSyncedAt: new Date() });
+    // stored by batch 9 (version 1, no lease flag): one matched and already queued in a digest, one matched and pending
+    const queued = await v1Row(h, w.tenantId, conn, { mlsNumber: 'M3641', postalCode: zip, status: 'active', modifiedAt: '2026-11-10T10:00:00Z', priceCents: 260_000 });
+    await h.su.query('INSERT INTO saved_search_matches (tenant_id, search_id, listing_id, matched_at) VALUES ($1,$2,$3, now())', [w.tenantId, searchId, queued]);
+    await h.su.query("UPDATE saved_searches SET alert_frequency = 'daily', last_alerted_at = now() - interval '2 days' WHERE id = $1", [searchId]);
+    const sys = () => systemActor(tid(), 'worker');
+    expect(await withTenantTx(sys(), (tx, now) => sendDueAlertsInTx(tx, mlsDeps(h), w.tenantId, now, { searchId }), { db: h.database })).toBe(1);
+    const digest = (await alertsOf(contactId)).at(-1)!;
+    expect(digest).toMatchObject({ status: 'queued' });
+    expect(digest.body).toContain('$2,600');
+    const pending = await v1Row(h, w.tenantId, conn, { mlsNumber: 'M3642', postalCode: zip, status: 'active', modifiedAt: '2026-11-10T10:00:00Z', priceCents: 275_000 });
+    await h.su.query('INSERT INTO saved_search_matches (tenant_id, search_id, listing_id, matched_at) VALUES ($1,$2,$3, now())', [w.tenantId, searchId, pending]);
+    // the backfill re-reads both as Residential Lease
+    await startBackfill(h, conn);
+    const lease = (n: number, cents: number) => reso(n, { PostalCode: zip, PropertyType: 'Residential Lease', ListPrice: cents / 100, ModificationTimestamp: '2026-11-10T10:00:00Z' });
+    expect(await run(conn, splitFeed({ incremental: [{ records: [] }], backfill: [{ records: [lease(3641, 260_000), lease(3642, 275_000)], more: false }] }))).toMatchObject({ filled: 2 });
+    for (const n of ['M3641', 'M3642']) expect(await rowOf(n)).toMatchObject({ is_lease: true, mls_normalize_version: NORMALIZE_VERSION });
+    // the compliance sweep the sync runs after its pages cancels the queued digest (a lease is never a home for sale)
+    // and releases its match; a second sweep finds nothing left
+    expect((await alertsOf(contactId)).find((m) => m.id === digest.id)).toMatchObject({ status: 'canceled', status_reason: 'MLS_LEASE' });
+    expect((await h.su.query('SELECT alerted_message_id FROM saved_search_matches WHERE search_id = $1 AND listing_id = $2', [searchId, queued])).rows[0]).toEqual({ alerted_message_id: null });
+    expect(await withTenantTx(sys(), (tx, now) => cancelIneligibleMlsAlertsInTx(tx, now), { db: h.database })).toEqual([]);
+    // the next pass, with the search due, sends nothing: neither lease is alerted
+    await h.su.query("UPDATE saved_searches SET last_alerted_at = now() - interval '2 days' WHERE id = $1", [searchId]);
+    expect(await withTenantTx(sys(), (tx, now) => sendDueAlertsInTx(tx, mlsDeps(h), w.tenantId, now, {}), { db: h.database })).toBe(0);
+    expect((await alertsOf(contactId)).filter((m) => m.status !== 'canceled')).toHaveLength(0);
+    // nurture: a matched lease makes nobody a follower, so a rent change fires no price drop or back on market
+    for (const id of [queued, pending]) expect(await withTenantTx(sys(), (tx) => listingFollowers(tx, id), { db: h.database })).toEqual([]);
   });
 });
 

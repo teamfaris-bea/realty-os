@@ -79,6 +79,30 @@ export async function myOpenDraft(tx: Tx, contactId: string, contactAddressId: s
 }
 
 /**
+ * The caller's open drafts for (contact, address), locked, the one linked to the address first: also those whose
+ * address was deleted (S0's F15 keeps such a draft open with contact_address_id NULL) and whose stored subject still
+ * names it, newest first. An Undo of the delete puts the address back under the same id, so these are drafts of the
+ * same home (batch 10 review db-public/F3, ownership-data/F3).
+ */
+export async function myOpenDrafts(tx: Tx, contactId: string, contactAddressId: string | null): Promise<CmaRow[]> {
+  const orphan =
+    contactAddressId === null
+      ? sql`false`
+      : sql`(contact_address_id IS NULL AND subject #>> '{input,kind}' = 'contact_address' AND subject #>> '{input,contactAddressId}' = ${contactAddressId})`;
+  return (
+    await sql<CmaRow>`SELECT ${COLS} FROM cma_reports WHERE tenant_id = app.tenant_id() AND created_by_user_id = app.user_id()
+       AND contact_id = ${contactId}::uuid AND status = 'draft' AND (contact_address_id IS NOT DISTINCT FROM ${contactAddressId}::uuid OR ${orphan})
+     ORDER BY (contact_address_id IS NULL) = (${contactAddressId}::uuid IS NULL) DESC, created_at DESC, id FOR UPDATE`.execute(tx)
+  ).rows;
+}
+
+/** Links an open draft whose address was deleted to that address again, once it is back (its Undo). */
+export async function relinkAddress(tx: Tx, id: string, contactAddressId: string): Promise<void> {
+  await sql`UPDATE cma_reports SET contact_address_id = ${contactAddressId}::uuid
+     WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid AND status = 'draft' AND contact_address_id IS NULL`.execute(tx);
+}
+
+/**
  * Inserts a draft. A contact CMA uses cma_reports_one_open_draft as its arbiter: a concurrent tap that already stored the
  * open draft for (caller, contact, address) wins, and this returns null (the caller re-reads).
  */
@@ -96,10 +120,19 @@ export async function insertDraft(tx: Tx, id: string, w: CmaWrite): Promise<stri
   return r.rows[0]?.id ?? null;
 }
 
-/** Rewrites a draft's content (the policy admits its creator and tenant-wide roles; the guard refuses a non-draft). */
+/**
+ * Rewrites a draft's content (the policy admits its creator and tenant-wide roles; the guard refuses a non-draft). A
+ * draft whose address was deleted and put back (the run resolved it again) is linked to it again, unless its creator
+ * holds another open draft for that address (cma_reports_one_open_draft).
+ */
 export async function updateDraft(tx: Tx, id: string, w: CmaWrite): Promise<boolean> {
   const r = await sql`
-    UPDATE cma_reports SET listing_id = ${w.listingId}::uuid, purpose = ${w.purpose}, inspection = ${w.inspection}, inspected_on = ${w.inspectedOn}::date,
+    UPDATE cma_reports SET contact_address_id = CASE
+             WHEN contact_address_id IS NULL AND ${w.contactAddressId}::uuid IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM cma_reports o WHERE o.tenant_id = cma_reports.tenant_id AND o.created_by_user_id = cma_reports.created_by_user_id
+                                 AND o.contact_id = cma_reports.contact_id AND o.contact_address_id = ${w.contactAddressId}::uuid AND o.status = 'draft' AND o.id <> cma_reports.id)
+             THEN ${w.contactAddressId}::uuid ELSE contact_address_id END,
+           listing_id = ${w.listingId}::uuid, purpose = ${w.purpose}, inspection = ${w.inspection}, inspected_on = ${w.inspectedOn}::date,
            intended_users = ${w.disclosure.intendedUsers}, agent_interest = ${w.disclosure.agentInterest}, conflicts = ${w.disclosure.conflicts},
            value_definition = ${w.disclosure.valueDefinition}, limiting_conditions = ${w.disclosure.limitingConditions}, method_version = ${w.methodVersion},
            valuation_date = ${w.valuationDate}::date, mls_data_as_of = ${w.mlsDataAsOf}, subject = ${JSON.stringify(w.subject)}::jsonb,
@@ -116,6 +149,66 @@ export async function touchDataDate(tx: Tx, id: string, at: Date | null): Promis
 
 export async function supersede(tx: Tx, id: string): Promise<void> {
   await sql`UPDATE cma_reports SET status = 'superseded' WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid AND status = 'draft'`.execute(tx);
+}
+
+// ---- merged records (R-CMA-8, batch 10 review db-public/F1, ownership-data/F4) -------------------------------------
+// A merge moves no CMA and leaves the merged-away record closed and unowned, so contacts RLS hides it from its former
+// agent, while 0061's cma_reports_select still shows its creator their CMAs of it. The survivor's own ledger events
+// (lead_ownership_events 'merged_in', payload.loserId; their policy follows the survivor's detail) name every record
+// merged into it, so the caller traces the person through what RLS shows them, no policy widened: the contacts it
+// shows (merged_into_contact_id) and the merged_in events of the records it reaches.
+
+/**
+ * The records of the person `contactId` heads, as far as the caller can trace them: the contact and every record
+ * merged into it, along chains (a chain through a record whose events the caller cannot read stops there).
+ */
+export async function personRecords(tx: Tx, contactId: string): Promise<string[]> {
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE tree(id) AS (
+      SELECT ${contactId}::uuid
+      UNION
+      SELECT x.id FROM tree t CROSS JOIN LATERAL (
+        SELECT c.id FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.merged_into_contact_id = t.id
+        UNION ALL
+        SELECT (e.payload ->> 'loserId')::uuid FROM lead_ownership_events e
+         WHERE e.tenant_id = app.tenant_id() AND e.contact_id = t.id AND e.type = 'merged_in' AND e.payload ? 'loserId') x(id)
+    )
+    SELECT id FROM tree`.execute(tx);
+  return r.rows.map((x) => x.id);
+}
+
+/**
+ * The live record a merged-away contact's person lives on now, when the caller sees its detail (R-PERM-5), else null:
+ * up the merge chain through the contacts RLS shows and the merged_in events naming a hidden record. Null for a
+ * contact that was never merged away.
+ */
+export async function survivorSeenByCaller(tx: Tx, contactId: string): Promise<string | null> {
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE up(id, depth) AS (
+      SELECT ${contactId}::uuid, 0
+      UNION ALL
+      SELECT s.id, up.depth + 1 FROM up CROSS JOIN LATERAL (
+        SELECT c.merged_into_contact_id FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = up.id AND c.merged_into_contact_id IS NOT NULL
+        UNION
+        SELECT e.contact_id FROM lead_ownership_events e WHERE e.tenant_id = app.tenant_id() AND e.type = 'merged_in' AND e.payload ->> 'loserId' = up.id::text) s(id)
+       WHERE up.depth < 16
+    )
+    SELECT up.id FROM up JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = up.id
+     WHERE up.depth > 0 AND c.merged_into_contact_id IS NULL AND c.deleted_at IS NULL AND app.contact_detail_visible(c.tenant_id, c.id)
+     ORDER BY up.depth DESC LIMIT 1`.execute(tx);
+  return r.rows[0]?.id ?? null;
+}
+
+/**
+ * Supersedes the caller's own open drafts for the home `addressKey` on `contactIds` (records merged into the one the
+ * caller just stored a draft for): one creator keeps one open draft per home across the person (F15). Another
+ * person's draft is never touched (R-CMA-6).
+ */
+export async function supersedeMyDraftsForHome(tx: Tx, contactIds: readonly string[], addressKey: string): Promise<void> {
+  if (contactIds.length === 0) return;
+  await sql`UPDATE cma_reports SET status = 'superseded'
+     WHERE tenant_id = app.tenant_id() AND created_by_user_id = app.user_id() AND status = 'draft'
+       AND contact_id = ANY (${[...contactIds]}::uuid[]) AND subject #>> '{resolved,addressKey}' = ${addressKey}`.execute(tx);
 }
 
 /** The CMAs of contacts, newest first (RLS decides which rows the caller reads). */

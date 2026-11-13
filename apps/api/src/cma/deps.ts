@@ -27,6 +27,7 @@ export {
   mlsEligibility,
   valuationEligible,
   type ValuationRefusal,
+  VALUATION_USE_WHERE,
 } from '../mls/eligibility.js';
 export { liveNearMatches, mlsRowsAtAddress, soldCandidates, type SoldCandidates, type SoldQuery, type SoldTier, type TierQuery } from '../mls/comps.js';
 export {

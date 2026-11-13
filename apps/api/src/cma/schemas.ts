@@ -186,9 +186,13 @@ export const CmaViewSchema = z.object({
     sentences: z.array(z.string()),
   }),
   backtest: z.object({ salesTested: z.number(), notValued: z.number(), medianMissBps: N, within10PctBps: N, windowStart: z.string(), sentence: z.string() }),
-  nearMatches: z.array(z.object({ listingId: z.string(), mlsNumber: z.string().nullable(), address: z.string(), status: z.string(), listingBrokerageName: z.string().nullable(), avmDisplayAllowed: z.boolean(), dismissed: z.boolean() })),
+  /** avmDisplayAllowed is null while the record has not been re-read since the feed's flag was added (gates/F4) */
+  nearMatches: z.array(z.object({ listingId: z.string(), mlsNumber: z.string().nullable(), address: z.string(), status: z.string(), listingBrokerageName: z.string().nullable(), avmDisplayAllowed: z.boolean().nullable(), dismissed: z.boolean() })),
+  /** client readiness (R-CMA-7); D9: nothing is shared in V1, so sharingAvailable is false and the sentence says so */
   clientShare: z.object({
-    allowed: z.boolean(),
+    ready: z.boolean(),
+    sharingAvailable: z.literal(false),
+    sentence: z.string(),
     estimateSentence: z.string(),
     blockers: z.array(z.object({ code: z.enum(BLOCKER_CODES), sentence: z.string(), count: z.number().optional(), listingIds: z.array(z.string()).optional() })),
   }),
@@ -212,6 +216,7 @@ export const CmaListResponse = z.object({
       createdByUserId: Id,
       mine: z.boolean(),
       fromMergedRecord: z.boolean(),
+      canEdit: z.boolean(),
       createdAt: z.string(),
     }),
   ),

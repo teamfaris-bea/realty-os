@@ -81,7 +81,9 @@ export interface ContactRel {
 
 /**
  * Live contacts a listing concerns (R-NURT-2): a client's interest (listing_contacts role 'interested') or an
- * active saved search that matched it. Merged-away and deleted records never receive anything.
+ * active saved search that matched it. Merged-away and deleted records never receive anything. A saved-search match
+ * on an MLS lease follows nothing (E360, batch 10 review ownership-data/F1): batch 9 matched leases before they were
+ * flagged, and a rent change is never a price drop for a buyer; an agent's explicit 'interested' link still counts.
  */
 export async function listingFollowers(tx: Tx, listingId: string): Promise<ContactRel[]> {
   const r = await sql<{ contact_id: string; owner_user_id: string | null; via: 'saved' | 'matched' }>`
@@ -89,7 +91,8 @@ export async function listingFollowers(tx: Tx, listingId: string): Promise<Conta
       SELECT lc.contact_id, 'saved' AS via FROM listing_contacts lc WHERE lc.tenant_id = app.tenant_id() AND lc.listing_id = ${listingId} AND lc.role = 'interested'
       UNION ALL
       SELECT ss.contact_id, 'matched' FROM saved_search_matches m JOIN saved_searches ss ON ss.tenant_id = m.tenant_id AND ss.id = m.search_id
-       WHERE m.tenant_id = app.tenant_id() AND m.listing_id = ${listingId} AND ss.status = 'active') rel
+        JOIN listings l ON l.tenant_id = m.tenant_id AND l.id = m.listing_id
+       WHERE m.tenant_id = app.tenant_id() AND m.listing_id = ${listingId} AND ss.status = 'active' AND NOT (l.source = 'mls' AND l.is_lease)) rel
       JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = rel.contact_id
      WHERE c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
      ORDER BY c.id, rel.via DESC`.execute(tx);

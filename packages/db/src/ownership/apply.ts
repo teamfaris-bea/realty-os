@@ -73,7 +73,7 @@ import {
   selectRejection,
   updateProjection,
 } from './rows.js';
-import { mergeCommunication } from './merge.js';
+import { type MergeStep, mergeCommunication } from './merge.js';
 
 export interface OwnershipCommandOptions {
   /** idempotency key (uuid); retries and replays reuse it */
@@ -94,6 +94,8 @@ export interface OwnershipCommandOptions {
    * replaced by the caller's one summary per affected user. The decision, ledger, feed and timers are unchanged.
    */
   summaryNotices?: true;
+  /** merge: the other modules' merge steps, run after the communication move when it runs inline (merge.ts MergeStep) */
+  mergeSteps?: readonly MergeStep[];
 }
 
 /** A replay returns what the first execution stored (R-OWN-7): the ledger events, or the rejection. */
@@ -509,7 +511,7 @@ async function applyMerge(tx: Tx, actor: Actor, cmd: Extract<OwnershipCommand, {
   const tenantWide = (await sql<{ ok: boolean }>`SELECT app.is_tenant_wide() AS ok`.execute(tx)).rows[0]?.ok === true;
   const owner = d.survivor.next.state === 'owned' ? d.survivor.next.ownerUserId : null;
   const mergeFx = { kind: 'mergeCommunication', survivorId, loserId, ownerUserId: owner, previousOwnerUserId: survivor.ownerUserId ?? loser.ownerUserId };
-  if (tenantWide) await mergeCommunication(tx, ctx.now, ctx.ids, survivorId, loserId, owner ?? null, ctx.people, survivor.ownerUserId ?? loser.ownerUserId);
+  if (tenantWide) await mergeCommunication(tx, ctx.now, ctx.ids, survivorId, loserId, owner ?? null, ctx.people, survivor.ownerUserId ?? loser.ownerUserId, opts.mergeSteps);
   // the communication move runs FIRST in the loser's follow-up (before its draft invalidation / re-homing)
   await runEffects(tx, actor, loserId, cmd, loser, d.loser.next, d.loser.effects, ctx, opts.commandId, tenantWide ? [] : [mergeFx]);
   await runEffects(tx, actor, survivorId, cmd, survivor, d.survivor.next, d.survivor.effects, { ...ctx }, derivedCommandId('merge.survivor', opts.commandId));

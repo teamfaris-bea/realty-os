@@ -550,6 +550,7 @@ A KMS-backed KEK is **not** a drop-in, and it is not built: `Kek.platformKey` is
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states. Counsel reviews of platform clearance packs are recorded on the deployment with the owner command of §10.1 (dry run first, then `--apply`), each pinned to the version counsel reviewed, and withdrawn with its `--revoke`; never by hand.
 - [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared until it has both `reviewed_by_counsel_at` (counsel item C14, recorded with §10.1; owner decision D11 reports it cleared) and `rules.vendor_ready_at` (which §10.1 never sets), that is until Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
 - [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
+- [ ] CMA (owner decision D9): `platform:cma` stays unreviewed unless the owner attests counsel cleared the in-house CMA wording (record it with §10.1); V1 shares nothing with clients either way. Each MLS connection's valuation section is the Owner's or Admin's entry on the MLS admin page (Valuation use), from the MLS agreement, which the MLS should confirm in writing (**VERIFY WITH MLS**, V1).
 - [ ] Telephony: `TELEPHONY_LIVE_REQUESTS=false` until the written pilot approval (§5.1). The start-up log of the API and the worker shows its value.
 - [ ] County public records (owner decision D10): `PUBLIC_RECORDS_LIVE_CALLS=false` unless every step of "Before any live county call" below is done and signed off.
 
@@ -648,6 +649,22 @@ Recording it builds nothing: the pack gates no outreach path, and the homeowner 
 `platform:gbp` (Google Business Profile, module 53) is **not** covered by D11: never add it to the command above. Record it only after its own counsel review (PHASE2_3_PLAN §7 C15), pinned to the version counsel reviewed, with the same dry run and `--apply`.
 
 Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); the compose form above has not been run against a compose stack.
+
+**D9: `platform:cma` and the licence pack's valuation section (batch 10).** Owner decision D9 adds a CMA built in-house from the team's own MLS sold data (an estimate, never an appraisal; never a third-party AVM). Two separate records hold it back, and neither is turned on by this release:
+
+- **`platform:cma@2026.11.0`** ships unreviewed (`0061_cma_schema.sql`). It is not a D11 pack, so the D11 command above never includes it. Record it with this same command, and only on the owner's attestation that counsel cleared the in-house CMA wording (C6 extended: client CMA wording, the "not an appraisal" placement, the state statements V4, USPAP SoP 11-1 V5/V7). Dry run first:
+
+  ```sh
+  docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
+    node packages/db/dist/scripts/counsel-review.js --keys platform:cma@2026.11.0 \
+    --reviewed-on YYYY-MM-DD --reference "<the owner's attestation of counsel's clearance of the in-house CMA wording, and where it is recorded>"
+  ```
+
+  **Effect in V1: none for clients.** Client CMAs and seller-update value ranges are not built (V2), so nothing built from MLS sales reaches a client either way. Once recorded, a CMA's readiness view stops listing PLATFORM_NOT_CLEARED and the Integrations page says "counsel reviewed the pack on <date>", still beside "not built in this version". A later pack version ships unreviewed and needs its own record.
+- **The valuation section** of each MLS connection's licence pack is **not** recorded by this command. An Owner or Admin enters it on the MLS admin page, under "Valuation use" (re-auth), from the MLS agreement: `agent_cma`, `client_cma`, `automated_notes`, the AVM flag scope and the per-state statements, each with its own counsel mark; the section's stamp (`valuation.reviewed_by_counsel_at`) is set only when every valuation value is marked, and saving it never changes the display pack's stamp. Agent CMAs need only `agent_cma` (the Owner's statement from the agreement; **VERIFY WITH MLS**, V1); a pack without the section refuses every agent CMA in words (E371). Strictest defaults: nothing allowed, the seller's "no automated valuation" choice holds for every client output, no statement.
+- **`MLS_LIVE_CALLS` stays `false`** for this release, in every environment. With it false a Spark deployment reads nothing from the MLS (no request is made and the key is not decrypted), so no sold history is stored, `GET /admin/mls` says "Live MLS calls are turned off on this deployment, so no sold history is read from the MLS.", and an agent CMA has no sold sales to compare (it is refused in words, or finds none). Turning it on is §11's separate, signed-off procedure, not part of D9.
+
+Nothing here is a compliance claim: every value above is **VERIFY WITH COUNSEL** / **VERIFY WITH MLS** until counsel and the MLS answer in writing. Not rehearsed against a compose stack.
 
 ## 11. Spark MLS (read-only)
 

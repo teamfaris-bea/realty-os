@@ -164,20 +164,31 @@ export async function mlsRowsAtAddress(tx: Tx, key: string): Promise<ListingRow[
 const NEAR_IGNORED = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'st', 'ave', 'blvd', 'rd', 'dr', 'ln', 'ct', 'pl', 'ter', 'cir', 'pkwy', 'hwy', 'sq', 'trl', 'way']);
 const nameCore = (tokens: readonly string[]) => tokens.filter((t) => !NEAR_IGNORED.has(t)).join(' ');
 
+/** The first five digits of a postal code, as core addressKey folds it ("94110-1234" -> "94110"). */
+const zip5 = (code: string): string => (code.match(/\d/g) ?? []).join('').slice(0, 5);
+
 /**
  * The live MLS rows (coming soon, active, pending) in the same 5-digit postal code with the same street number and
- * street-name tokens (F2), ignoring street-type, directional and unit differences. Uses listings_mls_postal_idx (the
- * stored PostalCode compared with plain equality; VERIFY WITH MLS that the feed sends the 5-digit code). E370: a
- * near match blocks sharing until the agent confirms it is a different home (api/cma).
+ * street-name tokens (F2), ignoring street-type, directional and unit differences. E370: a near match blocks sharing
+ * until the agent confirms it is a different home (api/cma), and api/cma reads the subject's own records among these
+ * too (gates/F4). Core normalize stores PostalCode as the feed sends it (VERIFY WITH MLS: a ZIP+4 is possible), and a
+ * row the 0068 backfill has not re-read has no stored key, so it is found only here, by its address: the read takes
+ * every stored code from the 5-digit code up to the next one (`>=` and `<`, leakproof text comparisons, an index
+ * range on listings_mls_postal_idx), which holds the code itself and its ZIP+4 forms ("94110-1234", "941101234"), and
+ * keeps the rows whose first five digits are the code (the range under the production collation: VERIFY, ARCHITECTURE
+ * §21.8b).
  */
 export async function liveNearMatches(tx: Tx, o: { postalCode: string; streetNumber: string; streetNameTokens: readonly string[] }): Promise<ListingRow[]> {
-  const zip = (o.postalCode.match(/\d/g) ?? []).join('').slice(0, 5);
+  const zip = zip5(o.postalCode);
   if (zip.length !== 5) return [];
   const want = nameCore(o.streetNameTokens);
+  const next = zip === '99999' ? null : String(Number(zip) + 1).padStart(5, '0');
+  const below = next === null ? sql`` : sql`AND l.postal_code < ${next}`;
   const r = await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls'
-                                    AND l.postal_code = ${zip} AND l.status IN ('coming_soon','active','pending')
+                                    AND l.postal_code >= ${zip} ${below} AND l.status IN ('coming_soon','active','pending')
                                   ORDER BY l.mls_modified_at DESC, l.id LIMIT 5000`.execute(tx);
   return r.rows.filter((row) => {
+    if (zip5(row.postal_code) !== zip) return false;
     const key = row.address_key ?? addressKey({ line1: row.address_line1, line2: row.address_line2, city: row.city, region: row.region, postalCode: row.postal_code });
     const s = key === null ? null : streetOfKey(key);
     return s !== null && s.streetNumber === o.streetNumber.toLowerCase() && nameCore(s.streetNameTokens) === want;

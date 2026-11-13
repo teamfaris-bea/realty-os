@@ -15,6 +15,9 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               "null",
             ],
           },
+          "canEdit": {
+            "type": "boolean",
+          },
           "contactId": {
             "anyOf": [
               {
@@ -94,6 +97,7 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
           "createdByUserId",
           "mine",
           "fromMergedRecord",
+          "canEdit",
           "createdAt",
         ],
         "type": "object",
@@ -251,9 +255,6 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
         "clientShare": {
           "additionalProperties": false,
           "properties": {
-            "allowed": {
-              "type": "boolean",
-            },
             "blockers": {
               "items": {
                 "additionalProperties": false,
@@ -261,6 +262,8 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                   "code": {
                     "enum": [
                       "PLATFORM_NOT_CLEARED",
+                      "FEED_DISCONNECTED",
+                      "VALUATION_USE_WITHDRAWN",
                       "MLS_CLIENT_DISPLAY_OFF",
                       "FEED_STALE",
                       "CLIENT_USE_NOT_ALLOWED",
@@ -298,9 +301,21 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "estimateSentence": {
               "type": "string",
             },
+            "ready": {
+              "type": "boolean",
+            },
+            "sentence": {
+              "type": "string",
+            },
+            "sharingAvailable": {
+              "const": false,
+              "type": "boolean",
+            },
           },
           "required": [
-            "allowed",
+            "ready",
+            "sharingAvailable",
+            "sentence",
             "estimateSentence",
             "blockers",
           ],
@@ -905,7 +920,10 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                 "type": "string",
               },
               "avmDisplayAllowed": {
-                "type": "boolean",
+                "type": [
+                  "boolean",
+                  "null",
+                ],
               },
               "dismissed": {
                 "type": "boolean",

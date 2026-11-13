@@ -12,7 +12,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { DISPLAY_FIELDS, LISTING_STATUSES, USPS_REGIONS } from '@realty/core/listings';
-import { actorOf, adminTx } from '../admin/common.js';
+import { actorOf, adminTx, platformOf } from '../admin/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { listingFacts } from '../workspace/listings.js';
@@ -138,7 +138,7 @@ async function register(app: FastifyInstance): Promise<void> {
     adminTx(req, (tx, now) => competingFor(tx, req.params.id, now)),
   );
 
-  r.get('/admin/mls', { ...view, schema: { response: { 200: MlsAdminResponse } } }, async (req) => adminTx(req, (tx, now) => mlsAdminView(tx, now)));
+  r.get('/admin/mls', { ...view, schema: { response: { 200: MlsAdminResponse } } }, async (req) => adminTx(req, (tx, now) => mlsAdminView(tx, now, platformOf(req).config.mls)));
 
   r.put('/admin/mls/connections/:id/license-pack', { ...manage, bodyLimit: 64 * 1024, schema: { params: IdParams, body: LicensePackBody, response: { 200: z.object({ licensePack: PackViewSchema }) } } }, async (req) => ({
     licensePack: await adminTx(req, (tx, now) => saveLicensePack(tx, actorOf(req), req.params.id, req.body as PackInput & { valuation?: ValuationPackInput }, now)),

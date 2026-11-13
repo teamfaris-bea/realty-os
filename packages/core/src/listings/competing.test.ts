@@ -52,6 +52,17 @@ describe('competingSet', () => {
     expect(listings.map((l) => l.mlsNumber)).toEqual(['M1', 'M2', 'T11', 'M3']);
   });
 
+  it('E360 (b10 review ownership-data/F5): a lease is never a competing listing, whatever its price: its list price is a monthly rent', () => {
+    const lease = (n: number, cents: number): ListingFacts => {
+      const l = mls({ id: lid(n), mlsNumber: `L${n}`, listPriceCents: cents, beds: 3 });
+      return { ...l, valuation: { ...l.valuation, isLease: true } };
+    };
+    // one at a rent, one whose "price" falls inside the band: neither competes
+    const withLeases = [...pool(), lease(20, 300_000), lease(21, 50_000_000)];
+    expect(competingSet(subject, withLeases, rule)).toEqual(competingSet(subject, pool(), rule));
+    expect(competingSet(subject, withLeases, { ...rule, priceBandPct: null }).listings.map((l) => l.mlsNumber)).not.toContain('L20');
+  });
+
   it('R-MLS-3: with a stale MLS feed, MLS candidates pause and only team listings remain', () => {
     const { listings } = competingSet(subject, pool(), { ...rule, mlsFeedStale: true });
     expect(listings.map((l) => l.mlsNumber)).toEqual(['T11']);

@@ -58,6 +58,7 @@ export {
 } from './ownership/apply.js';
 export { FOLLOWUP_JOB_KIND, type FollowupPayload, followupDedupeKey } from './ownership/effects.js';
 export { type FollowupResult, FollowupPayloadError, applyOwnershipFollowupInTx, runOwnershipFollowup } from './ownership/followup.js';
+export type { MergeStep } from './ownership/merge.js';
 export { type NewContactFields, projectionOf, eventOf, selectLedger } from './ownership/rows.js';
 export { TenantNotReadyError, importOwnersPending, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, type TenantFacts } from './ownership/context.js';
 export { type AuditRowSpec, insertAuditRow } from './repos/audit.js';

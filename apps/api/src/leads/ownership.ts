@@ -20,6 +20,7 @@ import { type Database, type Tx, applyOwnershipCommandInTx, applyOwnershipComman
 class NotApplied extends Error {}
 import type { z } from 'zod';
 import { AppError, type ErrorCode, isErrorCode } from '../errors.js';
+import { MERGE_STEPS } from '../mergeSteps.js';
 import { projectionOfRow, projectionRow } from './repos/ownership.js';
 import type { ProjectionView } from './schemas.js';
 
@@ -84,7 +85,7 @@ export async function runOwnershipCommand(
         actor,
         async (tx) => {
           await hook(tx);
-          const r = await applyOwnershipCommandInTx(tx, actor, contactId, cmd, { commandId, ...(expectedSeq !== undefined ? { expectedSeq } : {}), ...(opts.ids ? { ids: opts.ids } : {}) });
+          const r = await applyOwnershipCommandInTx(tx, actor, contactId, cmd, { commandId, mergeSteps: MERGE_STEPS, ...(expectedSeq !== undefined ? { expectedSeq } : {}), ...(opts.ids ? { ids: opts.ids } : {}) });
           if (!r.outcome.ok || r.replayed) throw new NotApplied();
           await setOwnershipCommand(tx, null);
           return { ok: true as const, contactId: id, replayed: false, events: summary(r.outcome.events, id), projection: await visibleProjection(tx, id) };
@@ -101,6 +102,7 @@ export async function runOwnershipCommand(
     cmd,
     {
       commandId,
+      mergeSteps: MERGE_STEPS,
       ...(expectedSeq !== undefined ? { expectedSeq } : {}),
       ...(opts.ids ? { ids: opts.ids } : {}),
       ...(opts.db ? { db: opts.db } : {}),

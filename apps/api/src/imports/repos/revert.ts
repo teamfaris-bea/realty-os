@@ -4,6 +4,8 @@
 // enrollment, share, attribute, listing/showing link, a point or address the import did not add, a
 // non-imported consent event), or an edit (the editable fields' fingerprint moved past what the import
 // left; a history row updated after the stage committed). Touched rows are listed for a human, never deleted.
+// D9: a CMA prepared for the person since the import, or citing an imported address, keeps them too (cmaCited,
+// reason CMA_PREPARED; batch 10 review ownership-data/F2).
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { CHILD_FP } from './writes.js';
@@ -69,6 +71,27 @@ export async function touchedContacts(tx: Tx, batchId: string, baseline: Readonl
   for (const r of fps.rows) {
     const was = baseline.get(r.id)?.fp ?? null;
     if (was !== null && r.fp !== was) out.add(r.id);
+  }
+  return out;
+}
+
+/**
+ * D9 (batch 10 review ownership-data/F2): the contacts a CMA was prepared for since `since` (any status: a draft is
+ * the agent's work too) and the addresses any CMA cites, with the contacts of those CMAs. A revert never soft-deletes
+ * such a person (their CMA would be hidden with them) nor deletes such an address (the CMA's subject link would be
+ * nulled by 0061's ON DELETE SET NULL). Runs as the system (tenant-wide under cma_reports_select).
+ */
+export async function cmaCited(tx: Tx, contactIds: readonly string[], addressIds: readonly string[], since: Date): Promise<Set<string>> {
+  if (contactIds.length === 0 && addressIds.length === 0) return new Set();
+  const r = await sql<{ contact_id: string; contact_address_id: string | null }>`
+    SELECT r.contact_id::text AS contact_id, r.contact_address_id::text AS contact_address_id FROM cma_reports r
+     WHERE r.tenant_id = app.tenant_id() AND r.contact_id IS NOT NULL
+       AND ((r.contact_id = ANY (${[...contactIds]}::uuid[]) AND r.created_at > ${since})
+            OR r.contact_address_id = ANY (${[...addressIds]}::uuid[]))`.execute(tx);
+  const out = new Set<string>();
+  for (const x of r.rows) {
+    out.add(x.contact_id);
+    if (x.contact_address_id !== null && addressIds.includes(x.contact_address_id)) out.add(x.contact_address_id);
   }
   return out;
 }
