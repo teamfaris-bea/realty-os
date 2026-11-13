@@ -168,8 +168,9 @@ export async function pendingPushesOfActiveLinks(tx: Tx): Promise<{ id: string; 
 
 /**
  * Serializes every booking and appointment write of ONE person (E151): the booking re-reads in-app
- * appointments and live free/busy only after it holds this lock, and module 14's write takes it too
- * (enqueueCalendarPush), so a slot booked in-app is seen by a concurrent booking.
+ * appointments only after it holds this lock, and module 14's write takes it too (enqueueCalendarPush), so a slot
+ * booked in-app is seen by a concurrent booking. The live free/busy is read before, holding no lock, and its calendar
+ * link is re-checked under it (b12 recheck R9).
  */
 export async function lockPersonBookings(tx: Tx, userId: string): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended('calendar.book:' || app.tenant_id()::text || ':' || ${userId}::text, 0))`.execute(tx);

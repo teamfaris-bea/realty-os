@@ -486,6 +486,61 @@ describe('booking under the per-user advisory lock (E151)', () => {
     expect(await booking).toMatchObject({ ok: false, code: 'SLOT_TAKEN', nextSlot: { startsAt: inHours(241) } });
   });
 
+  /** The agent's Google calendar is connected (as the push cases above leave it; connected here when run alone). */
+  const googleConnected = async () => {
+    if ((await linkRow(h, agent.userId!))?.status !== 'connected') expect((await connectCalendar(h, agent, 'google_calendar')).result).toBe('CONNECTED');
+  };
+
+  it('E151 (b12 recheck R9): the live free/busy call is made holding neither the contact lock nor the person\'s booking lock; the booking takes them afterwards', async () => {
+    await googleConnected();
+    const deps = calendarDeps(h.app.platform);
+    const { lockContact } = await import('@realty/db');
+    const { lockPersonBookings } = await import('./repos/links.js');
+    const contact = await ownedContact(agent, { consent: false });
+    // whether another transaction can take the lock while the calendar is being read (a held lock fails fast)
+    const takenElsewhere = (take: (tx: Parameters<typeof lockPersonBookings>[0]) => Promise<void>) => withTenantTx(systemActor(agent.tenantId!, 'provider'), async (tx) => {
+      await sql`SET LOCAL lock_timeout = '300ms'`.execute(tx);
+      await take(tx);
+    }, { db: h.database }).then(() => false, () => true);
+    const fake = google();
+    const original = fake.freeBusy.bind(fake);
+    const held: { contact: boolean; booking: boolean }[] = [];
+    fake.freeBusy = async (a, range) => {
+      held.push({ contact: await takenElsewhere((tx) => lockContact(tx, contact.id as never)), booking: await takenElsewhere((tx) => lockPersonBookings(tx, agent.userId!)) });
+      return original(a, range);
+    };
+    try {
+      const r = await bookSlot(deps, agent.tenantId!, { userId: agent.userId!, contactId: contact.id, kind: 'consult', startsAt: inHours(280), endsAt: inHours(281), createdByKind: 'assistant' });
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      expect((await h.su.query(`SELECT contact_id FROM appointments WHERE id = $1`, [(r as { appointmentId: string }).appointmentId])).rows).toEqual([{ contact_id: contact.id }]);
+    } finally {
+      fake.freeBusy = original;
+    }
+    expect(held).toEqual([{ contact: false, booking: false }]);
+  });
+
+  it('E531 (b12 recheck R9): the calendar link changes between the free/busy read and the locks: the booking re-checks it under the locks and refuses CALENDAR_UNAVAILABLE', async () => {
+    await googleConnected();
+    const deps = calendarDeps(h.app.platform);
+    const fake = google();
+    const original = fake.freeBusy.bind(fake);
+    const link = (await linkRow(h, agent.userId!))!;
+    const ref = (await h.su.query<{ r: string | null }>(`SELECT external_calendar_ref AS r FROM user_calendar_links WHERE id = $1`, [link.id])).rows[0]!.r;
+    fake.freeBusy = async (a, range) => {
+      const busy = await original(a, range);
+      // reconnected to another calendar while this read was in flight
+      await h.su.query(`UPDATE user_calendar_links SET external_calendar_ref = 'another-calendar' WHERE id = $1`, [link.id]);
+      return busy;
+    };
+    try {
+      expect(await bookSlot(deps, agent.tenantId!, { userId: agent.userId!, kind: 'consult', startsAt: inHours(284), endsAt: inHours(285), createdByKind: 'assistant' })).toEqual({ ok: false, code: 'CALENDAR_UNAVAILABLE' });
+      expect((await h.su.query(`SELECT 1 FROM appointments WHERE user_id = $1 AND starts_at = $2`, [agent.userId, inHours(284)])).rows).toEqual([]);
+    } finally {
+      fake.freeBusy = original;
+      await h.su.query(`UPDATE user_calendar_links SET external_calendar_ref = $2 WHERE id = $1`, [link.id, ref]);
+    }
+  });
+
   it('refuses a booking when the calendar does not answer (never risks a double booking)', async () => {
     const deps = calendarDeps(h.app.platform);
     const fake = google();

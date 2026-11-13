@@ -8,8 +8,9 @@
 //                   is encrypted and stored by the system actor (R-INT-4). At most one live calendar per person.
 //   disconnect      revoked AND purged locally in one transaction, then revoked at the provider (best effort)
 //   busy            live free/busy (R-CAL-3): read per request, never stored
-//   bookSlot        booking under the person's advisory lock (E151): re-reads in-app appointments and live
-//                   free/busy after taking the lock; a taken slot returns the next free one instead
+//   bookSlot        booking under the person's advisory lock (E151): reads the live free/busy first, holding no
+//                   lock, then takes the contact and booking locks, re-checks the member and the calendar link and
+//                   re-reads in-app appointments under them; a taken slot returns the next free one instead
 import type { ContactId, IdGenerator, TenantId, UserActor } from '@realty/core/foundation';
 import { type Database, type Tx, lockContactRoot, withTenantTx } from '@realty/db';
 import { randomBytes } from 'node:crypto';
@@ -315,7 +316,11 @@ export function mergeBusy(xs: readonly Busy[]): Busy[] {
   return out;
 }
 
-type ProviderBusy = { calendar: BusyView['calendar']; provider: CalendarProviderKey | null; busy: Busy[] };
+/** `source`: the live link the busy times were read from (b12 recheck R9: bookSlot re-checks it under its locks). */
+type ProviderBusy = { calendar: BusyView['calendar']; provider: CalendarProviderKey | null; busy: Busy[]; source: string | null };
+
+/** The identity of a live link's calendar: a reconnect, a revoke or another calendar changes it. */
+const sourceOf = (link: repo.LinkRow | null): string | null => (link ? `${link.id}:${link.provider}:${link.external_calendar_ref ?? ''}` : null);
 
 /** System actor, inside the caller's transaction: the person's live calendar busy times, read now, kept nowhere. */
 async function providerBusy(deps: CalendarDeps, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<ProviderBusy> {
@@ -323,19 +328,19 @@ async function providerBusy(deps: CalendarDeps, tx: Tx, tenantId: TenantId, user
   if (!link) {
     const links = await repo.linksOfUser(tx, userId);
     const revoked = links.find((l) => l.status === 'revoked' && l.last_error_code === 'GRANT_REVOKED');
-    return { calendar: revoked ? 'needs_reconnect' : 'not_connected', provider: revoked?.provider ?? null, busy: [] };
+    return { calendar: revoked ? 'needs_reconnect' : 'not_connected', provider: revoked?.provider ?? null, busy: [], source: null };
   }
   const svc = CALENDAR_SERVICES[link.provider];
   try {
     const live = await liveAuth(deps, tx, tenantId, link);
     const busy = await withAuth(live, (a) => deps.adapters.calendar[svc.calendar].freeBusy(a, range));
-    return { calendar: link.status === 'degraded' ? 'degraded' : 'connected', provider: link.provider, busy };
+    return { calendar: link.status === 'degraded' ? 'degraded' : 'connected', provider: link.provider, busy, source: sourceOf(link) };
   } catch (e) {
     if (e instanceof GrantRevokedError) {
       await revokeLinkAsSystem(tx, sys(tenantId), link, 'GRANT_REVOKED');
-      return { calendar: 'needs_reconnect', provider: link.provider, busy: [] };
+      return { calendar: 'needs_reconnect', provider: link.provider, busy: [], source: null };
     }
-    return { calendar: 'unavailable', provider: link.provider, busy: [] };
+    return { calendar: 'unavailable', provider: link.provider, busy: [], source: sourceOf(link) };
   }
 }
 
@@ -396,18 +401,35 @@ const SEARCH_MS = 7 * 86_400_000;
 const overlaps = (s: number, e: number, b: Busy) => Date.parse(b.start) < e && Date.parse(b.end) > s;
 
 /**
- * Books one slot for `userId` as the system actor (the assistant or voice path, module 48). The transaction
- * takes the contact's locks (and its root survivor's), then the person's advisory lock, then re-reads their in-app
- * appointments and their live free/busy, so
- * of two concurrent bookings of one slot exactly one wins; the other gets SLOT_TAKEN with the next free slot of
- * the same length (15-minute steps, within 7 days). An unreachable calendar refuses the booking rather than
- * risking a double booking. The new appointment enqueues its calendar push in the same transaction.
+ * Books one slot for `userId` as the system actor (the assistant or voice path, module 48). b12 recheck R9: the live
+ * free/busy is read first, in its own system transaction that holds no contact or booking lock (an external call can
+ * take seconds, and every per-contact writer of the lead would wait behind it). The booking transaction then takes the
+ * contact's locks (and its root survivor's), then the person's advisory lock (the global order, as the voice handback
+ * takes them), and re-checks under them: the person still active, the same live calendar link (a revoke, a reconnect
+ * or another calendar since the read refuses CALENDAR_UNAVAILABLE rather than book on a stale read), and their in-app
+ * appointments read again, so of two concurrent bookings of one slot exactly one wins; the other gets SLOT_TAKEN with
+ * the next free slot of the same length (15-minute steps, within 7 days). An unreachable calendar refuses the booking
+ * rather than risking a double booking. The new appointment enqueues its calendar push in the same transaction.
  */
 export async function bookSlot(deps: CalendarDeps, tenantId: string, input: BookInput): Promise<BookResult> {
   const s = Date.parse(input.startsAt);
   const e = Date.parse(input.endsAt);
   if (!(e > s) || e - s > 12 * 3_600_000) return { ok: false, code: 'SLOT_INVALID' };
   const actor = sys(tenantId);
+  const windowEnd = new Date(e + SEARCH_MS).toISOString();
+  // the live read, no lock held (never retried: one external call per booking)
+  const read = await withTenantTx(
+    actor,
+    async (tx, now): Promise<BookResult | ProviderBusy> => {
+      if (s < now) return { ok: false, code: 'SLOT_INVALID' };
+      if (!(await repo.memberActive(tx, input.userId))) return { ok: false, code: 'MEMBER_NOT_ACTIVE' };
+      return providerBusy(deps, tx, actor.tenantId, input.userId, { start: new Date(s).toISOString(), end: windowEnd });
+    },
+    { db: deps.db, retries: 0 },
+  );
+  if ('ok' in read) return read;
+  if (read.calendar === 'unavailable') return { ok: false, code: 'CALENDAR_UNAVAILABLE' };
+  const p = read;
   return withTenantTx(
     actor,
     async (tx, now) => {
@@ -418,9 +440,8 @@ export async function bookSlot(deps: CalendarDeps, tenantId: string, input: Book
       const contactId = input.contactId ? await lockContactRoot(tx, input.contactId as ContactId) : null;
       await repo.lockPersonBookings(tx, input.userId);
       if (!(await repo.memberActive(tx, input.userId))) return { ok: false as const, code: 'MEMBER_NOT_ACTIVE' as const };
-      const windowEnd = new Date(e + SEARCH_MS).toISOString();
-      const p = await providerBusy(deps, tx, actor.tenantId, input.userId, { start: new Date(s).toISOString(), end: windowEnd });
-      if (p.calendar === 'unavailable') return { ok: false as const, code: 'CALENDAR_UNAVAILABLE' as const };
+      // b12 recheck R9: the busy times read above still describe the person's live calendar
+      if (sourceOf(await repo.liveLinkOf(tx, input.userId)) !== p.source) return { ok: false as const, code: 'CALENDAR_UNAVAILABLE' as const };
       const own = (await repo.busyAppointments(tx, input.userId, new Date(s).toISOString(), windowEnd)).map((a) => ({ start: a.starts_at.toISOString(), end: a.ends_at.toISOString() }));
       const taken = mergeBusy([...p.busy, ...own]);
       if (taken.some((b) => overlaps(s, e, b))) {
