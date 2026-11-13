@@ -110,15 +110,18 @@ export function adaptComp(c: StoredResult['comps'][number], d: DisplayListing, s
   return view;
 }
 
-/** The area sentences rebuilt with V1-B's own builders, each one among the engine's (scope 6). */
-export function areaSentences(r: StoredResult, subjectYearBuilt: number | null): string[] {
+/**
+ * The area sentences rebuilt with V1-B's own builders, each one asserted to be among the engine's (scope 6). null when a
+ * rebuilt sentence is not among them (ISA-3 audit F10): the caller refuses (COMPS_CEILING), never sends a shorter set.
+ */
+export function areaSentences(r: StoredResult, subjectYearBuilt: number | null): string[] | null {
   const out: string[] = [];
   const reached = tierReachedSentence(r.area.tier, true, r.area.lookbackMonths, CMA_DEFAULTS);
   out.push(reached);
   const skipped = tierSkippedSentence(r.area.tiersSkipped);
   if (skipped !== null) out.push(skipped);
   if (subjectYearBuilt === null) out.push(filterSkippedSentence('year_built'));
-  return out.filter((s) => r.area.sentences.includes(s));
+  return out.every((s) => r.area.sentences.includes(s)) ? out : null;
 }
 
 interface Footer {
@@ -207,6 +210,7 @@ export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRo
     facts.push({ factKind: 'sold_comp_set', listingId: sale.id, connectionId: conn.id, priceKind: 'sold', priceCents: v.closePriceCents!, statusAtBuild: 'sold', asOf: (conn.lastSyncedAt ?? now) as Instant, displayRulesVersion: displayRulesVersion(conn), methodVersion: r.methodVersion, valuationDate: p.valuationDate, tier: c.tier! });
   }
   const sentences = areaSentences(r, p.resolved.facts.yearBuilt.value);
+  if (sentences === null) return done(['COMPS_CEILING']);
   const result: IsaCompResult = { methodVersion: r.methodVersion, comps: views, areaLookbackMonths: r.area.lookbackMonths, sizeFilterApplied: true, bedsFilterApplied: bedsFiltered, sentences };
   const foot = footerOf(e, facts.map((f) => f.connectionId), p.resolved.state, deps);
   if (!foot.ok) return done([foot.code!]);

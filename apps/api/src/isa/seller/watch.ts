@@ -130,11 +130,25 @@ export async function runSellerWatchInTx(tx: Tx, deps: IsaDeps, actor: SystemAct
   return { code: 'RAN', events };
 }
 
-/** The hourly sweep: one job per live seller assignment and tenant-local day (its own transaction each). */
-export async function sellerWatchSweepInTx(tx: Tx, enqueue: (assignmentId: string, day: string) => Promise<void>, now: Instant): Promise<number> {
+/** One page of the hourly sweep's read. */
+export const SELLER_SWEEP_PAGE = 1000;
+
+/**
+ * The hourly sweep: one job per live seller assignment and tenant-local day (its own transaction each). It pages by id
+ * (ISA-3 audit F10), so a tenant with more live seller assignments than a page reaches every one, not always the same
+ * first page; a job already enqueued for the day is one dedupe key.
+ */
+export async function sellerWatchSweepInTx(tx: Tx, enqueue: (assignmentId: string, day: string) => Promise<void>, now: Instant, pageSize: number = SELLER_SWEEP_PAGE): Promise<number> {
   const zone = (ianaZone((await sql<{ z: string }>`SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]?.z ?? 'UTC') ?? 'UTC') as IanaZone;
   const day = localDateOf(now, zone) as string;
-  const r = await sql<{ id: string }>`SELECT a.id FROM ai_isa_assignments a WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.side IN ('seller','both') ORDER BY a.id LIMIT 1000`.execute(tx);
-  for (const x of r.rows) await enqueue(x.id, day);
-  return r.rows.length;
+  let after: string | null = null;
+  let n = 0;
+  for (;;) {
+    const r: { rows: { id: string }[] } = await sql<{ id: string }>`SELECT a.id FROM ai_isa_assignments a WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.side IN ('seller','both')
+        AND (${after}::uuid IS NULL OR a.id > ${after}::uuid) ORDER BY a.id LIMIT ${pageSize}`.execute(tx);
+    for (const x of r.rows) await enqueue(x.id, day);
+    n += r.rows.length;
+    if (r.rows.length < pageSize) return n;
+    after = r.rows.at(-1)!.id;
+  }
 }

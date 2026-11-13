@@ -82,9 +82,12 @@ async function competitionHandlesInTx(tx: Tx, a: AssignmentRow, now: Instant): P
 export async function sellerBundleInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant): Promise<SellerBundle> {
   if (!seller(a)) return EMPTY;
   await ensureWatchInTx(tx, a);
-  // a hold in the machine suspends comps the first time (E502; H6 covers each new escalation)
-  if (a.machine.held.some((h) => h.class === 'pricing_negotiation')) {
-    await sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND comps_suspended_at IS NULL`.execute(tx);
+  // a held pricing topic suspends comps (E502; H6 covers each new top escalation): the first time, and again when the
+  // hold started after the last resume (ISA-3 audit F10: a secondary hold class has no escalate action of its own)
+  const pricing = a.machine.held.filter((h) => h.class === 'pricing_negotiation').map((h) => h.since);
+  if (pricing.length > 0) {
+    await sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
+      AND (comps_suspended_at IS NULL OR (comps_resumed_at IS NOT NULL AND comps_resumed_at >= comps_suspended_at AND comps_resumed_at < ${new Date(Math.max(...pricing))}))`.execute(tx);
   }
   const link = await assignmentSubjectLinkInTx(tx, a);
   const comp = await sellerGatesInTx(tx, actor, a, now, 'competition');
