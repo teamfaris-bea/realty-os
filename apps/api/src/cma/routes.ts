@@ -35,6 +35,7 @@ import { supersedeCreatorsDraftsAcrossPerson } from './merge.js';
 import { getCma, survivorSeenByCaller } from './repos.js';
 import { depsFromPlatform } from './deps.js';
 import { CmaListResponse, CmaResponse, IdParams, OneTapBody, PatchBody, PrepareBody, ShareBody, SharePreviewQuery, SharePreviewResponse, ShareResponse } from './schemas.js';
+import { reportPdf } from './pdf.js';
 import { type AdminTx, previewShare, shareCma } from './share.js';
 import { getView, listForContact, oneTap, patch, prepare } from './service.js';
 
@@ -135,6 +136,17 @@ async function register(app: FastifyInstance): Promise<void> {
       },
     }),
   );
+
+  // the report PDF (owner question f): anyone with cma.share on the shared CMA's facts; re-checked at every download
+  r.get('/cma/:id/report.pdf', { config: share, preHandler: onCmaShare, schema: { params: IdParams } }, async (req, reply) => {
+    const pdf = await reportPdf(runAs(req), platformOf(req).providers.integrations.renderer, actorOf(req), req.params.id);
+    return reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', 'attachment; filename="cma.pdf"')
+      .header('x-content-type-options', 'nosniff')
+      .header('cache-control', 'no-store')
+      .send(Buffer.from(pdf.bytes));
+  });
 
   r.patch('/cma/:id', { config: auth, preHandler: onCma, bodyLimit: 64 * 1024, schema: { params: IdParams, body: PatchBody, response: { 200: CmaResponse } } }, async (req) => {
     await limitRuns(req);

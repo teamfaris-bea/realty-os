@@ -130,6 +130,7 @@ describe('route table', () => {
         'POST /api/contacts/:id/cma → cma.prepare',
         'GET /api/cma/:id/share-preview → cma.share',
         'POST /api/cma/:id/share → cma.share',
+        'GET /api/cma/:id/report.pdf → cma.share',
       ].sort(),
     );
   });
