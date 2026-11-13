@@ -10,11 +10,12 @@ import type { StandaloneJobContext } from '../worker/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { reconcileMarketing } from './handlers.js';
 import { publishDepsOf } from './routes.js';
+import type * as Repo from './repo.js';
 import { type MarketingWorld, type PieceBody, approve, call, clearFairHousing, generateAll, getPiece, marketingWorld, teamListing } from './testing.js';
 
 const hook = vi.hoisted(() => ({ onLocked: null as null | ((n: number) => Promise<void>), n: 0 }));
 vi.mock('./repo.js', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('./repo.js')>();
+  const orig = await importOriginal<typeof Repo>();
   return {
     ...orig,
     publicationById: async (...a: Parameters<typeof orig.publicationById>) => {
