@@ -19,6 +19,9 @@ const PACK_NAMES: Record<string, string> = {
   'platform:cma': 'Client CMAs and seller value ranges',
   'platform:ads': 'Google Ads budget changes',
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
+  'platform:gbp': 'Google Business Profile',
+  'platform:ai_isa': 'AI assistant (ISA) messages',
+  'platform:ai_isa_seller_data': 'AI assistant recent-sales emails',
 };
 
 export function packName(key: string): string {

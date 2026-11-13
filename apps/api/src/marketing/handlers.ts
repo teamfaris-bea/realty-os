@@ -35,7 +35,7 @@ type DepsFor = (ctx: StandaloneJobContext) => PublishDeps;
 const defaultDeps: DepsFor = (ctx) => {
   const r = commsRuntime();
   const cfg = loadConfig();
-  return { db: r.db, envelope: r.envelope, ids: r.ids, social: ctx.providers.integrations.social, publicBaseUrl: cfg.publicBaseUrl, linkSecret: cfg.sessionSecret };
+  return { db: r.db, envelope: r.envelope, ids: r.ids, social: ctx.providers.integrations.social, gbp: ctx.providers.gbp, publicBaseUrl: cfg.publicBaseUrl, linkSecret: cfg.sessionSecret };
 };
 
 export interface ReconcileSummary {

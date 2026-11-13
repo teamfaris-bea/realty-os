@@ -43,6 +43,8 @@ import { type AdsProvider, FakeAds, UnconfiguredAds } from '../ads/provider.js';
 import { BeaufortGisRecords } from './publicRecords/beaufort.js';
 import { FakeVoiceAgent } from '../voice/fake.js';
 import { UnconfiguredVoiceAgent, type VoiceAgentProvider } from '../voice/provider.js';
+import { type GbpProvider, UnconfiguredGbp } from '../gbp/provider.js';
+import { FakeGbp } from '../gbp/testing.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -85,6 +87,8 @@ export interface Providers {
   ads: AdsProvider;
   /** module 48: the voice agent (deterministic fake; production: unconfigured, no vendor yet, N12) */
   voiceAgent: VoiceAgentProvider;
+  /** module 53: Google Business Profile posts and reviews (deterministic fake; production: unconfigured, no Google app or N15 access) */
+  gbp: GbpProvider;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -108,6 +112,7 @@ export interface FakeProviders extends Providers {
   textExtractor: FakeTextExtractor;
   ads: FakeAds;
   voiceAgent: FakeVoiceAgent;
+  gbp: FakeGbp;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -132,6 +137,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     textExtractor: new FakeTextExtractor(),
     ads: new FakeAds(opts.clock),
     voiceAgent: new FakeVoiceAgent(opts.clock),
+    gbp: new FakeGbp(),
   };
 }
 
@@ -211,5 +217,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const ads: AdsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredAds() : fakes.ads;
   // module 48: no voice vendor is procured (N12); production answers nothing unless fakes are allowed
   const voiceAgent: VoiceAgentProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredVoiceAgent() : fakes.voiceAgent;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent };
+  // module 53: no Google app or Business Profile API access (N15); production reads and posts nothing unless fakes are allowed
+  const gbp: GbpProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGbp() : fakes.gbp;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent, gbp };
 }

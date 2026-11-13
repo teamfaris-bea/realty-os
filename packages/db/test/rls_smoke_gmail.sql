@@ -879,6 +879,14 @@ UPDATE marketing_publications SET status = 'retracted', retracted_at = now() WHE
 SELECT pg_temp.expect_error(format($q$UPDATE marketing_publications SET status = 'published', retracted_at = NULL WHERE id = %L$q$, :pub1),
   'R-MKT-12: a retraction is final (forward only)', '%PUBLICATION_FORWARD_ONLY%');
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
+-- module 53: a GBP location also waits for counsel review of platform:gbp (a separate gate next to the guard)
+SELECT pg_temp.expect_error(format($q$INSERT INTO marketing_publications (tenant_id, id, piece_id, connection_id, requested_by_user_id)
+  VALUES (%L, %L, %L, %L, %L)$q$, :tA, :pub3, :pcG, :gbpA, :agA1),
+  'R-GBP-3: publishing to a GBP location waits for counsel review of platform:gbp', '%PLATFORM_NOT_CLEARED%platform:gbp%');
+RESET ROLE;
+UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:gbp';
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO marketing_publications (tenant_id, id, piece_id, connection_id, requested_by_user_id) VALUES
   (:tA, :pub2, :pcS, :fbA, :agA1), (:tA, :pub3, :pcG, :gbpA, :agA1);
 SELECT pg_temp.ok((SELECT count(*) FROM marketing_publications WHERE status = 'publishing') = 2,

@@ -68,9 +68,9 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     }
     expect(v.services.find((s) => s.kind === 'zillow_feed')!.sentence).toMatch(/^Needs partner access|Demo data only/);
     expect((v as unknown as { perUser: { key: string }[] }).perUser.map((x) => x.key)).toEqual(['google_calendar', 'microsoft_calendar']);
-    // D2 (migration 0025) adds platform:gmail, D9's schema step platform:cma, module 52 platform:ads and D10 platform:public_records_outreach, unreviewed like the rest (and the AI ISA migration, D12 proposed, platform:ai_isa and platform:ai_isa_seller_data)
+    // D2 (migration 0025) adds platform:gmail, D9's schema step platform:cma, module 52 platform:ads, module 53 platform:gbp and D10 platform:public_records_outreach, unreviewed like the rest (and the AI ISA migration, D12 proposed, platform:ai_isa and platform:ai_isa_seller_data)
     expect(v.platformPacks.map((p) => p.key)).toEqual(
-      ['platform:ads', 'platform:ai_isa', 'platform:ai_isa_seller_data', 'platform:avm', 'platform:cma', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:public_records_outreach', 'platform:review_requests', 'platform:voice'],
+      ['platform:ads', 'platform:ai_isa', 'platform:ai_isa_seller_data', 'platform:avm', 'platform:cma', 'platform:coaching', 'platform:fair_housing', 'platform:gbp', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:public_records_outreach', 'platform:review_requests', 'platform:voice'],
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);
@@ -180,6 +180,35 @@ describe('connect through the provider callback (R-INT-3)', () => {
     } finally {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:fair_housing' AND status = 'published'");
     }
+  });
+
+  it('R-GBP-3 E460: a GBP location\'s capabilities wait for counsel review of platform:gbp, even after platform:fair_housing is reviewed; posts and replies need both', async () => {
+    const g = await connectFlow(h, owner, 'gbp_location', { externalAccountId: 'loc-caps', displayName: 'Example Realty Team location' }, [{ id: 'loc-caps' }]);
+    expect(g.cb.result).toBe('CONNECTED');
+    const caps = async () => (await list()).services.find((s) => s.kind === 'gbp_location')!.connections.find((c) => c.id === g.connectionId)!.capabilities;
+    const set = (key: string, on: boolean) => h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = ${on ? 'now()' : 'NULL'} WHERE key = $1 AND status = 'published'`, [key]);
+    try {
+      expect(await caps()).toEqual([
+        { name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+        { name: 'read_reviews', available: false, reason: 'Waits for counsel review of platform:gbp.' },
+        { name: 'reply_reviews', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+      ]);
+      await set('platform:fair_housing', true);
+      for (const c of await caps()) expect(c, c.name).toEqual({ name: c.name, available: false, reason: 'Waits for counsel review of platform:gbp.' });
+      await set('platform:gbp', true);
+      expect((await caps()).every((c) => c.available && c.reason === null)).toBe(true);
+      await set('platform:fair_housing', false);
+      expect(await caps()).toEqual([
+        { name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+        { name: 'read_reviews', available: true, reason: null },
+        { name: 'reply_reviews', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+      ]);
+      expect((await list()).platformPacks.find((p) => p.key === 'platform:gbp')!.sentence).toMatch(/^Google Business Profile: cleared by counsel on /);
+    } finally {
+      await set('platform:fair_housing', false);
+      await set('platform:gbp', false);
+    }
+    expect((await list()).platformPacks.find((p) => p.key === 'platform:gbp')!.sentence).toMatch(/^Google Business Profile stays off: awaiting counsel review \(pack 2026\.11\.0, not yet reviewed\)\.$/);
   });
 
   it('E160: a Page the token does not manage is refused; nothing is linked; the row stays unconfigured; the token is revoked', async () => {

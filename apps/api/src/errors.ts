@@ -412,6 +412,13 @@ export const ERROR_STATUS = {
   VOICE_FAKE_ON_REAL_TELEPHONY: 409, // module 48: the deterministic fake voice agent never answers real telephony
   VOICE_RECORDING_OFF: 409, // module 48: recording is off in the active policy; an AI call is always announced and recorded (O13)
   AI_DISABLED: 409, // module 48: the team turned the assistant off (tenant_settings.ai_enabled)
+  // ---- module 53 api/gbp, module 54 api/coaching-trends ----
+  GBP_NOT_CLEARED: 409, // Google Business Profile waits for counsel review of platform:gbp (R-GBP-3)
+  GBP_NOT_CONFIGURED: 409, // no Google Business Profile adapter on this platform yet (N15): export instead
+  REPLY_PRIVACY: 422, // the reply names the reviewer, a price, an address, a date, contact details or deal terms (R-GBP-1)
+  REPLY_STALE: 409, // the review changed at Google after the draft was written (E466)
+  REPLY_IN_PROGRESS: 409, // a reply to this review is being posted right now (E464)
+  COACHING_TRENDS_SCOPE: 404, // trends of members the caller may not read (R-COACH-8)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

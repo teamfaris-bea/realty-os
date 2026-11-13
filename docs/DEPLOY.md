@@ -608,6 +608,8 @@ Recording it builds nothing: the pack gates no outreach path, and the homeowner 
 
 `platform:ads` (Google Ads budget changes and pauses, module 52) is **not** part of D11. It stays dark on every deployment until counsel review is recorded for it (the counsel-review command, per deployment) **and** a separate platform step sets `rules.vendor_ready_at` once a real Google Ads adapter has passed its check against the team's account at the deployment's API access level (**VERIFY**, N14). Until both are set, spend is still read and shown, nothing changes money, and at the monthly cap the reconcile only alerts every Owner and Admin to pause the campaigns in Google Ads (no automatic pause while dark). The D11 command is unchanged and never names `platform:ads`. What counsel must cover before clearing it is the ads item of PHASE2_3_PLAN C3 (**VERIFY WITH COUNSEL**: Google Ads housing rules and radius limits, the disparate-impact risk of shifting budget by cost per agreement, the cap attestation and overspend copy, auto-pausing at the cap with unmanaged campaigns included, ranking by `gads:` attribution, and what clearing must cover before `vendor_ready_at`).
 
+`platform:gbp` (Google Business Profile, module 53) is **not** covered by D11: never add it to the command above. Record it only after its own counsel review (PHASE2_3_PLAN §7 C15), pinned to the version counsel reviewed, with the same dry run and `--apply`.
+
 Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); the compose form above has not been run against a compose stack.
 
 ## 11. Spark MLS (read-only)

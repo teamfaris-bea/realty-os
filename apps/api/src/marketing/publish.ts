@@ -1,7 +1,8 @@
 // publishPost: THE publishing path (module 29; D2; PHASE2_3_PLAN §5.4 #29; DATA_MODEL R-MKT-12, R-GATE-15, R-INT-6;
 // E227, E228; ARCHITECTURE §21.11). The only module that calls SocialPublisher (publishPost, lookupPost, deletePost):
 // lint realty/no-provider-outbound reserves publishPost / postReviewReply for this file, and architecture.test.ts
-// proves no other file calls any of the three. Module 53 adds the gbp_location branch here (one flagged edit).
+// proves no other file calls any of the three. Module 53 adds the gbp_location branch here (flagged edit): deps.gbp publishes, looks up and deletes GBP posts, and
+// sendReviewReply posts review replies.
 //
 //   TX1  as the person who tapped (FORCE RLS): the piece (an approved/published social post) and the target (a
 //        connected/degraded facebook_page / instagram_business of the tenant) are re-read; the guard runs once more
@@ -31,10 +32,11 @@ import { audit, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
-import type { OAuthToken, PublishRequest, SocialPublisher } from '../providers/integrations/types.js';
+import type { DeleteRequest, OAuthToken, PublishRequest, SocialPublisher } from '../providers/integrations/types.js';
+import type { GbpProvider, ReviewReplyRequest } from '../gbp/provider.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { Database } from '@realty/db';
-import { type PublishTargetKind, classifyPublish, reconcileFromLookup, retractFromDelete } from './decide.js';
+import { type PublishTargetKind, classifyPublish, errorCodeOf, reconcileFromLookup, retractFromDelete } from './decide.js';
 import { type MarketingAssumptions, marketingAssumptions } from './assumptions.js';
 import { signedAssetUrl } from './assetLinks.js';
 import { clearRemoveYourselfReason, closeReviewCard, raiseRemoveYourselfCard } from './cards.js';
@@ -45,6 +47,8 @@ export interface PublishDeps {
   db: Database;
   envelope: EnvelopeService;
   social: SocialPublisher;
+  /** module 53: the Google Business Profile adapter (gbp_location targets and review replies). Absent or not configured: GBP_NOT_CONFIGURED */
+  gbp?: GbpProvider;
   /** absolute base of this API (signed image URLs the provider fetches, VERIFY: Instagram fetches public URLs) */
   publicBaseUrl: string;
   /** keys the signed asset URLs (HMAC, derived per purpose) */
@@ -100,14 +104,21 @@ export async function publishPost(deps: PublishDeps, actor: UserActor, pieceId: 
     async (tx, now): Promise<Prepared> => {
       const p = await repo.pieceById(tx, pieceId, { forUpdate: true });
       if (!p) throw new AppError('NOT_FOUND');
-      if (p.kind !== 'social_post') throw new AppError(p.kind === 'gbp_post' ? 'PUBLISH_TARGET_INVALID' : 'MARKETING_NOT_PUBLISHABLE');
+      if (p.kind !== 'social_post' && p.kind !== 'gbp_post') throw new AppError('MARKETING_NOT_PUBLISHABLE');
       if (p.status !== 'approved' && p.status !== 'published') throw new AppError(p.status === 'draft' ? 'MARKETING_APPROVE_FIRST' : 'MARKETING_NOT_LIVE', { status: p.status });
       const t = await repo.targetById(tx, connectionId);
       if (!t) throw new AppError('NOT_FOUND');
-      if (t.kind !== 'facebook_page' && t.kind !== 'instagram_business') throw new AppError('PUBLISH_TARGET_INVALID');
+      // a social post goes only to a Facebook Page or Instagram business account, a GBP post only to a GBP location (module 53)
+      const meta = t.kind === 'facebook_page' || t.kind === 'instagram_business';
+      if (p.kind === 'social_post' ? !meta : t.kind !== 'gbp_location') throw new AppError('PUBLISH_TARGET_INVALID');
       if (t.status !== 'connected' && t.status !== 'degraded') throw new AppError('CHANNEL_NOT_CONNECTED');
       if (!t.external_account_id || !t.credential_id) throw new AppError('CHANNEL_NOT_CONNECTED');
       if (!(await repo.platformCleared(tx, 'platform:fair_housing'))) throw new AppError('PLATFORM_NOT_CLEARED');
+      if (t.kind === 'gbp_location') {
+        // module 53: GBP stays dark behind platform:gbp (the 0170 gate is the authority) and needs a configured adapter
+        if (!(await repo.platformCleared(tx, 'platform:gbp'))) throw new AppError('PLATFORM_NOT_CLEARED', { pack: 'platform:gbp' });
+        if (!deps.gbp?.configured) throw new AppError('GBP_NOT_CONFIGURED');
+      }
       const assets = await repo.assetsOf(tx, pieceId);
       if (t.kind === 'instagram_business' && (deps.assumptions ?? marketingAssumptions()).instagramRequiresImage && assets.length === 0) throw new AppError('PUBLISH_NEEDS_IMAGE');
       // R-MKT-4: the frozen approval stands only while the live rendering still passes (identity / pack changes)
@@ -131,7 +142,7 @@ export async function publishPost(deps: PublishDeps, actor: UserActor, pieceId: 
         publicationId,
         pieceId,
         listingId: p.listing_id,
-        target: t.kind,
+        target: t.kind as PublishTargetKind,
         connectionId,
         externalAccountId: t.external_account_id,
         credentialId: t.credential_id,
@@ -174,7 +185,11 @@ async function sendAndRecord(deps: PublishDeps, tenantId: string, prep: Prepared
   };
   let outcome: ReturnType<typeof classifyPublish>;
   try {
-    outcome = classifyPublish({ ok: true, result: await deps.social.publishPost(req) });
+    // the provider by target: a GBP location through deps.gbp (module 53), a Meta account through deps.social
+    if (prep.target === 'gbp_location') {
+      if (!deps.gbp?.configured) throw new ProviderError('not_configured', 'GBP_NOT_CONFIGURED');
+      outcome = classifyPublish({ ok: true, result: await deps.gbp.publishPost(req) });
+    } else outcome = classifyPublish({ ok: true, result: await deps.social.publishPost(req) });
   } catch (e) {
     outcome = classifyPublish({ ok: false, error: e });
   }
@@ -229,6 +244,9 @@ async function recordOutcome(deps: Pick<PublishDeps, 'db'>, tenantId: string, pu
  */
 export async function reconcilePublications(deps: PublishDeps, tenantId: string): Promise<{ looked: number; published: number; failed: number }> {
   const rows = await asSystem(deps, tenantId, async (tx, now) => {
+    // module 53: a GBP location is looked up only with a configured adapter and platform:gbp cleared; otherwise its
+    // 'unknown' rows stay unknown ("Check your Google Business Profile") and are not selected at all
+    const gbpOn = deps.gbp?.configured === true && (await repo.platformCleared(tx, 'platform:gbp'));
     await sql`UPDATE marketing_publications SET status = 'unknown', error_code = 'PUBLISH_ANSWER_LOST'
                WHERE tenant_id = app.tenant_id() AND status = 'publishing' AND requested_at < ${toIso((now - STALE_PUBLISHING_MS) as Instant)}::timestamptz`.execute(tx);
     const r = await sql<{ id: string; piece_id: string; connection_id: string; requested_at: Date; kind: string; external_account_id: string | null; credential_id: string | null; content_sha256: string }>`
@@ -237,19 +255,23 @@ export async function reconcilePublications(deps: PublishDeps, tenantId: string)
         JOIN integration_connections c ON c.tenant_id = p.tenant_id AND c.id = p.connection_id
         JOIN marketing_pieces mp ON mp.tenant_id = p.tenant_id AND mp.id = p.piece_id
        WHERE p.tenant_id = app.tenant_id() AND p.status = 'unknown'
-         AND c.kind IN ('facebook_page','instagram_business') AND c.external_account_id IS NOT NULL AND c.credential_id IS NOT NULL
+         AND (c.kind IN ('facebook_page','instagram_business') OR (c.kind = 'gbp_location' AND ${gbpOn}))
+         AND c.external_account_id IS NOT NULL AND c.credential_id IS NOT NULL
        ORDER BY p.updated_at, p.id LIMIT 50`.execute(tx);
     return { rows: r.rows, now };
   });
   const out = { looked: 0, published: 0, failed: 0 };
   for (const r of rows.rows) {
-    if (!r.external_account_id || !r.credential_id || (r.kind !== 'facebook_page' && r.kind !== 'instagram_business')) continue;
+    if (!r.external_account_id || !r.credential_id || (r.kind !== 'facebook_page' && r.kind !== 'instagram_business' && r.kind !== 'gbp_location')) continue;
+    if (r.kind === 'gbp_location' && !deps.gbp?.configured) continue;
     const token = await asSystem(deps, tenantId, (tx) => tokenFor(deps, tx, tenantId, r.credential_id!)).catch(() => null);
     if (!token) continue;
     out.looked += 1;
     let decided: ReturnType<typeof reconcileFromLookup>;
     try {
-      decided = reconcileFromLookup({ ok: true, result: await deps.social.lookupPost({ externalAccountId: r.external_account_id, accessToken: token.accessToken, target: r.kind, pieceId: r.piece_id, contentSha256: r.content_sha256 }) }, rows.now - r.requested_at.getTime(), (deps.assumptions ?? marketingAssumptions()).unknownGiveUpMs);
+      const look = { externalAccountId: r.external_account_id, accessToken: token.accessToken, target: r.kind as PublishRequest['target'], pieceId: r.piece_id, contentSha256: r.content_sha256 };
+      const found = r.kind === 'gbp_location' ? await deps.gbp!.lookupPost(look) : await deps.social.lookupPost(look);
+      decided = reconcileFromLookup({ ok: true, result: found }, rows.now - r.requested_at.getTime(), (deps.assumptions ?? marketingAssumptions()).unknownGiveUpMs);
     } catch (e) {
       decided = reconcileFromLookup({ ok: false, error: e }, rows.now - r.requested_at.getTime());
     }
@@ -308,17 +330,24 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
                               AND (retract_claim_id IS NULL OR retract_claimed_at < now() - app.marketing_retract_claim_window())`.execute(tx);
     if (Number(took.numAffectedRows ?? 0) === 0) return 'in_progress' as const;
     const c = await repo.targetById(tx, p.connection_id);
-    const token = c?.credential_id ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
+    // module 53 (R-GBP-3): while platform:gbp is uncleared, Google is called only to take down a post whose listing must
+    // come down (the system's retraction, requestedBy null); a person's own retraction gets the "remove it yourself" card
+    const gbpHeld = c?.kind === 'gbp_location' && requestedBy !== null && !(await repo.platformCleared(tx, 'platform:gbp'));
+    const token = c?.credential_id && !gbpHeld ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
     return { p, c, token, claimId };
   });
   if (!pub) return { outcome: 'not_live' };
   if (pub === 'in_progress') return { outcome: 'in_progress' };
   // the provider, outside any transaction, by the claim holder only, and waited for well inside the claim window
   let decided: ReturnType<typeof retractFromDelete>;
-  if (!pub.token || !pub.c?.external_account_id || (pub.c.kind !== 'facebook_page' && pub.c.kind !== 'instagram_business')) decided = { kind: 'remove_yourself', reason: 'FAILED' };
+  // retract by target: a GBP location through deps.gbp (module 53; allowed while platform:gbp is uncleared: taking a live
+  // post down never waits on a pack), a Meta account through deps.social; no configured GBP adapter: "remove it yourself"
+  const viaGbp = pub.c?.kind === 'gbp_location';
+  if (!pub.token || !pub.c?.external_account_id || !(pub.c.kind === 'facebook_page' || pub.c.kind === 'instagram_business' || (viaGbp && deps.gbp?.configured))) decided = { kind: 'remove_yourself', reason: 'FAILED' };
   else {
     try {
-      const call = deps.social.deletePost({ externalAccountId: pub.c.external_account_id, accessToken: pub.token.accessToken, target: pub.c.kind, providerRef: pub.p.external_post_id! });
+      const del: DeleteRequest = { externalAccountId: pub.c.external_account_id, accessToken: pub.token.accessToken, target: pub.c.kind as DeleteRequest['target'], providerRef: pub.p.external_post_id! };
+      const call = viaGbp ? deps.gbp!.deletePost(del) : deps.social.deletePost(del);
       decided = retractFromDelete({ ok: true, result: await withinBound(call, deps.deleteTimeoutMs ?? DELETE_POST_TIMEOUT_MS) });
     } catch (e) {
       decided = retractFromDelete({ ok: false, error: e });
@@ -374,6 +403,29 @@ export async function retractAllOf(deps: PublishDeps, tenantId: string, pieceId:
     if (r.outcome === 'in_progress') out.inProgress += 1;
   }
   return out;
+}
+
+/** How long one review reply is waited for; then it counts as unknown (the reply may exist: never posted twice). */
+export const REVIEW_REPLY_TIMEOUT_MS = 30_000;
+
+/**
+ * Module 53: post one public reply to a Google review. THE only postReviewReply call site (R-GBP-1, R-GATE-15); only
+ * gbp/replies.ts imports it (gbp/architecture.test.ts), which runs it outside any transaction after its TX1 claimed the
+ * approval, and records the outcome in its TX2. A public review reply is publishing, not contact communication
+ * (R-GATE-15): no messages row, contact point, touch or consent event. 'replied' only on Google's explicit answer; an
+ * explicit refusal is { failed }; a timeout or an answer we cannot read is 'unknown'.
+ */
+export async function sendReviewReply(deps: Pick<PublishDeps, 'gbp'>, req: ReviewReplyRequest, timeoutMs = REVIEW_REPLY_TIMEOUT_MS): Promise<'replied' | { failed: string } | 'unknown'> {
+  if (!deps.gbp?.configured) return { failed: 'GBP_NOT_CONFIGURED' };
+  try {
+    const r = await withinBound(deps.gbp.postReviewReply(req), timeoutMs);
+    if (r.kind === 'replied') return 'replied';
+    if (r.kind === 'rejected') return { failed: errorCodeOf(r.code, 'REPLY_REJECTED') };
+    return 'unknown';
+  } catch (e) {
+    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured')) return { failed: errorCodeOf(e.providerCode, 'REPLY_REJECTED') };
+    return 'unknown';
+  }
 }
 
 export { closeReviewCard };

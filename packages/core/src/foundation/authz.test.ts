@@ -437,6 +437,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     PHASE_2_3.push('coaching.view', 'coaching.team_view', 'coaching.settings'); // module 36: DATA_MODEL Part 2 row "Call reviews" / "Coaching settings", tested in apps/api/src/coaching/matrix.test.ts (role × route vs can())
     PHASE_2_3.push('cma.prepare'); // module 71 (D9): DATA_MODEL §8 row, tested in apps/api/src/cma/authz.test.ts (role × route vs can())
     PHASE_2_3.push('document.upload', 'document.upload_listing', 'document.upload_contact', 'document.view', 'document.download', 'document.share', 'document.hold'); // module 42: tested in apps/api/src/documents/authz.test.ts (role × route vs can())
+    PHASE_2_3.push('gbp.view', 'gbp.reply'); // module 53: DATA_MODEL Part 2 gbp_reviews (members read) and the reply rule R-GBP-1, tested in apps/api/src/gbp/adversarial.test.ts (role × route vs can())
     PHASE_2_3.push('listing.reassign'); // b7 review ownership-data/F2: DATA_MODEL §8 row, tested in apps/api/src/workspace/listingAgent.test.ts (role × route vs can())
     PHASE_2_3.push('ads.view', 'ads.cap_set', 'ads.shift_decide', 'ads.campaign_manage'); // module 52: DATA_MODEL §8 ads rows, tested in apps/api/src/ads/adversarial.test.ts (role × action vs can()) and the ads route tests
     PHASE_2_3.push('settings.ai_isa', 'ai_isa.optin', 'ai_isa.view', 'ai_isa.start', 'ai_isa.pause', 'ai_isa.resume', 'ai_isa.control', 'ai_isa.handoff'); // module 75 (D12 proposed): docs/AI_ISA.md §3.5, tested in apps/api/src/isa/authz.test.ts (role × action vs can())

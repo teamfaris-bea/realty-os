@@ -138,19 +138,22 @@ export const PACK_GATES: Record<string, string> = {
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
   'platform:ai_isa': 'AI assistant (ISA) messages',
   'platform:ai_isa_seller_data': 'AI assistant recent-sales emails',
+  'platform:gbp': 'Google Business Profile',
 };
 
 /**
- * A capability that also waits on a platform clearance pack. A pack in VENDOR_CHECKED_PACKS also needs its vendor
- * check (`rules.vendor_ready_at`), exactly as the database clears it: `change_budget` waits for `platform:ads`, which
- * the module 52 gates read with `app.platform_cleared('platform:ads', true)`. The publishing packs need counsel review
- * only, as the 0025 publications guard's `app.platform_cleared('platform:fair_housing')` does. Reading Google Ads
- * spend waits for no pack (module 52, Q-ADS-1).
+ * A capability that also waits on platform clearance packs (one, or several that must all be cleared). A pack in
+ * VENDOR_CHECKED_PACKS also needs its vendor check (`rules.vendor_ready_at`), exactly as the database clears it:
+ * `change_budget` waits for `platform:ads`, which the module 52 gates read with `app.platform_cleared('platform:ads', true)`.
+ * The publishing packs need counsel review only, as the 0025 publications guard's
+ * `app.platform_cleared('platform:fair_housing')` and module 53's `app.platform_cleared('platform:gbp')` do. Reading
+ * Google Ads spend waits for no pack (module 52, Q-ADS-1).
  */
-const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string>>> = {
+const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string | readonly string[]>>> = {
   facebook_page: { publish_posts: 'platform:fair_housing' },
   instagram_business: { publish_posts: 'platform:fair_housing' },
-  gbp_location: { publish_posts: 'platform:fair_housing' },
+  // module 53: GBP stays dark behind platform:gbp (D7); posts and replies also need platform:fair_housing
+  gbp_location: { publish_posts: ['platform:fair_housing', 'platform:gbp'], read_reviews: 'platform:gbp', reply_reviews: ['platform:fair_housing', 'platform:gbp'] },
   ads_google: { change_budget: 'platform:ads' },
 };
 
@@ -257,20 +260,22 @@ export function capabilityViews(kind: ConnectionKind, status: ConnectionStatus, 
   for (const name of Object.keys(reported).sort()) {
     if (reported[name] !== true) continue;
     const live = status === 'connected' || status === 'degraded';
-    const packKey = CAPABILITY_PACK[kind]?.[name];
-    const pack = packKey ? packs.find((p) => p.key === packKey) : undefined;
-    const reviewed = pack !== undefined && pack.reviewedByCounselAt !== null;
-    const vendorPending = packKey !== undefined && VENDOR_CHECKED_PACKS.includes(packKey) && (pack === undefined || pack.vendorReadyAt === null);
-    const cleared = !packKey || (reviewed && !vendorPending);
+    const named = CAPABILITY_PACK[kind]?.[name];
+    const keys: readonly string[] = named === undefined ? [] : typeof named === 'string' ? [named] : named;
+    const packOf = (k: string) => packs.find((p) => p.key === k);
+    // "available" only when every named pack is reviewed and, for a VENDOR_CHECKED_PACKS pack, vendor-checked;
+    // the reason names the first pack not reviewed, else the first whose vendor check is pending
+    const unreviewed = keys.find((k) => (packOf(k)?.reviewedByCounselAt ?? null) === null);
+    const vendorPending = keys.find((k) => VENDOR_CHECKED_PACKS.includes(k) && (packOf(k)?.vendorReadyAt ?? null) === null);
     const reason = !offered
       ? NOT_OFFERED
       : !live
         ? 'The connection is not live.'
-        : cleared
-          ? null
-          : !reviewed
-            ? `Waits for counsel review of ${packKey}.`
-            : `Waits for the vendor check of ${packKey}.`;
+        : unreviewed !== undefined
+          ? `Waits for counsel review of ${unreviewed}.`
+          : vendorPending !== undefined
+            ? `Waits for the vendor check of ${vendorPending}.`
+            : null;
     out.push({ name, available: reason === null, reason });
   }
   return out;

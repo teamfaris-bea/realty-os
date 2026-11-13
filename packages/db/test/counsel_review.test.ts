@@ -103,9 +103,9 @@ afterAll(async () => {
 describe('counsel-review: recording counsel review of platform packs (R-INT-6, D11)', () => {
   it('R-INT-6: every platform pack still ships unreviewed (the code default is unchanged)', () => {
     const platform = snapshot.filter((p) => p.key.startsWith('platform:') && p.status === 'published');
-    // D9 S0 adds platform:cma (client CMAs and seller-update value ranges) and module 52 adds platform:ads; D11 lists neither (F8)
+    // D9 S0 adds platform:cma (client CMAs and seller-update value ranges), module 52 platform:ads and module 53 platform:gbp; D11 lists none of them (F8)
     // the AI ISA migration (D12 proposed) adds platform:ai_isa and platform:ai_isa_seller_data, also unreviewed
-    expect(platform.map((p) => p.key).sort()).toEqual([...D11_KEYS, ...NOT_D11, 'platform:cma', 'platform:ads', 'platform:ai_isa', 'platform:ai_isa_seller_data'].sort());
+    expect(platform.map((p) => p.key).sort()).toEqual([...D11_KEYS, ...NOT_D11, 'platform:cma', 'platform:ads', 'platform:gbp', 'platform:ai_isa', 'platform:ai_isa_seller_data'].sort());
     for (const p of snapshot) expect(p.reviewed_by_counsel_at, p.key).toBeNull();
     for (const p of platform) expect(p.rules, p.key).not.toHaveProperty('vendor_ready_at');
   });

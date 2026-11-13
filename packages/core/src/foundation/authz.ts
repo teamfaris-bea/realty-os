@@ -177,6 +177,8 @@ export const ACTIONS = [
   'ai_isa.resume', // module 75: resume AI care: the lead's owner only (R-ISA-15)
   'ai_isa.control', // module 75: take over or end AI care, and their 10 s undo (✅ | ✅ | T | own | — | —)
   'ai_isa.handoff', // module 75: acknowledge a handoff, resolve a held topic (✅ | ✅ | T | own | — | —)
+  'gbp.view', // module 53: Google Business Profile status and reviews (every staff role, as the members-read policy of gbp_reviews)
+  'gbp.reply', // module 53: draft, post or discard a public reply to a Google review (Owner/Admin; always a tap, R-GBP-1)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -394,6 +396,10 @@ export const AUDIT_ACTIONS = [
   'voice.session_ended', // module 48: an AI-answered call ended in its one handback (outcome and end reason codes only)
   'voice.test_call', // module 48: a scripted test call against the fake (in memory; nothing placed or saved)
   'voice.handback_recovered', // module 48: voice.reconcile wrote the recovery handback of a call whose session was lost
+  'gbp.reply_drafted', // module 53: an Owner/Admin had a reply drafted (assistant or typed) for a Google review (ids and guard codes only)
+  'gbp.reply_posted', // module 53: Google confirmed a public review reply (TX2 or the reconcile; ids only)
+  'gbp.reply_discarded', // module 53: an Owner/Admin discarded a reply draft (ids only)
+  'gbp.reviews_synced', // module 53: the system read a location's reviews (counts only, never review text)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -739,6 +745,10 @@ const MATRIX: Record<Action, ActionRule> = {
   'ai_isa.resume': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
   'ai_isa.control': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN }, system: ['assistant', 'worker', 'timer'] },
   'ai_isa.handoff': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
+  // Module 53 (DATA_MODEL Part 2: gbp_reviews read by members, written by the system): every staff role reads the
+  // reviews; a public reply is the team's voice, so only an Owner or Admin drafts, posts or discards one (owner question 3's default).
+  'gbp.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
+  'gbp.reply': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

@@ -19,10 +19,15 @@ describe('module 29 architecture', () => {
   it('R-GATE-15 R-MKT-12: publishPost is the only publishing path: no file outside marketing/publish.ts (and the providers themselves) calls publishPost, lookupPost, deletePost or postReviewReply, tests included', () => {
     const offenders = ALL.filter((f) => !f.rel.startsWith('providers/') && f.rel !== 'marketing/publish.ts' && /\.\s*(publishPost|lookupPost|deletePost|postReviewReply)\s*\(/.test(f.text)).map((f) => f.rel);
     expect(offenders).toEqual([]);
-    // and publish.ts reaches the provider only through the injected SocialPublisher (no providers import of a real adapter)
+    // and publish.ts reaches a provider only through the injected adapters, deps.social (Meta) or deps.gbp (module 53),
+    // never through any other receiver and never by importing a real adapter
     const pub = SOURCES.find((f) => f.rel === 'marketing/publish.ts')!.text;
     expect(pub).toMatch(/deps\.social\.publishPost\(/);
-    expect(pub).not.toMatch(/integrations\/real/);
+    expect(pub).toMatch(/deps\.gbp\.publishPost\(/);
+    const receivers = [...pub.matchAll(/([\w.!?]+)\.\s*(publishPost|lookupPost|deletePost|postReviewReply)\s*\(/g)].map((m) => m[1]!.replace(/[!?]+$/, ''));
+    expect(receivers.length).toBeGreaterThan(0);
+    expect([...new Set(receivers)].sort()).toEqual(['deps.gbp', 'deps.social']);
+    expect(pub).not.toMatch(/integrations\/real|gbp\/testing/);
   });
 
   it('R-MKT-12: marketing_publications is written only by marketing/publish.ts (TX1 insert as the person; outcomes and retractions as the system)', () => {
