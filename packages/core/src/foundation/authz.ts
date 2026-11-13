@@ -179,6 +179,8 @@ export const ACTIONS = [
   'ai_isa.handoff', // module 75: acknowledge a handoff, resolve a held topic (✅ | ✅ | T | own | — | —)
   'gbp.view', // module 53: Google Business Profile status and reviews (every staff role, as the members-read policy of gbp_reviews)
   'gbp.reply', // module 53: draft, post or discard a public reply to a Google review (Owner/Admin; always a tap, R-GBP-1)
+  'ai_isa.seller_facts', // module 75 seller part (ISA-3): the assistant builds and re-checks seller facts (system 'assistant' only; never a user; R-ISA-18)
+  'ai_isa.subject_confirm', // module 75 seller part (ISA-3): confirm the seller's home, mark a near match a different home, resume comps (the lead's owner, as themselves; DB guard)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -400,6 +402,11 @@ export const AUDIT_ACTIONS = [
   'gbp.reply_posted', // module 53: Google confirmed a public review reply (TX2 or the reconcile; ids only)
   'gbp.reply_discarded', // module 53: an Owner/Admin discarded a reply draft (ids only)
   'gbp.reviews_synced', // module 53: the system read a location's reviews (counts only, never review text)
+  'ai_isa.subject_confirmed', // module 75 seller part (ISA-3): the owner confirmed the seller's home (ids and a facts hash only)
+  'ai_isa.subject_cleared', // module 75 seller part (ISA-3): a subject confirmation was cleared (reason code only)
+  'ai_isa.subject_disputed', // module 75 seller part (ISA-3): the seller's home facts were disputed (codes only)
+  'ai_isa.comps_resumed', // module 75 seller part (ISA-3): the owner let the assistant keep sharing recent sales (reason code only)
+  'ai_isa.near_match_dismissed', // module 75 seller part (ISA-3): the owner said a live listing is a different home (listing ids only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -749,6 +756,11 @@ const MATRIX: Record<Action, ActionRule> = {
   // reviews; a public reply is the team's voice, so only an Owner or Admin drafts, posts or discards one (owner question 3's default).
   'gbp.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
   'gbp.reply': { roles: { owner: ALL, admin: ALL } },
+  // Module 75 seller part (ISA-3; docs/AI_ISA.md §6.3). seller_facts: no role, only the assistant (dispatch TX1 runs
+  // via 'assistant'); the pipeline also needs cma.prepare on behalf of the lead's owner (canAsRole). subject_confirm:
+  // the lead's owner only, as themselves (ai_isa_seller_watch_guard is the backstop).
+  'ai_isa.seller_facts': { roles: {}, system: ['assistant'] },
+  'ai_isa.subject_confirm': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };
@@ -877,6 +889,27 @@ function actionChecks(rule: ActionRule, f: ResourceFacts): DenyCode | null {
 function finish(rule: ActionRule, f: ResourceFacts): CanResult {
   const code = actionChecks(rule, f);
   return code ? { ok: false, code } : ALLOW;
+}
+
+/**
+ * ISA-3 (R-ISA-18): whether a member holding `role` may perform `action` on the resource, judged by the role branch of
+ * can() alone, for work done on that member's behalf by the system (the AI ISA's comps run under the owner's
+ * cma.prepare). A grant that needs re-auth or a setting is refused: no fresh re-auth or setting can be shown for a
+ * member who is not present. Pure and total: unknown facts deny.
+ */
+export function canAsRole(role: Role, action: Action, resource: ResourceFacts): CanResult {
+  const rule = MATRIX[action];
+  if (!rule) return DENY_NOT_FOUND;
+  const grant = rule.roles[role];
+  if (!grant) return DENY_NOT_FOUND;
+  if (grant.setting !== undefined || grant.reauth !== undefined) return DENY_NOT_FOUND;
+  if (!anyScope(grant.scopes, resource)) return DENY_NOT_FOUND;
+  for (const check of grant.checks ?? []) {
+    const code = runCheck(check, resource);
+    if (code) return { ok: false, code };
+  }
+  const actionCode = actionChecks(rule, resource);
+  return actionCode ? { ok: false, code: actionCode } : ALLOW;
 }
 
 /** Whether the action is 🔒 for this role in any case (UI: prompt for re-auth before the tap). */
