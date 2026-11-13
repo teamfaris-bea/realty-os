@@ -10,6 +10,8 @@ import { depsFromPlatform } from '../../comms/runtime.js';
 import { call } from '../testing.js';
 import { compsForSubjectInTx } from './cmaSeam.js';
 import { buildCompsInTx, serverTextBanned } from './comps.js';
+import { compsSuspendedNowInTx } from './gates.js';
+import { watchOf } from './subject.js';
 import { COUNT_SHARE_ENABLED } from './counts.js';
 import { SELLER_RUNTIME, factPlaceholdersInTx, onEscalationInTx, sellerBundleInTx, sellerFactsCurrentInTx, sellerStartRefusalInTx, COMPS_PLACEHOLDER } from './index.js';
 import { type IsaDeps, contextFor, queueIsaMessageInTx } from './isa2Seam.js';
@@ -424,6 +426,39 @@ describe('E502: a pricing hold suspends comps', () => {
     // a supersede of the draft (a merge's, or a later tap's) changes its status only
     await h.su.query(`UPDATE cma_reports SET status = 'superseded' WHERE id = $1`, [d!.id]);
     expect(await suspended()).toContain('COMPS_SUSPENDED');
+  });
+});
+
+describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts a pricing suspension', () => {
+  it('E502: a share whose email was blocked or swept (never dispatched), or that went to a co-seller, keeps the suspension; a share dispatched to the lead lifts it (cma_shared)', async () => {
+    const w3 = await sellerWorld(h);
+    const l = await sellerLead(h, w3);
+    await confirm(w3, l);
+    // a CMA prepared before the hold (so the "prepared after it" branch never lifts it), then the hold
+    expect((await call(w3.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
+    await asSystem(h, w3, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    const { ownedContact, sendText } = await import('../../comms/testing.js');
+    const toLead = (await sendText(w3.agents[0]!, l.id, 'A note from your agent.')).body.message!.id;
+    const coSeller = await ownedContact(w3.agents[0]!);
+    const toCoSeller = (await sendText(w3.agents[0]!, coSeller.id, 'A note from your agent.')).body.message!.id;
+    const share = async (messageId: string, status: string, dispatched: boolean) => {
+      await h.su.query(`SET session_replication_role = replica`);
+      try {
+        await h.su.query(`UPDATE messages SET status = $2, dispatched_at = CASE WHEN $3 THEN now() ELSE NULL END WHERE id = $1`, [messageId, status, dispatched]);
+        await h.su.query(`UPDATE cma_reports SET status = 'shared', shared_at = now() + interval '1 second', shared_by_user_id = $2, shared_message_id = $3 WHERE contact_id = $1`, [l.id, w3.agents[0]!.userId, messageId]);
+      } finally {
+        await h.su.query(`SET session_replication_role = origin`);
+      }
+    };
+    const suspendedNow = () => asSystem(h, w3, l, async (tx, a, actor) => compsSuspendedNowInTx(tx, actor, a, await watchOf(tx, a.id)));
+    for (const [m, status, dispatched] of [[toLead, 'blocked', false], [toLead, 'canceled', false], [toLead, 'failed', true], [toCoSeller, 'sent', true]] as const) {
+      await share(m, status, dispatched);
+      expect(await suspendedNow(), `${m === toLead ? 'lead' : 'co-seller'} ${status}`).toBe(true);
+    }
+    expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: null });
+    await share(toLead, 'sent', true);
+    expect(await suspendedNow()).toBe(false);
+    expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: 'cma_shared' });
   });
 });
 

@@ -55,13 +55,21 @@ export function compsSuspended(w: Pick<WatchRow, 'comps_suspended_at' | 'comps_r
  * only status or the link, each moving updated_at through cma_reports_touch_updated_at. An edit of the draft (PATCH)
  * does not count either: cma_reports keeps no content-change time, so it would be told from a sync only by updated_at.
  * VERIFY (owner question 10): whether an edited draft should clear it; until then the owner's resume-comps does.
+ *
+ * b13 review B13S-4 (AI_ISA.md E502: "a CMA shared through V2-A" is one whose share message went out): the share counts
+ * only when its message was dispatched to the lead's own person (contact_person_ids) and was not canceled, blocked,
+ * failed or undelivered. V2-A leaves a CMA shared when its email is blocked at dispatch or swept, and a share to a
+ * co-seller stamps the lead's CMA without reaching the lead: none of these lifts the lead's suspension.
  */
 export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserActor, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>, w: WatchRow | null): Promise<boolean> {
   if (!compsSuspended(w)) return false;
   const r = (await sql<{ prepared: boolean; shared: boolean }>`SELECT
       EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.created_by_user_id = ${a.ownerUserId}
                 AND c.created_at > ${w!.comps_suspended_at}) AS prepared,
-      EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${w!.comps_suspended_at}) AS shared`.execute(tx)).rows[0]!;
+      EXISTS (SELECT 1 FROM cma_reports c JOIN messages m ON m.tenant_id = c.tenant_id AND m.id = c.shared_message_id
+               WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${w!.comps_suspended_at}
+                 AND m.dispatched_at IS NOT NULL AND m.status NOT IN ('canceled','blocked','failed','undelivered')
+                 AND m.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid))) AS shared`.execute(tx)).rows[0]!;
   const reason = r.shared ? 'cma_shared' : r.prepared ? 'cma_prepared' : null;
   if (reason === null) return true;
   if (actor.kind === 'system') {
