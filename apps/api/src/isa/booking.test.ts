@@ -435,6 +435,63 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(['blocked', 'canceled']).toContain(m.status);
   });
 
+  // batch 13 audit ISA2B-14 (and ISA2B-02's untested backstop): the CONFIRMATION_LATE sweep reads the notice of the
+  // policy the booking ran under (stored with the appointment at TX-C), not core's default
+  it('R-ISA-14 E533: the sweep cancels a confirmation still unsent at slot start minus the policy\'s notice (CONFIRMATION_LATE): status canceled, the card critical', async () => {
+    const steps = (await h.su.query<{ steps: { booking: Record<string, unknown> } }>(`SELECT steps FROM playbook_versions WHERE id = $1`, [bw.versionId])).rows[0]!.steps;
+    const setSteps = async (v: unknown) => {
+      await h.su.query(`SET session_replication_role = replica`);
+      try {
+        await h.su.query(`UPDATE playbook_versions SET steps = $2::jsonb WHERE id = $1`, [bw.versionId, JSON.stringify(v)]);
+      } finally {
+        await h.su.query(`SET session_replication_role = origin`);
+      }
+    };
+    // this policy asks 24 hours' notice (core's default is 4)
+    await setSteps({ ...steps, booking: { ...steps.booking, minNoticeHours: 24 } });
+    let l: { id: string; phone: string };
+    try {
+      ({ l } = await offered());
+      await reply(l, '2', 6, { holdConfirmation: true });
+    } finally {
+      await setSteps(steps);
+    }
+    expect((await offerOf(l.id))!.status).toBe('accepted');
+    const ho = (await handoffOf(h, l.id))[0]!;
+    const conf = ho.pending_message_id!;
+    await h.su.query(`UPDATE messages SET status = 'scheduled', scheduled_for = now() + interval '1 hour' WHERE id = $1 AND status IN ('queued','scheduled')`, [conf]);
+    // the appointment is now 10 hours away: inside this policy's 24-hour notice, outside core's default 4 hours
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE ai_isa_handoffs SET package = p.v, package_sha256 = encode(sha256(convert_to(p.v::text, 'UTF8')), 'hex')
+        FROM (SELECT jsonb_set(package, '{appointmentDetail,startsAt}', to_jsonb(to_char((now() + interval '10 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))) AS v
+                FROM ai_isa_handoffs WHERE id = $1) p WHERE id = $1`, [ho.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const { bookingSweepInTx } = await import('./handlers.js');
+    await withTenantTx(systemActor(bw.tenantId as never, 'assistant'), (tx, now) => bookingSweepInTx(tx, depsFromPlatform(h.app.platform), now), { db: h.database });
+    expect((await h.su.query<{ status: string; status_reason: string | null }>(`SELECT status, status_reason FROM messages WHERE id = $1`, [conf])).rows[0]).toEqual({ status: 'canceled', status_reason: 'CONFIRMATION_LATE' });
+    expect((await handoffOf(h, l.id))[0]!.confirmation_status).toBe('canceled');
+    const card = (await h.su.query<{ score: number; reasons: { code: string }[] }>(`SELECT score, reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff'`, [l.id])).rows[0]!;
+    expect([card.score, card.reasons[0]!.code]).toEqual([98, 'AI_ISA_CONFIRMATION_NOT_SENT']);
+    expect((await h.su.query(`SELECT 1 FROM notifications WHERE subject_id = $1 AND kind = 'ai_isa_handoff_hot'`, [l.id])).rows.length).toBeGreaterThanOrEqual(1);
+    // the notice the booking ran under is kept with the appointment
+    expect((ho.package['appointmentDetail'] as Record<string, unknown>)['minNoticeHours']).toBe(24);
+  });
+
+  it('R-ISA-14 E533: a confirmation still unsent but outside the policy\'s notice is left scheduled by the sweep', async () => {
+    const { l } = await offered();
+    await reply(l, '2', 6, { holdConfirmation: true });
+    const ho = (await handoffOf(h, l.id))[0]!;
+    const conf = ho.pending_message_id!;
+    await h.su.query(`UPDATE messages SET status = 'scheduled', scheduled_for = now() + interval '1 hour' WHERE id = $1 AND status IN ('queued','scheduled')`, [conf]);
+    const { bookingSweepInTx } = await import('./handlers.js');
+    await withTenantTx(systemActor(bw.tenantId as never, 'assistant'), (tx, now) => bookingSweepInTx(tx, depsFromPlatform(h.app.platform), now), { db: h.database });
+    expect((await h.su.query<{ status: string }>(`SELECT status FROM messages WHERE id = $1`, [conf])).rows[0]!.status).toBe('scheduled');
+    expect((await handoffOf(h, l.id))[0]!.confirmation_status).not.toBe('canceled');
+  });
+
   it('J1 (reduced to its booking half, cut 5): offer, "2", the booking, the handoff; the agent\'s own text clears the deadline ("Got it" never does)', async () => {
     const { l } = await offered();
     await reply(l, '2');

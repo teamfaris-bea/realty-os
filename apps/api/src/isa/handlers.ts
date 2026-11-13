@@ -182,7 +182,9 @@ export const BOOKING_STUCK_MS = 5 * 60_000;
  * The booking part of the sweep (items 8–9): an offer unsent at its expiry is canceled (OFFER_EXPIRED_UNSENT); a row
  * accepting for 5 minutes, or decided while the machine still says accepting, gets its book job again (tx#1 replays
  * a decided row straight to TX-C); a post-handoff confirmation still unsent at the slot's notice time is canceled
- * (CONFIRMATION_LATE) and the card made critical.
+ * (CONFIRMATION_LATE) and the card made critical. The notice is the booking policy's, kept with the appointment at TX-C
+ * (appointmentDetail.minNoticeHours; batch 13 audit ISA2B-14); a package without it (written before batch 13) falls back
+ * to core's default, which policy validation also sets as the floor, so the fallback never cancels early.
  */
 export async function bookingSweepInTx(tx: Tx, deps: IsaDeps, now: Instant): Promise<void> {
   const unsent = await sql<{ id: string; m: string | null }>`SELECT o.id, o.offered_message_id AS m FROM ai_isa_slot_offers o WHERE o.tenant_id = app.tenant_id()
@@ -207,7 +209,8 @@ export async function bookingSweepInTx(tx: Tx, deps: IsaDeps, now: Instant): Pro
       FROM ai_isa_handoffs h JOIN messages m ON m.tenant_id = h.tenant_id AND m.id = h.pending_message_id
      WHERE h.tenant_id = app.tenant_id() AND h.confirmation_status IN ('queued','scheduled') AND m.action_category = 'ai_isa_confirmation' AND m.status IN ('queued','scheduled')
        AND (h.package->'appointmentDetail'->>'startsAt') IS NOT NULL
-       AND (h.package->'appointmentDetail'->>'startsAt')::timestamptz - make_interval(hours => ${ISA_BOOKING_DEFAULTS.minNoticeHours}) <= now()
+       AND (h.package->'appointmentDetail'->>'startsAt')::timestamptz - make_interval(hours => CASE WHEN (h.package->'appointmentDetail'->>'minNoticeHours') ~ '^[0-9]{1,3}$'
+             THEN (h.package->'appointmentDetail'->>'minNoticeHours')::int ELSE ${ISA_BOOKING_DEFAULTS.minNoticeHours}::int END) <= now()
      LIMIT 100`.execute(tx);
   for (const x of late.rows) {
     const c = await sql<{ id: string }>`UPDATE messages SET status = 'canceled', status_reason = 'CONFIRMATION_LATE' WHERE tenant_id = app.tenant_id() AND id = ${x.m}

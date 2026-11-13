@@ -115,13 +115,18 @@ async function bookedCardInTx(tx: Tx, deps: IsaDeps, a: { id: string; contactId:
   }
 }
 
-/** The package's appointment detail (ids, codes, times and the verified quote only). */
-function appointmentDetail(o: OfferRow, readAt: Instant): Record<string, unknown> {
+/**
+ * The package's appointment detail (ids, codes, times and the verified quote only). minNoticeHours is the notice of the
+ * policy the booking ran under (tx#1's confirmationInTime used it): the CONFIRMATION_LATE sweep reads it from here,
+ * not core's default (batch 13 audit ISA2B-14).
+ */
+function appointmentDetail(o: OfferRow, readAt: Instant, minNoticeHours: number): Record<string, unknown> {
   const slot = acceptedSlotOf(o);
   return {
     appointmentId: o.appointmentId, kind: o.kind, startsAt: slot ? new Date(slot.startsAt).toISOString() : null, endsAt: slot ? new Date(slot.endsAt).toISOString() : null,
     organizerUserId: o.organizerUserId, offerId: o.id, acceptedMessageId: o.acceptedMessageId, acceptedQuote: o.acceptedQuote, linkId: o.availabilityLinkId,
     calendarReadAt: new Date(readAt).toISOString(), calendarSentence: `Your calendar showed this time free at ${new Date(readAt).toISOString()}`, zones: o.zones,
+    minNoticeHours,
   };
 }
 
@@ -148,7 +153,7 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
     await sql`UPDATE ai_isa_turns SET decision = ${JSON.stringify({ code: booked ? 'BOOKED' : o.refusalCode ?? 'REFUSED' })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx);
     const pausedNotes = a.pausedAt !== null ? ['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT'] : [];
     const env = { tx, deps, actor: actorOf(tenantId), ctx, now, turnId: turn.id, pinnedSeq: a.lastInboundSeq,
-      handoffExtra: booked ? { appointmentDetail: appointmentDetail(o, read), notes: pausedNotes } : undefined };
+      handoffExtra: booked ? { appointmentDetail: appointmentDetail(o, read, ctx.content.booking.minNoticeHours), notes: pausedNotes } : undefined };
     if (!machineAccepting) {
       if (!booked) return 'STALE_RESULT';
       // the machine did not hold this offer as accepting: care must not stay live after a booking
