@@ -11,7 +11,12 @@ import { avmRefresh } from '../nurture/avm.js';
 import { type NurtureWorld, type PastClient, approveTemplate, nurtureWorld, pastClient, valuationsOf, withAvmCleared } from '../nurture/testing.js';
 import { createProviders } from '../providers/index.js';
 import { FakeAvmP2 } from '../providers/integrations/fakes.js';
+import type { TenantId } from '@realty/core/foundation';
+import { syncConnection } from '../mls/sync.js';
+import { makeDue, mlsDeps, pagedFeed } from '../mls/testing.js';
+import { SPARK_FIELD_MAPPING } from '../providers/integrations/spark.js';
 import { IN_HOUSE_PROVIDER, IN_HOUSE_REF, InHouseAvm, readOnlySystemTx } from './avm.js';
+import { valueForSubjectInTx } from './pipeline.js';
 import { TEST_STATEMENT, cmaPack, daysAgo, feedLastSyncedAt, localSales, mlsSale, saleReso, syncSales } from './testing.js';
 
 let h: ApiHarness;
@@ -107,6 +112,33 @@ describe('R-TEN-1..3 R-CMA-10: tenancy', () => {
     if (y.available) expect(y.ref).not.toContain(a.mls);
     // a call naming A's address under B's tenant reads nothing of A (RLS: the address is not found)
     await expect(avm.estimate(facts(mine), { ...ctx(b, mine) })).rejects.toBeTruthy();
+  });
+});
+
+describe('b13 audit V2B-4 R-MLS-7: an in-house value never rests on BuildingAreaTotal (fix/mls-size merged before V2-B)', () => {
+  /** A Spark-style record: the total area only (synthetic, larger than the living area it replaces), no LivingArea. */
+  const totalAreaOnly = (r: ResoLike): ResoLike => ({ ...r, BuildingAreaTotal: Math.round(Number(r['LivingArea']) * 1.3), LivingArea: null });
+  /** RESO records through V1-A's real sync under the Spark field mapping (as a Spark connection's sync reads them). */
+  async function sparkSync(w: NurtureWorld, records: ResoLike[]): Promise<void> {
+    await makeDue(h, w.mls);
+    const r = await syncConnection(mlsDeps(h, { [w.mls]: { ...pagedFeed([records]), fields: SPARK_FIELD_MAPPING } }), w.tenantId as TenantId, w.mls);
+    expect(r).toMatchObject({ outcome: 'synced', skippedInvalid: 0, inserted: records.length });
+  }
+
+  it('E626 E642 R-MLS-7 R-CMA-10: a past client\'s home and its local sales synced under the Spark mapping with only BuildingAreaTotal store no size; the run is CMA_SUBJECT_INCOMPLETE (the size), and the monthly estimate is an unavailable row with no value, never a value from the total area', async () => {
+    const w = await nurtureWorld(h);
+    await setPack(w.mls, scPack());
+    await approveTemplate(w.agents[0]!, 'after_closing_alerts');
+    const c = await pastClient(h, w, w.agents[0]!);
+    const sales = Array.from({ length: 8 }, (_, i) => saleReso({ ...SC, sqft: 1200 + i * 60, beds: 3, closeDate: daysAgo(20 + i * 25), contractDate: daysAgo(50 + i * 25), closePriceCents: 42_000_000 + i * 1_500_000 }));
+    const home = saleReso({ line1: c.line1, ...SC, closeDate: daysAgo(1500), sqft: 1500, beds: 3 });
+    await sparkSync(w, [...sales, home].map(totalAreaOnly));
+    const stored = (await h.su.query<{ n: number; sized: number; sourced: number }>("SELECT count(*)::int AS n, count(sqft)::int AS sized, count(size_source)::int AS sourced FROM listings WHERE tenant_id = $1 AND source = 'mls'", [w.tenantId])).rows[0]!;
+    expect(stored).toEqual({ n: 9, sized: 0, sourced: 0 });
+    const run = await readOnlySystemTx(w.tenantId, h.database, (tx, now) => valueForSubjectInTx(tx, now, { kind: 'contact_address', contactAddressId: c.addressId }, { contactId: c.id, use: 'automated_notes' }));
+    expect(run).toMatchObject({ ok: false, code: 'CMA_SUBJECT_INCOMPLETE', sentence: expect.stringMatching(/^Size not available from the MLS/) });
+    expect(await bothCleared(() => pass(w))).toMatchObject({ requested: 1, recorded: 1, failed: 0 });
+    expect((await valuationsOf(h, c.addressId)).map((v) => [v.status, v.value_cents, v.low_cents, v.high_cents, v.display_allowed, v.provider])).toEqual([['unavailable', null, null, null, false, IN_HOUSE_PROVIDER]]);
   });
 });
 

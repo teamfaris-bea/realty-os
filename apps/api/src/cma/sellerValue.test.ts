@@ -14,8 +14,14 @@ import { assemble } from '../sellerUpdates/assembly.js';
 import { periodOf } from '../sellerUpdates/store.js';
 import { RECOMMENDATION, type SendT, type SellerListing, type UpdateT, call, cmd, draftsOf, reconcile, sellerListing } from '../sellerUpdates/testing.js';
 import { systemActor } from '../worker/systemActor.js';
+import type { TenantId } from '@realty/core/foundation';
+import type { ResoLike } from '@realty/core/listings';
+import { ownedContact } from '../comms/testing.js';
+import { syncConnection } from '../mls/sync.js';
+import { makeDue, mlsDeps, pagedFeed } from '../mls/testing.js';
+import { SPARK_FIELD_MAPPING } from '../providers/integrations/spark.js';
 import { SELLER_VALUE_SENTENCES } from './sellerValue.js';
-import { TEST_STATEMENT, cmaPack, daysAgo, localSales, mlsSale, teamListing } from './testing.js';
+import { TEST_STATEMENT, cmaPack, daysAgo, localSales, mlsSale, saleReso, teamListing } from './testing.js';
 
 let h: ApiHarness;
 let w: AssistantWorld;
@@ -251,5 +257,40 @@ describe('lane V2-B deliverable 5: the seller update\'s value section', () => {
     const l = await listing();
     const u = await withCmaCleared(() => drafted(l));
     expect(valueOf(u).lines.map((x) => x.text)).toContain('700 Sample Avenue, Oakland: sold ' + new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${daysAgo(5)}T12:00:00Z`)) + ' for $520,000');
+  });
+});
+
+describe('b13 audit V2B-4 R-MLS-7: a seller value range never rests on BuildingAreaTotal (fix/mls-size merged before V2-B)', () => {
+  it('E642 R-MLS-7 R-CMA-10: the subject\'s MLS mirror and the local sales synced under the Spark mapping with only BuildingAreaTotal store no size; a listing with no size of its own reads "the home\'s size or type is not on record", one with the agent\'s size reads "not enough comparable sales"; no number either way', async () => {
+    const w2 = await assistantWorld(h, { agents: 1 });
+    const m2 = await mlsConnection(h, w2.tenantId, w2.owner.userId!, { pack: cmaPack({ maxStalenessHours: 72 }), lastSyncedAt: new Date() });
+    const a2 = w2.agents[0]!;
+    const number = `TM${Date.now() % 100000}`;
+    const own = await teamListing(a2 as TestClient, { addressLine1: '760 Sample Avenue', postalCode: '94110', status: 'active', sqft: undefined, mlsNumber: number });
+    const seller = await ownedContact(a2 as TestClient, { consent: false, firstName: 'Sam' });
+    expect((await call(a2, 'POST', `/listings/${own}/contacts`, { contactId: seller.id, role: 'seller' })).status).toBe(200);
+    const sized = await sellerListing(a2, { postalCode: '94110' }); // the agent entered 1,450 sq ft (sellerUpdates/testing.ts)
+    /** A Spark-style record: the total area only (synthetic, larger than the living area it replaces), no LivingArea. */
+    const totalAreaOnly = (r: ResoLike): ResoLike => ({ ...r, BuildingAreaTotal: Math.round(Number(r['LivingArea']) * 1.3), LivingArea: null });
+    const records = [
+      ...Array.from({ length: 8 }, (_, i) => saleReso({ sqft: 1200 + i * 60, beds: 3, closeDate: daysAgo(20 + i * 25), contractDate: daysAgo(50 + i * 25), closePriceCents: 42_000_000 + i * 1_500_000 })),
+      saleReso({ mlsNumber: number, line1: '760 Sample Ave', status: 'active', closePriceCents: null, closeDate: null, sqft: 1500 }),
+    ].map(totalAreaOnly);
+    await makeDue(h, m2);
+    const synced = await syncConnection(mlsDeps(h, { [m2]: { ...pagedFeed([records]), fields: SPARK_FIELD_MAPPING } }), w2.tenantId as TenantId, m2);
+    expect(synced).toMatchObject({ outcome: 'synced', skippedInvalid: 0, inserted: records.length });
+    expect((await h.su.query<{ sized: number }>("SELECT count(sqft)::int AS sized FROM listings WHERE tenant_id = $1 AND source = 'mls'", [w2.tenantId])).rows[0]!.sized).toBe(0);
+    const u = await withCmaCleared(async () => {
+      await reconcile(h, w2.tenantId);
+      const get = async (id: string) => (await call<{ update: ValueUpdate }>(a2, 'GET', `/listings/${id}/seller-update`)).body.update;
+      return { own: await get(own), sized: await get(sized.listingId) };
+    });
+    const line = (t: string) => ({ state: 'unavailable', statement: `Value range unavailable: ${t}.`, lines: [{ text: `Value range unavailable: ${t}.`, feedback: null }] });
+    expect(valueOf(u.own)).toMatchObject(line('the home’s size or type is not on record'));
+    expect(valueOf(u.sized)).toMatchObject(line('not enough comparable sales'));
+    for (const x of [u.own, u.sized]) {
+      expect(JSON.stringify(valueOf(x))).not.toMatch(/\$|\d/);
+      expect(x.preview.body).not.toMatch(/Estimated value/);
+    }
   });
 });
