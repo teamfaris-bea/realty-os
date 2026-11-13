@@ -343,6 +343,7 @@ export const ERROR_STATUS = {
   CMA_SUBJECT_INCOMPLETE: 422, // the subject lacks its property type or size, the contact has no address, or a street address lacks the city, state or ZIP its MLS key needs (details.missing, details.sentence; E373, E365)
   CMA_SUBJECT_TYPE_NOT_SUPPORTED: 422, // land and 'other' are not valued in V1 (owner question (g), core/valuation CMA_SUPPORTED_TYPES; details.propertyType)
   CMA_NOT_DRAFT: 409, // a shared or superseded CMA never changes; prepare a new draft (details.status; E377)
+  CMA_SUBJECT_ADDRESS_GONE: 409, // the draft's contact address was deleted (S0 keeps the draft open with no address), so it cannot be re-run; prepare a new CMA (details.sentence; F15)
   // ---- api/documents (module 42; R-DOC-1..10) ----
   DOCUMENT_TYPE_NOT_ALLOWED: 422, // not a PDF, JPEG or PNG by its bytes, the declared type differs, or the file is empty (E400)
   DOCUMENT_RETENTION_OUT_OF_RANGE: 422, // retention 3-10 years after the scope's close (or the upload); details {from, to}

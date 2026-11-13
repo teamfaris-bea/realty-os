@@ -6,6 +6,10 @@
 //                    rows have a value the team row wins (R-MLS-5). An MLS listing: every fact from its row.
 //   contact_address  the address key, then every MLS record at it: facts from the newest record; its closed records are
 //                    the sale history (shown, never comps: E365).
+// R-CMA-6 (batch 10 review gates/F3): facts, sizes and sale prices come only from records of the connections the agent
+// gate admits (`connectionIds`); a record of any other connection gives none (the team row's or the agent's facts take
+// its place). Every connection is still read for the strict checks: the home's own identities (never comps, E365), the
+// seller's MLS flag and near matches (E370, F2).
 //   entered          the agent's facts (CmaSubjectFactsSchema, strict), each labelled 'agent'. Only propertyType and sqft
 //                    are required (CMA_SUBJECT_INCOMPLETE otherwise); without coordinates only the subdivision, postal-code
 //                    and city tiers run (E373).
@@ -90,9 +94,14 @@ export interface ResolvedSubject {
   /** listing ids and MLS numbers that are the subject itself (never comps): its listing and mirrors first, then records at its key */
   selfListingIds: string[];
   selfMlsNumbers: string[];
-  /** the subject listing's MLS mirror (SELLER_WITHHELD reads its AVM flag) */
+  /** the subject listing's MLS mirror, of any connection (SELLER_WITHHELD reads its AVM flag) */
   mirrorListingId: string | null;
-  /** the MLS connection whose record gave the facts, if any */
+  /**
+   * the subject's own MLS record whatever its connection: an MLS listing subject itself, or the team listing's mirror
+   * (SELLER_WITHHELD reads its AVM flag: a strict check). Absent on a CMA stored before batch 10's review.
+   */
+  mlsRecordId?: string | null;
+  /** the MLS connection whose record gave the facts, if any (only a connection the agent gate admits) */
   connectionId: string | null;
 }
 
@@ -253,9 +262,11 @@ function newest(rows: readonly ListingRow[]): ListingRow | null {
 
 /**
  * Resolves the subject. `sizeField` is the connection's size field (the RESO field the feed's sizes come from), used for
- * an agent-entered or team size (V3: every size comparison is like with like).
+ * an agent-entered or team size (V3: every size comparison is like with like). `connectionIds` are the connections the
+ * agent gate admits: only their records give facts and sale history (R-CMA-6).
  */
-export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId: string | null; sizeField: string | null }): Promise<ResolvedSubject> {
+export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId: string | null; sizeField: string | null; connectionIds: readonly string[] }): Promise<ResolvedSubject> {
+  const admitted = (r: ListingRow | null): boolean => r !== null && r.mls_connection_id !== null && o.connectionIds.includes(r.mls_connection_id);
   let address: SubjectAddress;
   let facts: SubjectFacts;
   let sizeSource: string | null;
@@ -265,6 +276,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
   let listingId: string | null = null;
   let contactAddressId: string | null = null;
   let mirrorListingId: string | null = null;
+  let mlsRecordId: string | null = null;
   let connectionId: string | null = null;
   const self = new Set<string>();
   const selfNumbers = new Set<string>();
@@ -278,11 +290,14 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     if (row.mls_number) selfNumbers.add(row.mls_number);
     address = { line1: row.address_line1, line2: row.address_line2, city: row.city, region: row.region, postalCode: row.postal_code };
     if (row.source === 'team') {
-      const mirror = (await mirrorsOf(tx, row.id))[0] ?? null;
-      for (const m of await mirrorsOf(tx, row.id)) {
+      const mirrors = await mirrorsOf(tx, row.id);
+      for (const m of mirrors) {
         self.add(m.id);
         if (m.mls_number) selfNumbers.add(m.mls_number);
       }
+      // the facts come from the newest mirror the agent gate admits; the strict checks read the newest of any connection
+      const anyMirror = mirrors[0] ?? null;
+      const mirror = mirrors.find((m) => admitted(m)) ?? null;
       const team = factsFromRow(row, 'team');
       const mls = factsFromRow(mirror, 'mls');
       // R-MLS-5: the team row wins where both have a value; the size is the mirror's (F4)
@@ -307,17 +322,26 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
         sizeSource = o.sizeField;
         sizeSentence = agentSize;
       }
-      mirrorListingId = mirror?.id ?? null;
+      mirrorListingId = anyMirror?.id ?? null;
+      mlsRecordId = anyMirror?.id ?? null;
       connectionId = mirror?.mls_connection_id ?? null;
-      key = mirror?.address_key ?? keyOf(address);
-    } else {
+      key = anyMirror?.address_key ?? keyOf(address);
+    } else if (admitted(row)) {
       facts = factsFromRow(row, 'mls');
       if (row.sqft !== null) ({ sizeSource, sizeSentence } = mlsSize(row, o.sizeField, 'Size from the MLS record'));
       else {
         sizeSource = row.size_source;
         sizeSentence = 'Size from the MLS record.';
       }
+      mlsRecordId = row.id;
       connectionId = row.mls_connection_id;
+      key = row.address_key ?? keyOf(address);
+    } else {
+      // an MLS listing of a connection the agent gate does not admit: the home by its address only (R-CMA-6)
+      facts = factsFromRow(null, 'agent');
+      sizeSource = o.sizeField;
+      sizeSentence = agentSize;
+      mlsRecordId = row.id;
       key = row.address_key ?? keyOf(address);
     }
     if (key) rowsAtKey = await mlsRowsAtAddress(tx, key);
@@ -330,7 +354,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     key = keyOf(address);
     if (key === null && address.line1?.trim()) refuseUnkeyed(address);
     rowsAtKey = key ? await mlsRowsAtAddress(tx, key) : [];
-    const n = newest(rowsAtKey);
+    const n = newest(rowsAtKey.filter(admitted));
     facts = factsFromRow(n, 'mls');
     if (n?.sqft != null) ({ sizeSource, sizeSentence } = mlsSize(n, o.sizeField, 'Size from the newest MLS record of this address'));
     else {
@@ -386,7 +410,9 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
             : 'The home’s street address is not known, so its MLS history was not looked up. Enter the property type and size to prepare a CMA.'
           : rowsAtKey.length === 0
             ? 'This address is not in the MLS history. Enter the property type and size to prepare a CMA.'
-            : 'Enter the property type and size to prepare a CMA.',
+            : !rowsAtKey.some(admitted)
+              ? 'This address’s MLS records come from a feed whose licence pack does not record valuation use. Enter the property type and size to prepare a CMA.'
+              : 'Enter the property type and size to prepare a CMA.',
     });
   }
   if (!SUPPORTED_TYPES.includes(facts.propertyType.value!)) {
@@ -404,10 +430,11 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     sizeSource,
     sizeSentence,
     factSentences: bounded.sentences,
-    saleHistory: history(rowsAtKey),
+    saleHistory: history(rowsAtKey.filter(admitted)),
     selfListingIds: [...own, ...[...atKey].sort()],
     selfMlsNumbers: [...ownNumbers, ...[...atKeyNumbers].sort()],
     mirrorListingId,
+    mlsRecordId,
     connectionId,
   };
 }

@@ -42,7 +42,7 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type ClientShare, type CmaConnections, type NearMatch, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches } from './gates.js';
+import { type CmaConnections, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, readinessConnections } from './gates.js';
 import {
   type CmaInspection,
   type CmaPurpose,
@@ -57,7 +57,11 @@ import {
   insertDraft,
   mergeTreeIds,
   myOpenDraft,
+  myOpenDrafts,
+  relinkAddress,
   supersede,
+  supersedeMyDraftsForHome,
+  survivorSeenByCaller,
   tenantZoneName,
   touchDataDate,
   updateDraft,
@@ -278,8 +282,9 @@ async function contextListings(tx: Tx, conns: CmaConnections, s: ResolvedSubject
   const zips = [...new Set([(s.address.postalCode ?? '').trim(), zip])].filter((z) => z !== '');
   const area = sql`(l.postal_code = ANY (${zips}::text[]) OR (l.city = ${s.address.city ?? ''} AND l.region = ${s.address.region ?? ''}))`;
   const rows = (
+    // never a lease (E360, b10 review ownership-data/F5): its list price is a rent; team rows carry is_lease false
     await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.status = ANY (${['active', 'pending']}::text[]) AND ${area}
-      AND (l.source = 'team' OR l.mls_connection_id = ANY (${live}::uuid[])) ORDER BY l.id LIMIT 500`.execute(tx)
+      AND NOT l.is_lease AND (l.source = 'team' OR l.mls_connection_id = ANY (${live}::uuid[])) ORDER BY l.id LIMIT 500`.execute(tx)
   ).rows;
   const subjectFacts: ListingFacts = {
     id: (s.listingId ?? null) as ListingFacts['id'],
@@ -344,8 +349,9 @@ function contentOf(s: StoredSubject, r: StoredResult, i: Pick<Inputs, 'notes' | 
 async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWrite; conns: CmaConnections; zone: IanaZone }> {
   const conns = await agentGate(tx, now);
   const zone = await zoneOf(tx);
-  const sizeField = await connectionSizeField(tx, conns.used.map((u) => u.conn.id));
-  const resolved = await resolveSubject(tx, i.subject, { contactId: i.contactId, sizeField });
+  const connectionIds = conns.used.map((u) => u.conn.id);
+  const sizeField = await connectionSizeField(tx, connectionIds);
+  const resolved = await resolveSubject(tx, i.subject, { contactId: i.contactId, sizeField, connectionIds });
   const valuationDate = localDateOf(now, zone) as string;
   const { result, offered } = await run(tx, conns, resolved, valuationDate, i.include, i.exclude);
   // only listings that are near matches now may be dismissed (others are ignored; with nothing to dismiss, nothing is read)
@@ -371,7 +377,7 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
       disclosure: i.disclosure,
       methodVersion: result.methodVersion,
       valuationDate,
-      mlsDataAsOf: mlsDataAsOf(conns),
+      mlsDataAsOf: mlsDataAsOf(conns, result.comps.map((c) => c.ref.connectionId)),
       subject,
       result,
       valueCents: result.available ? result.valueCents : null,
@@ -383,10 +389,31 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
   };
 }
 
+/**
+ * A contact a CMA is prepared or edited for must be live. A merged-away record is 409 CONTACT_MERGED, naming the
+ * survivor only to a caller who sees it (R-PERM-5), also when contacts RLS hides the record itself from the caller
+ * (its former agent opening their own CMA of it: db-public/F1, F2); any other contact the caller cannot see is 404.
+ */
 async function assertContact(tx: Tx, contactId: string): Promise<void> {
   const c = await contactLive(tx, contactId);
-  if (c === null) throw new AppError('NOT_FOUND');
-  if (!c.live) throw new AppError('CONTACT_MERGED', c.mergedInto ? { mergedInto: c.mergedInto } : undefined);
+  if (c !== null && c.live) return;
+  const survivor = c === null || c.mergedInto !== null ? await survivorSeenByCaller(tx, contactId) : null;
+  if (c === null && survivor === null) throw new AppError('NOT_FOUND');
+  throw new AppError('CONTACT_MERGED', survivor ? { mergedInto: survivor } : undefined);
+}
+
+/**
+ * F15 across a merge (ownership-data/F4): once the caller stores or keeps a draft for a home on `contactId`, their open
+ * drafts for the same home (address key) on records merged into it are superseded (a merged-away record's draft takes
+ * no edit any more, and the person keeps one open draft per creator and home). In the caller's transaction, on the
+ * records of the person along chains (0075's definer tree: past a closed middle record too), and only the caller's own
+ * drafts, which cma_reports_select and cma_reports_update admit for their creator; routes.ts then runs the same rule as
+ * the system after the transaction (cma/merge.ts supersedeCreatorsDraftsAcrossPerson; re-review ownership-data/F4).
+ */
+async function supersedeMergedAwayDrafts(tx: Tx, contactId: string, w: CmaWrite): Promise<void> {
+  const key = (w.subject as StoredSubject).resolved.addressKey;
+  if (key === null) return;
+  await supersedeMyDraftsForHome(tx, (await mergeTreeIds(tx, contactId)).filter((id) => id !== contactId), key);
 }
 
 export interface PrepareBody {
@@ -402,6 +429,12 @@ export async function prepare(tx: Tx, actor: UserActor, now: Instant, b: Prepare
   if (contactId !== null) await assertContact(tx, contactId);
   if (b.subject.kind === 'contact_address' && contactId === null) throw new AppError('VALIDATION_FAILED', { reason: 'CONTACT_REQUIRED' });
   const { write } = await compute(tx, now, { subject: b.subject, contactId, purpose: b.purpose, inspection: b.inspection ?? 'none', inspectedOn: b.inspectedOn ?? null, notes: null, disclosure: NO_DISCLOSURE, include: [], exclude: [], nearMatchDismissed: [] });
+  // an explicit prepare supersedes the caller's open drafts for this contact and address, a draft whose address was
+  // deleted and put back included (F15: one open draft per home)
+  if (contactId !== null) {
+    for (const d of await myOpenDrafts(tx, contactId, write.contactAddressId)) await supersede(tx, d.id);
+    await supersedeMergedAwayDrafts(tx, contactId, write);
+  }
   const id = randomUUID();
   let stored = await insertDraft(tx, id, write);
   if (stored === null) {
@@ -425,7 +458,10 @@ export async function oneTap(tx: Tx, actor: UserActor, now: Instant, contactId: 
     if (b.contactAddressId) throw new AppError('NOT_FOUND');
     throw new AppError('CMA_SUBJECT_INCOMPLETE', { missing: ['address'], sentence: 'Add the home’s address (a property or home address) to prepare a CMA.' });
   }
-  const open = await myOpenDraft(tx, contactId, addr.id);
+  // the caller's open draft for this address; a draft whose address was deleted and put back (its Undo) is the same
+  // home's: it is picked up, and any other is superseded, so one open draft remains (F15, ownership-data/F3)
+  const [open, ...others] = await myOpenDrafts(tx, contactId, addr.id);
+  for (const d of others) await supersede(tx, d.id);
   const stored = open ? (open.subject as unknown as StoredSubject) : null;
   const facts = { ...(stored?.input.kind === 'contact_address' ? stored.input.facts : undefined), ...b.facts };
   const inputs: Inputs = {
@@ -441,7 +477,9 @@ export async function oneTap(tx: Tx, actor: UserActor, now: Instant, contactId: 
     nearMatchDismissed: stored?.nearMatchDismissed ?? [],
   };
   const { write } = await compute(tx, now, inputs);
+  await supersedeMergedAwayDrafts(tx, contactId, write);
   if (open && open.content_sha256 === write.contentSha256) {
+    if (open.contact_address_id === null) await relinkAddress(tx, open.id, addr.id);
     if ((open.mls_data_as_of?.getTime() ?? null) !== (write.mlsDataAsOf?.getTime() ?? null)) await touchDataDate(tx, open.id, write.mlsDataAsOf);
     return { created: false, view: await viewOf(tx, actor, now, (await getCma(tx, open.id))!) };
   }
@@ -469,10 +507,30 @@ export interface PatchBody {
   nearMatchDismissed?: string[] | undefined;
 }
 
+/**
+ * The address a draft S0 kept open after its contact address was deleted still names (F15: contact_address_id became
+ * NULL; the stored subject keeps the id), else null. An Undo of the delete puts the address back under that id.
+ */
+function deletedAddressOf(row: CmaRow): string | null {
+  const s = row.subject as unknown as StoredSubject;
+  return row.contact_id !== null && row.contact_address_id === null && s.input.kind === 'contact_address' ? s.input.contactAddressId : null;
+}
+
+/** Whether a draft's address was deleted and is still gone: it cannot be re-run (db-public/F3, ownership-data/F3). */
+async function addressGone(tx: Tx, row: CmaRow): Promise<boolean> {
+  const a = deletedAddressOf(row);
+  return a !== null && (await addressOf(tx, row.contact_id!, a)) === null;
+}
+
 export async function patch(tx: Tx, actor: UserActor, now: Instant, id: string, b: PatchBody): Promise<CmaView> {
   const row = await getCma(tx, id, { lock: true });
   if (!row) throw new AppError('NOT_FOUND');
   if (row.status !== 'draft') throw new AppError('CMA_NOT_DRAFT', { status: row.status });
+  // a merged-away record's draft takes no edit (CONTACT_MERGED), as prepare and the one-tap refuse it (db-public/F2)
+  if (row.contact_id !== null) await assertContact(tx, row.contact_id);
+  if (await addressGone(tx, row)) {
+    throw new AppError('CMA_SUBJECT_ADDRESS_GONE', { sentence: 'The home’s address was deleted from this contact, so this CMA can’t be re-run. Prepare a new CMA for the home.' });
+  }
   const s = row.subject as unknown as StoredSubject;
   const input: SubjectInput = b.subjectFacts === undefined ? s.input : ({ ...s.input, facts: { ...s.input.facts, ...b.subjectFacts } } as SubjectInput);
   const inspection = b.inspection ?? row.inspection;
@@ -518,34 +576,49 @@ export interface CmaSummary {
   createdByUserId: string;
   mine: boolean;
   fromMergedRecord: boolean;
+  /** what PATCH would accept now: the caller's own draft of a live record whose address is still there */
+  canEdit: boolean;
   createdAt: string;
 }
 
+/** Whether the caller may edit the draft now (the view's canEdit): never an edit that must fail. */
+async function editable(tx: Tx, actor: UserActor, row: CmaRow, contactLiveNow: boolean | null): Promise<boolean> {
+  if (row.status !== 'draft' || row.created_by_user_id !== actor.userId) return false;
+  if (row.contact_id !== null && !(contactLiveNow ?? (await contactLive(tx, row.contact_id))?.live === true)) return false; // merged away, or not seen
+  return !(await addressGone(tx, row));
+}
+
 export async function listForContact(tx: Tx, actor: UserActor, contactId: string): Promise<CmaSummary[]> {
-  // the contact and every record merged into it (merge moves no CMA; b11 ownership-data/F1: the definer tree, because
-  // contacts RLS hides a merged-away record from the survivor's agent and Team Lead)
+  // the contact and every record merged into it, along chains (a merge moves no CMA). The definer tree (0075), because
+  // contacts RLS hides a merged-away record from its creator past a closed middle record (b10 db-public/F1's residual)
+  // and from the survivor's agent and Team Lead (b11 ownership-data/F1); cma_reports_select (0077) decides every row.
   const ids = await mergeTreeIds(tx, contactId);
   const rows = await cmasOfContacts(tx, ids);
-  return rows.map((r) => {
-    const s = r.subject as unknown as StoredSubject;
-    const a = s.resolved?.address;
-    return {
-      id: r.id,
-      contactId: r.contact_id,
-      status: r.status,
-      purpose: r.purpose,
-      valuationDate: r.valuation_date,
-      mlsDataAsOf: r.mls_data_as_of?.toISOString() ?? null,
-      valueCents: r.value_cents === null ? null : Number(r.value_cents),
-      lowCents: r.low_cents === null ? null : Number(r.low_cents),
-      highCents: r.high_cents === null ? null : Number(r.high_cents),
-      address: a?.line1 ? [a.line1, a.line2].filter(Boolean).join(' ') + (a.city ? `, ${a.city}` : '') : null,
-      createdByUserId: r.created_by_user_id,
-      mine: r.created_by_user_id === actor.userId,
-      fromMergedRecord: r.contact_id !== contactId,
-      createdAt: r.created_at.toISOString(),
-    };
-  });
+  const live = (await contactLive(tx, contactId))?.live === true;
+  const out: CmaSummary[] = [];
+  for (const r of rows) out.push({ ...summaryOf(actor, contactId, r), canEdit: await editable(tx, actor, r, r.contact_id === contactId ? live : false) });
+  return out;
+}
+
+function summaryOf(actor: UserActor, contactId: string, r: CmaRow): Omit<CmaSummary, 'canEdit'> {
+  const s = r.subject as unknown as StoredSubject;
+  const a = s.resolved?.address;
+  return {
+    id: r.id,
+    contactId: r.contact_id,
+    status: r.status,
+    purpose: r.purpose,
+    valuationDate: r.valuation_date,
+    mlsDataAsOf: r.mls_data_as_of?.toISOString() ?? null,
+    valueCents: r.value_cents === null ? null : Number(r.value_cents),
+    lowCents: r.low_cents === null ? null : Number(r.low_cents),
+    highCents: r.high_cents === null ? null : Number(r.high_cents),
+    address: a?.line1 ? [a.line1, a.line2].filter(Boolean).join(' ') + (a.city ? `, ${a.city}` : '') : null,
+    createdByUserId: r.created_by_user_id,
+    mine: r.created_by_user_id === actor.userId,
+    fromMergedRecord: r.contact_id !== contactId,
+    createdAt: r.created_at.toISOString(),
+  };
 }
 
 // ---- the view ----------------------------------------------------------------------------------
@@ -558,34 +631,23 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
   const zone = await zoneOf(tx);
   const listing = (identity: string): RefListing =>
     r.listings[identity] ?? { saleListingId: identity, teamListingId: null, sourceLabel: 'MLS', mlsNumber: null, listingBrokerageName: null, address: { line1: '', line2: null, city: '', region: '', postalCode: '' } };
-  let share: ClientShare;
-  let matches: NearMatch[];
-  try {
-    const conns = await agentGate(tx, now);
-    const x = await clientReadiness(tx, {
-      conns,
-      now,
-      state: s.resolved.state,
-      addressKey: s.resolved.addressKey,
-      addressLine: s.resolved.address.line1,
-      subjectMlsListingId: s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
-      compSales: r.comps.map((c) => {
-        const l = listing(c.ref.identity);
-        return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
-      }),
-      readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
-      nearMatchDismissed: s.nearMatchDismissed,
-      hasValue: row.value_cents !== null,
-    });
-    share = x.share;
-    matches = x.nearMatches;
-  } catch (e) {
-    // the feed was disconnected or its valuation use withdrawn after the CMA was prepared: the stored CMA stays readable,
-    // and nothing may reach a client
-    if (!(e instanceof AppError) || (e.code !== 'CMA_NO_MLS_CONNECTION' && e.code !== 'CMA_VALUATION_NOT_ALLOWED')) throw e;
-    share = { allowed: false, blockers: [{ code: 'MLS_CLIENT_DISPLAY_OFF', sentence: String(e.details?.['sentence'] ?? '') }], estimateSentence: 'This is an estimate, not an appraisal.' };
-    matches = [];
-  }
+  // readiness never needs the agent gate to pass: a feed disconnected or a valuation use withdrawn after the CMA was
+  // prepared is its own blocker beside every other one that holds, and the stored CMA stays readable (gates/F5, api-ui/F1)
+  const { share, nearMatches: matches } = await clientReadiness(tx, {
+    conns: await readinessConnections(tx, now),
+    now,
+    state: s.resolved.state,
+    addressKey: s.resolved.addressKey,
+    addressLine: s.resolved.address.line1,
+    subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
+    compSales: r.comps.map((c) => {
+      const l = listing(c.ref.identity);
+      return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
+    }),
+    readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
+    nearMatchDismissed: s.nearMatchDismissed,
+    hasValue: row.value_cents !== null,
+  });
   const facts = s.resolved.facts;
   const comp = (c: StoredResult['comps'][number]) => {
     const l = listing(c.ref.identity);
@@ -625,7 +687,8 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     notes: row.agent_notes,
     createdByUserId: row.created_by_user_id,
     mine: row.created_by_user_id === actor.userId,
-    canEdit: row.status === 'draft' && row.created_by_user_id === actor.userId,
+    // never an edit that must fail: not a merged-away record's draft, nor one whose address was deleted (F15)
+    canEdit: await editable(tx, actor, row, null),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     sharedAt: row.shared_at?.toISOString() ?? null,

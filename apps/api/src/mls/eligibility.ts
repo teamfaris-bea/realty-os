@@ -252,12 +252,18 @@ export function clientView(e: MlsEligibility, r: ListingRow): DisplayListing | n
 
 // ---- valuation use (D9) -------------------------------------------------------------------------------
 
+/**
+ * Where an Owner or Admin records valuation use: module 41's MLS page (apps/web surfaces/integrations, "Valuation use"),
+ * which sends V1-A's PUT /admin/mls/connections/:id/license-pack `valuation` body (batch 10 review api-ui/F2).
+ */
+export const VALUATION_USE_WHERE = 'An Owner or Admin records this from your MLS agreement on the MLS admin page, under Valuation use.';
+
 export type ValuationRefusal = 'NO_MLS_CONNECTION' | 'MLS_NOT_LIVE' | 'PACK_DOES_NOT_ALLOW' | 'VALUATION_NOT_REVIEWED' | 'NO_VALUATION_STATEMENT' | 'MLS_NOT_CLIENT_ELIGIBLE' | 'FEED_STALE';
 
 export const VALUATION_SENTENCE: Readonly<Record<ValuationRefusal, string>> = Object.freeze({
   NO_MLS_CONNECTION: 'There is no MLS connection to value this home from.',
   MLS_NOT_LIVE: 'The MLS connection is not live, so its sales cannot be used.',
-  PACK_DOES_NOT_ALLOW: 'The MLS licence pack does not record that this use of sold data is allowed. An Owner or Admin can record it from your MLS agreement.',
+  PACK_DOES_NOT_ALLOW: `The MLS licence pack does not record that this use of sold data is allowed. ${VALUATION_USE_WHERE}`,
   VALUATION_NOT_REVIEWED: 'The valuation part of the MLS licence pack is not marked as reviewed by counsel, so nothing built from MLS sales reaches a client.',
   NO_VALUATION_STATEMENT: "The MLS licence pack has no valuation statement for this home's state, so nothing built from MLS sales reaches a client.",
   MLS_NOT_CLIENT_ELIGIBLE: 'MLS data cannot reach clients: the display licence pack is not counsel-reviewed or lacks an attribution or a disclaimer.',

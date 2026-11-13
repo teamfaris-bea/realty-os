@@ -14,13 +14,23 @@
 // person), tags, custom values, relationships, notes and stage history move in the merge transaction
 // itself, by the definer trigger app.contacts_merge_children on contacts.merged_into_contact_id.
 // Runs as a tenant-wide actor (system / Owner / Admin): inline in the merge transaction, or in the
-// merge's ownership.followup for a Team Lead.
+// merge's ownership.followup for a Team Lead. Then the callers' MergeSteps run, in the same transaction
+// and as the same actor: the merge rules of modules this package does not know (batch 10 review
+// ownership-data/F4: api/cma's CMA drafts), so a database migrated only partway (a migration's backfill
+// test) never meets a table it does not have.
 import type { ContactId, IdGenerator, Instant, UserId } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
 import type { PeopleFacts } from '@realty/core/ownership';
 import { sql } from 'kysely';
 import type { Tx } from '../tenantTx.js';
 import { unownedHandbackTarget } from './effects.js';
+
+/**
+ * A step another module runs in the merge's move transaction, after the communication move, as the same tenant-wide
+ * actor (inline for the system / Owner / Admin, in the ownership.followup for a Team Lead). It must be idempotent: a
+ * re-delivered follow-up runs it again.
+ */
+export type MergeStep = (tx: Tx, survivorId: ContactId, loserId: ContactId) => Promise<void>;
 
 interface ConvRow {
   id: string;
@@ -45,6 +55,7 @@ export async function mergeCommunication(
   survivingOwner: UserId | null,
   people: PeopleFacts | undefined,
   previousOwner: UserId | null,
+  steps: readonly MergeStep[] = [],
 ): Promise<void> {
   const lconv = await conversationOf(tx, loserId);
   let moved = 0;
@@ -133,4 +144,5 @@ export async function mergeCommunication(
       UPDATE priority_feed_items SET state = 'done', snoozed_until = NULL, resolved_at = ${toIso(now)}::timestamptz
        WHERE tenant_id = app.tenant_id() AND assistant_action_id = ANY (${invalidated}::uuid[]) AND state IN ('open', 'snoozed')`.execute(tx);
   }
+  for (const step of steps) await step(tx, survivorId, loserId);
 }

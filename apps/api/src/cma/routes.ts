@@ -7,19 +7,29 @@
 //   PATCH /cma/:id                edit a draft and re-run it                                       cma.prepare
 //
 // Authorization: cma.prepare (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —) on the contact's facts (own, collaborating,
-// team), or `{own}` for the creator of a research CMA without a contact. ISA and TC have none; support reads through RLS
-// only (no route). A contact whose detail the caller cannot see, an invisible CMA, another tenant's id and every denial
-// are 404 (R-PERM-5). Bodies are strict and carry no tenant id; the tenant is the session's (R-TEN-3).
+// team), or `{own}` for the creator of a research CMA without a contact. A CMA of a merged-away record the caller does
+// not see is authorized on the facts of the record its merge chain ends at, when the caller sees that one, which lists
+// it (R-CMA-8; batch 10 review db-public/F1, batch 11 review ownership-data/F1): its creator, whom 0061's creator
+// branch shows the row, and the survivor's agent and Team Lead, whom 0077's root-survivor branch shows it. Nobody edits
+// such a CMA (409 CONTACT_MERGED). ISA and TC have none; support reads through RLS only (no route). A contact whose
+// detail the caller cannot see, an invisible CMA, another tenant's id and every denial are 404 (R-PERM-5). Bodies are strict and carry no tenant id; the tenant is the session's (R-TEN-3).
+//
+// Limits (batch 10 review api-ui/F5): the three routes that run V1-B's engine synchronously (one soldCandidates read,
+// then prepareCma with its back-test: about 300 ms for 2,000 candidates) count every authorized call against a
+// per-person and a per-team limit (CMA_RUN_LIMITS; auth/rateLimit.ts, DB-backed fixed windows, as the Spark key and
+// MMS upload routes do), beside the global per-session limit. Reading a stored CMA runs no engine and is not limited.
 import type { ResourceFacts } from '@realty/core/foundation';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { Tx } from '@realty/db';
-import { adminTx } from '../admin/common.js';
-import { mergedIntoRoot } from '../admin/repos/erasure.js';
+import { type Tx, withTenantTx } from '@realty/db';
+import { actorOf, adminTx, platformOf } from '../admin/common.js';
+import { type Limit, enforceLimits } from '../auth/rateLimit.js';
 import { personFacts } from '../lists/repos/catalog.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
-import { getCma } from './repos.js';
+import { systemActor } from '../worker/systemActor.js';
+import { supersedeCreatorsDraftsAcrossPerson } from './merge.js';
+import { getCma, survivorSeenByCaller } from './repos.js';
 import { CmaListResponse, CmaResponse, IdParams, OneTapBody, PatchBody, PrepareBody } from './schemas.js';
 import { getView, listForContact, oneTap, patch, prepare } from './service.js';
 
@@ -33,15 +43,43 @@ export async function contactCmaFacts(tx: Tx, contactId: string): Promise<Resour
 async function cmaFacts(tx: Tx, req: FastifyRequest, id: string): Promise<ResourceFacts | null> {
   const row = await getCma(tx, id);
   if (!row) return null;
-  if (row.contact_id !== null) {
-    // b11 ownership-data/F1 (0077): a merged-away record's CMA is read through the record its merge chain ends at, which
-    // the survivor's agent and Team Lead see (contacts RLS hides the merged-away record itself from them)
-    const own = await contactCmaFacts(tx, row.contact_id);
-    if (own) return own;
-    const root = await mergedIntoRoot(tx, row.contact_id);
-    return root ? contactCmaFacts(tx, root) : null;
-  }
-  return { own: row.created_by_user_id === req.actor?.userId };
+  if (row.contact_id === null) return { own: row.created_by_user_id === req.actor?.userId };
+  const facts = await contactCmaFacts(tx, row.contact_id);
+  if (facts !== null) return facts;
+  // contacts RLS hides a closed, unowned merged-away record from its creator and from the survivor's agent and Team
+  // Lead: its CMA is reached through the record its merge chain ends at, when the caller sees that (as the survivor's
+  // list shows it: b10 db-public/F1, b11 ownership-data/F1 with 0077); edits are refused CONTACT_MERGED in the service
+  const survivor = await survivorSeenByCaller(tx, row.contact_id);
+  return survivor === null ? null : contactCmaFacts(tx, survivor);
+}
+
+/**
+ * The engine routes' limits: 60 runs a minute per person (one a second, more than reviewing comps takes) and 300 per
+ * team, so one scripted session cannot hold an API process's event loop (VERIFY under load).
+ */
+export const CMA_RUN_LIMITS = (tenantId: string, userId: string): Limit[] => [
+  { kind: 'cma_run_user', parts: [tenantId, userId], max: 60, windowSeconds: 60 },
+  { kind: 'cma_run_tenant', parts: [tenantId], max: 300, windowSeconds: 60 },
+];
+
+async function limitRuns(req: FastifyRequest): Promise<void> {
+  const p = platformOf(req);
+  const a = actorOf(req);
+  await enforceLimits(p.db, p.config.sessionSecret, CMA_RUN_LIMITS(a.tenantId, a.userId), p.cmaLimitClock);
+}
+
+/**
+ * F15 across merge chains (batch 10 re-review ownership-data/F4): once a one-tap or prepare stored or kept an open draft
+ * of a contact, its creator's other open drafts for the home on the person's merged-away records are superseded as the
+ * session tenant's system actor, right after the caller's transaction (the workspace listing-agent route follows the
+ * same pattern). The caller's transaction already applies the rule along chains (service.ts supersedeMergedAwayDrafts,
+ * through 0075's definer tree since the batch 11 merge); this pass keeps it independent of the caller's policies and
+ * also sees a merge that committed before it starts. Only the caller's own drafts, only draft -> superseded, nothing
+ * returned (cma/merge.ts).
+ */
+async function oneOpenDraftAcrossPerson(req: FastifyRequest, cma: { id: string; contactId: string | null; status: string }): Promise<void> {
+  if (cma.contactId === null || cma.status !== 'draft') return;
+  await withTenantTx(systemActor(actorOf(req).tenantId, 'worker'), (tx) => supersedeCreatorsDraftsAcrossPerson(tx, cma.id), { db: platformOf(req).db, retries: 2 });
 }
 
 async function register(app: FastifyInstance): Promise<void> {
@@ -55,12 +93,16 @@ async function register(app: FastifyInstance): Promise<void> {
   });
 
   r.post('/cma', { config: auth, preHandler: onBody, bodyLimit: 64 * 1024, schema: { body: PrepareBody, response: { 201: CmaResponse } } }, async (req, reply) => {
+    await limitRuns(req);
     const cma = await adminTx(req, (tx, now, actor) => prepare(tx, actor, now, req.body));
+    await oneOpenDraftAcrossPerson(req, cma);
     return reply.code(201).send({ cma });
   });
 
   r.post('/contacts/:id/cma', { config: auth, preHandler: onContact, bodyLimit: 16 * 1024, schema: { params: IdParams, body: OneTapBody.optional(), response: { 200: CmaResponse, 201: CmaResponse } } }, async (req, reply) => {
+    await limitRuns(req);
     const x = await adminTx(req, (tx, now, actor) => oneTap(tx, actor, now, req.params.id, req.body ?? {}));
+    await oneOpenDraftAcrossPerson(req, x.view);
     return reply.code(x.created ? 201 : 200).send({ cma: x.view });
   });
 
@@ -72,9 +114,10 @@ async function register(app: FastifyInstance): Promise<void> {
     cma: await adminTx(req, (tx, now, actor) => getView(tx, actor, now, req.params.id)),
   }));
 
-  r.patch('/cma/:id', { config: auth, preHandler: onCma, bodyLimit: 64 * 1024, schema: { params: IdParams, body: PatchBody, response: { 200: CmaResponse } } }, async (req) => ({
-    cma: await adminTx(req, (tx, now, actor) => patch(tx, actor, now, req.params.id, req.body)),
-  }));
+  r.patch('/cma/:id', { config: auth, preHandler: onCma, bodyLimit: 64 * 1024, schema: { params: IdParams, body: PatchBody, response: { 200: CmaResponse } } }, async (req) => {
+    await limitRuns(req);
+    return { cma: await adminTx(req, (tx, now, actor) => patch(tx, actor, now, req.params.id, req.body)) };
+  });
 }
 
 export const cmaRoutes: RouteModule = { name: 'cma', register };
