@@ -355,12 +355,16 @@ export const CAPABILITY_WORDS: Record<string, string> = {
   seller_sold_comps: 'Share recent sales with sellers',
   book_appointments: 'Book appointments on your calendar',
 };
-/** The panel's "What it may do", rewritten for the reader (V5, V6: the API allows converse only today). */
-export function capabilityLine(c: { capability: string; allowed: boolean }, v: Viewer, built: ReadonlySet<string>): string {
+/**
+ * The panel's "What it may do", rewritten for the reader (V5, V6). b13 review B13S-2: allowed and built are the API's
+ * (the policy and the opt-in, as the turn grants them; ISA_BUILT_CAPABILITIES), never a web constant. Recent sales are
+ * built and dark: allowed says what they still wait for; not allowed says only the opt-in or policy, one reason.
+ */
+export const SOLD_COMPS_WAIT = 'none go out until counsel review of platform:cma and platform:ai_isa_seller_data is recorded and the MLS licence allows it';
+export function capabilityLine(c: { capability: string; allowed: boolean; built?: boolean }, v: Viewer): string {
   const what = (CAPABILITY_WORDS[c.capability] ?? 'Another capability').replace('your calendar', v.isOwner ? 'your calendar' : `${v.ownerFirst}'s calendar`).replace('for you to approve', v.isOwner ? 'for you to approve' : `for ${v.ownerFirst} to approve`);
-  if (c.allowed) return `${what}: yes.`;
-  if (c.capability === 'seller_sold_comps') return `${what}: no. Waiting for counsel review (platform:cma) and the seller-data pack.`;
-  if (!built.has(c.capability)) return `${what}: not available yet on this deployment.`;
+  if (c.built !== true) return `${what}: not available yet on this deployment.`;
+  if (c.allowed) return c.capability === 'seller_sold_comps' ? `${what}: allowed, but ${SOLD_COMPS_WAIT}.` : `${what}: yes.`;
   return `${what}: no. ${v.isOwner ? 'Not in your opt-in or the team policy.' : `Not in ${v.ownerFirst}'s opt-in or the team policy.`}`;
 }
 

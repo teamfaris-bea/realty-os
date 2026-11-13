@@ -152,6 +152,22 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     await runIsa(h, bw.tenantId, rounds, o.holdConfirmation ? { beforeTick: holdConfirmations } : {});
   };
 
+  it('R-ISA-22 (b13 review B13S-2): the panel reports booking as allowed for an agent opted into it, every capability as built, and the opt-in form\'s list from the same server list', async () => {
+    const l = await isaLead(h, agent(), { zone });
+    expect((await startCare(agent(), l.id)).status).toBe(200);
+    const p = await call<{ capabilities: { capability: string; allowed: boolean; built: boolean; sentence: string }[] }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(p.status).toBe(200);
+    const row = (c: string) => p.body.capabilities.find((x) => x.capability === c)!;
+    expect(row('book_appointments')).toEqual({ capability: 'book_appointments', allowed: true, built: true, sentence: 'Allowed.' });
+    expect(row('converse')).toMatchObject({ allowed: true, built: true });
+    // in the team policy, not in this agent's opt-in
+    expect(row('share_listings')).toEqual({ capability: 'share_listings', allowed: false, built: true, sentence: 'Not in the opt-in or the team policy.' });
+    expect(p.body.capabilities.every((c) => c.built)).toBe(true);
+    expect(JSON.stringify(p.body.capabilities)).not.toMatch(/not available yet|not built/i);
+    const me = await call<{ builtCapabilities: string[] }>(agent(), 'GET', '/me/ai-isa');
+    expect(me.body.builtCapabilities).toEqual(['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments']);
+  });
+
   it('R-ISA-13 E528: an offer is sent; "2" → accepting → booked → appointment_booked, the confirmation pending in local time and zone', async () => {
     const { l, o } = await offered();
     expect(o?.status).toBe('offered');

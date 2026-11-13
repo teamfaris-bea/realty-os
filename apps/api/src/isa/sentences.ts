@@ -23,6 +23,33 @@ const START_REFUSALS: Record<string, string> = {
   AI_ISA_NO_CHANNEL: 'No phone or email of theirs can receive AI messages.',
   AI_ISA_LISTED_ELSEWHERE: 'Their home is listed with another brokerage.',
 };
+/**
+ * b13 review B13S-2: what this tree implements, one list for the panel and the opt-in form (the web reads it from
+ * the API, never its own constant). Every capability turn.ts can grant is here: converse, share_listings and
+ * propose_saved_search (ISA-2b's buyer bundle and saved search), seller_competition (ISA-3: competing listings with
+ * their asking prices, allowed before platform:cma, E534), book_appointments (ISA-2b offers and booking) and
+ * seller_sold_comps, built but dark: recent sales go out only once counsel review of platform:cma and
+ * platform:ai_isa_seller_data is recorded and the MLS licence allows ai_isa_comps (the STUB(V2-A) statement rules
+ * refuse every statement until then). Reserved capabilities (core ISA_RESERVED_CAPABILITIES) are never listed.
+ */
+export const ISA_BUILT_CAPABILITIES = ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const;
+
+/** The panel's "What it may do" row of a capability: allowed (the team policy and the owner's opt-in) and the sentence. */
+export function capabilityRow(cap: string, inPolicy: boolean, inOptIn: boolean): { capability: string; allowed: boolean; built: boolean; sentence: string } {
+  const built = (ISA_BUILT_CAPABILITIES as readonly string[]).includes(cap);
+  const allowed = built && inPolicy && inOptIn;
+  const sentence = !built
+    ? 'Not built in this version.'
+    : !allowed
+      ? 'Not in the opt-in or the team policy.'
+      : cap === 'seller_sold_comps'
+        ? 'Allowed. Recent sales still go out only once counsel review of platform:cma and platform:ai_isa_seller_data is recorded and the MLS licence allows it.'
+        : cap === 'seller_competition'
+          ? 'Allowed: competing listings with their asking prices.'
+          : 'Allowed.';
+  return { capability: cap, allowed, built, sentence };
+}
+
 /** Control and booking refusals (ISA-2b; the web shows the sentence). */
 export const CONTROL_REFUSALS: Record<string, string> = {
   AI_ISA_BOOKING_IN_PROGRESS: 'The AI assistant is booking the time they agreed to. Resume after the booking finishes (a few seconds).',

@@ -15,7 +15,6 @@ import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { type PanelHandoff, type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useMe, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './Controls.js';
-import { BUILT } from './built.js';
 import { capsWords, localDate, localTime, PAUSE_EXPIRY_MS, scheduledWords, zonesWords } from './time.js';
 import {
   EFFECT_WORDS,
@@ -145,10 +144,10 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
           <Section title="What it may do">
             <ul className="flex flex-col gap-0.5">
               {p.capabilities.map((c) => (
-                <li key={c.capability}>{capabilityLine(c, viewer, BUILT)}</li>
+                <li key={c.capability}>{capabilityLine(c, viewer)}</li>
               ))}
             </ul>
-            {a.side !== 'buyer' ? <SellerFacts soldComps={p.capabilities.find((c) => c.capability === 'seller_sold_comps')?.sentence ?? null} /> : null}
+            {a.side !== 'buyer' ? <SellerFacts /> : null}
           </Section>
           <Section title="What it needs before it may text or email">
             <ul className="flex flex-col gap-0.5">
@@ -192,7 +191,7 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
                 ))}
               </ul>
             ) : (
-              'Nothing yet. It only talks with them; listings and saved searches are not available yet on this deployment.'
+              'Nothing yet.'
             )}
           </Section>
           <Section title="Times offered">
@@ -206,10 +205,8 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
                   </li>
                 ))}
               </ul>
-            ) : BUILT.has('book_appointments') ? (
-              'None offered.'
             ) : (
-              'Booking is not available yet on this deployment.'
+              'None offered.'
             )}
           </Section>
           {p.heldTopics.length > 0 ? <HeldTopics p={p} viewer={viewer} contactId={contact.id} /> : null}
@@ -241,13 +238,14 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
   );
 }
 
-/** E534: the seller facts line, then the panel's own seller_sold_comps sentence verbatim (batch 13 isa-4 F10; brief item 13). */
-export function SellerFacts({ soldComps }: { soldComps: string | null }) {
-  return (
-    <p className="pt-1 text-[14px] text-ink-muted">
-      Seller facts: not available yet. Competing listings and recent sales are not built, and counsel review of platform:cma and the seller-data pack is also required.{soldComps ? ` ${soldComps}` : ''}
-    </p>
-  );
+/**
+ * E534 (b13 review B13S-2): what reaches a seller, once. ISA-3 builds both: competing listings go out with their asking
+ * prices before platform:cma (E534); recent sales wait for platform:cma, platform:ai_isa_seller_data and the licence's
+ * ai_isa_comps. The capability lines above say what this owner's opt-in allows.
+ */
+export const SELLER_FACTS = 'Seller facts: competing listings go out with their asking prices only. Recent sales wait for counsel review of platform:cma and platform:ai_isa_seller_data, and for the MLS licence to allow the AI seller-data use.';
+export function SellerFacts() {
+  return <p className="pt-1 text-[14px] text-ink-muted">{SELLER_FACTS}</p>;
 }
 
 function PausedLines({ p, viewer, contact }: { p: PanelResponse; viewer: ViewerInfo; contact: ContactFullView }) {
@@ -553,7 +551,7 @@ export function StartSheet({ contact, onClose, fromHandbackId }: { contact: Pick
                 </Button>
               ))}
             </div>
-            <p className="text-[14px] text-ink-muted">The assistant only converses with sellers here. Competing listings and recent sales are not built yet.</p>
+            <p className="text-[14px] text-ink-muted">With sellers it may share competing listings (their asking prices) when your opt-in allows it. Recent sales wait for counsel review of platform:cma and platform:ai_isa_seller_data.</p>
             {act.error ? <Notice tone="error">{act.error.message}</Notice> : null}
           </>
         )}

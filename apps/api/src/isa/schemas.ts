@@ -75,6 +75,8 @@ export const MeView = z.object({
   attestationText: z.string().nullable(),
   needsReattest: z.boolean(),
   calendarLive: z.boolean(),
+  /** b13 review B13S-2: the capabilities this tree implements (the opt-in form enables only these) */
+  builtCapabilities: z.array(z.string()),
   underCare: z.number().int(),
   sentence: z.string(),
 });
@@ -139,7 +141,8 @@ export const PanelResponse = z.object({
   startRefusal: z.object({ code: z.string(), sentence: z.string() }).nullable(),
   canResume: z.boolean(),
   chain: z.array(ChainLink),
-  capabilities: z.array(z.object({ capability: z.string(), allowed: z.boolean(), sentence: z.string() })),
+  // b13 review B13S-2: built says this tree implements it (isa/sentences.ts ISA_BUILT_CAPABILITIES); the web reads it
+  capabilities: z.array(z.object({ capability: z.string(), allowed: z.boolean(), built: z.boolean(), sentence: z.string() })),
   consent: z.array(z.object({ channel: z.enum(CHANNELS), sentence: z.string() })),
   zones: z.object({ zones: z.array(z.string()), source: z.enum(['explicit', 'union']), sentence: z.string() }),
   nextAllowedSendAt: Iso.nullable(),

@@ -337,6 +337,12 @@
           "calendarLive": {
             "type": "boolean"
           },
+          "builtCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "underCare": {
             "type": "integer",
             "minimum": -9007199254740991,
@@ -352,6 +358,7 @@
           "attestationText",
           "needsReattest",
           "calendarLive",
+          "builtCapabilities",
           "underCare",
           "sentence"
         ],
@@ -1048,6 +1055,9 @@
                 "allowed": {
                   "type": "boolean"
                 },
+                "built": {
+                  "type": "boolean"
+                },
                 "sentence": {
                   "type": "string"
                 }
@@ -1055,6 +1065,7 @@
               "required": [
                 "capability",
                 "allowed",
+                "built",
                 "sentence"
               ],
               "additionalProperties": false

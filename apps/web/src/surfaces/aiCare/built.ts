@@ -1,6 +1,6 @@
-// What this deployment has built (Q6). One constant each; ISA-2b widens BUILT (share_listings, propose_saved_search,
-// book_appointments) and flips EMAIL_SENDER_CHECKS when the DKIM verdicts reach the turn path (ISA-2 report, gaps).
-export const BUILT: ReadonlySet<string> = new Set(['converse']);
+// What this deployment has built (Q6). b13 review B13S-2: which capabilities are built is the API's one list
+// (apps/api/src/isa/sentences.ts ISA_BUILT_CAPABILITIES), read from GET /me/ai-isa `builtCapabilities` and each panel
+// row's `built`; the web keeps no copy of it, so it can never say a capability the AI uses is unbuilt.
 
 /**
  * Email replies are turns only with an aligned DKIM pass (isa/ingest.ts dkimAligned). ISA-2b wired the provider verdicts

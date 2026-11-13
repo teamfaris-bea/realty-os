@@ -9,14 +9,20 @@ import { FakeFetch, IDS, ISA_IDS, adminView, isaApp, meView, optIn } from './tes
 import { ON_ATTESTATION, capAttestation, holdLines } from './TeamAssistantPage.js';
 
 describe('My AI assistant (/settings/ai-assistant)', () => {
-  it('R-ISA-32 Q6: capabilities are unchecked except the required one; unbuilt ones are disabled and say so; booking without a calendar links to it', async () => {
-    isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView() }), '/settings/ai-assistant', 'agent');
+  it('R-ISA-32 Q6 (b13 review B13S-2): capabilities are unchecked except the required one; built ones (the API\'s list) can be ticked; one the API does not list is disabled and says so; booking without a calendar links to it', async () => {
+    const v = isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView() }), '/settings/ai-assistant', 'agent');
     const req = await screen.findByLabelText('Talk with them by text and email (required)');
     expect(req).toBeChecked();
     expect(req).toBeDisabled();
     const listings = screen.getByLabelText('Share listings that fit their search');
     expect(listings).not.toBeChecked();
-    expect(listings).toBeDisabled();
+    expect(listings).toBeEnabled();
+    expect(screen.queryByText('Not available yet on this deployment')).toBeNull();
+    expect(screen.getByLabelText('Book appointments on your calendar')).toBeDisabled();
+    expect(screen.getByText('Connect your calendar first')).toBeInTheDocument();
+    v.view.unmount();
+    isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView({ builtCapabilities: ['converse'] }) }), '/settings/ai-assistant', 'agent');
+    expect(await screen.findByLabelText('Share listings that fit their search')).toBeDisabled();
     expect(screen.getAllByText('Not available yet on this deployment').length).toBeGreaterThan(0);
     // ISA-2b wired DKIM verdicts (EMAIL_SENDER_CHECKS): the old "email replies come to you for now" note is gone
     expect(screen.queryByText(/Their email replies pause AI care and come to you for now/)).toBeNull();
@@ -77,10 +83,12 @@ describe('My AI assistant (/settings/ai-assistant)', () => {
     expect(within(await screen.findByRole('dialog')).getByText('This ends AI care for your 2 leads now and withdraws your opt-in. Each comes back to you with a handoff.')).toBeInTheDocument();
   });
 
-  it('booking with a live calendar can be ticked', async () => {
+  it('booking with a live calendar can be ticked (b13 review B13S-2: ISA-2b builds it)', async () => {
     isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView({ calendarLive: true }) }), '/settings/ai-assistant', 'agent');
-    // booking is not built yet (BUILT), so it stays disabled even with a calendar: Q6
-    expect(await screen.findByLabelText('Book appointments on your calendar')).toBeDisabled();
+    const box = await screen.findByLabelText('Book appointments on your calendar');
+    expect(box).toBeEnabled();
+    await userEvent.setup().click(box);
+    expect(box).toBeChecked();
     expect(screen.queryByText('Connect your calendar first')).toBeNull();
   });
 });

@@ -21,7 +21,7 @@ import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
 import { adminLoosening, adminPut, adminView, meView, optIn, optInLoosening, reattest, revokeOptIn } from './settings.js';
 import type { TurnDeps } from './turn.js';
-import { STATE_SENTENCES, appointmentAlreadySetSentence, chipOf, startRefusalSentence } from './sentences.js';
+import { ISA_BUILT_CAPABILITIES, STATE_SENTENCES, appointmentAlreadySetSentence, capabilityRow, chipOf, startRefusalSentence } from './sentences.js';
 import { liveOfferOf } from './booking/rows.js';
 
 function depsOf(req: FastifyRequest): TurnDeps {
@@ -88,10 +88,9 @@ async function panel(req: FastifyRequest, contactId: string) {
       },
       canResume: !history && a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && actor.userId === a.ownerUserId && (chain.effect === 'ok' || chain.effect === 'hold'),
       chain: chain.links.map((l) => ({ link: l.link, name: l.name, effect: l.effect, code: l.code, sentence: l.sentence })),
-      capabilities: ctx === null ? [] : (['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const).map((cap) => {
-        const allowed = ctx.content.capabilities.includes(cap) && capsOn.has(cap) && (cap === 'converse');
-        return { capability: cap, allowed, sentence: allowed ? 'Allowed.' : cap === 'seller_sold_comps' ? 'Can share recent sales: no — not built in this version.' : cap === 'converse' ? 'Not in your opt-in.' : 'Not available yet on this deployment.' };
-      }),
+      // b13 review B13S-2: allowed is what turn.ts grants (the policy and the opt-in, capabilitiesInEffect), for every
+      // capability this tree builds (ISA_BUILT_CAPABILITIES), never converse alone
+      capabilities: ctx === null ? [] : ISA_BUILT_CAPABILITIES.map((cap) => capabilityRow(cap, ctx.content.capabilities.includes(cap), capsOn.has(cap))),
       consent: (ctx?.channels ?? []).map((ch) => ({ channel: ch, sentence: ch === 'sms'
         ? "Texts: OK for replies within 24 h of their text. Listings and follow-ups need written consent naming the team, from their own form, plus a fresh Do Not Call check."
         : 'Email: OK for replies within 24 h of their own verified email. Follow-ups need consent from their own form.' })),

@@ -57,6 +57,8 @@ export interface MeView {
   attestationText: string | null;
   needsReattest: boolean;
   calendarLive: boolean;
+  /** b13 review B13S-2: the capabilities this deployment builds (the API's one list) */
+  builtCapabilities: string[];
   underCare: number;
   sentence: string;
 }
@@ -129,7 +131,7 @@ export interface PanelResponse {
   startRefusal: { code: string; sentence: string } | null;
   canResume: boolean;
   chain: ChainLink[];
-  capabilities: { capability: string; allowed: boolean; sentence: string }[];
+  capabilities: { capability: string; allowed: boolean; built: boolean; sentence: string }[];
   consent: { channel: Channel; sentence: string }[];
   zones: { zones: string[]; source: 'explicit' | 'union'; sentence: string };
   nextAllowedSendAt: string | null;

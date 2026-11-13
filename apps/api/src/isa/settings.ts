@@ -12,6 +12,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { continueCare, currentPolicy, systemEndInTx } from './controls.js';
 import { sha256, type IsaDeps } from './effects.js';
 import { assignmentById, lockForTurn, tenantIsaFacts } from './repo.js';
+import { ISA_BUILT_CAPABILITIES } from './sentences.js';
 
 export const NOTICE_SENTENCE = 'The AI assistant (ISA) uses engineering defaults for consent evidence, quiet hours and frequency limits on its own messages. These are not legal advice and have not been reviewed by counsel.';
 
@@ -88,6 +89,7 @@ export async function meView(tx: Tx, actor: UserActor) {
     attestationText: pol ? attestationText(pol.sha) : null,
     needsReattest: opt !== undefined && pol !== null && opt.v !== pol.versionId,
     calendarLive: cal.rows[0]!.ok,
+    builtCapabilities: [...ISA_BUILT_CAPABILITIES],
     underCare: n.rows[0]!.n,
     sentence: pol === null ? 'Your team has no approved AI assistant policy yet.' : opt ? 'You are opted in.' : 'You have not opted in. Nothing is sent for your leads.',
   };

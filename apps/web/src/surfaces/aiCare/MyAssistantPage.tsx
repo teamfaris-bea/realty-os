@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 import { Button, Card, Dialog, Notice, announce } from '../../design/index.js';
 import { type AvailabilityWindow, type Channel, type MeView, type OptInBody, type OptInResult, type ReattestResult, useIsaAction, useIsaList, useMe } from './api.js';
 import { HoldBanner, useHold } from './Controls.js';
-import { BUILT, EMAIL_SENDER_CHECKS } from './built.js';
+import { EMAIL_SENDER_CHECKS } from './built.js';
 import { viewerZone } from './time.js';
 import { CAPABILITY_WORDS, isaMessage } from './words.js';
 
@@ -111,7 +111,7 @@ function OptInForm({ me }: { me: MeView }) {
         <legend className="text-[15px] font-semibold">What it may do for your leads</legend>
         {offered.map((c) => {
           const required = c === 'converse';
-          const built = BUILT.has(c);
+          const built = me.builtCapabilities.includes(c); // b13 review B13S-2: the API's list
           const needsCal = c === 'book_appointments' && !me.calendarLive;
           const id = `cap-${c}`;
           return (

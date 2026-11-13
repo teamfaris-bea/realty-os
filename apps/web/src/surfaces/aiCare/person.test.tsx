@@ -30,7 +30,9 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(within(strip).getAllByRole('button', { name: 'Take over' }).length).toBeGreaterThan(0);
     expect(await screen.findByText('What it may do')).toBeInTheDocument();
     expect(screen.getByText('Talk with them by text and email: yes.')).toBeInTheDocument();
-    expect(screen.getByText('Share listings that fit their search: not available yet on this deployment.')).toBeInTheDocument();
+    // b13 review B13S-2: every capability this tree builds is said as allowed or not in the opt-in, never "not available yet"
+    expect(screen.getByText('Share listings that fit their search: no. Not in your opt-in or the team policy.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/not available yet|not built/i);
     expect(screen.getByText('2 of 6 AI messages in the last 24 hours')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/on file\b.*consent|consent.*on file/i);
     expect(document.body.textContent).not.toMatch(/\b[A-Z]{2,}_[A-Z_]+\b/);
@@ -71,13 +73,17 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(screen.queryByRole('button', { name: 'Continue AI care' })).toBeNull();
   });
 
-  it('E534 (batch 13 isa-4 F10): a seller assignment shows "Seller facts: not available yet" and the seller_sold_comps sentence verbatim', async () => {
+  it('E534 (b13 review B13S-2): a seller assignment says competing listings go with their asking prices and recent sales wait for counsel review, once; an allowed capability reads yes; booking and listings never read "not available yet"', async () => {
     const p = panel();
     p.assignment!.side = 'seller';
-    p.capabilities = p.capabilities.map((c) => (c.capability === 'seller_sold_comps' ? { ...c, sentence: 'Can share recent sales: no — not built in this version.' } : c));
+    p.capabilities = p.capabilities.map((c) => (['seller_competition', 'seller_sold_comps', 'book_appointments'].includes(c.capability) ? { ...c, allowed: true } : c));
     isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');
-    expect(await screen.findByText(/^Seller facts: not available yet\. Competing listings and recent sales are not built, and counsel review of platform:cma and the seller-data pack is also required\./)).toBeInTheDocument();
-    expect(screen.getByText(/Can share recent sales: no — not built in this version\.$/)).toBeInTheDocument();
+    expect(await screen.findByText('Seller facts: competing listings go out with their asking prices only. Recent sales wait for counsel review of platform:cma and platform:ai_isa_seller_data, and for the MLS licence to allow the AI seller-data use.')).toBeInTheDocument();
+    expect(screen.getByText('Share competing listings with sellers: yes.')).toBeInTheDocument();
+    expect(screen.getByText('Share recent sales with sellers: allowed, but none go out until counsel review of platform:cma and platform:ai_isa_seller_data is recorded and the MLS licence allows it.')).toBeInTheDocument();
+    expect(screen.getByText('Book appointments on your calendar: yes.')).toBeInTheDocument();
+    expect(screen.getByText('None offered.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/not available yet|not built|Booking is not available/i);
   });
 
   it('E496 (batch 13 isa-4 F10): Take over is offered while care is paused because someone on the team wrote (human_contact)', async () => {
