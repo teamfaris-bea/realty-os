@@ -148,7 +148,7 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
                 <li key={c.capability}>{capabilityLine(c, viewer, BUILT)}</li>
               ))}
             </ul>
-            {a.side !== 'buyer' ? <SellerFacts /> : null}
+            {a.side !== 'buyer' ? <SellerFacts soldComps={p.capabilities.find((c) => c.capability === 'seller_sold_comps')?.sentence ?? null} /> : null}
           </Section>
           <Section title="What it needs before it may text or email">
             <ul className="flex flex-col gap-0.5">
@@ -237,10 +237,11 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
   );
 }
 
-export function SellerFacts() {
+/** E534: the seller facts line, then the panel's own seller_sold_comps sentence verbatim (batch 13 isa-4 F10; brief item 13). */
+export function SellerFacts({ soldComps }: { soldComps: string | null }) {
   return (
     <p className="pt-1 text-[14px] text-ink-muted">
-      Seller facts: not available yet. Competing listings and recent sales are not built, and counsel review of platform:cma and the seller-data pack is also required. Can share recent sales: no — waiting for counsel review (platform:cma) and the seller-data pack.
+      Seller facts: not available yet. Competing listings and recent sales are not built, and counsel review of platform:cma and the seller-data pack is also required.{soldComps ? ` ${soldComps}` : ''}
     </p>
   );
 }

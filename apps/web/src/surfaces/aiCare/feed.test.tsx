@@ -146,6 +146,15 @@ describe('AI care feed cards (module 76)', () => {
     expect(c.textContent).not.toMatch(/return to the pond|saved search/);
   });
 
+  it('R-ISA-22 R-AST-13 (batch 13 isa-4 F10): stray score or confidence keys in a handoff package never render', async () => {
+    const h = handoffView();
+    const pkg = { ...h.package, confidence: 0.91, score: 77, claims: h.package.claims!.map((c) => ({ ...c, confidence: 0.66 })) };
+    isaApp(feedOf([handoffCard()], { handoff: { ...h, package: pkg } }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('They asked to talk to a person.')).toBeInTheDocument();
+    expect(c.textContent).not.toMatch(/confidence|\bscore\b|0\.91|0\.66|\b77\b|%/i);
+  });
+
   it('V9 Q10: a met deadline reads "Done: Jane was reached at …" and the card stays', async () => {
     isaApp(feedOf([handoffCard()], { handoff: handoffView({ slaMetAt: iso(-60_000) }) }), '/', 'agent');
     const c = await screen.findByTestId('ai-card-ai_isa_handoff');

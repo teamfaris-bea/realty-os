@@ -21,7 +21,7 @@ function person(p: PanelResponse, o: { live?: boolean; hold?: string | null } = 
 const announced = () => screen.getByTestId('announcer').textContent ?? '';
 
 describe('the AI care panel and strip (module 76)', () => {
-  it('R-ISA-22 E539: live care for the owner: the strip says so with Pause and Take over; the panel says what it may do and needs, in words', async () => {
+  it('R-ISA-22: live care for the owner: the strip says so with Pause and Take over; the panel says what it may do and needs, in words', async () => {
     isaApp(person(panel()), `/contacts/${IDS.jane}`, 'agent');
     const strip = await screen.findByTestId('ai-strip');
     expect(within(strip).getByText('AI assistant is handling this conversation')).toBeInTheDocument();
@@ -53,6 +53,49 @@ describe('the AI care panel and strip (module 76)', () => {
     const s = await screen.findByRole('region', { name: 'An earlier handoff is still open' });
     expect(within(s).getByText('Someone on the team ended it.')).toBeInTheDocument();
     expect(within(s).getByText(/^Respond by .+ · Overdue\. A call, text or email to Jane from you or a collaborator meets it\.$/)).toBeInTheDocument();
+  });
+
+  it('E516 (batch 13 isa-4 F10): Continue AI care shows for the owner only; the owner\'s tap posts an empty body and says the result', async () => {
+    const paused = panel({ state: 'paused' });
+    paused.assignment!.pauseReason = 'reinquiry';
+    const started = { assignmentId: ISA_IDS.assignment2, state: 'starting', epoch: 1, inFlight: [], canceled: 0, undoUntil: null, sentence: 'AI care continued as a new period.', stoppedEnrollment: false, supersededProposals: 0 };
+    const fake = person(paused).on(`POST /contacts/${IDS.jane}/ai-isa/continue`, { status: 200, body: started });
+    const v = isaApp(fake, `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText('Jane inquired again. AI care is paused so you can see the new inquiry.')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Continue AI care' }));
+    expect(await screen.findByText('AI care continued as a new period.', { selector: 'p' })).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/ai-isa/continue`)[0]!.body).toEqual({});
+    v.view.unmount();
+    isaApp(person(paused), `/contacts/${IDS.jane}`, 'team_lead', { userId: ISA_IDS.tl });
+    expect(await screen.findByText('Jane inquired again. AI care is paused so you can see the new inquiry.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Continue AI care' })).toBeNull();
+  });
+
+  it('E534 (batch 13 isa-4 F10): a seller assignment shows "Seller facts: not available yet" and the seller_sold_comps sentence verbatim', async () => {
+    const p = panel();
+    p.assignment!.side = 'seller';
+    p.capabilities = p.capabilities.map((c) => (c.capability === 'seller_sold_comps' ? { ...c, sentence: 'Can share recent sales: no — not built in this version.' } : c));
+    isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText(/^Seller facts: not available yet\. Competing listings and recent sales are not built, and counsel review of platform:cma and the seller-data pack is also required\./)).toBeInTheDocument();
+    expect(screen.getByText(/Can share recent sales: no — not built in this version\.$/)).toBeInTheDocument();
+  });
+
+  it('E496 (batch 13 isa-4 F10): Take over is offered while care is paused because someone on the team wrote (human_contact)', async () => {
+    const p = panel({ state: 'paused' });
+    p.assignment!.pauseReason = 'human_contact';
+    isaApp(person(p), `/contacts/${IDS.jane}`, 'team_lead', { userId: ISA_IDS.tl });
+    const strip = await screen.findByTestId('ai-strip');
+    expect(within(strip).getByText(/Someone on the team texted, emailed or called them\./)).toBeInTheDocument();
+    expect(within(strip).getAllByRole('button', { name: 'Take over' }).length).toBeGreaterThan(0);
+    expect(within(strip).queryByRole('button', { name: 'Pause' })).toBeNull();
+  });
+
+  it('R-ISA-22 R-AST-13 (batch 13 isa-4 F10): stray score or confidence keys in the panel never render, and a consent sentence "on file" is never shown as "on file"', async () => {
+    const p = { ...panel(), score: 0.93, confidence: 0.81, consent: [{ channel: 'sms' as const, sentence: 'Texts: written consent on file from their own form.', confidence: 0.7 }] };
+    p.capabilities = p.capabilities.map((c) => ({ ...c, score: 12 }));
+    isaApp(person(p as never), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText('Texts: written consent recorded from their own form.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/on file|confidence|\bscore\b|0\.93|0\.81|93%|81%/i);
   });
 
   it('R-ISA-22 V5: a team lead never reads "You opted in", "You own" or "Waiting on you"; the owner is named instead', async () => {
@@ -204,7 +247,7 @@ describe('the AI care panel and strip (module 76)', () => {
     await waitFor(() => expect(within(strip).getByTestId('ai-control-line').textContent).toMatch(/^Paused: nobody is following up automatically\. Ava is told and can resume it\. 1 message was already on its way at .*It may still reach Jane\.$/));
   });
 
-  it('R-PERM-5: a TC never fetches AI care; a 404 panel renders nothing', async () => {
+  it('R-PERM-5 E539: a TC never fetches AI care; a 404 panel (a forged or invisible contact id) renders nothing', async () => {
     const fake = person(panel());
     isaApp(fake, `/contacts/${IDS.jane}`, 'tc');
     await screen.findByText('Jane Doe', { selector: 'h2' });

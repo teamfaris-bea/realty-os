@@ -13,7 +13,7 @@ const RELS = { own: { own: true }, collab: { collaborator: true }, team: { team:
 describe('R-ISA-15 controls (module 76)', () => {
   for (const role of ROLES) {
     for (const [rel, facts] of Object.entries(RELS)) {
-      it(`R-ISA-15: ${role} on a ${rel} lead: the controls shown are exactly what core can() allows`, () => {
+      it(`R-ISA-15 E496: ${role} on a ${rel} lead: the controls shown, live and paused, are exactly what core can() allows`, () => {
         const f = { tenantId: T, ...facts, reauth: { reauthenticatedAt: Date.now(), now: Date.now() } } as never;
         const view = can(actor(role), 'ai_isa.view', f).ok;
         const owner = rel === 'own' ? ME : OTHER;
@@ -32,6 +32,10 @@ describe('R-ISA-15 controls (module 76)', () => {
         expect(undo.takeOver || undo.end || undo.resume).toBe(false);
         // Resume: the owner only, and only when the panel says canResume
         expect(paused.resume).toBe(rel === 'own' && can(actor(role), 'ai_isa.resume', f).ok);
+        // E496 (batch 13 isa-4 F10): Take over and End stay on a paused assignment (a human_contact pause included)
+        expect(paused.takeOver).toBe(can(actor(role), 'ai_isa.control', f).ok);
+        expect(paused.end).toBe(can(actor(role), 'ai_isa.control', f).ok);
+        expect(paused.pause).toBe(false);
       });
     }
   }
