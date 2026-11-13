@@ -197,6 +197,34 @@ export interface AiIsaPersonBlocksTable {
   lift_attestation: string | null;
 }
 
+/** public.ai_isa_seller_watch (table) */
+export interface AiIsaSellerWatchTable {
+  tenant_id: string;
+  assignment_id: string;
+  contact_id: string;
+  contact_address_id: string | null;
+  subject_address_key: string | null;
+  subject_connection_id: string | null;
+  subject_record_listing_id: string | null;
+  subject_record_date: Timestamp | null;
+  subject_facts: Json | null;
+  subject_confirmed_by_user_id: string | null;
+  subject_confirmed_at: Timestamp | null;
+  subject_disputed_at: Timestamp | null;
+  subject_cleared_reason: string | null;
+  near_match_dismissed: Generated<string[]>;
+  last_snapshot: Generated<Json>;
+  snapshot_versions: Generated<Json>;
+  last_comps_check: Json | null;
+  comps_suspended_at: Timestamp | null;
+  comps_resumed_at: Timestamp | null;
+  comps_resumed_by_user_id: string | null;
+  comps_resumed_reason: string | null;
+  last_run_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.ai_isa_shared_facts (table) */
 export interface AiIsaSharedFactsTable {
   tenant_id: string;
@@ -2952,6 +2980,7 @@ export interface DB {
   ai_isa_daily_counts: AiIsaDailyCountsTable;
   ai_isa_handoffs: AiIsaHandoffsTable;
   ai_isa_person_blocks: AiIsaPersonBlocksTable;
+  ai_isa_seller_watch: AiIsaSellerWatchTable;
   ai_isa_shared_facts: AiIsaSharedFactsTable;
   ai_isa_slot_offers: AiIsaSlotOffersTable;
   ai_isa_state_zones: AiIsaStateZonesTable;
@@ -3129,6 +3158,7 @@ export const TABLE_NAMES = [
   'ai_isa_daily_counts',
   'ai_isa_handoffs',
   'ai_isa_person_blocks',
+  'ai_isa_seller_watch',
   'ai_isa_shared_facts',
   'ai_isa_slot_offers',
   'ai_isa_state_zones',
