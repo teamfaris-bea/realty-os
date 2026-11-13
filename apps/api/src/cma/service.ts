@@ -44,7 +44,7 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type ClientShare, type CmaConnections, type NearMatch, type ReadinessInput, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
+import { type ClientShare, type CmaConnections, type NearMatch, type ReadinessInput, type ReadinessUse, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
 import { shareMessageSentence } from './report.js';
 import {
   type CmaInspection,
@@ -151,6 +151,7 @@ interface Inputs {
   nearMatchDismissed: string[];
 }
 
+/** The tenant's zone (exported for V2-A's share and lane V2-B's pipeline). */
 export async function zoneOf(tx: Tx): Promise<IanaZone> {
   return (ianaZone(await tenantZoneName(tx)) ?? ('UTC' as IanaZone)) as IanaZone;
 }
@@ -218,9 +219,18 @@ function engine(input: Parameters<typeof runEngine>[0]): CmaResult {
  * the team row's identity and facts, the lowest-id mirror's close price, size and sale facts), V1-B's engine, the context
  * listings. A record whose stored values V1-B's strict schemas refuse (a price or count beyond the engine's bounds) is
  * left out and counted, so one bad record never stops a CMA. Also returns every identity offered to the engine: the ids
- * this run read under RLS (V1-B lists only the closest not-used sales, so its result does not name them all).
+ * this run read under RLS (V1-B lists only the closest not-used sales, so its result does not name them all), and
+ * (lane V2-B, additive) the candidates offered, sorted by identity, and the tier reads the engine was given: what
+ * cma/pipeline.ts hashes into a value run's inputsSha256.
  */
-async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationDate: string, include: readonly string[], exclude: readonly string[]): Promise<{ result: StoredResult; offered: ReadonlySet<string> }> {
+export async function run(
+  tx: Tx,
+  conns: CmaConnections,
+  s: ResolvedSubject,
+  valuationDate: string,
+  include: readonly string[],
+  exclude: readonly string[],
+): Promise<{ result: StoredResult; offered: ReadonlySet<string>; candidates: CmaCandidate[]; tierReads: { tier: CmaTier | 'rate_pool'; limitReached: boolean }[] }> {
   const connectionIds = conns.used.map((u) => u.conn.id);
   const subject = engineSubject(s);
   // V1-B's reach, composed as the engine composes it: the main run reads back max(extended look-back, rate pool) months
@@ -275,7 +285,8 @@ async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationD
     return { tier: ENGINE_TIER[t], ran: x !== undefined, rows: x?.rows ?? 0, limitReached: x?.limitReached ?? false };
   });
   const context = await contextListings(tx, conns, s);
-  return { result: { ...result, listings, reads, recordsLeftOut, connectionIds, ...context }, offered };
+  const sorted = [...candidates].sort((a, b) => (a.ref.identity < b.ref.identity ? -1 : a.ref.identity > b.ref.identity ? 1 : 0));
+  return { result: { ...result, listings, reads, recordsLeftOut, connectionIds, ...context }, offered, candidates: sorted, tierReads };
 }
 
 /** Actives and pendings near the subject: support only, never comps (core competingSet with no price band). */
@@ -657,33 +668,53 @@ export interface Readiness extends Awaited<ReturnType<typeof clientReadiness>> {
 export async function readinessOf(tx: Tx, now: Instant, row: CmaRow, conns?: CmaConnections): Promise<Readiness> {
   const s = row.subject as unknown as StoredSubject;
   const r = row.result as unknown as StoredResult;
-  const input: ReadinessInput = {
-    conns: conns ?? (await readinessConnections(tx, now)),
-    now,
-    state: s.resolved.state,
-    addressKey: s.resolved.addressKey,
-    addressLine: s.resolved.address.line1,
-    subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
-    compSales: r.comps.map((c) => {
-      const l = listingOf(r, c.ref.identity);
-      return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
-    }),
-    readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
-    nearMatchDismissed: s.nearMatchDismissed,
-    hasValue: row.value_cents !== null,
-    // R-MLS-7: a stored subject or comp size from a field that is never finished living area blocks under every use
-    notLivingArea: storedNotLivingArea(s, r),
-  };
+  const input = readinessInputOf(s.resolved, r, conns ?? (await readinessConnections(tx, now)), now, { nearMatchDismissed: s.nearMatchDismissed, hasValue: row.value_cents !== null });
   return { ...(await clientReadiness(tx, input)), input };
 }
 
 /**
  * R-MLS-7 (the owner's MLS size rule): whether the stored subject's or any stored comp's size came from a field that is
- * never finished living area (core SIZE_FIELDS_NEVER_USED, BuildingAreaTotal among them). Every readiness input of a
- * stored CMA computes it here, never a literal false: the view, the share, the sweep and the PDF.
+ * never finished living area (core SIZE_FIELDS_NEVER_USED, BuildingAreaTotal among them). Every readiness input computes
+ * it here (readinessInputOf), never a literal false: the view, V2-A's share, sweep and PDF, and V2-B's in-house notes
+ * and seller ranges.
  */
 export function storedNotLivingArea(s: Pick<StoredSubject, 'resolved'>, r: Pick<StoredResult, 'comps'>): boolean {
   return notLivingAreaSize([s.resolved.sizeSource, ...r.comps.map((c) => c.sale.sizeSource)]);
+}
+
+/**
+ * The readiness input of a run (V1-C's view literal, moved here for lane V2-B and V2-A's share re-check): the subject's
+ * key, state and own MLS record, the comps' sale rows, and every connection the run read. `use` and `selfListingIds`
+ * default to V1's ('client_cma', none), so V1's readiness is unchanged. Batch 13: V2-A's readinessOf builds its input
+ * here too, and `notLivingArea` is computed from the subject's and comps' size sources (R-MLS-7, storedNotLivingArea).
+ */
+export function readinessInputOf(
+  resolved: ResolvedSubject,
+  r: Pick<StoredResult, 'comps' | 'listings' | 'connectionIds'>,
+  conns: CmaConnections,
+  now: Instant,
+  o: { nearMatchDismissed: readonly string[]; hasValue: boolean; use?: ReadinessUse; selfListingIds?: readonly string[] },
+): ReadinessInput {
+  const sale = (identity: string) => r.listings[identity] ?? { saleListingId: identity, teamListingId: null };
+  return {
+    conns,
+    now,
+    state: resolved.state,
+    addressKey: resolved.addressKey,
+    addressLine: resolved.address.line1,
+    subjectMlsListingId: resolved.mlsRecordId ?? resolved.mirrorListingId ?? (resolved.connectionId && resolved.listingId ? resolved.listingId : null),
+    compSales: r.comps.map((c) => {
+      const l = sale(c.ref.identity);
+      return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
+    }),
+    readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(resolved.connectionId ? [resolved.connectionId] : [])],
+    nearMatchDismissed: o.nearMatchDismissed,
+    hasValue: o.hasValue,
+    // R-MLS-7: a subject or comp size from a field that is never finished living area blocks under every use
+    notLivingArea: storedNotLivingArea({ resolved }, r),
+    ...(o.use !== undefined ? { use: o.use } : {}),
+    ...(o.selfListingIds !== undefined ? { selfListingIds: o.selfListingIds } : {}),
+  };
 }
 
 /** The listing behind one engine identity (the engine's references carry no address). */

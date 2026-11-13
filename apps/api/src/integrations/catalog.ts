@@ -146,7 +146,7 @@ export const PACK_GATES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
-  'platform:cma': 'Client CMAs and seller value ranges', // module 71 (D9, F8): platform:avm keeps gating home-value notes
+  'platform:cma': 'Client CMAs, seller value ranges and in-house home-value notes', // module 71 (D9, F8; R-CMA-10: in-house notes need platform:avm too)
   'platform:ads': 'Changing Google Ads budgets',
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
   // the AI ISA packs (D12 proposed; b12 review ui-1): the page prints this line under the web name, so it names "the

@@ -37,6 +37,7 @@ import { webPushProvider } from './webpush.js';
 import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeIntegrations, selectIntegrations } from './integrations/index.js';
 import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
 import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/provider.js';
+import { InHouseAvm } from '../cma/avm.js';
 import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
 import { type DocumentTextExtractor, FakeScanner, FakeTextExtractor, type MalwareScanner, UnconfiguredScanner, UnconfiguredTextExtractor } from '../documents/provider.js';
 import { type AdsProvider, FakeAds, UnconfiguredAds } from '../ads/provider.js';
@@ -205,7 +206,9 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
       ...(opts.fetch ? { fetch: opts.fetch } : {}),
     });
   }
-  const integrations = selectIntegrations(config);
+  // R-CMA-10 (lane V2-B, owner question 9): production values homes in-house from the tenant's own MLS rows; dev, test
+  // and the staging demo (fakes allowed) keep the fake
+  const integrations = config.env === 'production' && !config.allowFakeProviders ? { ...selectIntegrations(config), avm: new InHouseAvm() } : selectIntegrations(config);
   // module 68: no Google OAuth client is configured in this build (fakes only, VERIFY before any real adapter)
   const gmail: GmailProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGmail() : fakes.gmail;
   // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed

@@ -1,0 +1,248 @@
+// Lane V2-B deliverable 5 (R-CMA-7, R-CMA-10, R-SELL-2, R-SELL-4, E375, E366, E629-E632, E638, E639): the seller
+// update's 'value' section through the real server, the reconcile pass and the send path. Real Postgres (app_user,
+// RLS); MLS rows are RESO fixtures stored through V1-A's sync; fakes only, nothing real is sent.
+import { randomUUID } from 'node:crypto';
+import type { Instant } from '@realty/core/foundation';
+import { type Database, withTenantTx } from '@realty/db';
+import type { KyselyPlugin } from 'kysely';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type AssistantWorld, assistantWorld } from '../assistant/testing.js';
+import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
+import { grantConsent, randomPhone } from '../comms/testing.js';
+import { TEST_ATTRIBUTION, TEST_DISCLAIMER, mlsConnection } from '../mls/testing.js';
+import { assemble } from '../sellerUpdates/assembly.js';
+import { periodOf } from '../sellerUpdates/store.js';
+import { RECOMMENDATION, type SendT, type SellerListing, type UpdateT, call, cmd, draftsOf, reconcile, sellerListing } from '../sellerUpdates/testing.js';
+import { systemActor } from '../worker/systemActor.js';
+import { SELLER_VALUE_SENTENCES } from './sellerValue.js';
+import { TEST_STATEMENT, cmaPack, daysAgo, localSales, mlsSale, teamListing } from './testing.js';
+
+let h: ApiHarness;
+let w: AssistantWorld;
+let mls: string;
+
+type ValueUpdate = UpdateT & { valueRemoved: boolean; valueNote: string | null; delivery: { contactId: string; status: string }[] | null };
+
+beforeAll(async () => {
+  h = await createApiHarness();
+  w = await assistantWorld(h, { agents: 1 });
+  mls = await mlsConnection(h, w.tenantId, w.owner.userId!, { pack: cmaPack({ maxStalenessHours: 72 }), lastSyncedAt: new Date() });
+}, 240_000);
+afterAll(async () => {
+  await h?.close();
+});
+
+const agent = () => w.agents[0]!;
+const mw = () => ({ h, tenantId: w.tenantId, mls });
+const setPack = (pack: Record<string, unknown>) => h.su.query('UPDATE integration_connections SET license_pack = $2::jsonb WHERE id = $1', [mls, JSON.stringify(pack)]);
+
+async function withCmaCleared<T>(fn: () => Promise<T>): Promise<T> {
+  await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:cma' AND status = 'published'");
+  try {
+    return await fn();
+  } finally {
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma'");
+  }
+}
+
+/** A seller listing in the fixtures' ZIP (94110), drafted by the reconcile pass. */
+async function listing(o: { sellers?: number } = {}): Promise<SellerListing> {
+  return sellerListing(agent(), { postalCode: '94110', ...o });
+}
+async function drafted(l: SellerListing): Promise<ValueUpdate> {
+  await reconcile(h, w.tenantId);
+  const r = await call<{ update: ValueUpdate | null }>(agent(), 'GET', `/listings/${l.listingId}/seller-update`);
+  expect(r.status).toBe(200);
+  return r.body.update!;
+}
+const view = async (id: string) => (await call<{ update: ValueUpdate }>(agent(), 'GET', `/seller-updates/${id}`)).body.update;
+const valueOf = (u: UpdateT) => u.sections.find((s) => s.kind === 'value')!;
+async function send(id: string, body: Record<string, unknown> = {}) {
+  const v = await view(id);
+  return call<SendT>(agent(), 'POST', `/seller-updates/${id}/send`, { commandId: cmd(), recommendation: RECOMMENDATION, recipientIds: v.recipients.filter((r) => r.sendable).map((r) => r.contactId), ...body });
+}
+const outbound = async (contactId: string) => (await h.su.query<{ status: string; channel: string; body: string }>("SELECT status, channel, body FROM messages WHERE contact_id = $1 AND direction = 'outbound' AND action_category = 'seller_update' ORDER BY created_at", [contactId])).rows;
+
+function spied(): { db: Database; statements: string[] } {
+  const statements: string[] = [];
+  const plugin: KyselyPlugin = {
+    transformQuery: (a) => {
+      statements.push(JSON.stringify(a.node));
+      return a.node;
+    },
+    transformResult: async (a) => a.result,
+  };
+  return { db: { ...h.database, kysely: h.database.kysely.withPlugin(plugin) } as Database, statements };
+}
+const SOLD_READ = 'l.close_date IS NOT NULL';
+
+describe('lane V2-B deliverable 5: the seller update\'s value section', () => {
+  it('R-CMA-10 as shipped (platform:cma uncleared): unavailable, the agent sentence only, no "Home value" block in the preview, and no sold data read', async () => {
+    await localSales(mw(), 8);
+    const l = await listing();
+    const u = await drafted(l);
+    expect(valueOf(u)).toMatchObject({ state: 'unavailable', statement: SELLER_VALUE_SENTENCES.notCleared, lines: [] });
+    expect(u.preview.body).not.toContain('Home value');
+    const spy = spied();
+    const d = (await draftsOf(h, l.listingId))[0]!;
+    await withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => assemble(tx, l.listingId, periodOf((d.payload as { period: never }).period), now), { db: spy.db });
+    expect(spy.statements.some((s) => s.includes(SOLD_READ))).toBe(false);
+  });
+
+  it('R-CMA-10 R-SELL-2: with platform:cma cleared the update shows the range, its comps through clientView with sold price, date and brokerage, the statement, attribution and disclaimer; one claim cites every comp', async () => {
+    const l = await listing();
+    const u = await withCmaCleared(() => drafted(l));
+    const s = valueOf(u);
+    expect(s.state).toBe('has_data');
+    expect(s.statement).toMatch(/^An estimate from comparable recent MLS sales, not an appraisal\. MLS data as of /);
+    const texts = s.lines.map((x) => x.text);
+    expect(texts[0]).toMatch(/^Estimated value: \$[\d,]+ \(range \$[\d,]+–\$[\d,]+\), from recent MLS sales as of [A-Z][a-z]{2} \d{1,2}, \d{4}\. This is an estimate, not an appraisal\.$/);
+    expect(texts[1]).toBe('Comparable closed sales:');
+    const comps = texts.filter((t) => / sold [A-Z][a-z]{2} \d{1,2}, \d{4} for \$/.test(t));
+    expect(comps.length).toBeGreaterThanOrEqual(3);
+    for (const c of comps) expect(c).toMatch(/, listed by Other Brokerage \(test\)$/);
+    for (const t of [TEST_STATEMENT, TEST_ATTRIBUTION, TEST_DISCLAIMER]) expect(texts).toContain(t);
+    expect(JSON.stringify(s)).not.toMatch(/adjusted|weight|backtest|confidence/i);
+    expect(s.sources).toHaveLength(1);
+    expect(s.sources[0]!.evidence).toHaveLength(comps.length);
+    expect(s.sources[0]!.evidence.every((e) => e.sourceType === 'listing')).toBe(true);
+    expect(u.preview.body).toContain('Home value');
+    expect(u.preview.body).toContain(texts[0]!);
+  });
+
+  it('E375 R-CMA-10: two comps ⇒ "Value range unavailable: not enough comparable sales." with no digits; with the display pack unreviewed, the agent sentence only (configuration is read first)', async () => {
+    const w2 = await assistantWorld(h, { agents: 1 });
+    const m2 = await mlsConnection(h, w2.tenantId, w2.owner.userId!, { pack: cmaPack({ maxStalenessHours: 72 }), lastSyncedAt: new Date() });
+    await localSales({ h, tenantId: w2.tenantId, mls: m2 }, 2);
+    const l = await sellerListing(w2.agents[0]!, { postalCode: '94110' });
+    const get = async () => {
+      await reconcile(h, w2.tenantId);
+      return (await call<{ update: ValueUpdate }>(w2.agents[0]!, 'GET', `/listings/${l.listingId}/seller-update`)).body.update;
+    };
+    const u = await withCmaCleared(get);
+    expect(valueOf(u)).toMatchObject({ state: 'unavailable', statement: 'Value range unavailable: not enough comparable sales.', lines: [{ text: 'Value range unavailable: not enough comparable sales.' }] });
+    expect(JSON.stringify(valueOf(u).lines)).not.toMatch(/\d/);
+    expect(u.preview.body).toContain('Value range unavailable: not enough comparable sales.');
+    await h.su.query('UPDATE integration_connections SET license_pack = $2::jsonb WHERE id = $1', [m2, JSON.stringify(cmaPack({ reviewed: false, maxStalenessHours: 72 }))]);
+    const v = (await withCmaCleared(() => call<{ update: ValueUpdate }>(w2.agents[0]!, 'POST', `/seller-updates/${u.id}/reassemble`))).body.update;
+    expect(valueOf(v)).toMatchObject({ state: 'unavailable', statement: SELLER_VALUE_SENTENCES.displayOff, lines: [] });
+    expect(v.preview.body).not.toContain('Home value');
+  });
+
+  it('M1 R-CMA-7: client_cma false with automated_notes true ⇒ agent only', async () => {
+    const l = await listing();
+    await setPack(cmaPack({ maxStalenessHours: 72, valuation: { client_cma: false } }));
+    try {
+      const u = await withCmaCleared(() => drafted(l));
+      expect(valueOf(u)).toMatchObject({ state: 'unavailable', statement: SELLER_VALUE_SENTENCES.licence, lines: [] });
+    } finally {
+      await setPack(cmaPack({ maxStalenessHours: 72 }));
+    }
+  });
+
+  it('E629 E638 R-SELL-4: a new comp after assembly ⇒ SELLER_UPDATE_STALE and one tap reassembles; re-viewed a day later with no new data ⇒ the same valuation date and hash', async () => {
+    const l = await listing();
+    const u = await withCmaCleared(() => drafted(l));
+    const d = (await draftsOf(h, l.listingId))[0]!;
+    const p = d.payload as { period: never; dataSha256: string };
+    const later = await withCmaCleared(() => withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => assemble(tx, l.listingId, periodOf(p.period), (now + 86_400_000) as Instant), { db: h.database }));
+    expect(later.dataSha256).toBe(p.dataSha256);
+    expect(later.sections.find((x) => x.kind === 'value')!.lines[0]!.text).toBe(valueOf(u).lines[0]!.text);
+    await mlsSale(mw(), { closeDate: daysAgo(3), sqft: 1450, closePriceCents: 61_000_000 });
+    expect((await withCmaCleared(() => view(u.id))).stale).toBe(true);
+    const r = await withCmaCleared(() => send(u.id));
+    expect([r.status, (r.body as unknown as { error: { code: string } }).error.code]).toEqual([409, 'SELLER_UPDATE_STALE']);
+    const again = (await withCmaCleared(() => call<{ update: ValueUpdate }>(agent(), 'POST', `/seller-updates/${u.id}/reassemble`))).body.update;
+    expect(again.stale).toBe(false);
+    expect(valueOf(again).state).toBe('has_data');
+  });
+
+  it('E631 E89: the agent removes the value section: kept across a recommendation patch and reassembly; the sent text has none and no child carries a value to re-check', async () => {
+    const l = await listing();
+    const u = await withCmaCleared(() => drafted(l));
+    const removed = (await withCmaCleared(() => call<{ update: ValueUpdate }>(agent(), 'PATCH', `/seller-updates/${u.id}`, { valueRemoved: true }))).body.update;
+    expect(removed.valueRemoved).toBe(true);
+    expect(removed.preview.body).not.toContain('Home value');
+    await withCmaCleared(() => call(agent(), 'PATCH', `/seller-updates/${u.id}`, { recommendation: RECOMMENDATION }));
+    const re = (await withCmaCleared(() => call<{ update: ValueUpdate }>(agent(), 'POST', `/seller-updates/${u.id}/reassemble`))).body.update;
+    expect(re.valueRemoved).toBe(true);
+    const r = await withCmaCleared(() => send(u.id));
+    expect(r.status).toBe(200);
+    const [m] = await outbound(l.sellers[0]!.id);
+    expect(m!.body).not.toContain('Home value');
+    expect(m!.body).not.toContain('Estimated value');
+    const child = (await h.su.query<{ payload: Record<string, unknown> }>("SELECT payload FROM assistant_actions WHERE trigger_ref->>'kind' = 'seller_update_send' AND trigger_ref->>'actionId' = $1", [u.id])).rows[0]!;
+    expect(child.payload['value']).toBeUndefined();
+  });
+
+  it('E630 R-CMA-10: a seller reached by text gets no value section, an email co-seller does, and the view says so', async () => {
+    const l = await listing();
+    const sms = await call<{ contact: { id: string } }>(agent(), 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Text', lastName: 'Only', phones: [randomPhone()] });
+    await grantConsent(agent(), sms.body.contact.id, 'sms');
+    expect((await call(agent(), 'POST', `/listings/${l.listingId}/contacts`, { contactId: sms.body.contact.id, role: 'co_seller' })).status).toBe(200);
+    const u = await withCmaCleared(() => drafted(l));
+    const v = await withCmaCleared(() => view(u.id));
+    expect(v.recipients.find((r) => r.contactId === sms.body.contact.id)?.channel).toBe('sms');
+    expect(v.valueNote).toBe('Sellers who get this by text won’t see the value range.');
+    const r = await withCmaCleared(() => send(u.id));
+    expect(r.status).toBe(200);
+    const [e] = await outbound(l.sellers[0]!.id);
+    const [t] = await outbound(sms.body.contact.id);
+    expect(e!.channel).toBe('email');
+    expect(e!.body).toContain('Estimated value');
+    expect(t!.channel).toBe('sms');
+    expect(t!.body).not.toContain('Estimated value');
+    expect(t!.body).not.toContain('Home value');
+  });
+
+  it('E632 R-CMA-7: platform:cma revoked after the tap and before the messages are queued ⇒ nothing queued, each child blocked with the reason, the tap reports blocked / not_queued, and the resume pass never sends it', async () => {
+    const l = await listing();
+    const u = await withCmaCleared(() => drafted(l));
+    const seller = l.sellers[0]!.id;
+    const d = (await draftsOf(h, l.listingId))[0]!;
+    const value = (d.payload as { value?: unknown }).value;
+    expect(value).toBeDefined();
+    // the rows step C writes, with step D never run (the fixture of sellerUpdates.test.ts's resume case), the child carrying the value
+    await h.su.query("UPDATE assistant_actions SET status = 'approved', decided_by_user_id = $2, decided_at = now(), edited_payload = $3::jsonb WHERE id = $1", [u.id, agent().userId, JSON.stringify({ recommendation: RECOMMENDATION, excludedFeedbackIds: [], recipients: [{ contactId: seller, channel: 'email' }], address: l.address, valueRemoved: false })]);
+    const seq = (await h.su.query('SELECT ownership_period_seq AS p FROM contacts WHERE id = $1', [seller])).rows[0].p;
+    const childId = randomUUID();
+    await h.su.query(
+      `INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, bound_ownership_seq, decided_by_user_id, decided_at, trigger_ref, dedupe_key, created_at)
+       VALUES ($1, $2, $3, 'message_draft', 'seller_update', 'requires_approval', 'approved', $4, 'Your seller update, sent on your tap.', $5::jsonb, $6, $4, now(), $7::jsonb, $8, now() - interval '5 minutes')`,
+      [w.tenantId, childId, seller, agent().userId, JSON.stringify({ sellerUpdateActionId: u.id, channel: 'email', subject: 'Weekly update', text: `Update\n\nHome value\n${valueOf(u).lines[0]!.text}\n\nMy recommendation\n${RECOMMENDATION}`, signature: null, value }), seq,
+       JSON.stringify({ kind: 'seller_update_send', actionId: u.id, listing_id: l.listingId }), `seller_update_send:${u.id}:${seller}`],
+    );
+    // platform:cma is not cleared now: the "Try again" tap re-runs D
+    const r = await send(u.id);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ result: 'blocked', recipients: [{ contactId: seller, messageId: null, result: 'not_queued' }] });
+    expect(await outbound(seller)).toEqual([]);
+    const child = (await h.su.query<{ status: string; explanation: string }>('SELECT status, explanation FROM assistant_actions WHERE id = $1', [childId])).rows[0]!;
+    expect(child.status).toBe('blocked');
+    expect(child.explanation).toMatch(/^Not sent: the value range can no longer be shown to clients \(.+\)\.$/);
+    // the resume pass reads approved or executed children only: never sent later, even once platform:cma is cleared
+    await withCmaCleared(() => reconcile(h, w.tenantId));
+    expect(await outbound(seller)).toEqual([]);
+  });
+
+  it('E639 R-CMA-7: a comp the pack hides from clients (internet display withheld) ⇒ the COMPS_HIDDEN line', async () => {
+    const w2 = await assistantWorld(h, { agents: 1 });
+    const m2 = await mlsConnection(h, w2.tenantId, w2.owner.userId!, { pack: cmaPack({ maxStalenessHours: 72 }), lastSyncedAt: new Date() });
+    await localSales({ h, tenantId: w2.tenantId, mls: m2 }, 8, { displayAllowed: false });
+    const l = await sellerListing(w2.agents[0]!, { postalCode: '94110' });
+    const u = await withCmaCleared(async () => {
+      await reconcile(h, w2.tenantId);
+      return (await call<{ update: ValueUpdate }>(w2.agents[0]!, 'GET', `/listings/${l.listingId}/seller-update`)).body.update;
+    });
+    expect(valueOf(u).lines).toEqual([{ text: 'Value range unavailable: some of the sales it rests on can’t be shown under the MLS licence.', feedback: null }]);
+  });
+
+  it('E366 R-MLS-5: a mirrored team sale among the comps is shown from clientSoldView (the team row\'s address, the mirror\'s sold price)', async () => {
+    const team = await teamListing(agent() as TestClient, { addressLine1: '700 Sample Avenue', status: 'sold', sqft: 1450, beds: 3, mlsNumber: `TM${Date.now() % 100000}` });
+    const number = (await h.su.query<{ n: string }>('SELECT mls_number AS n FROM listings WHERE id = $1', [team])).rows[0]!.n;
+    await mlsSale(mw(), { mlsNumber: number, line1: '700 Sample Ave', closeDate: daysAgo(5), sqft: 1450, beds: 3, closePriceCents: 52_000_000 });
+    const l = await listing();
+    const u = await withCmaCleared(() => drafted(l));
+    expect(valueOf(u).lines.map((x) => x.text)).toContain('700 Sample Avenue, Oakland: sold ' + new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${daysAgo(5)}T12:00:00Z`)) + ' for $520,000');
+  });
+});

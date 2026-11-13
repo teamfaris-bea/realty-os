@@ -23,6 +23,7 @@ import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import * as A from '../assistant/repos/actions.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
+import type { SellerValue } from '../cma/sellerValue.js';
 import { type Assembled, type PeriodSpec, sellerText } from './assembly.js';
 
 export const sellerUpdateDedupeKey = (listingId: string, periodKey: string): string => `seller_update:${listingId}:${periodKey}`;
@@ -46,11 +47,15 @@ export interface SellerUpdatePayload {
   dataSha256: string;
   /** claims are append-only: this assembly's claims are those from this ordinal on (earlier ones: past assemblies) */
   claimOrdinalFrom: number;
+  /** lane V2-B: the shown value range's re-check inputs (absent when the section shows none) */
+  value?: SellerValue;
 }
 
 export interface AgentChoices {
   recommendation?: string;
   excludedFeedbackIds?: string[];
+  /** lane V2-B (E631): the listing agent removed the value section; kept across reassembly */
+  valueRemoved?: boolean;
 }
 
 export function storedPeriod(p: PeriodSpec): StoredPeriod {
@@ -79,8 +84,8 @@ export function claimsOf(specs: readonly ClaimSpec[], listingId: string, ids: Id
 }
 
 export function payloadOf(o: { listingId: string; address: string; period: PeriodSpec; a: Assembled; channel: 'email' | 'sms' }): SellerUpdatePayload {
-  const t = sellerText({ address: o.address, period: o.period, sections: o.a.sections, excludedFeedbackIds: [], recommendation: null, agentName: null });
-  return { channel: o.channel, subject: t.subject, body: t.body, listingId: o.listingId, period: storedPeriod(o.period), sections: o.a.sections, assembledThrough: toIso(o.a.assembledThrough), dataSha256: o.a.dataSha256, claimOrdinalFrom: 0 };
+  const t = sellerText({ address: o.address, period: o.period, sections: o.a.sections, excludedFeedbackIds: [], recommendation: null, agentName: null, channel: o.channel });
+  return { channel: o.channel, subject: t.subject, body: t.body, listingId: o.listingId, period: storedPeriod(o.period), sections: o.a.sections, assembledThrough: toIso(o.a.assembledThrough), dataSha256: o.a.dataSha256, claimOrdinalFrom: 0, ...(o.a.value ? { value: o.a.value } : {}) };
 }
 
 interface Env {

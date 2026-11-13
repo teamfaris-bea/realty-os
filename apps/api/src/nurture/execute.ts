@@ -50,6 +50,7 @@ import { EMAIL_UNSUBSCRIBE_LINE, firstInThread } from '../assistant/steps.js';
 import { queueOutboundInTx } from '../comms/index.js';
 import { resolvedPolicy } from '../comms/gateInput.js';
 import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsEligibility } from '../mls/eligibility.js';
+import { inHouseNoteGate } from '../cma/avm.js';
 import { addressText, estimateOfRow } from './avm.js';
 import { DIGEST_SUBJECT, type RunSkipReason, apiSkip, decideBatch, digestTemplate, draftExplanation, firingOfRow, literal } from './decide.js';
 import { localToday } from './detect.js';
@@ -72,7 +73,7 @@ interface Item {
   listing?: { row: ListingRow; view: ReturnType<typeof clientView> };
   deal?: { address: string; closedAt: Instant | null };
   /** home_value firings: the cited valuation as core reads it and its R-AVM-1 sentence */
-  avm?: { estimate: AvmEstimate; text: string | null; valuationId: string; prior: AvmEstimate | null };
+  avm?: { estimate: AvmEstimate; text: string | null; valuationId: string; prior: AvmEstimate | null; lines?: string[] };
   /** deal-date firings (module 31): the date as stored now and the recipient's roles on the deal */
   dealDate?: { completed: boolean; label: string; dueAt: Instant | null; zone: IanaZone | null; roles: string[]; side: DealSide };
 }
@@ -83,7 +84,7 @@ async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
 }
 
 /** The fact as it stands now (R-NURT-4), read under the contact lock. `skip`: the firing cannot be what it says. */
-async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal' | 'avm' | 'dealDate'> & { skip?: SkipReason }> {
+async function currentFact(tx: Tx, f: Firing, e: MlsEligibility, now: Instant): Promise<Pick<Item, 'current' | 'listing' | 'deal' | 'avm' | 'dealDate'> & { skip?: SkipReason }> {
   const r = f.ref;
   switch (r.kind) {
     case 'price_drop':
@@ -133,9 +134,12 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       const v = await R.valuationById(tx, r.valuationId);
       if (!v || v.contactId !== f.contactId || f.triggerKey !== `avm:${r.contactAddressId}:${r.month}` || v.month !== r.month) return { current: { kind: 'gone' }, skip: 'FACT_MISMATCH' };
       if (v.contactAddressId !== null && v.contactAddressId !== r.contactAddressId) return { current: { kind: 'gone' }, skip: 'FACT_MISMATCH' };
-      const estimate = estimateOfRow(v);
+      // R-CMA-10 (lane V2-B): an in-house estimate is re-gated here, in the transaction that queues; a failure is a
+      // visible skip (ESTIMATE_NOT_DISPLAYABLE), never an approvable draft. Null: not in-house (unchanged path)
+      const gate = await inHouseNoteGate(tx, v.id, e, now);
+      const estimate = gate !== null && !gate.ok ? { ...estimateOfRow(v), displayAllowed: false } : estimateOfRow(v);
       const prior = v.contactAddressId === null ? null : await R.priorOkValuation(tx, v.contactAddressId, v.valuedAt, v.id);
-      const avm = { estimate, text: homeValueText(estimate), valuationId: v.id, prior: prior ? estimateOfRow(prior) : null };
+      const avm = { estimate, text: homeValueText(estimate), valuationId: v.id, prior: prior ? estimateOfRow(prior) : null, ...(gate?.ok ? { lines: gate.lines } : {}) };
       // R-NURT-4: the address still belongs to the contact and is unchanged since it was valued (a deleted address
       // sets contact_address_id to NULL, 0037), and it is still a home they bought through the team (K2: not one they
       // sold through the team since, not the other side's)
@@ -294,7 +298,7 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       skipped.push({ run, reason: api });
       continue;
     }
-    const cur = await currentFact(tx, f, e);
+    const cur = await currentFact(tx, f, e, now);
     if (cur.skip !== undefined) {
       skipped.push({ run, reason: cur.skip });
       continue;
@@ -400,6 +404,9 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
   // R-AVM-1: the system adds the estimate sentence after rendering, so every approved wording carries it, before the
   // content guard and authorizeAutonomousAction read the text (several items: it is on each item's line already)
   if (kept.length === 1 && kept[0]!.avm?.text) notes.unshift(kept[0]!.avm.text);
+  // R-CMA-10: an in-house estimate's MLS statement, attribution, disclaimer and data date, after the estimate sentence
+  const avmLines = [...new Set(kept.flatMap((it) => it.avm?.lines ?? []))].filter((l) => !notes.includes(l));
+  notes.splice(kept.length === 1 && kept[0]!.avm?.text ? 1 : 0, 0, ...avmLines);
   let text = notes.length > 0 ? `${rendered.text}\n${notes.join('\n')}` : rendered.text;
   if (step.channel === 'email' && step.purpose === 'marketing') text = `${text}\n${EMAIL_UNSUBSCRIBE_LINE}`;
   const subject = step.channel === 'email' ? (kept.length === 1 ? (rendered.subject ?? tstep.subject ?? 'A note from your agent') : DIGEST_SUBJECT(kept.length)) : undefined;

@@ -6,6 +6,7 @@ import type { Clock } from '@realty/core/foundation';
 import { ProviderError } from '../types.js';
 import type {
   AddressFacts,
+  AvmCallContext,
   AvmEstimate,
   AvmProvider,
   AvmUnavailable,
@@ -470,14 +471,17 @@ export class FakeAvmP2 implements AvmProvider {
   readonly answers = new Map<string, FakeAvmAnswer>();
   /** every request, in order (tests count vendor calls) */
   readonly calls: AddressFacts[] = [];
+  /** the call context of every request, in order (null when none was given; R-CMA-10 lane V2-B) */
+  readonly contexts: (Omit<AvmCallContext, 'db'> | null)[] = [];
   /** test hook run at the start of every request (e.g. to prove no transaction is open) */
   onEstimate: ((a: AddressFacts) => Promise<void>) | null = null;
   constructor(private readonly clock: Clock | null = null) {}
   static key(a: Pick<AddressFacts, 'line1' | 'postalCode'>): string {
     return `${a.line1}|${a.postalCode}`;
   }
-  async estimate(a: AddressFacts): Promise<AvmUnavailable | AvmEstimate> {
+  async estimate(a: AddressFacts, ctx?: AvmCallContext): Promise<AvmUnavailable | AvmEstimate> {
     this.calls.push({ ...a });
+    this.contexts.push(ctx ? { tenantId: ctx.tenantId, contactId: ctx.contactId, contactAddressId: ctx.contactAddressId } : null);
     if (this.onEstimate) await this.onEstimate(a);
     const set = this.answers.get(FakeAvmP2.key(a));
     if (set?.kind === 'error') throw new ProviderError('unavailable', 'FAKE_AVM_ERROR');

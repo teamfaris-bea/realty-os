@@ -105,6 +105,19 @@ export function notLivingAreaSize(sources: readonly (string | null | undefined)[
   return sources.some((f) => typeof f === 'string' && NEVER_SIZE.has(f.toLowerCase()));
 }
 
+/**
+ * R-MLS-7 for a re-check rebuilt from a stored value (lane V2-B's in-house note ref and stored seller range keep listing
+ * ids, not size sources; batch 13): whether a live row it judges (each comp's sale and team rows, the subject's own MLS
+ * record and the MLS rows at its key) carries a size from a field that is never finished living area. The estimate-time
+ * gate judged the run's own sources (readinessInputOf); 0082's CHECK keeps such a source out of listings since, so this
+ * holds only after a regression. Computed, never assumed false.
+ */
+export async function liveNotLivingArea(tx: Tx, i: Pick<ReadinessInput, 'compSales' | 'subjectMlsListingId' | 'addressKey'>): Promise<boolean> {
+  const rows = await listingRows(tx, [...compListingIds(i), ...(i.subjectMlsListingId ? [i.subjectMlsListingId] : [])]);
+  const atKey = i.addressKey ? await mlsRowsAtAddress(tx, i.addressKey) : [];
+  return notLivingAreaSize([...rows, ...atKey].map((r) => r.size_source));
+}
+
 /** The live statuses of an MLS record of the subject (SELLER_WITHHELD; the same three V1-A's liveNearMatches reads). */
 export const LIVE_STATUSES: readonly string[] = ['coming_soon', 'active', 'pending'];
 
@@ -184,23 +197,28 @@ export interface ReadinessInput {
   /** R-MLS-7: the stored subject or comp sizes came from a field that is never finished living area (blocks under every use) */
   notLivingArea: boolean;
   /**
-   * The client use readiness is judged for (ISA-3, flagged additive): 'client_cma' (the default; V1's output is
-   * byte-identical) or 'ai_isa' (the AI ISA's comps email, R-ISA-18): platform:cma AND platform:ai_isa_seller_data
-   * (never platform:avm), the licence's ai_isa_comps, SELLER_WITHHELD under either flag scope, and no dismissal of a
-   * near match (R-CMA-7).
+   * The client use readiness is judged for (ISA-3, flagged additive; V2-B's 'automated_notes' at batch 13): 'client_cma'
+   * (the default; V1's output is byte-identical); 'ai_isa' (the AI ISA's comps email, R-ISA-18): platform:cma AND
+   * platform:ai_isa_seller_data (never platform:avm), the licence's ai_isa_comps, SELLER_WITHHELD under either flag
+   * scope, and no dismissal of a near match (R-CMA-7); or 'automated_notes' (lane V2-B, R-CMA-10: in-house home-value
+   * notes and seller value ranges): platform:cma (avm.ts's automatedGate adds platform:avm for notes), the licence's
+   * automated_notes, SELLER_WITHHELD under either avm_flag_scope (M2) and no dismissal of a near match (nothing is
+   * reviewed by a person first). SIZE_NOT_LIVING_AREA (notLivingArea) blocks under every use.
    */
   use?: ReadinessUse;
+  /** listings that are the subject itself (its listing and mirrors, R-MLS-5): never near matches, under every use (E633; lane V2-B) */
+  selfListingIds?: readonly string[];
 }
 
-/** ISA-3: the client uses readiness is judged for (V2-B adds 'automated_notes' to this union and to useOf's switch). */
-export type ReadinessUse = 'client_cma' | 'ai_isa';
+/** The client uses readiness is judged for: ISA-3's 'ai_isa' and V2-B's 'automated_notes' beside V1's 'client_cma'. */
+export type ReadinessUse = 'client_cma' | 'ai_isa' | 'automated_notes';
 /** The AI ISA's seller-data pack (docs/AI_ISA.md §6.3; 0084's 2026.11.1, lane number 0191). */
 export const AI_ISA_SELLER_PACK = 'platform:ai_isa_seller_data';
 
 interface UseRules {
   packs: readonly string[];
   platformSentence: string;
-  licenceUse: 'client_cma' | 'ai_isa_comps';
+  licenceUse: 'client_cma' | 'ai_isa_comps' | 'automated_notes';
   allowed: (v: MlsConnectionFacts['pack']['valuation']) => boolean;
   clientUseSentence: string;
   withheldEitherScope: boolean;
@@ -231,6 +249,19 @@ function useOf(use: ReadinessUse, state: string | null): UseRules {
         withheldEitherScope: true,
         honourDismissals: false,
         noValueSentence: 'Not enough comparable recent sales to send.',
+      };
+    case 'automated_notes':
+      // lane V2-B (R-CMA-10): in-house home-value notes and seller value ranges; V2-B's sentences
+      return {
+        packs: [CMA_PLATFORM_PACK],
+        platformSentence: 'Home-value notes and seller value ranges from recent MLS sales wait for counsel review of the in-house values (platform:cma), which is not recorded.',
+        licenceUse: 'automated_notes',
+        allowed: (v) => v.automatedNotes,
+        clientUseSentence: `Your MLS licence pack does not say sold data may be used in automated home-value notes and seller value ranges. ${VALUATION_USE_WHERE}`,
+        // M2 (lane V2-B): automated notes and seller ranges are withheld under either scope (VERIFY WITH MLS)
+        withheldEitherScope: true,
+        honourDismissals: false,
+        noValueSentence: 'There is no value: not enough comparable sales.',
       };
     default: {
       const never: never = use;
@@ -402,7 +433,9 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   }
 
   // F2: a live listing that may be this home, until the agent confirms it is a different one
-  const matches = await nearMatches(tx, i.addressKey, u.honourDismissals ? i.nearMatchDismissed : [], live);
+  // E633 (lane V2-B): the subject's own listing and mirrors are never near matches, under every use
+  const self = new Set(i.selfListingIds ?? []);
+  const matches = (await nearMatches(tx, i.addressKey, u.honourDismissals ? i.nearMatchDismissed : [], live)).filter((m) => !self.has(m.listingId));
   for (const m of matches.filter((x) => !x.dismissed)) {
     blockers.push({
       code: 'POSSIBLE_LIVE_LISTING',

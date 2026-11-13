@@ -18,6 +18,9 @@
 // VERIFY: every vendor shape below is RESO-/Graph-/OAuth-*shaped*, not a copy of a vendor API. The real
 // adapters are wired only once a partner account exists; until then the fakes are the only working
 // implementation and production reports "not set up on this platform" instead of using them.
+// One exception (R-CMA-10, lane V2-B): the AVM's estimate takes an optional call context (tenant, contact, address),
+// because the in-house source values the tenant's own MLS rows in its own read-only system transaction.
+import type { Database } from '@realty/db';
 
 /**
  * integration_connections.kind (0018 CHECK, widened by 0025). D2: `facebook_page` and `instagram_business` are
@@ -222,6 +225,11 @@ export interface AvmEstimate {
    * `true` lets the note reach a client; the parser (nurture/avm.ts) stores false for anything else.
    */
   displayAllowed: boolean;
+  /**
+   * The source's reference for this estimate (R-CMA-10: the in-house `inhouse:{method}:{connections}:{inputs sha256}`).
+   * Optional: a source without one stores none. A present but malformed ref makes the answer unparseable.
+   */
+  ref?: string;
 }
 
 /** The source answered and has no value for the address (E99). A failure is a thrown ProviderError instead. */
@@ -230,11 +238,28 @@ export interface AvmUnavailable {
   provider: string;
 }
 
+/**
+ * Who an estimate is for (R-CMA-10, lane V2-B): the in-house source values the tenant's own MLS rows for this contact
+ * address, in its own read-only system transaction on `db`. A source that needs no context ignores it.
+ */
+export interface AvmCallContext {
+  tenantId: string;
+  contactId: string;
+  contactAddressId: string;
+  /** the database handle the caller's transactions use (tests: the per-test database) */
+  db?: Database;
+}
+
 export interface AvmProvider {
   /** whether a home-value source is configured on this platform (P2, F10: platform configuration, no tenant connection) */
   readonly configured: boolean;
   /** throws ProviderError on a vendor failure: nothing is recorded and a later pass retries (no status 'error') */
-  estimate(a: AddressFacts): Promise<AvmUnavailable | AvmEstimate>;
+  estimate(a: AddressFacts, ctx?: AvmCallContext): Promise<AvmUnavailable | AvmEstimate>;
+  /**
+   * Whether this tenant can be valued now (R-CMA-10, E620): a per-tenant no-op when not, with the one sentence the
+   * triggers page shows. Absent: always available (a source with no tenant prerequisites).
+   */
+  availability?(c: { tenantId: string; db?: Database }): Promise<{ available: true } | { available: false; sentence: string }>;
 }
 
 // ---- Calendar (per-user OAuth link; module 34) ------------------------------------------------------

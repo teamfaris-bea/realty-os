@@ -60,6 +60,8 @@ export const SellerUpdateSchema = z.object({
   sections: z.array(Section),
   recommendation: z.string(),
   excludedFeedbackIds: z.array(z.string()),
+  valueRemoved: z.boolean(),
+  valueNote: z.string().nullable(),
   recipients: z.array(Recipient),
   preview: z.object({ channel: z.enum(['email', 'sms']), subject: z.string(), body: z.string() }),
   sentAt: z.string().nullable(),
@@ -71,6 +73,7 @@ const ListingUpdateResponse = z.object({ update: SellerUpdateSchema.nullable(), 
 export const PatchBody = z.strictObject({
   recommendation: z.string().max(2_000).optional(),
   excludedFeedbackIds: z.array(z.uuid()).max(200).optional(),
+  valueRemoved: z.boolean().optional(),
 });
 export const SendBody = z.strictObject({
   commandId: z.uuid(),
@@ -78,6 +81,7 @@ export const SendBody = z.strictObject({
   excludedFeedbackIds: z.array(z.uuid()).max(200).optional(),
   // R-SELL-5: the sellers the agent was shown as reachable; required (the update goes only to who was shown)
   recipientIds: z.array(z.uuid()).max(50),
+  valueRemoved: z.boolean().optional(),
 });
 const Result = z.enum(['sent', 'queued', 'blocked', 'failed', 'dispatch_unknown', 'noop']);
 export const SendResponse = z.object({

@@ -633,7 +633,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | Reviewing calls for coaching | `platform:coaching` | cleared |
 | Gmail sync | `platform:gmail` | not cleared: still waits for Google's verification (`vendor_ready_at`) |
 | AI voice answering | `platform:voice` | not cleared: still waits for a real vendor's latency check (`vendor_ready_at`) |
-| Home-value notes to past clients | `platform:avm` | cleared |
+| Home-value notes to past clients | `platform:avm` | cleared; in-house notes (production's source, R-CMA-10) also wait for `platform:cma`, which D11 does not cover, so none is requested until it is recorded below |
 | Review requests | `platform:review_requests` | cleared |
 | The client portal | `platform:portal` | cleared |
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
@@ -666,7 +666,7 @@ Rehearsed against throwaway test databases only (the pinned D11 command through 
 
 **D9: `platform:cma` and the licence pack's valuation section (batch 10).** Owner decision D9 adds a CMA built in-house from the team's own MLS sold data (an estimate, never an appraisal; never a third-party AVM). Two separate records hold it back, and neither is turned on by this release:
 
-- **`platform:cma@2026.11.0`** ships unreviewed (`0061_cma_schema.sql`). It is not a D11 pack, so the D11 command above never includes it. Record it with this same command, and only on the owner's attestation that counsel cleared the in-house CMA wording (C6 extended: client CMA wording, the "not an appraisal" placement, the state statements V4, USPAP SoP 11-1 V5/V7). Dry run first:
+- **`platform:cma@2026.11.0`** ships unreviewed (`0061_cma_schema.sql`). It is not a D11 pack, so the D11 command above never includes it. Lane V2-B: production registers the in-house home-value source, and its notes need `platform:cma` as well as `platform:avm` at every stage (request, build, queue, approval; R-CMA-10), so after D11 alone no home-value note is requested and GET /nurture/triggers says which pack is missing; seller-update value ranges need `platform:cma` too. Record it with this same command, and only on the owner's attestation that counsel cleared the in-house CMA wording (C6 extended: client CMA wording, the "not an appraisal" placement, the state statements V4, USPAP SoP 11-1 V5/V7). Dry run first:
 
   ```sh
   # the app VM (§12, real teams): render /run/realty/owner.env for this window, run it through the release profile, then remove owner.env

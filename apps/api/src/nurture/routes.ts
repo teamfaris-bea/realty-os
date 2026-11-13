@@ -73,9 +73,13 @@ function factOf(ev: Record<string, unknown> | null, ref: Record<string, unknown>
 async function triggerKinds(app: FastifyInstance, req: FastifyRequest): Promise<{ trigger: string; availability: 'available' | 'not_available_yet'; label: string; note: string | null }[]> {
   const vendor = app.platform.providers.integrations.avm.configured;
   const cleared = vendor ? await withTenantTx(actorOf(req), (tx) => R.platformCleared(tx, 'platform:avm'), { db: app.platform.db }) : false;
+  const source = app.platform.providers.integrations.avm;
+  const avail = vendor && source.availability ? await source.availability({ tenantId: actorOf(req).tenantId, db: app.platform.db }) : null;
   return (Object.keys(TRIGGER_AVAILABILITY) as (keyof typeof TRIGGER_AVAILABILITY)[]).map((t) => {
     if (t !== 'home_value') return { trigger: t, availability: TRIGGER_AVAILABILITY[t], label: LABELS[t], note: null };
     if (!vendor) return { trigger: t, availability: 'not_available_yet', label: LABELS[t], note: 'Home values are not set up on this platform yet.' };
+    // R-CMA-10 E620: a source with tenant prerequisites says which one is missing (nothing is requested until then)
+    if (avail !== null && !avail.available) return { trigger: t, availability: 'not_available_yet', label: LABELS[t], note: avail.sentence };
     return { trigger: t, availability: TRIGGER_AVAILABILITY[t], label: LABELS[t], note: cleared ? null : 'Home-value notes wait for counsel review: until then each one is a draft for you to check and send.' };
   });
 }

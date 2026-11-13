@@ -186,6 +186,10 @@ describe('R-AVM-2 every refusal is a draft or a visible skip (E98, E99)', () => 
     expect((await triggerRuns(h, old.id))[0]).toMatchObject({ status: 'skipped_ineligible', trigger_ref: expect.objectContaining({ skip: { reason: 'ESTIMATE_STALE', text: 'The estimate is out of date.' } }) });
     expect((await triggerRuns(h, hidden.id))[0]).toMatchObject({ status: 'skipped_ineligible', trigger_ref: expect.objectContaining({ skip: expect.objectContaining({ reason: 'ESTIMATE_NOT_DISPLAYABLE' }) }) });
     expect((await valuationsOf(h, hidden.addressId))[0]!.display_allowed).toBe(false);
+    // R-CMA-6 E636 (lane V2-B): the fact of a not-displayable estimate shows no number on trigger runs
+    const hr = await call<Runs>(w.agents[0]!, 'GET', `/contacts/${hidden.id}/trigger-runs`);
+    expect(hr.body.runs[0]!.fact!.text).toBe(`${hidden.line1}, Springfield, SC ${hidden.postalCode}: Estimate not shown to clients.`);
+    expect(hr.body.runs[0]!.fact!.text).not.toMatch(/\$\d/);
     for (const c of [wide, old, hidden]) expect(await homeMail(c.id)).toEqual([]);
     // the tenant's limit is data: a looser limit lets the same width through (read, never written by an API route)
     expect((await h.su.query('SELECT avm_max_range_bps FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0].avm_max_range_bps).toBe(2500);

@@ -16,6 +16,7 @@ import { sql } from 'kysely';
 import { audit, redactDiff } from '../audit.js';
 import { cancelIneligibleMlsAlertsInTx } from '../assistant/searches.js';
 import { cancelIneligibleCmaSharesInTx } from '../cma/sweep.js';
+import { cancelIneligibleHomeValueNotesInTx } from '../cma/avm.js';
 import type { SystemActor } from '@realty/core/foundation';
 import { mlsConnections } from './eligibility.js';
 
@@ -25,6 +26,8 @@ export interface SweepResult {
   /** module 71 (D9 V2-A): queued CMA share emails canceled because the CMA's readiness fails (E612) */
   canceledCmaShares: number;
   mirrorsLinked: number;
+  /** lane V2-B (E623, R-CMA-7): queued in-house home-value notes canceled once a pack or a read connection fails */
+  canceledHomeValueNotes: number;
 }
 
 export async function complianceSweepInTx(tx: Tx, actor: SystemActor, now: Instant): Promise<SweepResult> {
@@ -40,10 +43,11 @@ export async function complianceSweepInTx(tx: Tx, actor: SystemActor, now: Insta
   }
   const canceled = await cancelIneligibleMlsAlertsInTx(tx, now);
   const canceledCmaShares = await cancelIneligibleCmaSharesInTx(tx, now);
+  const notes = await cancelIneligibleHomeValueNotesInTx(tx, now);
   const linked = await sql`
     UPDATE listings m SET team_listing_id = t.id
       FROM listings t
      WHERE m.tenant_id = app.tenant_id() AND t.tenant_id = m.tenant_id AND m.source = 'mls' AND m.team_listing_id IS NULL
        AND t.source = 'team' AND t.mls_number = m.mls_number`.execute(tx);
-  return { degraded, canceledAlerts: canceled.length, canceledCmaShares: canceledCmaShares.length, mirrorsLinked: Number(linked.numAffectedRows ?? 0n) };
+  return { degraded, canceledAlerts: canceled.length, canceledCmaShares: canceledCmaShares.length, mirrorsLinked: Number(linked.numAffectedRows ?? 0n), canceledHomeValueNotes: notes.length };
 }
