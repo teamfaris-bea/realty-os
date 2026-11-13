@@ -106,6 +106,61 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     expect((m[0]!.body.match(/\(asking price\)/g) ?? []).length).toBe(3);
   });
 
+  // batch 13 audit ISA2B-06 (6) and (9): the 90-day repeat rule, and the handoff's factsSent lists only sent facts
+  it('R-ISA-17 R-ISA-14: a home sent to them is skipped for 90 days (NO_MATCH next turn); the handoff lists only the sent fact, not one canceled with its message', async () => {
+    const city = 'Danville';
+    const x = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 610000 });
+    const l = await buyer({ city });
+    share(['L1']);
+    await ask(l);
+    expect((await facts(l.id)).map((f) => [f.listing_id, f.status])).toEqual([[x, 'sent']]);
+    // asked again: the only home in the area was sent within 90 days, so the bundle is empty
+    const calls = w.ai.calls.length;
+    share(['L1']);
+    await ask(l);
+    expect(w.ai.calls.slice(calls).map((c) => c.user).join('\n')).toMatch(/listings: NO_MATCH/);
+    expect((await facts(l.id)).map((f) => f.listing_id)).toEqual([x]);
+    // a second home is shared but its message is still queued when care ends: its fact is canceled with the message
+    const y = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 620000 });
+    share(['L1']);
+    const hold = async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [w.tenantId]); };
+    await age(l.id);
+    await inboundSms(h, l.phone, w.mainNumber, 'Can you send me some homes?');
+    await runIsa(h, w.tenantId, 4, { beforeTick: hold });
+    expect((await facts(l.id)).map((f) => [f.listing_id, f.status])).toEqual([[x, 'sent'], [y, 'pending']]);
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/end`, {})).status).toBe(200);
+    await h.su.query(`UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1`, [l.id]);
+    await runIsa(h, w.tenantId, 3, { beforeTick: hold });
+    expect((await facts(l.id)).map((f) => [f.listing_id, f.status])).toEqual([[x, 'sent'], [y, 'canceled']]);
+    const ho = (await handoffOf(h, l.id))[0]!;
+    expect((ho.package['factsSent'] as { listingId: string | null }[]).map((f) => f.listingId)).toEqual([x]);
+  });
+
+  // batch 13 audit ISA2B-06 (7): Q7 on a person bound by SMS only
+  it('R-ISA-17 Q7: SMS only, a facts text too long for 3 segments drops whole listing lines from the end (attribution kept, never a cut line, never the email pointer)', async () => {
+    const city = 'Pleasanton';
+    for (let k = 0; k < 3; k += 1) await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 700000 + k, description: 'x' });
+    const l = await isaLead(h, w.agents[0]!);
+    await grantInitiated(h, w.tenantId, l);
+    expect((await startCare(w.agents[0]!, l.id, { side: 'buyer', channels: ['sms'] })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    await inboundSms(h, l.phone, w.mainNumber, 'We want 3 bedrooms in Pleasanton');
+    await runIsa(h, w.tenantId);
+    await seedClaims(h, l.id, [{ field: 'areas', value: [city], quote: city }, ...CLAIMS.slice(1)]);
+    share((labels) => labels.slice(0, 3));
+    await ask(l);
+    const m = (await aiMessages(h, l.id)).filter((x) => /Here are homes/.test(x.body));
+    expect(m).toHaveLength(1);
+    expect(m[0]!.channel).toBe('sms');
+    expect(m[0]!.body).not.toMatch(/I can email you/);
+    const lines = (m[0]!.body.match(/\(asking price\)/g) ?? []).length;
+    expect(lines).toBeGreaterThanOrEqual(1);
+    expect(lines).toBeLessThan(3);
+    expect(m[0]!.body).toMatch(/Source: Test MLS feed via/);
+    // one fact per line kept, and only those
+    expect((await facts(l.id)).length).toBe(lines);
+  });
+
   it('R-ISA-17: skipped: stale, a lease, version 1, off-market, a team listing without a mirror or coming soon; nothing → NO_MATCH (honest unavailable)', async () => {
     const isolated = 'Alameda';
     for (const o of [{ seenHoursAgo: 48 }, { lease: true }, { version: 1 }, { offMarket: true }]) await buyerListing(h, w.tenantId, { connectionId: conn, city: isolated, ...o });
@@ -121,6 +176,37 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     expect(await facts(l.id)).toHaveLength(0);
   });
 
+  // batch 13 audit ISA2B-01 (owner MLS size rule, R-MLS-7; fix/mls-size merged as 0082): a size the MLS has not
+  // confirmed as finished living area never reaches an AI facts line, and BuildingAreaTotal can never be stored as one
+  it('R-ISA-17 R-MLS-7: a Spark row whose size is unknown is shared with no "sq ft"; a confirmed living-area size is stated; a BuildingAreaTotal size cannot be stored', async () => {
+    const city = 'Walnut Creek';
+    const unknown = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 450000 });
+    const confirmed = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 460000 });
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      // what the sync stores for Spark today: no size until the MLS confirms a field (SPARK_FIELD_MAPPING sqft null)
+      await h.su.query(`UPDATE listings SET sqft = NULL, size_source = NULL WHERE id = $1`, [unknown]);
+      await h.su.query(`UPDATE listings SET sqft = 1400, size_source = 'LivingArea' WHERE id = $1`, [confirmed]);
+      // 0082's CHECK: a size read from BuildingAreaTotal is refused whatever writes it
+      await expect(h.su.query(`UPDATE listings SET sqft = 2600, size_source = 'BuildingAreaTotal' WHERE id = $1`, [unknown])).rejects.toThrow(/listings_size_source_not_total/);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const l = await buyer({ city });
+    const calls = w.ai.calls.length;
+    share((labels) => labels.slice(0, 2));
+    await ask(l);
+    expect(w.ai.calls.slice(calls).map((c) => c.user).join('\n')).toMatch(/\bL2\b/);
+    // the server-rendered facts message as built (its dispatch outcome is not under test here)
+    const m = (await aiMessages(h, l.id)).filter((x) => /Here are homes/.test(x.body));
+    expect(m).toHaveLength(1);
+    const body = m[0]!.body;
+    expect((body.match(/\(asking price\)/g) ?? []).length).toBe(2);
+    // exactly one size is stated: the confirmed one; the unknown size is left out, never guessed
+    expect(body.match(/[\d,]+ sq ft/g)).toEqual(['1,400 sq ft']);
+    expect((await facts(l.id)).map((f) => f.listing_id).sort()).toEqual([unknown, confirmed].sort());
+  });
+
   it('R-ISA-17: a team listing with a live MLS mirror is shared once, as the MLS row', async () => {
     const city = 'Berkeley';
     const team = await buyerListing(h, w.tenantId, { source: 'team', city, agentUserId: w.agents[0]!.userId! });
@@ -132,16 +218,43 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     expect(f.map((x) => x.listing_id)).toEqual([team]);
   });
 
-  it('R-ISA-9 E520: no initiated tier → no handles (CONSENT_TIER_MISSING); a hostile share gets HANDLE_UNKNOWN', async () => {
+  it('R-ISA-9 E520: no initiated tier → no handles (CONSENT_TIER_MISSING): a share is refused and nothing is shared', async () => {
     const l = await buyer({ grant: false });
     const calls = w.ai.calls.length;
     share(['L1', 'L7']);
     await ask(l);
     const prompts = w.ai.calls.slice(calls).map((c) => c.user).join('\n');
     expect(prompts).toMatch(/listings: CONSENT_TIER_MISSING/);
-    const t = await h.su.query<{ denied: string[] }>(`SELECT denied FROM ai_isa_turns WHERE contact_id = $1`, [l.id]);
-    expect(t.rows.flatMap((x) => x.denied).join(' ')).toMatch(/HANDLE_UNKNOWN|CAPABILITY_NOT_AVAILABLE/);
+    expect(prompts).not.toMatch(/\[L1\]/);
+    const denied = (await h.su.query<{ denied: string[] }>(`SELECT denied FROM ai_isa_turns WHERE contact_id = $1`, [l.id])).rows.flatMap((x) => x.denied);
+    // batch 13 audit ISA2B-07: exact (it used to accept CAPABILITY_NOT_AVAILABLE too): no handle exists this turn
+    expect(denied.filter((d) => d.endsWith(':share_listings'))).toEqual(['HANDLE_UNKNOWN:share_listings']);
     expect(await facts(l.id)).toHaveLength(0);
+  });
+
+  // batch 13 audit ISA2B-07 (the hostile share against a live bundle) and ISA2B-06 (5): R-ISA-20 E539 another contact's handle
+  it('R-ISA-9 R-ISA-20 E539: with a live bundle, a handle outside it (another buyer\'s turn had L2) gets HANDLE_UNKNOWN and the share is refused whole (nothing shared)', async () => {
+    const big = 'Orinda';
+    const small = 'Moraga';
+    for (let k = 0; k < 2; k += 1) await buyerListing(h, w.tenantId, { connectionId: conn, city: big, price: 500000 + k });
+    const only = await buyerListing(h, w.tenantId, { connectionId: conn, city: small, price: 510000 });
+    // buyer A's turn has L1 and L2
+    const a = await buyer({ city: big });
+    const callsA = w.ai.calls.length;
+    share(['L1']);
+    await ask(a);
+    expect(w.ai.calls.slice(callsA).map((c) => c.user).join('\n')).toMatch(/\bL2\b/);
+    // buyer B's turn has only L1: L2 (A's) is unknown here, L1 is B's own listing
+    const b = await buyer({ city: small });
+    const callsB = w.ai.calls.length;
+    share(['L1', 'L2']);
+    await ask(b);
+    expect(w.ai.calls.slice(callsB).map((c) => c.user).join('\n')).not.toMatch(/\bL2\b/);
+    const denied = (await h.su.query<{ denied: string[] }>(`SELECT denied FROM ai_isa_turns WHERE contact_id = $1`, [b.id])).rows.flatMap((x) => x.denied);
+    expect(denied.filter((d) => /^HANDLE_UNKNOWN/.test(d))).toEqual(['HANDLE_UNKNOWN:share_listings']);
+    // core refuses the whole share when any handle is unknown: nothing is shared, B's own listing included
+    expect(await facts(b.id)).toEqual([]);
+    void only;
   });
 
   it('R-ISA-20 E539: another tenant\'s listing never enters a bundle', async () => {
@@ -174,6 +287,27 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
   });
 });
 
+describe('R-ISA-17: an as-of change alone never cancels a fact (batch 13 audit ISA2B-07)', () => {
+  it('R-ISA-17: a sync that only moves last_seen_in_feed_at (status and price the same) keeps the fact pending, and it is sent', async () => {
+    const city = 'Castro Valley';
+    const id = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 640000, seenHoursAgo: 3 });
+    const l = await buyer({ city });
+    share(['L1']);
+    const hold = async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [w.tenantId]); };
+    await age(l.id);
+    await h.su.query(`SET session_replication_role = replica; UPDATE ai_isa_assignments SET started_at = started_at - interval '2 hours' WHERE contact_id = '${l.id}'; SET session_replication_role = origin`);
+    await inboundSms(h, l.phone, w.mainNumber, 'Can you send me some homes?');
+    await runIsa(h, w.tenantId, 4, { beforeTick: hold });
+    expect((await facts(l.id)).map((x) => [x.listing_id, x.status])).toEqual([[id, 'pending']]);
+    // the feed saw it again (a newer as-of), nothing else changed
+    await h.su.query(`SET session_replication_role = replica; UPDATE listings SET last_seen_in_feed_at = now() WHERE id = '${id}'; SET session_replication_role = origin`);
+    await h.su.query(`UPDATE integration_connections SET last_synced_at = now() WHERE id = $1`, [conn]);
+    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [w.tenantId]);
+    await runIsa(h, w.tenantId, 3);
+    expect((await facts(l.id)).map((x) => [x.listing_id, x.status])).toEqual([[id, 'sent']]);
+  });
+});
+
 describe('R-ISA-17 R-AST-10: the AI-origin saved search', () => {
   it('R-ISA-17 R-AST-10: origin ai_isa, proposed; activated by a human, no alert while care is live; paused at the handoff (review_saved_search)', async () => {
     const l = await buyer({ city: 'Piedmont' });
@@ -183,12 +317,12 @@ describe('R-ISA-17 R-AST-10: the AI-origin saved search', () => {
     const s = (await h.su.query<{ id: string; origin: string; status: string; name: string }>(`SELECT id, origin, status, name FROM saved_searches WHERE contact_id = $1`, [l.id])).rows;
     expect(s).toHaveLength(1);
     expect(s[0]).toMatchObject({ origin: 'ai_isa', status: 'proposed', name: 'Search from the AI assistant' });
-    const view = await call<{ search: { origin: string } }>(w.agents[0]!, 'GET', `/saved-searches/${s[0]!.id}`);
-    if (view.status === 200) expect(view.body.search.origin).toBe('ai_isa');
-    // a human approves and activates: no alert while care is live
+    // a human approves and activates: no alert while care is live. batch 13 audit ISA2B-07: the view's origin is read
+    // from the approve response (there is no GET /saved-searches/:id, so the old conditional never asserted)
     await buyerListing(h, w.tenantId, { connectionId: conn, city: 'Piedmont' });
-    const ap = await call(w.agents[0]!, 'POST', `/saved-searches/${s[0]!.id}/approve`, { checked: ['cities', 'priceMaxCents', 'bedsMin'] });
+    const ap = await call<{ search: { origin: string } }>(w.agents[0]!, 'POST', `/saved-searches/${s[0]!.id}/approve`, { checked: ['cities', 'priceMaxCents', 'bedsMin'] });
     expect(ap.status).toBe(200);
+    expect(ap.body.search.origin).toBe('ai_isa');
     expect((await call(w.agents[0]!, 'POST', `/saved-searches/${s[0]!.id}/activate`, {})).status).toBe(200);
     expect((await h.su.query(`SELECT 1 FROM messages WHERE contact_id = $1 AND action_category = 'search_alert'`, [l.id])).rows).toHaveLength(0);
     const { sendDueAlertsInTx } = await import('../assistant/searches.js');
@@ -206,5 +340,39 @@ describe('R-ISA-17 R-AST-10: the AI-origin saved search', () => {
     const ho = (await handoffOf(h, l.id))[0]!;
     expect(ho.package['savedSearch']).toMatchObject({ id: s[0]!.id, status: 'paused' });
     expect(ho.package['nextSteps']).toContain('review_saved_search');
+  });
+
+  // batch 13 audit ISA2B-06 (8): after the handoff, a re-activated AI search alerts only homes the AI did not send
+  it('R-ISA-17 R-AST-10: re-activated after the handoff, the alert omits the home the AI already sent (its match was marked alerted with the facts message)', async () => {
+    const city = 'Lafayette';
+    const sentHome = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 630000 });
+    const l = await buyer({ city });
+    share(['L1']);
+    await ask(l);
+    const f = await facts(l.id);
+    expect(f.map((x) => [x.listing_id, x.status])).toEqual([[sentHome, 'sent']]);
+    // the next turn proposes the saved search; a second home appears after the share
+    w.ai.script.length = 0;
+    for (let i = 0; i < 4; i += 1) w.ai.script.push((_r, src) => (/homes/.test(src.map((x) => x.text).join(' ')) ? { reply: { text: 'Thanks. I will keep an eye out for you.' }, qualification: [], actions: [{ type: 'propose_saved_search' }], summary: null } : defaultIsaOutput(src)));
+    await ask(l);
+    const sid = (await h.su.query<{ id: string }>(`SELECT id FROM saved_searches WHERE contact_id = $1 AND origin = 'ai_isa'`, [l.id])).rows[0]!.id;
+    const newHome = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 640000 });
+    expect((await call(w.agents[0]!, 'POST', `/saved-searches/${sid}/approve`, { checked: ['cities', 'priceMaxCents', 'bedsMin'] })).status).toBe(200);
+    expect((await call(w.agents[0]!, 'POST', `/saved-searches/${sid}/activate`, {})).status).toBe(200);
+    // both homes match; no alert while care is live
+    const matches = async () => (await h.su.query<{ listing_id: string; alerted_message_id: string | null }>(`SELECT listing_id, alerted_message_id FROM saved_search_matches WHERE search_id = $1 ORDER BY listing_id`, [sid])).rows;
+    expect((await matches()).map((m) => m.listing_id).sort()).toEqual([sentHome, newHome].sort());
+    expect((await h.su.query(`SELECT 1 FROM messages WHERE contact_id = $1 AND action_category = 'search_alert'`, [l.id])).rows).toHaveLength(0);
+    // the handoff: paused for review, the AI-sent home's match marked alerted with the facts message
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/end`, {})).status).toBe(200);
+    await h.su.query(`UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1`, [l.id]);
+    await runIsa(h, w.tenantId);
+    expect((await h.su.query<{ status: string }>(`SELECT status FROM saved_searches WHERE id = $1`, [sid])).rows[0]!.status).toBe('paused');
+    expect(Object.fromEntries((await matches()).map((m) => [m.listing_id, m.alerted_message_id]))).toEqual({ [sentHome]: f[0]!.message_id, [newHome]: null });
+    // re-activated by a person: the alert carries only the home the AI did not send
+    expect((await call(w.agents[0]!, 'POST', `/saved-searches/${sid}/activate`, {})).status).toBe(200);
+    const alerts = (await h.su.query<{ id: string }>(`SELECT id FROM messages WHERE contact_id = $1 AND action_category = 'search_alert'`, [l.id])).rows;
+    expect(alerts).toHaveLength(1);
+    expect(Object.fromEntries((await matches()).map((m) => [m.listing_id, m.alerted_message_id]))).toEqual({ [sentHome]: f[0]!.message_id, [newHome]: alerts[0]!.id });
   });
 });
