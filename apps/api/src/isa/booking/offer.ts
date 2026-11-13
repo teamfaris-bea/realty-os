@@ -20,6 +20,7 @@ import { systemActor } from '../../worker/systemActor.js';
 import { computeOffer, displayZones, type IsaSlot, step } from '../coreSeam.js';
 import { applyActionsInTx, contextFor, ensureTurn, type IsaDeps } from '../effects.js';
 import { assignmentById, lockForTurn } from '../repo.js';
+import { appointmentOnOf } from '../sentences.js';
 import { openAppointmentOf, slotsJson } from './rows.js';
 import { hhmmToSec, offerWindows, type OptInWindow } from './windows.js';
 
@@ -80,15 +81,19 @@ export async function runOfferJob(deps: OfferJobDeps, tenantId: string, p: Offer
     const ctx = await contextFor(tx, a, now);
     const turn = await ensureTurn(tx, deps.ids, ctx, { triggerKind: 'offer', triggerKey: `offer:${a.epoch}:${a.machine.lastInboundSeq}:${a.machine.counters.bookingFailures}`, pinnedSeq: a.lastInboundSeq, status: 'no_reply' });
     const env = { tx, deps, actor: actorOf(tenantId), ctx, now, turnId: turn.id, pinnedSeq: a.lastInboundSeq };
-    const refuse = async (code: OfferRefusal): Promise<string> => {
-      await sql`UPDATE ai_isa_turns SET decision = ${JSON.stringify({ code })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx);
+    const refuse = async (code: OfferRefusal, detail: Record<string, string> = {}): Promise<string> => {
+      await sql`UPDATE ai_isa_turns SET decision = ${JSON.stringify({ code, ...detail })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx);
       const r = step(a.machine, { type: 'offer_unavailable', at: now }, ctx.facts);
       await applyActionsInTx(env, r);
       return code;
     };
     if (pre.kind === 'refuse') return refuse(pre.code);
     const appt = await openAppointmentOf(tx, a.contactId);
-    if (appt !== null) return refuse('APPOINTMENT_ALREADY_SET');
+    if (appt !== null) {
+      // Q3: the agent sees the date of the appointment they already have, in the team's zone (batch 13 audit ISA2B-11)
+      const tz = (await sql<{ tz: string | null }>`SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]?.tz ?? null;
+      return refuse('APPOINTMENT_ALREADY_SET', { appointmentId: appt.id, appointmentOn: appointmentOnOf(appt.startsAt, tz) });
+    }
     const opt = await optInOf(tx, a.optinId);
     const routing = (await sql<{ s: string; e: string }>`SELECT routing_hours_start::text AS s, routing_hours_end::text AS e FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]!;
     const windows = offerWindows(opt.availability, { startSec: hhmmToSec(routing.s), endSec: hhmmToSec(routing.e) });

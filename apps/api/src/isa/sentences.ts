@@ -42,7 +42,7 @@ export const BUNDLE_SENTENCES: Record<string, string> = {
 export const BOOKING_SENTENCES: Record<string, string> = {
   CALENDAR_UNAVAILABLE: 'Your calendar could not be read just now, so no times were offered.',
   KIND_NOT_ALLOWED: 'That appointment kind is not in your opt-in or the team policy.',
-  APPOINTMENT_ALREADY_SET: 'They already have an appointment with the team.',
+  APPOINTMENT_ALREADY_SET: 'They already have an appointment with the team.', // the turn carries the dated form (appointmentAlreadySetSentence)
   NO_FREE_SLOT: 'No free time fits your availability, the notice period and their time zones.',
   NO_AVAILABILITY: 'Your availability leaves no hours inside routing hours.',
   OFFER_EXPIRED: 'The offered times expired before they answered.',
@@ -53,6 +53,25 @@ export const BOOKING_SENTENCES: Record<string, string> = {
   SLOT_TAKEN: 'That time was just taken; new times were offered.',
   SLOT_SOURCE_CHANGED: 'Your calendar changed; new times were offered.',
 };
+
+/**
+ * Q3's default (ISA-2b; batch 13 audit ISA2B-11): the agent sees "They already have an appointment on {date}", the
+ * date in the team's zone. The offer turn stores codes only (0080's ai_isa_codes_only: the appointment id and its local
+ * date, YYYY-MM-DD); the panel renders the sentence from them.
+ */
+export function appointmentOnOf(startsAt: number, teamZone: string | null): string {
+  const day = (z: string) => new Intl.DateTimeFormat('en-CA', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(startsAt));
+  try {
+    return day(teamZone ?? 'UTC');
+  } catch {
+    return day('UTC');
+  }
+}
+export function appointmentAlreadySetSentence(on: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(on)) return null;
+  const d = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(`${on}T12:00:00Z`));
+  return `They already have an appointment on ${d}.`;
+}
 
 export function startRefusalSentence(code: string): string {
   return START_REFUSALS[code] ?? 'AI care cannot start right now.';

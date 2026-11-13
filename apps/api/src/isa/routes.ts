@@ -21,7 +21,7 @@ import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
 import { adminLoosening, adminPut, adminView, meView, optIn, optInLoosening, reattest, revokeOptIn } from './settings.js';
 import type { TurnDeps } from './turn.js';
-import { STATE_SENTENCES, chipOf, startRefusalSentence } from './sentences.js';
+import { STATE_SENTENCES, appointmentAlreadySetSentence, chipOf, startRefusalSentence } from './sentences.js';
 import { liveOfferOf } from './booking/rows.js';
 
 function depsOf(req: FastifyRequest): TurnDeps {
@@ -92,7 +92,9 @@ async function panel(req: FastifyRequest, contactId: string) {
         : { zones: ctx.zones, source: ctx.zoneSource, sentence: ctx.zoneSource === 'explicit' ? 'Their time zone was set on the person.' : 'Every time zone they may be in (area code, addresses, the team zone and the continental US): effectively 12:00–20:00 Eastern.' },
       nextAllowedSendAt: last?.not_before?.toISOString() ?? null,
       capsSentence: ctx === null ? '' : `${sent.rows[0]!.n} of ${ctx.content.caps.ai24h} today`,
-      lastDecision: last ? { status: last.status, codes: (last.denied as string[]).slice(0, 10), at: last.created_at.toISOString(), sentence: `Last turn: ${last.status.replace(/_/g, ' ')}.` } : null,
+      // batch 13 audit ISA2B-11 (Q3): an offer refused because they already have an appointment says on which date
+      lastDecision: last ? { status: last.status, codes: (last.denied as string[]).slice(0, 10), at: last.created_at.toISOString(),
+        sentence: (last.decision['code'] === 'APPOINTMENT_ALREADY_SET' ? appointmentAlreadySetSentence(String(last.decision['appointmentOn'] ?? '')) : null) ?? `Last turn: ${last.status.replace(/_/g, ' ')}.` } : null,
       factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString(), source: f.source, asOf: f.as_of?.toISOString() ?? null })),
       openOffer: offerRow ? { id: offerRow.id, status: offerRow.status, slots: offerRow.slots.map((x) => ({ startsAt: new Date(x.startsAt).toISOString(), endsAt: new Date(x.endsAt).toISOString() })), expiresAt: new Date(offerRow.expiresAt).toISOString() } : null,
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),

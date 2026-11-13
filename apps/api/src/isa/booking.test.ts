@@ -422,8 +422,17 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     await inboundSms(h, l.phone, bw.mainNumber, 'Could we schedule a consultation to talk about buying?');
     await runIsa(h, bw.tenantId, 6);
     expect(await offerOf(l.id)).toBeNull();
-    const t = await h.su.query<{ decision: { code?: string } }>(`SELECT decision FROM ai_isa_turns WHERE contact_id = $1 AND trigger_kind = 'offer'`, [l.id]);
+    const t = await h.su.query<{ decision: { code?: string; appointmentOn?: string } }>(`SELECT decision FROM ai_isa_turns WHERE contact_id = $1 AND trigger_kind = 'offer'`, [l.id]);
     expect(t.rows.map((x) => x.decision.code)).toContain('APPOINTMENT_ALREADY_SET');
+    // batch 13 audit ISA2B-11 (Q3's default): the agent's sentence names the appointment's date in the team's zone; the
+    // turn keeps codes only (the local date)
+    const tz = (await h.su.query<{ tz: string }>(`SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = $1`, [bw.tenantId])).rows[0]!.tz;
+    const on = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(inHours(500)));
+    const d = t.rows.find((x) => x.decision.code === 'APPOINTMENT_ALREADY_SET')!.decision;
+    expect(d.appointmentOn).toBe(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(inHours(500))));
+    // the panel's last decision says it too
+    const panel = await call<{ lastDecision: { sentence: string } | null }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(panel.body.lastDecision?.sentence).toBe(`They already have an appointment on ${on}.`);
   });
 
   it('R-ISA-13 E531: a calendar that is not connected → no offer (CALENDAR_UNAVAILABLE); the holding line instead', async () => {
