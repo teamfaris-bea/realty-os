@@ -7,7 +7,7 @@
 // --reset drops and recreates realty_dev and re-applies the migrations first (stop dev servers first).
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { closeDefaultDatabase } from '@realty/db';
+import { closeDefaultDatabase, pgSsl } from '@realty/db';
 import { migrate } from '@realty/db/migrate';
 import pg from 'pg';
 import { loadConfig } from '../config.js';
@@ -21,12 +21,12 @@ export const CREDENTIALS_PATH = resolve(REPO_ROOT, '.demo/credentials.json');
 
 // ---- reset -------------------------------------------------------------------------------------------
 
-async function resetDatabase(ownerUrl: string): Promise<void> {
+async function resetDatabase(ownerUrl: string, ssl: ReturnType<typeof pgSsl>): Promise<void> {
   const u = new URL(ownerUrl);
   const dbName = decodeURIComponent(u.pathname.slice(1));
   const admin = new URL(ownerUrl);
   admin.pathname = '/postgres';
-  const c = new pg.Client({ connectionString: admin.toString() });
+  const c = new pg.Client({ connectionString: admin.toString(), ssl });
   await c.connect();
   try {
     await c.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [dbName]);
@@ -35,7 +35,7 @@ async function resetDatabase(ownerUrl: string): Promise<void> {
   } finally {
     await c.end();
   }
-  const r = await migrate(ownerUrl, resolve(REPO_ROOT, 'packages/db/migrations'), { log: () => {} });
+  const r = await migrate(ownerUrl, resolve(REPO_ROOT, 'packages/db/migrations'), { log: () => {}, ssl });
   log(`reset ${dbName}: ${r.applied.length} migrations applied`);
 }
 
@@ -47,13 +47,15 @@ async function main(): Promise<void> {
   const reset = process.argv.includes('--reset');
   const ownerUrl = process.env.MIGRATION_DATABASE_URL;
   if (!ownerUrl) throw new SeedError('MIGRATION_DATABASE_URL is not set (run pnpm db:setup first)');
-  if (reset) await resetDatabase(ownerUrl);
-  const su = new pg.Pool({ connectionString: ownerUrl, max: 2 });
+  const config = loadConfig();
+  const ssl = pgSsl(config.databaseTls);
+  if (reset) await resetDatabase(ownerUrl, ssl);
+  const su = new pg.Pool({ connectionString: ownerUrl, max: 2, ssl });
   // An idle client can be terminated by the server (a test database dropped WITH (FORCE), a restart):
   // without a listener pg re-throws it as an unhandled error. Queries in flight still reject normally.
   su.on('error', () => {});
   try {
-    await runDemoSeed(su, { config: loadConfig(), credentialsPath: CREDENTIALS_PATH, log });
+    await runDemoSeed(su, { config, credentialsPath: CREDENTIALS_PATH, log });
   } finally {
     await su.end();
   }

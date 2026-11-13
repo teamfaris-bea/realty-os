@@ -8,6 +8,7 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 import type { DB } from './schema.js';
+import { databaseTlsFromEnv, pgSsl } from './tls.js';
 
 export interface DatabaseOptions {
   /** connection string of the application role (DATABASE_URL: app_user) */
@@ -17,6 +18,8 @@ export interface DatabaseOptions {
   applicationName?: string;
   /** per-statement timeout applied to every pooled connection (default 30 s; 0 disables) */
   statementTimeoutMs?: number;
+  /** pg's ssl option, from pgSsl(databaseTls) (tls.ts); omitted: pg's default (dev and tests) */
+  ssl?: pg.PoolConfig['ssl'];
 }
 
 // `date` columns stay 'YYYY-MM-DD' strings: the default parser builds a Date at LOCAL midnight of the
@@ -48,6 +51,7 @@ export function createDatabase(opts: DatabaseOptions): Database {
     // set-returning definers (default 1,000 rows) push cheap queries past jit_above_cost, and compiling
     // them cost up to 600 ms for a 36 ms scoreboard query at 250k contacts.
     options: '-c jit=off',
+    ...(opts.ssl !== undefined ? { ssl: opts.ssl } : {}),
   });
   // An idle client error (e.g. the server terminated the connection) must not crash the process.
   pool.on('error', () => {});
@@ -81,7 +85,7 @@ export function getDatabase(): Database {
   if (defaultDb) return defaultDb;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('@realty/db: no database configured (call configureDatabase or set DATABASE_URL)');
-  defaultDb = createDatabase({ url });
+  defaultDb = createDatabase({ url, ssl: pgSsl(databaseTlsFromEnv(process.env, ['DATABASE_URL'])) });
   return defaultDb;
 }
 

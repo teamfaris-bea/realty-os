@@ -20,7 +20,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type TenantId, instant, uuidv7Generator } from '@realty/core/foundation';
-import { closeDefaultDatabase, configureDatabase, withTenantTx } from '@realty/db';
+import { closeDefaultDatabase, configureDatabase, pgSsl, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import type pg from 'pg';
 import { recomputeExceptions } from '../accountability/index.js';
@@ -94,7 +94,7 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
   // the in-process server: dev keys and secrets, fake providers, a generous global rate limit
   const config = { ...base, logLevel: 'silent' as const, globalRateLimitPerMinute: 100_000 };
   const origin = config.webOrigins[0] ?? 'http://localhost:5173';
-  const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-seed', max: 6 });
+  const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-seed', max: 6, ssl: pgSsl(config.databaseTls) });
   const clock = { now: () => instant(Date.now()) };
   const ids = uuidv7Generator(clock, (n) => new Uint8Array(randomBytes(n)));
   const providers = createFakeProviders({ clock });

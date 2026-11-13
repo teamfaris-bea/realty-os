@@ -450,6 +450,8 @@ export interface RunCounselReviewOptions {
   error: (line: string) => void;
   /** the client clock for the early "not in the future" check (tests); the database clock is checked as well */
   now?: Date;
+  /** pg's ssl option from pgSsl(databaseTlsFromEnv(env)) (tls.ts) */
+  ssl?: pg.ClientConfig['ssl'];
 }
 
 /** The command: parse, connect as the owner, record, print. Returns the exit code (0 ok, 1 refused or failed). */
@@ -472,7 +474,7 @@ export async function runCounselReview(argv: readonly string[], o: RunCounselRev
     o.error('counsel-review refused: MIGRATION_DATABASE_URL is not set (the database owner role); nothing was changed');
     return 1;
   }
-  const c = new pg.Client({ connectionString: o.url, application_name: 'realty-counsel-review' });
+  const c = new pg.Client({ connectionString: o.url, application_name: 'realty-counsel-review', ...(o.ssl !== undefined ? { ssl: o.ssl } : {}) });
   try {
     await c.connect();
     const r = await recordCounselReview(c, args);

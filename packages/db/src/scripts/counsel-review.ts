@@ -6,10 +6,19 @@
 // docs/DEPLOY.md §10.1.
 import { runCounselReview } from '../counselReview.js';
 import { loadRootEnv } from '../dbConfig.js';
+import { databaseTlsFromEnv, pgSsl } from '../tls.js';
 
 loadRootEnv();
+let ssl: ReturnType<typeof pgSsl>;
+try {
+  ssl = pgSsl(databaseTlsFromEnv(process.env, ['MIGRATION_DATABASE_URL']));
+} catch (err) {
+  console.error(`counsel-review refused: ${(err as Error).message}; nothing was changed`);
+  process.exit(1);
+}
 const code = await runCounselReview(process.argv.slice(2), {
   url: process.env.MIGRATION_DATABASE_URL,
+  ssl,
   log: (l) => console.log(l),
   error: (l) => console.error(l),
 });

@@ -1,5 +1,8 @@
 // Production configuration fails fast, names every missing setting at once, and never echoes a value.
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig, redactConfig } from './config.js';
 import { createProviders } from './providers/index.js';
@@ -223,6 +226,57 @@ describe('TRUST_PROXY: the proxies whose X-Forwarded-For the API believes (findi
       }
       expect(msg, v).toMatch(/TRUST_PROXY must list/);
       if (v.includes('internal') || v.includes('not-an-ip')) expect(msg, v).not.toContain(v);
+    }
+  });
+});
+
+describe('R-DEPLOY-5: database TLS and the database URL shape (DATABASE_SSL_MODE, DATABASE_SSL_CA_FILE)', () => {
+  it('R-DEPLOY-5 E485: production defaults to verify-full; disable is refused without the staging flag; a bad mode or CA is refused by name, with every other problem at once', () => {
+    expect(loadConfig(prodEnv()).databaseTls).toEqual({ mode: 'verify-full', caFile: null, ca: null });
+    expect(loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgres://x', KEK_BASE64: randomBytes(32).toString('base64'), SESSION_SECRET_BASE64: randomBytes(32).toString('base64') }).databaseTls.mode).toBe('disable');
+    expect(() => loadConfig(prodEnv({ DATABASE_SSL_MODE: 'disable' }))).toThrow(/DATABASE_SSL_MODE=disable is refused in production unless ALLOW_FAKE_PROVIDERS=true/);
+    expect(() => loadConfig(prodEnv({ DATABASE_SSL_MODE: 'no-verify' }))).toThrow(/DATABASE_SSL_MODE must be verify-full or disable/);
+    let msg = '';
+    try {
+      loadConfig(prodEnv({ DATABASE_SSL_CA_FILE: '/nonexistent/realty-ca.pem', TRUST_PROXY: 'true' }));
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain('DATABASE_SSL_CA_FILE is not readable');
+    expect(msg).toContain('TRUST_PROXY=true');
+    expect(msg).not.toContain('realty-ca.pem');
+  });
+
+  it('R-DEPLOY-5 E484: production refuses a query string in DATABASE_URL or MIGRATION_DATABASE_URL by name; postgres://x still loads', () => {
+    expect(() => loadConfig(prodEnv({ DATABASE_URL: 'postgres://app_user:pw-0f3a@db.example.com/realty?sslmode=no-verify' }))).toThrow(/DATABASE_URL must not carry a query string or fragment in production/);
+    const msg = (() => {
+      try {
+        loadConfig(prodEnv({ DATABASE_URL: 'postgres://app_user:pw-0f3a@db.example.com/realty?user=other' }));
+        return '';
+      } catch (e) {
+        return (e as Error).message;
+      }
+    })();
+    expect(msg).toContain('DATABASE_URL must not carry a query string');
+    expect(msg).not.toMatch(/pw-0f3a|other|example/);
+    expect(() => loadConfig(prodEnv({ MIGRATION_DATABASE_URL: 'postgres://o@h/d?host=x' }))).toThrow(/MIGRATION_DATABASE_URL must not carry a query string/);
+    expect(loadConfig(prodEnv({ DATABASE_URL: 'postgres://x' })).databaseUrl).toBe('postgres://x');
+  });
+
+  it('R-DEPLOY-5: redactConfig carries the TLS mode and the CA path, never the CA contents or the database password', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realty-ca-'));
+    try {
+      const ca = join(dir, 'db-ca.pem');
+      writeFileSync(ca, '-----BEGIN CERTIFICATE-----\nMIIBcacontents0f3a\n-----END CERTIFICATE-----\n');
+      const c = loadConfig(prodEnv({ DATABASE_SSL_CA_FILE: ca, DATABASE_URL: 'postgres://app_user:db-pw-0f3a9c@db.example.com:5432/realty' }));
+      expect(c.databaseTls.ca).toContain('MIIBcacontents0f3a');
+      const r = redactConfig(c);
+      expect(r.databaseTls).toEqual({ mode: 'verify-full', caFile: ca });
+      const text = JSON.stringify(r);
+      expect(text).not.toContain('MIIBcacontents0f3a');
+      expect(text).not.toContain('db-pw-0f3a9c');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

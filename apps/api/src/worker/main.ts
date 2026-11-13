@@ -12,10 +12,10 @@
 import { createServer } from 'node:http';
 import { hostname } from 'node:os';
 import { instant } from '@realty/core/foundation';
-import { QUEUES, type Queue, closeDefaultDatabase, configureDatabase } from '@realty/db';
+import { QUEUES, type Queue, closeDefaultDatabase, configureDatabase, pgSsl } from '@realty/db';
 import { z } from 'zod';
 import { loadConfig } from '../config.js';
-import { assertNoOwnerCredentials, assertRlsBoundLogin } from '../dbRole.js';
+import { assertAppRoleModel, assertNoOwnerCredentials } from '../dbRole.js';
 import { observedAlerts } from '../observability/alerts.js';
 import { loadObservabilityConfig } from '../observability/config.js';
 import { createErrorReporter } from '../observability/errors.js';
@@ -59,9 +59,9 @@ async function main(): Promise<void> {
   process.on('uncaughtException', (e) => errorReporter.capture(e, { process: 'worker', level: 'fatal', code: 'UNCAUGHT' }));
   process.on('unhandledRejection', (e) => errorReporter.capture(e, { process: 'worker', code: 'UNHANDLED_REJECTION' }));
   const log = jsonLogger({ level: config.logLevel === 'silent' ? 'silent' : config.logLevel === 'fatal' || config.logLevel === 'trace' ? 'info' : config.logLevel });
-  const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-worker', max: args.concurrency + 4 });
+  const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-worker', max: args.concurrency + 4, ssl: pgSsl(config.databaseTls) });
   // same refusal as the API (docs/DEPLOY.md §2): a superuser or BYPASSRLS login would bypass tenant isolation
-  await assertRlsBoundLogin(db);
+  await assertAppRoleModel(db, 'app_user', config.databaseTls);
   const clock = { now: () => instant(Date.now()) };
   const providers = createProviders(config, { clock });
   registry.registerAll(handlers);

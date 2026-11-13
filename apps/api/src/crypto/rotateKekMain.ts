@@ -3,6 +3,7 @@
 //   PREVIOUS_KEK_BASE64 / PREVIOUS_KEK_REF   the KEK in use now
 //   KEK_BASE64 / KEK_REF                     the new KEK (what api and worker start with afterwards)
 // Prints counts only, never keys.
+import { databaseTlsFromEnv, pgSsl } from '@realty/db';
 import pg from 'pg';
 import { localKek } from './kek.js';
 import { rotateKek } from './rotateKek.js';
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
   const fromRef = process.env.PREVIOUS_KEK_REF;
   const toRef = process.env.KEK_REF;
   if (!url || !fromRef || !toRef) throw new Error('MIGRATION_DATABASE_URL, PREVIOUS_KEK_REF and KEK_REF must be set');
-  const pool = new pg.Pool({ connectionString: url, max: 1 });
+  const pool = new pg.Pool({ connectionString: url, max: 1, ssl: pgSsl(databaseTlsFromEnv(process.env, ['MIGRATION_DATABASE_URL'])) });
   // An idle client can be terminated by the server (a test database dropped WITH (FORCE), a restart):
   // without a listener pg re-throws it as an unhandled error. Queries in flight still reject normally.
   pool.on('error', () => {});

@@ -1,0 +1,87 @@
+# The app VM's production stack (docs/DEPLOY.md §12). The database is NOT here: it runs on its own host and the
+# api, worker and release step reach it over verified TLS (DATABASE_SSL_MODE=verify-full, the CA at
+# /etc/realty/db-ca.pem on this host, mounted read-only). Files at rest stay in s3: no storage volume, no named
+# volumes. Images are built and tagged elsewhere (realty-api:<version>, realty-web:<version>) and run here by tag.
+#
+# Order (each step by hand; api and worker do not depend on release, so `up` never runs the owner's step):
+#   1. render   deploy/render-secrets.sh app.settings app.secrets.refs /run/realty/app.env
+#               deploy/render-secrets.sh - owner.secrets.refs /run/realty/owner.env
+#   2. release  REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release
+#   3. remove   rm /run/realty/owner.env
+#   4. up       REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml up -d
+#               (add --profile edge for the optional TLS edge below)
+#
+# owner.env (the owner's MIGRATION_DATABASE_URL) is read only by the release profile; api and worker read app.env
+# only and refuse to start with an owner credential (DEPLOY §3). No ${...:?} here names an owner variable, so the
+# owner's credentials never pass through this shell's environment either.
+name: realty
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app: &app
+  image: realty-api:${REALTY_VERSION:?set REALTY_VERSION to the release tag}
+  env_file: ${REALTY_ENV_DIR:-/run/realty}/app.env
+  volumes:
+    - /etc/realty/db-ca.pem:/run/realty/db-ca.pem:ro
+  init: true
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  release:
+    <<: *app
+    profiles: [release]
+    env_file:
+      - path: ${REALTY_ENV_DIR:-/run/realty}/app.env
+      - path: ${REALTY_ENV_DIR:-/run/realty}/owner.env
+        required: true
+    restart: "no"
+    command: ["node", "packages/db/dist/scripts/release.js"]
+
+  api:
+    <<: *app
+    command: ["node", "apps/api/dist/main.js"]
+    stop_grace_period: 40s
+
+  worker:
+    <<: *app
+    command: ["node", "apps/api/dist/worker/main.js"]
+    environment:
+      WORKER_HEALTH_PORT: "3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    stop_grace_period: 40s
+
+  web:
+    image: realty-web:${REALTY_VERSION:?set REALTY_VERSION to the release tag}
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: api:3001
+    # loopback by default: the edge below (or a load balancer reaching this host) terminates TLS in front of it
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    depends_on:
+      api: { condition: service_healthy }
+    logging: *logging
+
+  # optional TLS edge (deploy/edge/edge.conf replaces the image's stock server); certificates in /etc/realty/tls
+  edge:
+    profiles: [edge]
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./deploy/edge/edge.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/realty/tls:/etc/realty/tls:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - web
+    logging: *logging

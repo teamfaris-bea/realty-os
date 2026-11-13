@@ -15,6 +15,7 @@
     "test:report": "pnpm -r --no-bail exec vitest run --passWithNoTests --reporter=default --reporter=json --outputFile=.vitest-results.json; node scripts/rule-coverage.mjs --results",
     "db:setup": "pnpm --filter @realty/db run setup-dev",
     "db:migrate": "pnpm --filter @realty/db run migrate",
+    "db:preflight": "pnpm --filter @realty/db run preflight",
     "dev:api": "pnpm --filter @realty/api dev",
     "dev:worker": "pnpm --filter @realty/api dev:worker",
     "dev:web": "pnpm --filter @realty/web dev",

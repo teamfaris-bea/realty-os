@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../src/dbConfig.js';
+import { roleBlockOf } from '../src/roleBlock.js';
 import { createTestDb, type TestDb } from '../src/testing/index.js';
 
 const script = readFileSync(resolve(MIGRATIONS_DIR, '../../../deploy/restore-roles.sql'), 'utf8');
@@ -30,6 +31,12 @@ describe('deploy/restore-roles.sql', () => {
     const code = script.split('\n').filter((l) => !l.startsWith('--')).join('\n').trim();
     expect(code).toBe(block);
     for (const r of ['app_user', 'app_definer', 'app_retention']) expect(code).toContain(`CREATE ROLE ${r} NOLOGIN NOSUPERUSER`);
+  });
+
+  it('R-DEPLOY-4: roleBlockOf (the block the release step runs for a non-superuser owner) is the same block, read from 0001_init.sql, and throws on text without it', () => {
+    expect(roleBlockOf(init)).toBe(roleBlock(script));
+    expect(roleBlockOf(script)).toBe(roleBlockOf(init));
+    expect(() => roleBlockOf('CREATE TABLE x (id int);')).toThrow(/cluster-role block of 0001_init.sql was not found/);
   });
 
   it('is idempotent: on a cluster that has the roles it changes none of them', async () => {

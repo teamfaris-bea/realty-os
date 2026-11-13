@@ -1,0 +1,14 @@
+# The database host's client authentication (docs/DEPLOY.md §12). Every network connection must use TLS
+# (hostssl) and a SCRAM password, and come from the app VM only. There is no plain `host` line (it would also
+# accept a connection without TLS) and no password-less method for any network client.
+#
+# The app VM connects with DATABASE_SSL_MODE=verify-full, so the server certificate (postgresql.realty.conf) must
+# name <db-host> and chain to the CA mounted at /run/realty/db-ca.pem.
+#
+# TYPE   DATABASE  USER          ADDRESS            METHOD
+# the local superuser, over the Unix socket, as the OS user of the same name (maintenance only)
+local    all       postgres                         peer
+# the RLS-bound app role: every api and worker process
+hostssl  realty    app_user      <app-vm-ip>/32     scram-sha-256
+# the owner role: the release step (migrations) only, from the same VM
+hostssl  realty    <owner-role>  <app-vm-ip>/32     scram-sha-256
