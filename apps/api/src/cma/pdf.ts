@@ -12,8 +12,7 @@
 import type { UserActor } from '@realty/core/foundation';
 import { audit, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
-import type { DocumentRenderer, RenderedPdf } from '../providers/integrations/types.js';
-import { ProviderError } from '../providers/types.js';
+import { type DocumentRenderer, ProviderError, type RenderedPdf } from './deps.js';
 import { pdfFields, refusalFor } from './report.js';
 import { getCma } from './repos.js';
 import { readinessOf } from './service.js';

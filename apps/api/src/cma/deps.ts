@@ -58,6 +58,10 @@ export {
 // freshness window (DATA_OLD). From module 22 (comms): the human email created in the sharer's transaction, its
 // preview, dispatch and the deny sentences (D1, R-GATE-14; ARCHITECTURE §9 path 1).
 export { SIZE, winAnsi } from '../providers/integrations/pdf.js';
+// From the providers module (pdf.ts): the configured DocumentRenderer, its RenderedPdf, and ProviderError, so a renderer
+// that is not configured is said honestly (INTEGRATION_NOT_CONFIGURED), never a 500 (batch 13, audit cma-v2a F12).
+export type { DocumentRenderer, RenderedPdf } from '../providers/integrations/types.js';
+export { ProviderError } from '../providers/types.js';
 export { fairHousingPack, identityOf } from '../marketing/repo.js';
 export { check as fairHousingCheck } from '@realty/core/fairhousing';
 export { money, miles } from '@realty/core/valuation';
