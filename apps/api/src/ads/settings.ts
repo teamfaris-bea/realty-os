@@ -19,7 +19,7 @@ export const READS_WHILE_DARK = true;
 /**
  * Q-ADS-3 default: the monthly cap counts every campaign of the account, mirrored or not, managed or not, and the cap
  * pause covers every mirrored campaign Google Ads reports serving (unmanaged ones are resumed in Google Ads). Read by
- * mirror.ts runReconcile. Set to false, the cap counts only campaigns linked here (a listing and its approved creative,
+ * mirror.ts runReconcile and overview.ts buildOverview (its over-delivery note and month-to-date sentence). Set to false, the cap counts only campaigns linked here (a listing and its approved creative,
  * R-ADS-12) and pauses only managed (`active`) ones. The daily ceiling covers managed campaigns only either way.
  * VERIFY WITH COUNSEL (C3): auto-pausing at the cap, unmanaged campaigns included.
  */
@@ -90,6 +90,12 @@ export const OVERSPEND_NOTE_NO_LEAD_SOURCE =
   'Google Ads may spend more than a daily budget on a given day; Realty OS pauses the campaigns it records once month-to-date spend reaches your monthly cap. Without a lead source it records no new campaign: pause those in Google Ads.';
 export const OVERSPEND_NOTE_DARK =
   'Google Ads may spend more than a daily budget on a given day. Until counsel review and the Google Ads check are complete, Realty OS reads spend and alerts you at your monthly cap but cannot pause campaigns: pause them in Google Ads.';
+/** cleared, but no ads_google connection is live (none, revoked at Google or disconnected): nothing is read or paused */
+export const OVERSPEND_NOTE_NOT_CONNECTED =
+  'Google Ads may spend more than a daily budget on a given day. No Google Ads account is connected and read here, so Realty OS cannot pause campaigns at your monthly cap: pause them in Google Ads.';
+/** Q-ADS-3 answered "no" (CAP_COUNTS_EVERY_CAMPAIGN false): the cap counts linked campaigns and pauses managed ones */
+export const OVERSPEND_NOTE_MANAGED_ONLY =
+  'Google Ads may spend more than a daily budget on a given day. Realty OS counts only the campaigns linked to a listing here toward your monthly cap and pauses those it manages once their month-to-date spend reaches it: pause the others in Google Ads.';
 export const OVERSPEND_NOTE_NOT_READ =
   'Google Ads may spend more than a daily budget on a given day. Until counsel review and the Google Ads check are complete, Realty OS does not read Google Ads, so it cannot alert you or pause campaigns at your monthly cap.';
 

@@ -76,6 +76,11 @@ export interface RetainedDocumentRow {
   legal_hold: boolean;
   /** only while it is still in the future (a past date no longer blocks) */
   retention_until: Date | null;
+  /** what tells two blocking documents apart on the page (b11 ownership-data/F4); the preview is Owner/Admin only */
+  kind: string;
+  display_name: string;
+  version_no: number;
+  created_at: Date;
 }
 
 /**
@@ -85,11 +90,36 @@ export interface RetainedDocumentRow {
  */
 export async function retainedDocuments(tx: Tx, ids: readonly string[]): Promise<RetainedDocumentRow[]> {
   const r = await sql<RetainedDocumentRow>`
-    SELECT id, contact_id, legal_hold, CASE WHEN retention_until > now() THEN retention_until END AS retention_until
+    SELECT id, contact_id, legal_hold, CASE WHEN retention_until > now() THEN retention_until END AS retention_until,
+           kind, display_name, version_no, created_at
       FROM documents
      WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...ids]}::uuid[]) AND (legal_hold OR retention_until > now())
      ORDER BY id`.execute(tx);
   return r.rows;
+}
+
+export interface ErasedWithRow {
+  call_recordings: number;
+  documents: number;
+  cma_reports: number;
+}
+
+/**
+ * What erasing the person's records (`ids`, from mergeTree) deletes that a merge left on them (b11 ownership-data/F2).
+ * A merge moves a record's calls to the survivor (packages/db ownership/merge.ts), but no merge path moves a call's
+ * recording: it keeps the merged-away record's contact_id, and its transcript cascades with it. A record's documents
+ * and CMA reports never move either (0069, 0061; the survivor lists them through 0075 and 0077).
+ * app.purge_contact_internal shreds the objects of each record's recordings and documents, and the contact's delete
+ * cascades the rows. A recording already shredded (no audio left) is not counted. Owner/Admin read every row
+ * (tenant-wide: recording scope 'all', every document, every CMA report).
+ */
+export async function erasedWith(tx: Tx, ids: readonly string[]): Promise<ErasedWithRow> {
+  const r = await sql<ErasedWithRow>`
+    SELECT (SELECT count(*)::int FROM recordings
+             WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...ids]}::uuid[]) AND status <> 'shredded') AS call_recordings,
+           (SELECT count(*)::int FROM documents WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...ids]}::uuid[])) AS documents,
+           (SELECT count(*)::int FROM cma_reports WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...ids]}::uuid[])) AS cma_reports`.execute(tx);
+  return r.rows[0]!;
 }
 
 /** The record a merged-away contact's merge chain ends at (null when it was never merged away; 0075 helper). */

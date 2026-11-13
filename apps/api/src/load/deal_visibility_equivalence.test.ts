@@ -7,7 +7,8 @@
 // comparison below (old USING = 0021's per-row app.contact_detail_visible) covers both, and now also runs as support
 // without and with a live grant and as a client (portal) principal.
 // D9's schema step: cma_reports_select reads its contact branch through the helper from the start; it is compared here
-// with the same policy written with the per-row app.contact_detail_visible, on stored CMAs seeded below.
+// with the same policy written with the per-row app.contact_detail_visible, on stored CMAs seeded below. Since 0077
+// (b11 ownership-data/F1) the branch also reads the record's root survivor (app.contact_merge_root), in both forms.
 // These tests prove WHO-SEES-WHAT is unchanged.
 //
 // Method: for every member (Owner, Admin, Team Lead, Agent, ISA, TC) and the system actor, one transaction
@@ -68,11 +69,13 @@ const OLD_USING: { table: string; policy: string; using: string }[] = [
   { table: 'bulk_action_items', policy: 'bulk_action_items_select', using: `
       EXISTS (SELECT 1 FROM bulk_actions b WHERE b.tenant_id = bulk_action_items.tenant_id AND b.id = bulk_action_items.bulk_action_id)
       AND app.contact_detail_visible(tenant_id, contact_id)` },
-  // D9 S0: stored CMAs (tenant-wide, the creator as an active member, or whoever sees the contact's detail)
+  // D9 S0: stored CMAs (tenant-wide, the creator as an active member, or whoever sees the contact's detail, or since
+  // 0077 the detail of the record its merge chain ends at)
   { table: 'cma_reports', policy: 'cma_reports_select', using: `
       (SELECT app.is_tenant_wide())
       OR (created_by_user_id = (SELECT app.user_id()) AND (SELECT app.my_role()) IS NOT NULL)
-      OR (contact_id IS NOT NULL AND app.contact_detail_visible(tenant_id, contact_id))` },
+      OR (contact_id IS NOT NULL AND (app.contact_detail_visible(tenant_id, contact_id)
+           OR app.contact_detail_visible(tenant_id, app.contact_merge_root(tenant_id, contact_id))))` },
 ];
 const TABLES = OLD_USING.map((p) => p.table);
 /** The parity detail tables: the generator writes none of their rows, the fixture below does. */

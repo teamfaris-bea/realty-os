@@ -152,6 +152,20 @@ export function ListingPage() {
 const MEMBER_STATUS_WORD: Record<string, string> = { invited: 'invited', suspended: 'suspended', deactivating: 'being removed', removed: 'removed' };
 
 /**
+ * The control's refusals in listing words. PATCH /listings/:id/agent answers 200 only after the write and its audit (or
+ * when the listing already has that agent; b11 review api-ui/F8), but a 500 does not say whether the change was saved:
+ * the route's own invariant 500 (a team listing without an agent, or a write that missed the row it held locked) writes
+ * nothing, yet the review-card sync runs as the system after the change committed and can fail after it, and a proxy
+ * 5xx (any non-JSON 5xx reads as INTERNAL_ERROR) can come after a commit too (b11 merge review F1). So the page never
+ * says "nothing was saved" nor that the agent changed: it asks the person to check the agent shown above, which the
+ * mutation refetches (useMutate invalidates the listing whatever the answer), before trying again.
+ */
+const LISTING_AGENT_ERRORS: Record<string, string> = {
+  ASSIGNEE_NOT_ELIGIBLE: "That person can't be a listing agent now (not active, or a TC). Choose someone else.",
+  INTERNAL_ERROR: 'We could not confirm the change. Check the listing agent shown above before trying again.',
+};
+
+/**
  * Who handles a team listing, and (Owner/Admin: listing.reassign) a way to hand it to someone else. The choices are the
  * active members who can hold leads, never a TC (bulk/choices.ts assignTargetsFromMembers, the same rule the server's
  * assertAssignable applies again). The server's writer is fenced and audited (workspace/listings.ts); the listing's
@@ -183,7 +197,7 @@ function ListingAgent({ listing }: { listing: ListingDetailView }) {
       setTo('');
     }
   };
-  const error = m.error ? (m.error.code === 'ASSIGNEE_NOT_ELIGIBLE' ? "That person can't be a listing agent now (not active, or a TC). Choose someone else." : m.error.message) : null;
+  const error = m.error ? (LISTING_AGENT_ERRORS[m.error.code] ?? m.error.message) : null;
   return (
     <Section title="Listing agent">
       {members.isError ? <Notice tone="error">{messageFor(members.error, AGENT_ERROR_MESSAGES)}</Notice> : null}

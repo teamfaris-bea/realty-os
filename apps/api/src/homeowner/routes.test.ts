@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { ownedContact } from '../comms/testing.js';
-import { call } from '../leads/testing.js';
+import { call, command } from '../leads/testing.js';
 import { beforeThisMonth, closedDeal } from '../nurture/testing.js';
 import { FakePublicRecords, PUBLIC_RECORDS_TEST_TEXT } from '../predict/provider.js';
 import { type WorkspaceWorld, workspaceWorld } from '../workspace/testing.js';
@@ -130,11 +130,15 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-7)', () => {
     const inquiry = (type: string, at: string) => h.su.query(
       `INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome) VALUES ($1, $2, $3, $4, $5, $6, $7, 'attached')`,
       [w.tenantId, randomUUID(), c.id, w.sourceId, at, type, `fp-${randomUUID()}`]);
+    // The test team's zone is picked so its local hour is 10-16 when the test runs (zoneWithLocalHour), anywhere from
+    // UTC-12 to UTC+14, so the expected day is the instant's date in that zone, not its UTC date.
+    const tz = (await h.su.query<{ tz: string }>(`SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId])).rows[0]!.tz;
+    const teamDay = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
     await inquiry('value', '2019-04-02T16:00:00Z');
-    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2019-04-02' }]);
+    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: teamDay('2019-04-02T16:00:00Z') }]);
     await inquiry('sell', '2022-08-09T16:00:00Z');
     await inquiry('buy', '2024-01-05T16:00:00Z');
-    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2022-08-09' }]);
+    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: teamDay('2022-08-09T16:00:00Z') }]);
   });
 
   // b11 reconciliation homeowner-4: the panel listed only home and property rows, so a past buyer's K2 mailing subject
@@ -157,17 +161,37 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-7)', () => {
   });
 
   // b11 ownership-data/F6: a merge moves no addresses, inquiries or intent (0027), so a recognised duplicate's home and
-  // its sell inquiry stay on the merged-away record; the survivor's panel said nothing about it.
-  it('R-HOME-1 R-HOME-9 E569: a survivor with records merged into it says the profile uses only its own addresses, inquiries and intent', async () => {
+  // its sell inquiry stay on the merged-away record. The engine closes that record with no owner, and contacts RLS then
+  // hides it from the survivor's agent and Team Lead, so the flag is read from the survivor's merge tree (0075's
+  // app.contact_merge_tree_ids: ids only), not from the hidden record itself.
+  it('R-HOME-1 R-HOME-9 E569: after an engine merge the survivor\'s agent, its Team Lead and the Owner are each told that the profile uses only its own addresses, inquiries and intent', async () => {
     const survivor = await homeowner(h, w, w.agents[0]!, records, { reason: 'homeowner_tag' });
     const loser = await homeowner(h, w, w.agents[0]!, records, { reason: 'seller_inquiry' });
     expect((await get(w.agents[0]!, survivor.id)).body.mergedRecords).toBe(false);
-    await h.su.query(`BEGIN; SET LOCAL session_replication_role = replica; UPDATE contacts SET merged_into_contact_id = '${survivor.id}' WHERE id = '${loser.id}'; COMMIT;`);
-    for (const viewer of [w.agents[0]!, w.owner]) {
+    const m = await command(w.agents[0]!, survivor.id, 'merge', { loserId: loser.id });
+    expect(m.status).toBe(200);
+    expect((await h.su.query('SELECT merged_into_contact_id, owner_user_id FROM contacts WHERE id = $1', [loser.id])).rows[0]).toEqual({ merged_into_contact_id: survivor.id, owner_user_id: null });
+    for (const viewer of [w.agents[0]!, w.teamLead!, w.owner]) {
       const r = await get(viewer, survivor.id);
+      expect(r.status).toBe(200);
       expect(r.body.mergedRecords).toBe(true);
+      expect(r.body.recognized).toBe(true);
       expect(r.body.reasons.map((x) => x.reason)).toEqual(['homeowner_tag']);
       expect(r.body.homes.map((x) => x.address.split(',')[0])).toEqual([survivor.address.line1]);
+    }
+    // the peer agent still sees nothing of the survivor
+    expect((await get(w.agents[1]!, survivor.id)).status).toBe(404);
+  });
+
+  it('R-HOME-1 R-HOME-7 E569: a duplicate recognised only by its sell inquiry, merged into an unrecognised record: the survivor is not recognised and shows no profile (recognition does not carry over); the flag is still true for each viewer', async () => {
+    const survivor = await ownedContact(w.agents[0]!, { consent: false });
+    await addAddress(w.agents[0]!, survivor.id, nextBeaufortAddress());
+    const loser = await homeowner(h, w, w.agents[0]!, records, { reason: 'seller_inquiry' });
+    const m = await command(w.agents[0]!, survivor.id, 'merge', { loserId: loser.id });
+    expect(m.status).toBe(200);
+    for (const viewer of [w.agents[0]!, w.teamLead!, w.owner]) {
+      const r = await get(viewer, survivor.id);
+      expect(r.body).toEqual({ recognized: false, reasons: [], homes: [], mergedRecords: true, outreach: { built: false, clearanceOn: null } });
     }
   });
 

@@ -152,9 +152,13 @@ function mlsMatchable(e: MlsEligibility, l: RawListing): boolean {
   return l.source === 'team' || (!l.is_lease && clientView(e, l) !== null);
 }
 
-/** SQL for client-eligible MLS rows (the cheap part of mlsMatchable; the display rules run after). */
+/**
+ * SQL for client-eligible MLS rows (the cheap part of mlsMatchable; the display rules run after). Never a lease, at
+ * match time and at send time alike: a match recorded before the row was flagged (batch 9 stored leases without the
+ * flag; V1-A's backfill sets it later) is never alerted (batch 10 review ownership-data/F1).
+ */
 const mlsEligibleSql = (e: MlsEligibility) =>
-  sql`(l.source = 'team' OR (l.source = 'mls' AND l.display_allowed AND l.team_listing_id IS NULL AND l.mls_connection_id = ANY (${e.clientIds}::uuid[])))`;
+  sql`(l.source = 'team' OR (l.source = 'mls' AND NOT l.is_lease AND l.display_allowed AND l.team_listing_id IS NULL AND l.mls_connection_id = ANY (${e.clientIds}::uuid[])))`;
 
 /**
  * Location / price / beds narrowing for the MLS candidate query (500k rows per tenant); matchListing decides
@@ -418,7 +422,7 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
          AND ${mlsEligibleSql(e)}
        ORDER BY m.matched_at, l.id LIMIT ${ALERT_DIGEST_MAX * 5}`.execute(tx);
     // MLS rows are rendered (and re-checked) through the display rules now; one the pack withholds is not sent
-    const homes = picked.rows.map((row) => ({ row, mls: row.source === 'mls' ? clientView(e, row) : null })).filter((x) => x.row.source === 'team' || x.mls !== null).slice(0, ALERT_DIGEST_MAX);
+    const homes = picked.rows.map((row) => ({ row, mls: row.source === 'mls' && !row.is_lease ? clientView(e, row) : null })).filter((x) => x.row.source === 'team' || x.mls !== null).slice(0, ALERT_DIGEST_MAX);
     const m = { rows: homes.map((x) => x.row) };
     if (m.rows.length === 0) continue;
     const c = await contactCore(tx, s.contactId);
@@ -457,7 +461,8 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
 
 /**
  * Cancels alerts not yet dispatched whose digest holds an MLS listing that may no longer reach a client
- * (E85 feed stale, E86 display withdrawn, R-MLS-5 now a mirror, pack un-reviewed), and releases the
+ * (E85 feed stale, E86 display withdrawn, R-MLS-5 now a mirror, pack un-reviewed) or that is a lease (E360: flagged
+ * after the digest was queued, by V1-A's backfill; its price is a rent, MLS_LEASE), and releases the
  * digest's matches so the eligible homes are alerted again by the next pass. Runs as the system under each
  * contact's lock (the lock dispatch takes). Returns the canceled message ids.
  */
@@ -472,8 +477,8 @@ export async function cancelIneligibleMlsAlertsInTx(tx: Tx, now: Instant, o: { l
      ORDER BY msg.contact_id, msg.id LIMIT ${o.limit ?? 500}`.execute(tx);
   const bad = new Map<string, { contactId: string; searchId: string; reason: string }>();
   for (const row of r.rows) {
-    if (bad.has(row.message_id) || clientView(e, row) !== null) continue;
-    const reason = row.mls_connection_id !== null && e.staleIds.includes(row.mls_connection_id) ? 'MLS_FEED_STALE' : !row.display_allowed ? 'MLS_DISPLAY_WITHDRAWN' : 'MLS_NOT_DISPLAYABLE';
+    if (bad.has(row.message_id) || (!row.is_lease && clientView(e, row) !== null)) continue;
+    const reason = row.is_lease ? 'MLS_LEASE' : row.mls_connection_id !== null && e.staleIds.includes(row.mls_connection_id) ? 'MLS_FEED_STALE' : !row.display_allowed ? 'MLS_DISPLAY_WITHDRAWN' : 'MLS_NOT_DISPLAYABLE';
     bad.set(row.message_id, { contactId: row.contact_id, searchId: row.search_id, reason });
   }
   const canceled: string[] = [];

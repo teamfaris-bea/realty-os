@@ -230,7 +230,9 @@ async function register(app: FastifyInstance): Promise<void> {
     }),
   }));
   // b7 ownership-data/F2: an Owner/Admin hands a listing to an active member (audited); the new agent's marketing review
-  // cards are written as the system right after (a feed row of another user is not writable under the caller's RLS)
+  // cards are written as the system right after (a feed row of another user is not writable under the caller's RLS).
+  // The change has committed by then, so a failure there answers 500 with the change saved: a 500 from this route does
+  // not say nothing was saved, and the web says it could not confirm the change (b11 merge review F1)
   r.patch(
     '/listings/:id/agent',
     {

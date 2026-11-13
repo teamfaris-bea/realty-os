@@ -15,8 +15,12 @@
 //   email they had (PERSON_DO_NOT_CONTACT_UNCARRIED, worded, if one of them cannot keep it: nothing is erased).
 // - Module 42 documents (batch 11 review): a contact document of the person on legal hold or inside its retention
 //   period blocks the erasure (the database refuses: DOCUMENT_RETAINED). The preview lists them (no erase step is
-//   offered) and the refusal is worded. A merged-away record says the person lives on the record it was merged into
-//   (what moved stays there) and links to it. A seller's listing documents stay with the listing, and the page says so.
+//   offered), each by its name, kind, version, upload date, the record it is on and its id (ownership-data/F4: there is
+//   no documents page yet, so the id is what a hold is lifted by), and the refusal is worded. A merged-away record says
+//   the person lives on the record it was merged into (what moved stays there) and links to it; it also says, by count,
+//   what the merge left on it and its erasure deletes: the recordings of its calls (the calls moved, the recordings did
+//   not), its documents and its CMA reports (ownership-data/F2). A seller's listing documents stay with the listing,
+//   and the page says so.
 // - Deep link: /admin/erasure?contact=<id> (e.g. from a contact page). Without it, a search field
 //   finds the contact (GET /search, read-only reuse of the search surface's endpoint).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -50,6 +54,8 @@ export interface ErasurePreview {
   retainedDocuments?: ErasureRetainedDocument[];
   /** this record was merged into that one, where the person lives now (absent from older servers) */
   mergedInto?: string | null;
+  /** what the erasure deletes of these records: call recordings (and transcripts), documents, CMA reports (absent from older servers) */
+  erasedWith?: ErasedWith;
   /** listings the person sells whose documents stay after the erasure (absent from older servers) */
   listingDocuments?: { listingId: string; address: string; documents: number }[];
 }
@@ -58,6 +64,16 @@ export interface ErasureRetainedDocument {
   contactId: string;
   legalHold: boolean;
   retentionUntil: string | null;
+  /** what tells two documents apart (b11 ownership-data/F4; absent from older servers) */
+  kind?: string;
+  displayName?: string;
+  versionNo?: number;
+  uploadedAt?: string;
+}
+export interface ErasedWith {
+  callRecordings: number;
+  documents: number;
+  cmaReports: number;
 }
 
 const REASONS: readonly { value: ErasureReason; label: string }[] = [
@@ -71,6 +87,17 @@ const LINK_LABEL: Record<ErasureDeal['link'], string> = {
   primary: 'primary contact',
   party: 'on the deal',
   primary_and_party: 'primary contact and on the deal',
+};
+
+/** The documents' kinds as the portal names them (packages/core portal/render.ts). */
+const DOCUMENT_KIND_LABEL: Record<string, string> = {
+  purchase_contract: 'Purchase contract',
+  addendum: 'Addendum',
+  disclosure: 'Disclosure',
+  inspection: 'Inspection report',
+  appraisal: 'Appraisal',
+  listing_agreement: 'Listing agreement',
+  other: 'Other document',
 };
 
 const MIN_QUERY = 2;
@@ -224,7 +251,7 @@ function ContactErasure({ contactId, onPickAnother, onErased, announce }: { cont
             </SelectField>
           ) : null}
           {p.deals.length > 0 ? <OnDeals contactId={contactId} name={name} deals={p.deals} viewer={viewer} reason={reason} announce={onRemoved} /> : null}
-          {(p.retainedDocuments ?? []).length > 0 ? <RetainedDocuments name={name} documents={p.retainedDocuments ?? []} /> : null}
+          {(p.retainedDocuments ?? []).length > 0 ? <RetainedDocuments contactId={contactId} name={name} documents={p.retainedDocuments ?? []} /> : null}
           {p.deals.length === 0 && p.erasable ? (
             <EraseStep
               contactId={contactId}
@@ -232,6 +259,7 @@ function ContactErasure({ contactId, onPickAnother, onErased, announce }: { cont
               reason={reason}
               mergedRecords={p.mergedRecords ?? 0}
               mergedInto={p.mergedInto ?? null}
+              erasedWith={p.erasedWith ?? null}
               listingDocuments={p.listingDocuments ?? []}
               onErased={() => onErased(name)}
               onRefused={setRefusal}
@@ -325,22 +353,75 @@ function DealRow({ contactId, name, deal, viewer, reason, announce }: { contactI
 }
 
 /** Module 42 (R-DOC-4): the person's documents on legal hold or inside retention; the database refuses until none is left. */
-function RetainedDocuments({ name, documents }: { name: string; documents: ErasureRetainedDocument[] }) {
+function RetainedDocuments({ contactId, name, documents }: { contactId: string; name: string; documents: ErasureRetainedDocument[] }) {
+  const identified = documents.some((d) => d.displayName !== undefined);
   return (
     <div className="flex flex-col gap-3">
       <Notice tone="info">
         {name} can't be erased yet: {documents.length === 1 ? '1 of their documents is' : `${documents.length} of their documents are`} on legal hold or inside their retention period, and a kept
         document can't be deleted. Erasure waits until every hold is lifted and every retention date has passed.
       </Notice>
-      <ul className="flex flex-col gap-1 text-[15px] text-ink" aria-label={`Documents that keep ${name}`}>
+      <ul className="flex flex-col gap-2 text-[15px] text-ink" aria-label={`Documents that keep ${name}`}>
         {documents.map((d) => (
-          <li key={d.id}>{d.legalHold ? 'A document on legal hold' : `A document kept until ${formatDate(d.retentionUntil)}`}</li>
+          <RetainedDocument key={d.id} contactId={contactId} name={name} document={d} />
         ))}
       </ul>
       <p className="text-[15px] text-ink">
         An Owner or Admin can lift a legal hold. A retention date can be moved to between 3 and 10 years after the file was uploaded, but not removed.
+        {identified ? ' There is no documents page in Realty OS yet: a hold is lifted, or a retention date moved, through the documents API with the document id shown here.' : null}
       </p>
     </div>
+  );
+}
+
+/** One blocking document: what it is, which record it is on, why it is kept, and its id (b11 ownership-data/F4). */
+function RetainedDocument({ contactId, name, document: d }: { contactId: string; name: string; document: ErasureRetainedDocument }) {
+  const why = d.legalHold ? 'On legal hold' : `Kept until ${formatDate(d.retentionUntil)}`;
+  // an older server sends no name: the row says only why it is kept
+  if (d.displayName === undefined) return <li>{d.legalHold ? 'A document on legal hold' : `A document kept until ${formatDate(d.retentionUntil)}`}</li>;
+  const facts = [
+    d.kind ? (DOCUMENT_KIND_LABEL[d.kind] ?? 'Document') : null,
+    d.versionNo !== undefined ? `version ${d.versionNo}` : null,
+    d.uploadedAt ? `uploaded ${formatDate(d.uploadedAt)}` : null,
+    d.contactId === contactId ? 'on this record' : `on a duplicate record merged into ${name}`,
+  ].filter((x): x is string => x !== null);
+  return (
+    <li className="flex flex-col">
+      <span className="font-semibold">{d.displayName}</span>
+      <span className="text-[14px] text-ink-muted">{facts.join(' · ')}</span>
+      <span>{why}</span>
+      <span className="text-[13px] text-ink-muted break-all">{`Document id ${d.id}`}</span>
+    </li>
+  );
+}
+
+/** What a merge left on a merged-away record that its erasure deletes (b11 ownership-data/F2). */
+function LeftOnMergedRecord({ erasedWith, mergedRecords }: { erasedWith: ErasedWith | null; mergedRecords: number }) {
+  const where = mergedRecords > 0 ? 'this record and the records merged into it' : 'this record';
+  if (!erasedWith) {
+    return (
+      <p className="text-[15px] text-ink">
+        Its calls moved there too, but a call's recording and transcript stay on this record: erasing it deletes them, and the call stays on the record it was merged into without them.
+      </p>
+    );
+  }
+  const one = erasedWith.documents + erasedWith.cmaReports === 1;
+  const kept = [erasedWith.documents > 0 ? plural(erasedWith.documents, 'document') : null, erasedWith.cmaReports > 0 ? plural(erasedWith.cmaReports, 'CMA report') : null].filter(
+    (x): x is string => x !== null,
+  );
+  return (
+    <>
+      <p className="text-[15px] text-ink">
+        {erasedWith.callRecordings > 0
+          ? `Its calls moved there too, but the recordings and transcripts of ${plural(erasedWith.callRecordings, 'call')} stayed on ${where}. Erasing it deletes them; those calls stay on the record it was merged into, without a recording.`
+          : `Its calls moved there too, and no call recording stayed on ${where}.`}
+      </p>
+      {kept.length > 0 ? (
+        <p className="text-[15px] text-ink">
+          {`${kept.join(' and ')} stayed on ${where}: a merge moves neither, though the people who see the record it was merged into can read ${one ? 'it' : 'them'}. Erasing this record deletes ${one ? 'it' : 'them'}.`}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -350,6 +431,7 @@ function EraseStep({
   reason,
   mergedRecords,
   mergedInto,
+  erasedWith,
   listingDocuments,
   onErased,
   onRefused,
@@ -359,6 +441,7 @@ function EraseStep({
   reason: ErasureReason;
   mergedRecords: number;
   mergedInto: string | null;
+  erasedWith: ErasedWith | null;
   listingDocuments: NonNullable<ErasurePreview['listingDocuments']>;
   onErased(): void;
   onRefused(message: string): void;
@@ -385,6 +468,7 @@ function EraseStep({
             record leaves all of those in place. It deletes only what stayed on this record, such as documents uploaded to it. An opt-out given on one of its phones or emails, or a request not to be
             contacted, is kept without their details. The audit log notes that an erasure happened and why. To erase the person, erase the record it was merged into.
           </p>
+          <LeftOnMergedRecord erasedWith={erasedWith} mergedRecords={mergedRecords} />
           <ButtonLink variant="secondary" to={`/admin/erasure?contact=${mergedInto}`} className="self-start">
             Open the record it was merged into
           </ButtonLink>

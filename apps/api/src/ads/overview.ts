@@ -9,8 +9,10 @@ import { packSentence } from '../integrations/catalog.js';
 import { spendMonth } from './caps.js';
 import * as repo from './repo.js';
 import {
-  LEDGER_PER_CAMPAIGN, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK, OVERSPEND_NOTE_NO_LEAD_SOURCE, OVERSPEND_NOTE_NOT_READ, READS_WHILE_DARK, UNCHECKED_ALERT_MS, dollars,
+  CAP_COUNTS_EVERY_CAMPAIGN, LEDGER_PER_CAMPAIGN, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK, OVERSPEND_NOTE_MANAGED_ONLY, OVERSPEND_NOTE_NO_LEAD_SOURCE, OVERSPEND_NOTE_NOT_CONNECTED,
+  OVERSPEND_NOTE_NOT_READ, READS_WHILE_DARK, dollars,
 } from './settings.js';
+import { uncheckedConnections, uncheckedText } from './unchecked.js';
 
 export type AdsState = 'not_cleared' | 'no_connection' | 'connection_not_live' | 'no_lead_source' | 'no_cap' | 'ready';
 
@@ -24,7 +26,17 @@ const STATE_SENTENCE: Record<AdsState, string> = {
   no_cap: 'Set a monthly cap and a daily ceiling before any budget can move.',
   ready: 'Budget proposals arrive each Monday; each one waits for an Owner or Admin to approve it.',
 };
-const NOT_READ_SENTENCE = 'Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Until then Google Ads is not read, so no campaigns or spend are shown.';
+const NOT_READ = 'Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Until then Google Ads is not read, so';
+/**
+ * Q-ADS-1 answered "no" while dark (b11 ads-7): nothing is read, but campaigns and spend read while the pack was cleared
+ * (before a withdrawal, an E443 pack bump, or the answer reaching this deployment) stay stored and listed.
+ */
+function notReadSentence(stored: boolean, lastReadAt: string | null): string {
+  if (!stored) return `${NOT_READ} no campaigns or spend are shown.`;
+  return lastReadAt
+    ? `${NOT_READ} the campaigns and spend shown are as Google Ads reported them at ${lastReadAt.slice(0, 16).replace('T', ' ')} UTC and are not updated.`
+    : `${NOT_READ} the campaigns and spend shown are from an earlier read and are not updated.`;
+}
 
 export interface LedgerView {
   id: string;
@@ -72,25 +84,35 @@ function countsOf(a: repo.ActionRow | null): { at: string; windowDays: number; b
   return { at: a.createdAt, windowDays: counts.windowDays ?? 90, byCampaign: new Map(counts.campaigns.map((c) => [c.campaignId as string, c])) };
 }
 
-export async function buildOverview(tx: Tx, now: Instant, o: { readsWhileDark?: boolean } = {}) {
+/** The owner-question defaults the page follows (settings.ts, as the reconcile does); a test passes the other answer. */
+export interface OverviewOptions {
+  /** Q-ADS-1 */
+  readsWhileDark?: boolean;
+  /** Q-ADS-3 */
+  capCountsEveryCampaign?: boolean;
+}
+
+export async function buildOverview(tx: Tx, now: Instant, o: OverviewOptions = {}) {
   const readsWhileDark = o.readsWhileDark ?? READS_WHILE_DARK;
+  const countEvery = o.capCountsEveryCampaign ?? CAP_COUNTS_EVERY_CAMPAIGN;
   const pack = await repo.packRow(tx);
   const cleared = await repo.packCleared(tx);
-  const conns = await repo.adsConnections(tx);
+  const all = await repo.adsConnections(tx, { withDisconnected: true });
+  const conns = all.filter((c) => c.status !== 'disconnected');
   const live = conns.find((c) => c.status === 'connected' || c.status === 'degraded') ?? null;
   const cap = await repo.capInForce(tx);
+  const campaigns = await repo.campaignRows(tx);
+  // E454 (b11 api-ui/F4): a disconnected account whose campaigns are still listed is "no longer connected", never "none"
+  const anyConnection = conns.length > 0 || all.some((c) => campaigns.some((x) => x.connectionId === c.id));
   const state: AdsState = !cleared
     ? 'not_cleared'
-    : conns.length === 0
-      ? 'no_connection'
-      : live === null
-        ? 'connection_not_live'
-        : live.leadSourceId === null
-          ? 'no_lead_source'
-          : cap === null
-            ? 'no_cap'
-            : 'ready';
-  const campaigns = await repo.campaignRows(tx);
+    : live === null
+      ? anyConnection ? 'connection_not_live' : 'no_connection'
+      : live.leadSourceId === null
+        ? 'no_lead_source'
+        : cap === null
+          ? 'no_cap'
+          : 'ready';
   const core = campaigns.map(repo.toCoreCampaign);
   const { month, zone } = await spendMonth(tx, now);
   const costs = await repo.adsSyncCosts(tx, month);
@@ -99,11 +121,14 @@ export async function buildOverview(tx: Tx, now: Instant, o: { readsWhileDark?: 
   const latestHold = await repo.latestReallocation(tx, ['blocked'], { origin: 'weekly' });
   const latestWeekly = await repo.latestReallocation(tx, ['proposed', 'blocked', 'approved', 'executed', 'rejected', 'superseded'], { origin: 'weekly' });
   const counts = countsOf(latestWeekly);
-  const snapshotOf = (connectionId: string) => conns.find((c) => c.id === connectionId)?.snapshot ?? null;
+  const snapshotOf = (connectionId: string) => all.find((c) => c.id === connectionId)?.snapshot ?? null;
   const doubles = await repo.doubleCounted(tx, month);
   const syncedAt = live?.lastSyncedAt ?? null;
-  const since = live ? (live.lastSyncedAt ?? live.connectedAt) : null;
-  const unchecked = live !== null && (live.statusReason === 'ADS_CURRENCY_UNSUPPORTED' || since === null || now - Date.parse(since) >= UNCHECKED_ALERT_MS);
+  // the reconcile's alert rule (unchecked.ts): a live connection, or a revoked or disconnected one whose campaigns are
+  // still mirrored and whose account is not connected again; the live one's sentence first (b11 api-ui/F4, ads-5)
+  const uncheckedAll = uncheckedConnections(all, campaigns, now);
+  const unchecked = uncheckedAll.find((c) => c.id === live?.id) ?? uncheckedAll[0] ?? null;
+  const lastReadAt = all.reduce<string | null>((m, c) => (c.lastSyncedAt !== null && (m === null || Date.parse(c.lastSyncedAt) > Date.parse(m)) ? c.lastSyncedAt : m), null);
 
   const views = [];
   let unmanagedDaily = 0;
@@ -125,18 +150,33 @@ export async function buildOverview(tx: Tx, now: Instant, o: { readsWhileDark?: 
     a ? { id: a.id, status: a.status, explanation: a.explanation, createdAt: a.createdAt, payload: a.payload } : null;
   return {
     state,
-    stateSentence: state === 'not_cleared' && !readsWhileDark ? NOT_READ_SENTENCE : STATE_SENTENCE[state],
+    stateSentence: state === 'not_cleared' && !readsWhileDark ? notReadSentence(campaigns.length > 0 || costs.length > 0, lastReadAt) : STATE_SENTENCE[state],
     packKey: 'platform:ads',
     packSentence: pack ? packSentence(pack) : 'Changing Google Ads budgets stays off: the pack is missing on this deployment.',
     cleared,
     cap: cap ? { id: cap.id, versionNo: cap.versionNo, monthlyCapCents: cap.monthlyCapCents, dailyCeilingCents: cap.dailyCeilingCents, effectiveFrom: cap.effectiveFrom } : null,
-    monthToDate: { month: month.slice(0, 7), zone, spentCents: spent, capCents: cap?.monthlyCapCents ?? null, sentence: cap ? `${dollars(spent)} of your ${dollars(cap.monthlyCapCents)} monthly cap spent in ${month.slice(0, 7)}.` : `${dollars(spent)} spent in ${month.slice(0, 7)}; no monthly cap set.` },
+    // Q-ADS-3 "no" (b11 ads-7): the stored figure covers every campaign recorded here, the cap only the linked ones
+    monthToDate: {
+      month: month.slice(0, 7), zone, spentCents: spent, capCents: cap?.monthlyCapCents ?? null,
+      sentence: !cap
+        ? `${dollars(spent)} spent in ${month.slice(0, 7)}; no monthly cap set.`
+        : countEvery
+          ? `${dollars(spent)} of your ${dollars(cap.monthlyCapCents)} monthly cap spent in ${month.slice(0, 7)}.`
+          : `${dollars(spent)} spent in ${month.slice(0, 7)} on the campaigns recorded here; your ${dollars(cap.monthlyCapCents)} monthly cap counts only the campaigns linked to a listing here.`,
+    },
     dailyTotal: { countedCents: managedTotal, ceilingCents: cap?.dailyCeilingCents ?? null, sentence: cap ? `Daily budgets total ${dollars(managedTotal)} against your ${dollars(cap.dailyCeilingCents)} daily ceiling.` : `Daily budgets total ${dollars(managedTotal)}.` },
-    // b11 api-ui/F4: the pause runs only while the pack is cleared (and covers only campaigns it records)
-    overspendNote: !cleared ? (readsWhileDark ? OVERSPEND_NOTE_DARK : OVERSPEND_NOTE_NOT_READ) : live !== null && live.leadSourceId === null ? OVERSPEND_NOTE_NO_LEAD_SOURCE : OVERSPEND_NOTE,
+    // b11 api-ui/F4: the pause runs only while the pack is cleared and a connection is live (the reconcile reads no other),
+    // and covers only campaigns it records; Q-ADS-3 "no" (b11 ads-7): only linked campaigns count, only managed ones pause
+    overspendNote: !cleared
+      ? (readsWhileDark ? OVERSPEND_NOTE_DARK : OVERSPEND_NOTE_NOT_READ)
+      : live === null
+        ? OVERSPEND_NOTE_NOT_CONNECTED
+        : !countEvery
+          ? OVERSPEND_NOTE_MANAGED_ONLY
+          : live.leadSourceId === null ? OVERSPEND_NOTE_NO_LEAD_SOURCE : OVERSPEND_NOTE,
     asOf: syncedAt ? `as reported by Google Ads at ${syncedAt}` : null,
     lastSyncedAt: syncedAt,
-    uncheckedSentence: unchecked ? `Google Ads spend has not been checked since ${since ? `${since.slice(0, 16).replace('T', ' ')} UTC` : 'it was connected'}.` : null,
+    uncheckedSentence: unchecked ? `${uncheckedText(unchecked.lastSyncedAt).title}.` : null,
     campaigns: views,
     unmanagedDailyCents: unmanagedDaily,
     unmanagedSentence: `${dollars(unmanagedDaily)} a day of budgets on campaigns not managed here.`,

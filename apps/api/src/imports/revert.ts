@@ -214,7 +214,11 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         const ids = rows.filter((x) => x.table === t).map((x) => x.id);
         for (const id of await rv.touchedRows(tx, t, ids, since)) touched.add(id);
       }
-      const plan = planRevert(stage.category, rows, touched, { ids: deps.ids, now });
+      // D9 (b10 review ownership-data/F2): a person with a CMA prepared since the import, or an address a CMA cites,
+      // is kept for a human (CMA_PREPARED), with everything else of theirs this stage wrote
+      const cmaKeep = await rv.cmaCited(tx, [...baseline.keys()], rows.filter((x) => x.table === 'contact_addresses').map((x) => x.id), stage.approved_at ?? stage.committed_at ?? new Date(0));
+      for (const id of cmaKeep) touched.add(id);
+      const plan = planRevert(stage.category, rows, touched, { ids: deps.ids, now }, cmaKeep);
       // PARITY 65 (R-PAR-46): the batch's tag links and imported values leave every contact nobody touched
       // since (a touched contact keeps them with the rest of its import, for a human decision); a value
       // someone edited carries their provenance, so it never matches the batch
@@ -280,7 +284,9 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
           continue;
         }
         report.needsDecision += 1;
-        const reason = left.map((x) => plan.reasons[x.id] ?? (deleteSet.has(x.id) ? 'REFERENCED' : 'TOUCHED'))[0] as string;
+        const why = left.map((x) => plan.reasons[x.id] ?? (deleteSet.has(x.id) ? 'REFERENCED' : 'TOUCHED'));
+        // a CMA is the reason the report names in words, whichever row of the record came first
+        const reason = (why.includes('CMA_PREPARED') ? 'CMA_PREPARED' : why[0]) as string;
         report.reasons[reason] = (report.reasons[reason] ?? 0) + 1;
         if (report.manual.length < LIST_CAP) report.manual.push({ recordId: r.id, sourceRef: r.source_ref, reason });
       }

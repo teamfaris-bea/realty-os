@@ -2,6 +2,7 @@
 // Owner/Admin changes it (PATCH /listings/:id/agent, listing.reassign, audited), and the marketing review card of a
 // listing with no active agent goes to the Owners/Admins instead of the removed agent.
 // Real Postgres as app_user through the real server; deactivation is the staged API flow plus its job (R-OWN-22).
+import { randomUUID } from 'node:crypto';
 import { ROLES, type Role, can } from '@realty/core/foundation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
@@ -108,6 +109,86 @@ describe('R-PERM-1 b7 ownership-data/F2: changing a listing agent', () => {
     expect(onMls.status).toBe(404);
     expect(await agentOf(mls)).toBeNull();
     expect(await audits(mls)).toHaveLength(0);
+  });
+});
+
+// b11 review api-ui/F8: the route skipped the writer when the listing had no agent and still answered 200. A team listing
+// cannot be without one (listings_check), so there is no first agent to set; the route now refuses rather than answer 200.
+describe('b11 review api-ui/F8: PATCH /listings/:id/agent never answers 200 for a write that did not happen', () => {
+  const NO_AGENT = { code: '23514', constraint: 'listings_check' };
+
+  it('R-SELL-1 b11 review api-ui/F8: a team listing always has an agent: listings_check refuses one without on insert and update, even for the superuser, and the route cannot clear it', async () => {
+    const w = await assistantWorld(h, { agents: 1, push: false });
+    const a = w.agents[0]!;
+    const l = await teamListing(a, {});
+    // the superuser bypasses RLS, not CHECK constraints
+    await expect(h.su.query('UPDATE listings SET listing_agent_user_id = NULL WHERE id = $1', [l])).rejects.toMatchObject(NO_AGENT);
+    await expect(
+      h.su.query(
+        `INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code)
+         VALUES ($1, $2, 'team', 'active', '2 Example Way', 'Charleston', 'SC', '29401')`,
+        [w.tenantId, randomUUID()],
+      ),
+    ).rejects.toMatchObject(NO_AGENT);
+    // the agent FK is NO ACTION (a membership is never deleted from under its listings), not SET NULL
+    const fk = await h.su.query<{ del: string }>(
+      `SELECT confdeltype AS del FROM pg_constraint WHERE conrelid = 'listings'::regclass AND contype = 'f' AND conkey = ARRAY[
+         (SELECT attnum FROM pg_attribute WHERE attrelid = 'listings'::regclass AND attname = 'tenant_id'),
+         (SELECT attnum FROM pg_attribute WHERE attrelid = 'listings'::regclass AND attname = 'listing_agent_user_id')]::int2[]`,
+    );
+    expect(fk.rows.map((x) => x.del)).toEqual(['a']);
+    const clear = await call(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: null });
+    expect([clear.status, clear.code]).toEqual([422, 'VALIDATION_FAILED']);
+    expect(await agentOf(l)).toBe(a.userId);
+    expect(await audits(l)).toHaveLength(0);
+  });
+
+  it('R-OWN-22 b11 review api-ui/F8: were listings_check ever relaxed, an agentless team listing is refused 500 INTERNAL_ERROR, never 200; nothing written, nothing audited', async () => {
+    const w = await assistantWorld(h, { agents: 2, push: false });
+    const [a0, a1] = w.agents as [TestClient, TestClient];
+    const l = await teamListing(a0, {});
+    // this file's own database only (createTestDb): break the invariant the route relies on, then put it back
+    await h.su.query('ALTER TABLE listings DROP CONSTRAINT listings_check');
+    try {
+      await h.su.query('UPDATE listings SET listing_agent_user_id = NULL WHERE id = $1', [l]);
+      const r = await call(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: a1.userId });
+      expect([r.status, r.code]).toEqual([500, 'INTERNAL_ERROR']);
+      expect(await agentOf(l)).toBeNull();
+      expect(await audits(l)).toHaveLength(0);
+    } finally {
+      await h.su.query('UPDATE listings SET listing_agent_user_id = $2 WHERE id = $1', [l, a0.userId]);
+      await h.su.query(`ALTER TABLE listings ADD CONSTRAINT listings_check CHECK (source = 'mls' OR listing_agent_user_id IS NOT NULL)`);
+    }
+    // with the invariant back, the same change is written and audited once
+    const ok = await call<{ listing: { listingAgentUserId: string } }>(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: a1.userId });
+    expect(ok.status).toBe(200);
+    expect(ok.body.listing.listingAgentUserId).toBe(a1.userId);
+    expect(await agentOf(l)).toBe(a1.userId);
+    expect(await audits(l)).toHaveLength(1);
+  });
+
+  // b11 merge review F1: the converse does not hold. The change and its audit commit in the caller's transaction; the
+  // new agent's review cards are written after it, as the system, in a transaction of their own. A failure there still
+  // answers 500, with the change saved, so a 500 does not say "nothing was saved" (the web says it could not confirm the
+  // change and shows the refetched agent: apps/web ListingAgent.test.tsx).
+  it('R-OWN-22 b11 merge review F1: a 500 can come after the change committed (the review-card sync after it failed): the listing has the new agent and one audit, so a 500 is not "nothing was saved"', async () => {
+    const w = await assistantWorld(h, { agents: 2, push: false });
+    const [a0, a1] = w.agents as [TestClient, TestClient];
+    const l = await teamListing(a0, {});
+    // this file's own database only (createTestDb): make the system's card sync, which runs after the commit, fail
+    await h.su.query('REVOKE SELECT ON marketing_pieces FROM app_user');
+    let r: Awaited<ReturnType<typeof call>>;
+    try {
+      r = await call(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: a1.userId });
+    } finally {
+      await h.su.query('GRANT SELECT ON marketing_pieces TO app_user');
+    }
+    expect([r.status, r.code]).toEqual([500, 'INTERNAL_ERROR']);
+    expect(await agentOf(l)).toBe(a1.userId);
+    expect(await audits(l)).toHaveLength(1);
+    // the same change again is the 200 no-op (nothing more audited); the card sync runs again with it
+    expect((await call(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: a1.userId })).status).toBe(200);
+    expect(await audits(l)).toHaveLength(1);
   });
 });
 

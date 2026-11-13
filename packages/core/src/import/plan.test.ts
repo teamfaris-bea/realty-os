@@ -452,6 +452,29 @@ describe('revert (R-IMPORT-10, E43)', () => {
     expect(plan.reasons).toEqual({ k2: 'TOUCHED', kn2: 'TOUCHED' });
   });
 
+  it('R-IMPORT-10 E43 D9 (b10 review ownership-data/F2): a person with a CMA, or an address a CMA cites, is listed for a human as CMA_PREPARED, never removed; a CMA outranks TOUCHED', () => {
+    const plan = planRevert(
+      'contacts',
+      [
+        { table: 'contacts', id: 'c-cma', action: 'create' },
+        { table: 'contacts', id: 'c-both', action: 'create' },
+        { table: 'contacts', id: 'c-attached', action: 'attach' },
+        { table: 'contacts', id: 'c-plain', action: 'create' },
+        { table: 'contact_addresses', id: 'a-1', contactId: 'c-cma' },
+        { table: 'contact_addresses', id: 'a-cited', contactId: 'c-attached' },
+        { table: 'contact_addresses', id: 'a-2', contactId: 'c-attached' },
+        { table: 'contact_points', id: 'p-1', contactId: 'c-plain' },
+      ],
+      new Set(['c-both']),
+      ids(),
+      new Set(['c-cma', 'c-both', 'a-cited']),
+    );
+    expect(plan.delete).toEqual(['c-plain', 'a-2', 'p-1']);
+    expect(plan.reasons).toEqual({ 'c-cma': 'CMA_PREPARED', 'c-both': 'CMA_PREPARED', 'c-attached': 'PRE_EXISTING_CONTACT', 'a-1': 'CMA_PREPARED', 'a-cited': 'CMA_PREPARED' });
+    const own = planRevert('ownership', [{ table: 'lead_ownership_events', id: 'e1', contactId: 'c-cma' }], new Set(), ids(), new Set(['c-cma']));
+    expect([own.manual, own.unassign, own.reasons]).toEqual([['e1'], [], { e1: 'CMA_PREPARED' }]);
+  });
+
   it('R-IMPORT-10 stages revert in reverse commit order', () => {
     expect(revertOrder(['contacts', 'consent', 'notes', 'ownership', 'call_recordings', 'messages'])).toEqual(['consent', 'call_recordings', 'messages', 'notes', 'ownership', 'contacts']);
   });

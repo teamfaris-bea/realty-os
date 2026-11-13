@@ -21,7 +21,8 @@
 //      in Google Ads. VERIFY WITH COUNSEL (C3): auto-pausing at the cap, unmanaged campaigns included.
 // Then one transaction writes the ads_sync costs (one row per lead source and account-zone month, current and previous;
 // never deleted; manual rows untouched) and the "not checked for 2 hours" alerts (live, revoked or disconnected
-// connections that still have mirrored campaigns, R-ADS-13, E453, E454).
+// connections that still have mirrored campaigns, unless the account is connected again; unchecked.ts; R-ADS-13, E453,
+// E454).
 // Nothing is written back to Google Ads except through ads/dispatch.ts: no targeting, name or status.
 import { overspend, type CampaignId, type CampaignStatus, type HourlySpend } from '@realty/core/ads';
 import { type Instant, type TenantId, ianaZone, instant, localDateOf, resolveWall, toIso } from '@realty/core/foundation';
@@ -34,7 +35,8 @@ import { pauseForMonthlyCap, resolveOpenPlans, type PauseReport, type ResolveRep
 import type { AdsAccount, AdsAccountInfo, AdsCampaignReport, AdsSpendRow } from './provider.js';
 import * as repo from './repo.js';
 import { type AdsDeps, account, asSystem, clockOf, safeCode } from './runtime.js';
-import { CAP_COUNTS_EVERY_CAMPAIGN, MANAGED_CURRENCY, READS_WHILE_DARK, UNCHECKED_ALERT_MS, campaignRefOf, dollars } from './settings.js';
+import { CAP_COUNTS_EVERY_CAMPAIGN, MANAGED_CURRENCY, READS_WHILE_DARK, campaignRefOf, dollars } from './settings.js';
+import { uncheckedConnections, uncheckedText } from './unchecked.js';
 
 // ---- pure mapping ---------------------------------------------------------------------------------------------------
 
@@ -203,11 +205,7 @@ export function overspendText(o: { kind: 'paused'; paused: number; capCents: num
   };
 }
 
-/** "Google Ads spend has not been checked since <time>" (UTC, minutes; no account or campaign name). */
-export function uncheckedText(sinceIso: string | null): { title: string; body: string } {
-  const at = sinceIso ? `${sinceIso.slice(0, 16).replace('T', ' ')} UTC` : 'it was connected';
-  return { title: `Google Ads spend has not been checked since ${at}`, body: 'Realty OS could not read Google Ads spend, so it cannot pause campaigns at your monthly cap. Check the Google Ads connection.' };
-}
+export { uncheckedText };
 
 async function notifyAll(d: AdsDeps, tenantId: string, connectionId: string, text: { title: string; body: string }, dedupeKey: string): Promise<number> {
   return asSystem(d, tenantId, async (tx) => {
@@ -376,15 +374,11 @@ export async function runReconcile(d: AdsDeps, tenantId: TenantId | string, o: R
     return n;
   });
 
-  // "not checked" for 2 hours (E453, E454): every live connection, and every revoked or disconnected one that still has
-  // mirrored campaigns (they may still be spending), once per connection and day
+  // "not checked" for 2 hours (E453, E454; unchecked.ts): every live connection, and every revoked or disconnected one
+  // that still has mirrored campaigns (they may still be spending) unless its account is connected again as a live
+  // connection (b11 ads-5), once per connection and day
   const after = await asSystem(d, tenantId, async (tx) => ({ conns: await repo.adsConnections(tx, { withDisconnected: true }), campaigns: await repo.campaignRows(tx) }));
-  for (const c of after.conns) {
-    const live = c.status === 'connected' || c.status === 'degraded';
-    if (!live && !((c.status === 'revoked' || c.status === 'disconnected') && after.campaigns.some((x) => x.connectionId === c.id))) continue;
-    const since = c.lastSyncedAt ?? c.connectedAt;
-    const stale = c.statusReason === 'ADS_CURRENCY_UNSUPPORTED' || since === null || now - Date.parse(since) >= UNCHECKED_ALERT_MS;
-    if (!stale || (since === null && c.connectedAt === null)) continue;
+  for (const c of uncheckedConnections(after.conns, after.campaigns, now)) {
     const day = new Date(now).toISOString().slice(0, 10);
     report.uncheckedAlerts += await notifyAll(d, tenantId, c.id, uncheckedText(c.lastSyncedAt), `ad_unchecked:${c.id}:${day}`);
   }

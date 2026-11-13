@@ -706,6 +706,7 @@ export type ImportedRow =
 
 export type RevertReason =
   | 'TOUCHED' // edited, messaged or reassigned since import: a human decides
+  | 'CMA_PREPARED' // a CMA was prepared for the person since import, or cites this address (D9): a human decides
   | 'PRE_EXISTING_CONTACT' // the import only filled an existing contact: never removed
   | 'REVOCATION_KEPT' // imported opt-outs stay (R-CONSENT-3)
   | 'DNC_KEPT' // imported do-not-contact flags stay
@@ -750,12 +751,16 @@ const CATEGORY_INDEX: Record<Category, number> = { contacts: 1, ownership: 2, no
  * R-IMPORT-10 / E43: what reverting one stage does. Untouched rows are deleted (or compensated for
  * append-only tables); touched rows — or rows of a touched contact — are listed for a human; imported
  * grants are voided by `import_revert`; imported revocations and DNC flags stay.
+ * `cma` (D9; batch 10 review ownership-data/F2): contacts a CMA was prepared for since the import, and addresses a
+ * CMA cites. They and their rows are listed for a human with their own reason (CMA_PREPARED), never removed: the
+ * soft delete would hide the person's CMA, and deleting the address would take the CMA's subject link.
  */
 export function planRevert(
   stage: Category,
   imported: readonly ImportedRow[],
   touched: ReadonlySet<string>,
   ctx: { ids: IdGenerator; now: Instant },
+  cma: ReadonlySet<string> = new Set(),
 ): RevertPlan {
   const plan: RevertPlan = { delete: [], compensate: [], unassign: [], manual: [], kept: [], reasons: {} };
   const manual = (id: string, reason: RevertReason) => {
@@ -774,6 +779,7 @@ export function planRevert(
     switch (row.table) {
       case 'contacts':
         if (row.action !== 'create') manual(row.id, 'PRE_EXISTING_CONTACT');
+        else if (cma.has(row.id)) manual(row.id, 'CMA_PREPARED');
         else if (touched.has(row.id)) manual(row.id, 'TOUCHED');
         else plan.delete.push(row.id);
         break;
@@ -783,12 +789,14 @@ export function planRevert(
       case 'messages':
       case 'calls':
       case 'recordings':
-        if (touched.has(row.id) || touched.has(row.contactId)) manual(row.id, 'TOUCHED');
+        if (cma.has(row.id) || cma.has(row.contactId)) manual(row.id, 'CMA_PREPARED');
+        else if (touched.has(row.id) || touched.has(row.contactId)) manual(row.id, 'TOUCHED');
         else plan.delete.push(row.id);
         break;
       case 'lead_ownership_events':
         // the ledger is append-only: an untouched assignment is undone by a compensating event, not a delete
-        if (touched.has(row.contactId)) manual(row.id, 'TOUCHED');
+        if (cma.has(row.contactId)) manual(row.id, 'CMA_PREPARED');
+        else if (touched.has(row.contactId)) manual(row.id, 'TOUCHED');
         else plan.unassign.push({ eventId: row.id, contactId: row.contactId });
         break;
       case 'consent_events': {

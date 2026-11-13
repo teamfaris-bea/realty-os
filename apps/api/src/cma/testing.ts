@@ -222,8 +222,8 @@ export interface CmaBody {
     notUsed: { listingId: string; reason: string; sentence: string; includable: boolean }[];
     subjectSales: { listingId: string }[];
     subject: { kind: string; facts: Record<string, { value: unknown; source: string | null }>; saleHistory: { listingId: string }[]; sizeSentence: string; factSentences: string[]; nearMatchDismissed: string[]; include: string[]; exclude: string[] };
-    clientShare: { allowed: boolean; blockers: { code: string; sentence: string; count?: number; listingIds?: string[] }[] };
-    nearMatches: { listingId: string; dismissed: boolean; avmDisplayAllowed: boolean }[];
+    clientShare: { ready: boolean; sharingAvailable: false; sentence: string; blockers: { code: string; sentence: string; count?: number; listingIds?: string[] }[] };
+    nearMatches: { listingId: string; dismissed: boolean; avmDisplayAllowed: boolean | null }[];
     area: { tier: string | null; tiersSkipped: string[]; reads: { tier: string; ran: boolean; rows: number; limitReached: boolean }[]; recordsLeftOut: number; sentences: string[] };
     backtest: { salesTested: number; sentence: string };
     market: { rates: { feature: string; applied: boolean; sentence: string }[]; sentences: string[] };
