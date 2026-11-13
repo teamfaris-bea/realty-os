@@ -827,9 +827,10 @@ CREATE TRIGGER ai_isa_handoffs_guard BEFORE UPDATE ON ai_isa_handoffs FOR EACH R
 -- cascade through and nothing else: a control row is deleted only by the foreign-key cascade of its deleted assignment
 -- (pg_trigger_depth() > 1: fired from the cascade's trigger, never a direct DELETE; the parent row already gone), and
 -- the bound message_id of a turn or a fact becomes NULL only by its ON DELETE SET NULL (the message row already gone,
--- every other column unchanged). Nobody else can delete an assignment or a message (no DELETE grant; the purge is the
--- only path). Stop signals have no foreign key and are never deleted: they stay as opt-out evidence, like
--- consent_events, holding only the keyed address hash or the erased contact's id (docs/AI_ISA.md §8.2).
+-- every other column unchanged). Nobody else can delete an assignment or an action (no DELETE grant; the purge is the
+-- only path); the only other message delete is the import revert's (0009/0010), of imported messages, which no turn
+-- binds. Stop signals have no foreign key and are never deleted: they stay as opt-out evidence, like consent_events,
+-- holding only the keyed address hash or the erased contact's id (docs/AI_ISA.md §8.3).
 CREATE FUNCTION app.ai_isa_ledger_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' AND TG_TABLE_NAME = 'ai_isa_controls' AND pg_trigger_depth() > 1
