@@ -69,7 +69,10 @@ export interface PackValues {
 // statement. Nothing here ever ticks a use the Owner did not tick. V1 shares nothing built from MLS sales with clients,
 // whatever the section says (D9): the page says so beside the client uses.
 
-export const VALUATION_KEYS = ['agent_cma', 'client_cma', 'automated_notes', 'avm_flag_scope', 'statements'] as const;
+// b13 review B13S-1: 'ai_isa_comps' (ISA-3, R-ISA-18) is in the API's strict ValuationPackBody and in the keys its stamp
+// needs (apps/api/src/mls/admin.ts VALUATION_PACK_KEYS), in this order; apps/api/src/mls/webBody.contract.test.ts parses
+// this file's body with the API's schema.
+export const VALUATION_KEYS = ['agent_cma', 'client_cma', 'automated_notes', 'ai_isa_comps', 'avm_flag_scope', 'statements'] as const;
 export type ValuationKey = (typeof VALUATION_KEYS)[number];
 export const AVM_SCOPES = ['all_client_outputs', 'internet_display_only'] as const;
 export type AvmScope = (typeof AVM_SCOPES)[number];
@@ -97,6 +100,8 @@ export interface ValuationValues {
   agent_cma: boolean;
   client_cma: boolean;
   automated_notes: boolean;
+  /** Sold comps in the AI assistant's automated email to seller leads (ISA-3); strict default false. */
+  ai_isa_comps: boolean;
   avm_flag_scope: AvmScope;
   statements: ValuationStatement[];
 }
@@ -121,6 +126,10 @@ export const VALUATION_WORDS: Record<ValuationKey, { label: string; hint: string
   agent_cma: { label: 'Agents may prepare CMAs from MLS sold data', hint: 'Tick this only if your MLS agreement allows sold data to be used for valuations. Agent-facing only: the agent sees the estimate and nothing is sent to a client. Agent CMAs are refused until it is ticked.' },
   client_cma: { label: 'CMAs built from MLS sold data may be shared with clients', hint: CLIENT_USE_HINT },
   automated_notes: { label: 'Automated home-value notes and seller-update value ranges may carry values built from MLS sold data', hint: CLIENT_USE_HINT },
+  ai_isa_comps: {
+    label: 'The AI assistant may email recent MLS sales near a seller’s home to that seller',
+    hint: 'Built, and off until counsel review of the in-house CMA wording (platform:cma) and of the AI assistant’s seller data (platform:ai_isa_seller_data) are both recorded on the Integrations page: nothing built from MLS sales reaches a client before then. Leave it off unless your MLS agreement allows sold data in automated messages.',
+  },
   avm_flag_scope: { label: 'Where a seller’s “no automated valuation” choice applies', hint: 'Some MLS listings say the seller does not want automated valuations shown. The strictest choice holds it for everything that could reach a client.' },
   statements: { label: 'Valuation statement for each state', hint: 'The statement counsel requires with a value shown to a client in that state, and its smallest type size. None is shipped. Readiness checks for one; nothing is shown to a client until counsel review of platform:cma is recorded.' },
 };
@@ -176,6 +185,7 @@ export function pickValuation(raw: unknown): ValuationView {
       agent_cma: val('agent_cma') === true,
       client_cma: val('client_cma') === true,
       automated_notes: val('automated_notes') === true,
+      ai_isa_comps: val('ai_isa_comps') === true,
       avm_flag_scope: scope === 'internet_display_only' ? 'internet_display_only' : 'all_client_outputs',
       statements,
     },

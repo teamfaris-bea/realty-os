@@ -35,7 +35,7 @@ describe('licence-pack editor model (module 41)', () => {
   it('D9 b10 api-ui/F2: the valuation section parses to the strictest values when missing or unreadable, never a ticked client use; its states are core USPS_REGIONS', () => {
     expect(USPS_REGIONS).toEqual(CORE_USPS_REGIONS);
     const none = pickPack({ values: [], reviewedByCounselAt: null, unreviewedCount: 9, sentence: '' }).valuation;
-    expect(none.values).toEqual({ agent_cma: false, client_cma: false, automated_notes: false, avm_flag_scope: 'all_client_outputs', statements: [] });
+    expect(none.values).toEqual({ agent_cma: false, client_cma: false, automated_notes: false, ai_isa_comps: false, avm_flag_scope: 'all_client_outputs', statements: [] });
     expect(Object.values(none.marks).some(Boolean)).toBe(false);
     const odd = pickPack({
       values: [],
@@ -51,10 +51,19 @@ describe('licence-pack editor model (module 41)', () => {
         sentence: 'S',
       },
     }).valuation;
-    expect(odd.values).toEqual({ agent_cma: false, client_cma: false, automated_notes: false, avm_flag_scope: 'all_client_outputs', statements: [{ region: 'CA', text: 'Ok.', minPointSize: 12 }] });
-    expect(odd.marks).toEqual({ agent_cma: false, client_cma: true, automated_notes: false, avm_flag_scope: true, statements: true });
-    expect(odd.unreviewedCount).toBe(2); // never trusted over the marks
+    expect(odd.values).toEqual({ agent_cma: false, client_cma: false, automated_notes: false, ai_isa_comps: false, avm_flag_scope: 'all_client_outputs', statements: [{ region: 'CA', text: 'Ok.', minPointSize: 12 }] });
+    expect(odd.marks).toEqual({ agent_cma: false, client_cma: true, automated_notes: false, ai_isa_comps: false, avm_flag_scope: true, statements: true });
+    expect(odd.unreviewedCount).toBe(3); // never trusted over the marks
     const body = valuationBody(odd.values, odd.marks);
     expect(Object.keys(body)).toEqual([...VALUATION_KEYS]);
+  });
+
+  it('B13S-1 R-ISA-18: the valuation body carries the AI seller-data use (ai_isa_comps) with its own mark, off unless stored true; the API requires it (apps/api/src/mls/webBody.contract.test.ts)', () => {
+    expect([...VALUATION_KEYS]).toEqual(['agent_cma', 'client_cma', 'automated_notes', 'ai_isa_comps', 'avm_flag_scope', 'statements']);
+    const on = pickPack({ values: [], valuation: { values: [{ key: 'ai_isa_comps', value: true, counselReviewed: true }], reviewedByCounselAt: null, unreviewedCount: 5, sentence: '' } }).valuation;
+    expect([on.values.ai_isa_comps, on.marks.ai_isa_comps]).toEqual([true, true]);
+    const off = pickPack({ values: [], valuation: { values: [{ key: 'ai_isa_comps', value: 'true', counselReviewed: false }], reviewedByCounselAt: null, unreviewedCount: 6, sentence: '' } }).valuation;
+    expect(valuationBody(off.values, off.marks).ai_isa_comps).toEqual({ value: false, counselReviewed: false });
+    expect(valuationBody(on.values, on.marks).ai_isa_comps).toEqual({ value: true, counselReviewed: true });
   });
 });

@@ -191,7 +191,7 @@ function ValuationEditor({ c, several, editable }: { c: MlsConnection; several: 
       {!editable ? <p className="text-[15px] text-ink-muted">This connection is disconnected, so its valuation use cannot be changed.</p> : null}
       <form className="flex flex-col gap-4" noValidate onSubmit={(e) => void save(e)}>
         <ul className="flex flex-col gap-3">
-          {(['agent_cma', 'client_cma', 'automated_notes'] as const).map((k) => (
+          {(['agent_cma', 'client_cma', 'automated_notes', 'ai_isa_comps'] as const).map((k) => (
             <ValuationValue key={k} k={k} reviewed={marks[k]} mark={markRow(k)}>
               <Check label={VALUATION_WORDS[k].label} hint={VALUATION_WORDS[k].hint} checked={values[k]} disabled={!editable} onChange={(on) => change(k, on)} />
             </ValuationValue>

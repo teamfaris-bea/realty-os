@@ -243,24 +243,25 @@ describe('MLS page: sync and licence pack', () => {
   const valuationSection = async () => (await screen.findByRole('heading', { level: 2, name: 'Valuation use' })).closest('section')!;
   const VMARK = /^Counsel reviewed this valuation value \(/;
   const vmark = (s: HTMLElement, i: number) => within(s).getAllByRole('checkbox', { name: VMARK })[i]!;
-  const SENT = "Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. Client CMAs, seller value ranges and in-house home-value notes are built from MLS sales, but none reaches a client until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page, and then only as this connection's valuation use allows (in-house notes also need the home-value notes pack, platform:avm).";
+  const SENT = "Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 6 of 6 valuation values are not marked as reviewed by counsel. Client CMAs, seller value ranges and in-house home-value notes are built from MLS sales, but none reaches a client until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page, and then only as this connection's valuation use allows (in-house notes also need the home-value notes pack, platform:avm).";
   const valuation = (o: { agent?: boolean; marked?: boolean; statements?: unknown[]; sentence?: string } = {}) => ({
     values: [
       { key: 'agent_cma', value: o.agent ?? false, counselReviewed: o.marked ?? false },
       { key: 'client_cma', value: false, counselReviewed: o.marked ?? false },
       { key: 'automated_notes', value: false, counselReviewed: o.marked ?? false },
+      { key: 'ai_isa_comps', value: false, counselReviewed: o.marked ?? false },
       { key: 'avm_flag_scope', value: 'all_client_outputs', counselReviewed: o.marked ?? false },
       { key: 'statements', value: o.statements ?? [], counselReviewed: o.marked ?? false },
     ],
     reviewedByCounselAt: o.marked ? '2026-11-12T10:00:00.000Z' : null,
-    unreviewedCount: o.marked ? 0 : 5,
+    unreviewedCount: o.marked ? 0 : 6,
     sentence: o.sentence ?? SENT,
   });
 
   it('D9 b10 api-ui/F2: the valuation section shows the strictest defaults when none is stored: no use ticked, every client output, no statement; it says nothing built from MLS sales reaches a client until platform:cma is reviewed', async () => {
     mount(fakeWith(mls({ marked: PACK_KEYS })), PATH); // a display pack from before D9: no valuation section in the response
     const s = await valuationSection();
-    for (const name of [/^Agents may prepare CMAs from MLS sold data/, /^CMAs built from MLS sold data may be shared with clients/, /^Automated home-value notes and seller-update value ranges may carry values/]) {
+    for (const name of [/^Agents may prepare CMAs from MLS sold data/, /^CMAs built from MLS sold data may be shared with clients/, /^Automated home-value notes and seller-update value ranges may carry values/, /^The AI assistant may email recent MLS sales near a seller’s home to that seller/]) {
       expect(within(s).getByRole('checkbox', { name })).not.toBeChecked();
     }
     expect(within(s).getByLabelText('Where a seller’s “no automated valuation” choice applies')).toHaveValue('all_client_outputs');
@@ -272,6 +273,9 @@ describe('MLS page: sync and licence pack', () => {
     expect(s).toHaveTextContent(/Nothing built from MLS sales reaches a client until counsel review of the in-house CMA wording \(platform:cma\) is recorded on the Integrations page/);
     expect(s).toHaveTextContent(/Built, and off until counsel review of the in-house CMA wording \(platform:cma\) is recorded on the Integrations page: nothing built from MLS sales reaches a client before then\./);
     expect(s).not.toHaveTextContent(/in this version|Not available/);
+    // b13 review B13S-1: the AI seller-data use has its own value and mark, and says it also waits for platform:ai_isa_seller_data
+    expect(within(s).getAllByRole('checkbox', { name: VMARK })).toHaveLength(6);
+    expect(s).toHaveTextContent(/counsel review of the in-house CMA wording \(platform:cma\) and of the AI assistant’s seller data \(platform:ai_isa_seller_data\) are both recorded/);
     expect(await violations()).toEqual([]);
   });
 
@@ -289,7 +293,7 @@ describe('MLS page: sync and licence pack', () => {
     await userEvent.type(within(s).getByLabelText('Statement text'), 'An estimate of value, not an appraisal (test statement).');
     await userEvent.clear(within(s).getByLabelText('Smallest type size (points)'));
     await userEvent.type(within(s).getByLabelText('Smallest type size (points)'), '12');
-    for (let i = 0; i < 5; i++) await userEvent.click(vmark(s, i));
+    for (let i = 0; i < 6; i++) await userEvent.click(vmark(s, i));
     // a change after marking clears that mark (counsel reviewed the old value)
     await userEvent.click(within(s).getByRole('checkbox', { name: /^Agents may prepare CMAs from MLS sold data/ }));
     expect(vmark(s, 0)).not.toBeChecked();
@@ -305,6 +309,7 @@ describe('MLS page: sync and licence pack', () => {
       agent_cma: { value: true, counselReviewed: true },
       client_cma: { value: false, counselReviewed: true },
       automated_notes: { value: false, counselReviewed: true },
+      ai_isa_comps: { value: false, counselReviewed: true },
       avm_flag_scope: { value: 'all_client_outputs', counselReviewed: true },
       statements: { value: [{ region: 'CA', text: 'An estimate of value, not an appraisal (test statement).', minPointSize: 12 }], counselReviewed: true },
     });
