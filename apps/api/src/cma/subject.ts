@@ -280,7 +280,8 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
   let connectionId: string | null = null;
   const self = new Set<string>();
   const selfNumbers = new Set<string>();
-  const agentSize = `Size entered by the agent, taken as ${o.sizeField ?? 'the MLS feed’s size field'} (the size your MLS reports).`;
+  // R-MLS-7: with no size field for the connection's sales (Spark: none is confirmed) the agent's size is said as theirs only
+  const agentSize = o.sizeField === null ? 'Size entered by the agent.' : `Size entered by the agent, taken as ${o.sizeField} (the size your MLS reports).`;
 
   if (input.kind === 'listing') {
     const row = await listingRow(tx, input.listingId);
@@ -331,7 +332,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
       if (row.sqft !== null) ({ sizeSource, sizeSentence } = mlsSize(row, o.sizeField, 'Size from the MLS record'));
       else {
         sizeSource = row.size_source;
-        sizeSentence = 'Size from the MLS record.';
+        sizeSentence = 'Size not available from the MLS.';
       }
       mlsRecordId = row.id;
       connectionId = row.mls_connection_id;
@@ -385,6 +386,8 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
   const state = address.region === null ? null : uspsCode(address.region);
   assertReadableAddress(address, state ?? address.region, key);
   const hadSize = facts.sqft.value !== null;
+  // R-MLS-7: an admitted MLS record gave the facts but no size (the MLS has no confirmed size field, or none for it)
+  const mlsGaveNoSize = connectionId !== null && !hadSize;
   facts = withAgentFacts(facts, input.facts);
   if (input.facts?.sqft !== undefined && (input.kind !== 'entered' || hadSize)) {
     sizeSource = o.sizeField ?? sizeSource;
@@ -404,6 +407,8 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
       // "not in the MLS history" only when the history was looked up (a key was built)
       sentence: sizeLeftOut
         ? `The ${WHOSE[storedSize.source ?? 'mls']} size of this home is outside what the valuation reads. Enter ${missing.length > 1 ? 'the property type and size' : 'the size'} to prepare a CMA.`
+        : mlsGaveNoSize && missing.includes('sqft')
+          ? `Size not available from the MLS for this home. Enter ${missing.length > 1 ? 'the property type and size' : 'the size'} to prepare a CMA.`
         : key === null
           ? input.kind === 'listing'
             ? 'Enter the property type and size to prepare a CMA.'
