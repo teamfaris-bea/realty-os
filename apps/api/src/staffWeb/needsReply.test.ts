@@ -36,8 +36,9 @@ describe('needs_reply (module 55 verify 5)', () => {
     expect(ids['vr-unrated'], 'the review is stored').toBeDefined();
     // removed at Google: the sync blanks it exactly so (repos/gbp.ts blankReview); done here as the superuser
     await h.su.query('UPDATE gbp_reviews SET rating = NULL, body = NULL, reviewer_display = NULL WHERE id = $1', [ids['vr-unrated']!.id]);
-    ids['vr-unrated']!.rating = null;
-    expect(ids['vr-unrated']!.rating).toBeNull();
+    // read back from the database: the stored row is the unrated case the filter must leave out
+    const unrated = (await h.su.query<{ rating: number | null; body: string | null; reply_status: string }>('SELECT rating, body, reply_status FROM gbp_reviews WHERE id = $1', [ids['vr-unrated']!.id])).rows;
+    expect(unrated).toEqual([{ rating: null, body: null, reply_status: 'none' }]);
     const d = await call(w.owner, 'POST', `/gbp/reviews/${ids['vr-drafted']!.id}/draft`, { mode: 'manual', text: 'Thank you for working with us.' });
     expect(d.status, JSON.stringify(d.body)).toBe(200);
     const r = await call<Reviews>(w.owner, 'GET', '/gbp/reviews?filter=needs_reply');

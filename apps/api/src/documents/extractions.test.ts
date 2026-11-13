@@ -10,12 +10,15 @@ import { type DocWorld, call, docDeps, docWorld, makeDeal, pdfBytes, runScan, up
 
 let h: ApiHarness;
 let w: DocWorld;
+/** a second TC, for the "another TC" case */
+let tc2: DocWorld['tc'];
 
 const PAGES = [{ page: 1, text: 'RESIDENTIAL PURCHASE AGREEMENT (synthetic test form)\nClosing Date: 2/12/27 or sooner by agreement.' }];
 
 beforeAll(async () => {
   h = await createApiHarness();
   w = await docWorld(h);
+  tc2 = await h.invite(w.owner, 'tc');
 }, 180_000);
 afterAll(async () => {
   await h?.close();
@@ -41,15 +44,19 @@ const list = async (c: DocWorld['tc']) => {
 };
 
 describe('GET /documents/extractions (module 55; R-STAFF-2)', () => {
-  it('E674 R-STAFF-2: a TC uploader sees their own open extraction as a pointer; the agent of the deal, the Owner and another TC see none of it', async () => {
+  it('E674 R-STAFF-2: a TC uploader sees their own open extraction as a pointer; the agent of the deal, the Owner and another TC on the same deal see none of it', async () => {
     const { dealId } = await makeDeal(w, w.agents[0]!);
+    const m = await call(w.owner, 'POST', `/deals/${dealId}/members`, { userId: tc2.userId, role: 'tc' });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
     const docId = await contract(w.tc, dealId);
     const mine = await list(w.tc);
     const row = mine.find((x) => x.documentId === docId);
     expect(row).toMatchObject({ documentId: docId, dealId, versionNo: 1, outcome: 'dates' });
     expect(row!.unreviewedClaims).toBeGreaterThan(0);
+    // the second TC can open the document itself, so what keeps it off their list is the owner of the action
+    expect((await call(tc2, 'GET', `/documents/${docId}`)).status).toBe(200);
     // the action is the uploader's: nobody else lists it, the Owner included (tenant-wide reads go to the document)
-    for (const c of [w.agents[0]!, w.owner, w.admin, w.isa]) expect((await list(c)).some((x) => x.documentId === docId)).toBe(false);
+    for (const c of [w.agents[0]!, w.owner, w.admin, w.isa, tc2]) expect((await list(c)).some((x) => x.documentId === docId)).toBe(false);
   });
 
   it('R-STAFF-2: the static segment is not shadowed by /documents/:id (no 422 from its uuid param, no 404)', async () => {
