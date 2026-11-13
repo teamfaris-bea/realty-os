@@ -440,12 +440,18 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
     });
   });
 
-  it('R-ISA-30 E521 (b12 recheck R14): a handoff card decided while a1 owned the lead, which then moves to a0 and a0 releases to the pond, escalates to a0\'s Team Lead (the ledger\'s last owner), never to tl2 or a1', async () => {
+  it('R-ISA-30 E521 (b12 recheck R14, R18): a handoff card decided while a1 owned the lead, which a2 created and which then moves to a0 and a0 releases to the pond, escalates to a0\'s Team Lead (the ledger\'s last owner), never to tl2, a1 or the first owner\'s escalation', async () => {
     await twoTeams(async (tl2) => {
       const { runOwnershipCommand } = await import('../leads/ownership.js');
+      const { optInAgent } = await import('./testing.js');
       const [a0, a1] = [w.agents[0]!, w.agents[1]!];
-      const l = await isaLead(h, a0);
-      expect((await startCare(a0, l.id)).status).toBe(200);
+      // b12 recheck R18: the ledger's first owner is a third agent, a2 (on no team, so its unowned-card holder is an
+      // Owner/Admin): the first owner (a2), the frozen recipient (a1) and the last owner (a0) all differ, so reading the
+      // ledger's first owner instead of its last would alert the Owner/Admin, and the frozen recipient would alert tl2
+      const a2 = await h.invite(w.owner, 'agent');
+      await optInAgent(h, a2, w.versionId);
+      const l = await isaLead(h, a2);
+      expect((await startCare(a2, l.id)).status).toBe(200);
       await runIsa(h, w.tenantId);
       const ids = depsFromPlatform(h.app.platform).ids;
       const move = (to: string) => runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: to as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids });
@@ -465,6 +471,8 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
       await runIsa(h, w.tenantId, 1);
       expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).not.toBe('owned');
       expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: a1.userId, status: 'rejected' })]);
+      const ledger = (await h.su.query<{ owner: string }>(`SELECT owner_user_id AS owner FROM lead_ownership_events WHERE contact_id = $1 AND owner_user_id IS NOT NULL ORDER BY seq`, [l.id])).rows.map((r) => r.owner);
+      expect([ledger[0], ledger.at(-1)]).toEqual([a2.userId, a0.userId]);
       // (the sweep is tenant-wide: an earlier case's handoff may reach its second level in the same sweep)
       expect((await ageAndSweep(ho!.id)).escalated).toBeGreaterThanOrEqual(1);
       expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
@@ -472,6 +480,7 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
       const to = await overdueTo(l.id);
       expect(to, 'not the frozen recipient\'s Team Lead').not.toContain(tl2.userId);
       expect(to, 'never the agent who decided the card').not.toContain(a1.userId);
+      expect(to, 'not the first owner\'s escalation (an Owner/Admin)').not.toContain(w.owner.userId);
       expect(to).toEqual([w.teamLead!.userId]);
     });
   });
