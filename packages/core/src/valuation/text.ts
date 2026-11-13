@@ -128,7 +128,8 @@ export function notUsedSentence(reason: NotUsedReason, ctx: { conditions: readon
     case 'other_property_type':
       return 'Not used: a different property type.';
     case 'no_size':
-      return 'Not used: no size recorded.';
+      // R-MLS-7: a sale's size is unknown when the MLS gives none (no confirmed finished-living-area field)
+      return 'Not used: size not available from the MLS.';
     case 'other_size_source':
       return 'Not used: its size is measured differently.';
     case 'subject_listing':
@@ -298,6 +299,14 @@ export function unavailableSentence(reason: 'NO_SALES' | 'INSUFFICIENT_COMPS' | 
     case 'SUBJECT_TYPE_NOT_SUPPORTED':
       return 'No value: land and other property types are not valued yet.';
   }
+}
+
+/** The first sentence of NO_SALES when closed sales of the subject's kind were found but none has a size (R-MLS-7). */
+export const NO_SIZED_SALES = 'No value: no closed sales of this kind of home with a size from the MLS were found.';
+
+/** How many closed sales of the subject's kind were left out for an unknown size, and what that skips (R-MLS-7). */
+export function noSizeSentence(n: number): string {
+  return `${plural(n, 'closed sale', 'closed sales')} of this kind of home ${n === 1 ? 'was' : 'were'} not used: size not available from the MLS, so no size adjustment or price per sq ft can be worked out for ${n === 1 ? 'it' : 'them'}.`;
 }
 
 export function valueSentence(comps: number): string {

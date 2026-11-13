@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { runBacktest } from './backtest.js';
 import { type CmaCandidate, type CmaResult, type CmaSale, type CmaSaleCondition, CMA_DEFAULTS, prepareCma } from './index.js';
 import { addMonths, canonicalOrder, screen, searchTier } from './select.js';
+import { NO_SIZED_SALES, unavailableSentence } from './text.js';
 import { SUBJECT_LAT, SUBJECT_LON, VALUATION_DATE, cand, linearMarket, monthsBefore, shuffled, subject } from './testing/fixtures.js';
 
 const RUNS = { numRuns: 60 };
@@ -93,10 +94,15 @@ function run(candidates: readonly CmaCandidate[], extra: { include?: string[]; e
   return prepareCma({ subject: subject(extra.sqft === undefined ? {} : { sqft: extra.sqft }), candidates, tierReads: [], valuationDate: VALUATION_DATE, include: extra.include, exclude: extra.exclude });
 }
 
-/** The result without the not-used list (an extra ineligible candidate is listed there, by design). */
+/**
+ * The result without the not-used list (an extra ineligible candidate is listed there, by design) and without its
+ * R-MLS-7 summary: a sale left out for an unknown size is also counted in a sentence, and once one is, "no sales were
+ * found" is worded "no sales with a size from the MLS were found" (E601). Value, range, comps, rates are compared.
+ */
+const NO_SIZE_COUNT = /^\d[\d,]* closed sales? of this kind of home (?:was|were) not used: size not available from the MLS/;
 function core(r: CmaResult) {
-  const { notUsed: _n, notUsedTotal: _t, subjectSales: _s, ...rest } = r;
-  return rest;
+  const { notUsed: _n, notUsedTotal: _t, subjectSales: _s, sentences, ...rest } = r;
+  return { ...rest, sentences: sentences.filter((x) => !NO_SIZE_COUNT.test(x)).map((x) => (x === NO_SIZED_SALES ? unavailableSentence('NO_SALES', 0, CMA_DEFAULTS) : x)) };
 }
 
 describe('R-CMA-5: determinism', () => {
