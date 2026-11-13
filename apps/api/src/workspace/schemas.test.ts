@@ -21,7 +21,7 @@ const rows = () => h.app.platform.routeTable.filter((r) => PREFIXES.some((p) => 
 describe('api/workspace route table and schemas', () => {
   it('every workspace route declares its authorization; Action routes carry authorize(<that action>) (snapshot)', () => {
     const table = rows().map((r) => `${r.method} ${r.url} ${r.auth}${r.authorizes ? ` authorize(${r.authorizes})` : ''}`);
-    expect(table.length).toBe(51); // + module 42: POST and GET /deals/:id/documents, POST and GET /listings/:id/documents; + PATCH /listings/:id/agent (b7 review ownership-data/F2); + GET /listings/:id/competing (module 24, mls/routes.ts); + GET /listings/:id/marketing, POST …/marketing/generate, POST …/marketing/assets (module 29, marketing/routes.ts); + GET /listings/:id/seller-update (module 28, sellerUpdates/routes.ts); + module 31: GET /deals/:id/milestones, POST /deals/:id/milestones/plan, POST /deal-dates/:id/confirm
+    expect(table.length).toBe(55); // + module 45: POST and GET /deals/:id/portal(/invite), POST and GET /listings/:id/portal(/invite); + module 42: POST and GET /deals/:id/documents, POST and GET /listings/:id/documents; + PATCH /listings/:id/agent (b7 review ownership-data/F2); + GET /listings/:id/competing (module 24, mls/routes.ts); + GET /listings/:id/marketing, POST …/marketing/generate, POST …/marketing/assets (module 29, marketing/routes.ts); + GET /listings/:id/seller-update (module 28, sellerUpdates/routes.ts); + module 31: GET /deals/:id/milestones, POST /deals/:id/milestones/plan, POST /deal-dates/:id/confirm
     for (const r of rows()) if (r.auth !== 'self') expect(r.authorizes).toBe(r.auth);
     expect(table.sort()).toMatchSnapshot();
   });

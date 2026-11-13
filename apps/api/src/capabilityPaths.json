@@ -42,6 +42,25 @@
       ]
     },
     {
+      "path": "/api/portal/documents/:itemId/stream-token",
+      "methods": [
+        "POST"
+      ],
+      "secrets": [
+        "itemId"
+      ]
+    },
+    {
+      "path": "/api/portal/files/:token",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "secrets": [
+        "token"
+      ]
+    },
+    {
       "path": "/api/public/chat/session/:token/messages",
       "methods": [
         "POST"

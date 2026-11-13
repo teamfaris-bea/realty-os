@@ -179,6 +179,8 @@ export const ACTIONS = [
   'ai_isa.handoff', // module 75: acknowledge a handoff, resolve a held topic (✅ | ✅ | T | own | — | —)
   'gbp.view', // module 53: Google Business Profile status and reviews (every staff role, as the members-read policy of gbp_reviews)
   'gbp.reply', // module 53: draft, post or discard a public reply to a Google review (Owner/Admin; always a tap, R-GBP-1)
+  'portal.view', // module 45: a deal's or listing's portal state, a grant's client-view preview, an item preview (DATA_MODEL §8 split row)
+  'portal.manage', // module 45: invite, publish, retract, revoke, disable, change the login point (Owner, Admin, TL T, agent own)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -401,6 +403,14 @@ export const AUDIT_ACTIONS = [
   'gbp.reply_posted', // module 53: Google confirmed a public review reply (TX2 or the reconcile; ids only)
   'gbp.reply_discarded', // module 53: an Owner/Admin discarded a reply draft (ids only)
   'gbp.reviews_synced', // module 53: the system read a location's reviews (counts only, never review text)
+  'portal.invited', // module 45: a person invited a client to the portal (account created or reused; ids only)
+  'portal.granted', // module 45: a portal grant was made on a deal or listing (ids only)
+  'portal.grant_revoked', // module 45: a person revoked a grant (final; ids only)
+  'portal.account_disabled', // module 45: a person disabled a portal account (reason code)
+  'portal.login_point_changed', // module 45: a person changed an account's login point (ids only; voids outstanding links)
+  'portal.item_published', // module 45: a person or the sync published an item (kind, source ids)
+  'portal.item_retracted', // module 45: a person or the sync retracted an item (reason code)
+  'portal.display_updated', // module 45: a grant's published title or contact card changed (field names only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -750,6 +760,10 @@ const MATRIX: Record<Action, ActionRule> = {
   // reviews; a public reply is the team's voice, so only an Owner or Admin drafts, posts or discards one (owner question 2's default).
   'gbp.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
   'gbp.reply': { roles: { owner: ALL, admin: ALL } },
+  // Module 45 (DATA_MODEL §8 "Client portal", split): view ✅ | ✅ | T | own, deal | — | deal; manage ✅ | ✅ | T | own | — | —.
+  // Human actors only: no ISA, no support, no system via (the sync is a job, not a route). The DB re-checks every write.
+  'portal.view': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
+  'portal.manage': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

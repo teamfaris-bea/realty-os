@@ -49,6 +49,7 @@ import { isaRoutes } from './isa/routes.js';
 import { voiceRoutes } from './voice/routes.js';
 import { gbpRoutes } from './gbp/routes.js';
 import { coachingTrendsRoutes } from './coaching/trends/routes.js';
+import { portalRoutes } from './portal/plugin.js';
 
 export interface RouteModule {
   name: string;
@@ -96,5 +97,6 @@ export const routeModules: RouteModule[] = [
   voiceRoutes,
   gbpRoutes,
   coachingTrendsRoutes,
+  portalRoutes,
   // registry: add new entries above this line
 ];
