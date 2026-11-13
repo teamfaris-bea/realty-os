@@ -109,16 +109,20 @@ export interface ValuationView {
   sentence: string;
 }
 
-/** Said on the page whatever the section holds (D9: sharing is V2's). */
-export const VALUATION_NOT_SHARED = 'Nothing built from MLS sales reaches a client in this version, whatever is recorded here.';
-const NOT_IN_V1 = 'Not available in this version: nothing built from MLS sales reaches a client, whatever this says. Leave it off unless your MLS agreement allows it.';
+/**
+ * Said on the page whatever the section holds (D9). b13 integration (V2B-1's MLS lines): V2-A builds client CMAs and V2-B
+ * seller value ranges and in-house home-value notes, all behind platform:cma, so the page says what they wait for,
+ * never "in this version" (the API's valuation sentence says the same, apps/api/src/mls/admin.ts VALUATION_NO_SHARING).
+ */
+export const VALUATION_NOT_SHARED = 'Nothing built from MLS sales reaches a client until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page, whatever is recorded here.';
+const CLIENT_USE_HINT = 'Built, and off until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page: nothing built from MLS sales reaches a client before then. Leave it off unless your MLS agreement allows it.';
 
 export const VALUATION_WORDS: Record<ValuationKey, { label: string; hint: string }> = {
   agent_cma: { label: 'Agents may prepare CMAs from MLS sold data', hint: 'Tick this only if your MLS agreement allows sold data to be used for valuations. Agent-facing only: the agent sees the estimate and nothing is sent to a client. Agent CMAs are refused until it is ticked.' },
-  client_cma: { label: 'CMAs built from MLS sold data may be shared with clients', hint: NOT_IN_V1 },
-  automated_notes: { label: 'Automated home-value notes and seller-update value ranges may carry values built from MLS sold data', hint: NOT_IN_V1 },
+  client_cma: { label: 'CMAs built from MLS sold data may be shared with clients', hint: CLIENT_USE_HINT },
+  automated_notes: { label: 'Automated home-value notes and seller-update value ranges may carry values built from MLS sold data', hint: CLIENT_USE_HINT },
   avm_flag_scope: { label: 'Where a seller’s “no automated valuation” choice applies', hint: 'Some MLS listings say the seller does not want automated valuations shown. The strictest choice holds it for everything that could reach a client.' },
-  statements: { label: 'Valuation statement for each state', hint: 'The statement counsel requires with a value shown to a client in that state, and its smallest type size. None is shipped. Readiness checks for one; nothing is shown to a client in this version.' },
+  statements: { label: 'Valuation statement for each state', hint: 'The statement counsel requires with a value shown to a client in that state, and its smallest type size. None is shipped. Readiness checks for one; nothing is shown to a client until counsel review of platform:cma is recorded.' },
 };
 export const AVM_SCOPE_WORDS: Record<AvmScope, string> = { all_client_outputs: 'Everything that could reach a client (strictest)', internet_display_only: 'Internet display only' };
 

@@ -202,7 +202,7 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
     expect(JSON.stringify(d)).not.toMatch(/confidence|score|tenant/i);
   });
 
-  it('D9 (b10 review gates/F6, api-ui/F7): the valuation sentence never says values built from MLS sales may reach clients, unreviewed or fully reviewed; it says what agents may do and that this version shares nothing', async () => {
+  it('D9 (b10 review gates/F6, api-ui/F7; b13 integration V2B-1): the valuation sentence never says values built from MLS sales may reach clients, unreviewed or fully reviewed; it says what agents may do and what client values wait for (platform:cma, the valuation use), never that client CMAs are not built (V2-A and V2-B build them)', async () => {
     const conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { lastSyncedAt: new Date() });
     const none = (await viewOf(w.owner, conn)).licensePack.valuation;
     const partial = (await put(conn, { ...displayBody(REVIEWED_PACK), valuation: valuationBody({ reviewed: false }) })).body.licensePack.valuation;
@@ -215,7 +215,8 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
     expect(none.sentence).toBe(`Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 6 of 6 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
     expect(partial.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. 6 of 6 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
     expect(full.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. Every valuation value is marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
-    expect(VALUATION_NO_SHARING).toBe('Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.');
+    expect(VALUATION_NO_SHARING).toBe("Client CMAs, seller value ranges and in-house home-value notes are built from MLS sales, but none reaches a client until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page, and then only as this connection's valuation use allows (in-house notes also need the home-value notes pack, platform:avm).");
+    expect(VALUATION_NO_SHARING).not.toMatch(/not built|in this version/);
   });
 
   it('E372 (b10 review api-ui/F6): sold-data coverage says "Filling" only while the connection is live and read; a connection not connected, disconnected, or on a Spark deployment with live calls off says nothing is read', async () => {

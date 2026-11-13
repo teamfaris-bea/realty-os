@@ -243,7 +243,7 @@ describe('MLS page: sync and licence pack', () => {
   const valuationSection = async () => (await screen.findByRole('heading', { level: 2, name: 'Valuation use' })).closest('section')!;
   const VMARK = /^Counsel reviewed this valuation value \(/;
   const vmark = (s: HTMLElement, i: number) => within(s).getAllByRole('checkbox', { name: VMARK })[i]!;
-  const SENT = 'Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.';
+  const SENT = "Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. Client CMAs, seller value ranges and in-house home-value notes are built from MLS sales, but none reaches a client until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page, and then only as this connection's valuation use allows (in-house notes also need the home-value notes pack, platform:avm).";
   const valuation = (o: { agent?: boolean; marked?: boolean; statements?: unknown[]; sentence?: string } = {}) => ({
     values: [
       { key: 'agent_cma', value: o.agent ?? false, counselReviewed: o.marked ?? false },
@@ -257,7 +257,7 @@ describe('MLS page: sync and licence pack', () => {
     sentence: o.sentence ?? SENT,
   });
 
-  it('D9 b10 api-ui/F2: the valuation section shows the strictest defaults when none is stored: no use ticked, every client output, no statement; it says this version shares nothing', async () => {
+  it('D9 b10 api-ui/F2: the valuation section shows the strictest defaults when none is stored: no use ticked, every client output, no statement; it says nothing built from MLS sales reaches a client until platform:cma is reviewed', async () => {
     mount(fakeWith(mls({ marked: PACK_KEYS })), PATH); // a display pack from before D9: no valuation section in the response
     const s = await valuationSection();
     for (const name of [/^Agents may prepare CMAs from MLS sold data/, /^CMAs built from MLS sold data may be shared with clients/, /^Automated home-value notes and seller-update value ranges may carry values/]) {
@@ -267,9 +267,11 @@ describe('MLS page: sync and licence pack', () => {
     expect(within(s).getByText('No state statement yet.')).toBeInTheDocument();
     expect(within(s).getAllByRole('checkbox', { name: VMARK }).every((b) => !(b as HTMLInputElement).checked)).toBe(true);
     expect(within(s).getByText('Not reviewed by counsel', { selector: 'p' })).toBeInTheDocument();
-    expect(s).toHaveTextContent(/Nothing built from MLS sales reaches a client in this version/);
-    // the client uses say they are not available in this version
-    expect(s).toHaveTextContent(/Not available in this version: nothing built from MLS sales reaches a client, whatever this says\./);
+    // b13 integration (V2B-1's MLS lines): V2-A and V2-B build the client uses, so the page says what they wait for,
+    // never "in this version" or "not available"
+    expect(s).toHaveTextContent(/Nothing built from MLS sales reaches a client until counsel review of the in-house CMA wording \(platform:cma\) is recorded on the Integrations page/);
+    expect(s).toHaveTextContent(/Built, and off until counsel review of the in-house CMA wording \(platform:cma\) is recorded on the Integrations page: nothing built from MLS sales reaches a client before then\./);
+    expect(s).not.toHaveTextContent(/in this version|Not available/);
     expect(await violations()).toEqual([]);
   });
 
@@ -277,7 +279,7 @@ describe('MLS page: sync and licence pack', () => {
     const fake = fakeWith({ connections: [{ ...mls({ marked: PACK_KEYS }).connections[0]!, licensePack: { ...pack(PACK_KEYS), valuation: valuation() } }] }).on(VPUT, (c) => {
       const body = c.body as { valuation: Record<string, { value: unknown; counselReviewed: boolean }> };
       const marked = Object.values(body.valuation).every((v) => v.counselReviewed);
-      return { status: 200, body: { licensePack: { ...pack(PACK_KEYS), valuation: valuation({ agent: body.valuation.agent_cma!.value === true, marked, statements: body.valuation.statements!.value as unknown[], sentence: marked ? 'Agents may prepare CMAs. Every valuation value is marked as reviewed by counsel. Nothing built from MLS sales reaches a client in this version.' : SENT }) } } };
+      return { status: 200, body: { licensePack: { ...pack(PACK_KEYS), valuation: valuation({ agent: body.valuation.agent_cma!.value === true, marked, statements: body.valuation.statements!.value as unknown[], sentence: marked ? 'Agents may prepare CMAs. Every valuation value is marked as reviewed by counsel. Nothing built from MLS sales reaches a client until counsel review of platform:cma is recorded.' : SENT }) } } };
     });
     mount(fake, PATH);
     const s = await valuationSection();

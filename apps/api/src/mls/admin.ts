@@ -174,11 +174,13 @@ export function valuationValues(stored: unknown): { values: ValuationPackValues;
 }
 
 /**
- * D9: nothing built from MLS sales reaches a client in V1, whatever the valuation section says (sharing is V2's; client
- * CMAs and seller value ranges also wait on platform:cma, which ships unreviewed). Said on every valuation view, so a
- * fully marked section never reads as turning client values on (batch 10 review gates/F6, api-ui/F7).
+ * D9: whatever the valuation section says, nothing built from MLS sales reaches a client until counsel review of
+ * platform:cma is recorded (it ships unreviewed), and then only as the valuation use allows. Said on every valuation
+ * view, so a fully marked section never reads as turning client values on (batch 10 review gates/F6, api-ui/F7). b13
+ * integration (V2B-1's MLS line): it no longer says client CMAs are not built; V2-A builds client CMAs and V2-B seller
+ * value ranges and in-house home-value notes, all behind platform:cma (in-house notes also behind platform:avm).
  */
-export const VALUATION_NO_SHARING = 'Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.';
+export const VALUATION_NO_SHARING = "Client CMAs, seller value ranges and in-house home-value notes are built from MLS sales, but none reaches a client until counsel review of the in-house CMA wording (platform:cma) is recorded on the Integrations page, and then only as this connection's valuation use allows (in-house notes also need the home-value notes pack, platform:avm).";
 
 /**
  * The section in words: what agents may do (valuation.agent_cma alone admits an agent CMA, R-CMA-6: the Owner/Admin's
