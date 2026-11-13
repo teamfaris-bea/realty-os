@@ -25,6 +25,7 @@ import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/type
 import { ContactSearches } from './SavedSearchReview.js';
 import { MarketingApprovals } from './MarketingApprovals.js';
 import { SellerUpdateApproval } from './SellerUpdateApproval.js';
+import { VoiceHandback, VoiceHandbackButtons, isVoiceHandback } from './VoiceHandback.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -186,7 +187,9 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           <blockquote className="whitespace-pre-wrap rounded-xl bg-surface-2 px-3.5 py-2.5 text-[16px] text-ink">{action.draft.body}</blockquote>
         </figure>
       ) : null}
-      {action.claims.length > 0 ? (
+      {isVoiceHandback(action) ? (
+        <VoiceHandback action={action} review={(c) => (c.needsReview ? <ClaimReview claim={c} /> : null)} />
+      ) : action.claims.length > 0 ? (
         <ul className="flex flex-col gap-3" aria-label="What the assistant found">
           {action.claims.map((c) => (
             <li key={c.id}>
@@ -227,6 +230,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
               </Button>
             ) : null}
           </>
+        ) : isVoiceHandback(action) ? (
+          <VoiceHandbackButtons action={action} pending={approve.pending} onHandled={() => void doApprove()} />
         ) : action.kind === 'handback' && action.contactId ? (
           <>
             <Button icon="message" onClick={() => navigate(`/contacts/${action.contactId}/thread?compose=sms`)}>
