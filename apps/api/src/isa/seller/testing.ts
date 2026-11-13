@@ -7,10 +7,11 @@ import type { Instant } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import type { ApiHarness } from '../../auth/testHarness.js';
 import { address, cmaPack, localSales, mlsSale, daysAgo } from '../../cma/testing.js';
+import { depsFromPlatform } from '../../comms/runtime.js';
 import { mlsConnection } from '../../mls/testing.js';
 import { systemActor } from '../../worker/systemActor.js';
 import { type IsaLead, type IsaWorld, call, isaLead, isaWorld, optInAgent, startCare } from '../testing.js';
-import { assignmentById } from './isa2Seam.js';
+import { type IsaDeps, assignmentById, contextFor, queueIsaMessageInTx } from './isa2Seam.js';
 import type { SellerDeps } from './comps.js';
 
 export const SELLER_CAPS = ['converse', 'seller_competition', 'seller_sold_comps'];
@@ -99,3 +100,26 @@ export async function asSystem<T>(h: ApiHarness, w: SellerWorld, l: SellerLead, 
 
 export const nowInstant = (): Instant => Date.now() as Instant;
 export { randomUUID };
+
+/**
+ * A second MLS feed of the world (its own attribution and disclaimer; every valuation use recorded, ai_isa_comps
+ * included), live now. Returns its connection id (E536 "two connections").
+ */
+export async function secondFeed(h: ApiHarness, w: SellerWorld, o: { attribution: string; disclaimer: string }): Promise<string> {
+  return mlsConnection(h, w.tenantId, w.owner.userId!, { pack: { ...cmaPack({ valuation: { ai_isa_comps: true } }), attribution_text: o.attribution, disclaimer_text: o.disclaimer }, lastSyncedAt: new Date() });
+}
+
+/** ISA-2's TX-B queue path with a facts message (the H2 hook builds the body). Returns the message id or null. */
+export function queueFactsAs(h: ApiHarness, w: SellerWorld, l: SellerLead, handles: string[], channel: 'sms' | 'email' = 'email'): Promise<string | null> {
+  return asSystem(h, w, l, async (tx, a, actor) => {
+    const now = nowInstant();
+    const ctx = await contextFor(tx, a, now);
+    return queueIsaMessageInTx({ tx, deps: depsFromPlatform(h.app.platform) as unknown as IsaDeps, actor, ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq },
+      { kind: 'queue_message', messageKind: 'facts', purpose: 'marketing', channel, lines: [], text: null, handles, offerId: null, slotIndex: null, initiated: true }, a.machine);
+  });
+}
+
+/** Sets the seeded policy's allowed channels (the guard freezes an approved version; the editor is the web lane's). */
+export async function policyChannels(h: ApiHarness, w: SellerWorld, channels: ('sms' | 'email')[]): Promise<void> {
+  await h.su.query(`SET session_replication_role = replica; UPDATE playbook_versions SET steps = jsonb_set(steps, '{channels}', '${JSON.stringify(channels)}'::jsonb) WHERE id = '${w.versionId}'; SET session_replication_role = origin`);
+}

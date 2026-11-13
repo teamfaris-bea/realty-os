@@ -13,7 +13,7 @@ import { type IdGenerator, type Instant, type SystemActor, can } from '@realty/c
 import type { Tx } from '@realty/db';
 import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
-import { mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
+import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
 import { type CompsBuild, DEFAULT_SELLER_DEPS, type SellerDeps, buildCompsInTx } from './comps.js';
 import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, sourceOf } from './competition.js';
 import { assignmentSubjectLinkInTx, sellerGatesInTx, subjectLinkInTx } from './gates.js';
@@ -155,12 +155,25 @@ export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: Assig
     const conn = e.connections.find((c) => c.id === r.mls_connection_id)!;
     facts.push({ factKind: 'competitor', listingId: r.id, connectionId: conn.id, priceKind: 'asking', priceCents: Number(r.list_price_cents), statusAtBuild: r.status, asOf: sourceOf(e, r, team, now)!.asOf, displayRulesVersion: displayRulesVersion(conn), methodVersion: null, valuationDate: null, tier: null, compSetHash: null, lineSha256: '' });
   }
-  const conn = e.connections.find((c) => c.id === facts[0]!.connectionId)!;
   let channel: 'sms' | 'email' = sms && a.boundPoints.sms !== undefined ? 'sms' : 'email';
   if (channel === 'email' && a.boundPoints.email === undefined) channel = 'sms';
-  const body = factsMessage({ intro: FACT_INTROS.competition, lines, attribution: conn.pack.attributionText, disclaimer: conn.pack.disclaimerText, channel });
+  const body = factsMessage({ intro: FACT_INTROS.competition, lines, attribution: footerOfFeeds(e, facts.map((f) => f.connectionId), channel), disclaimer: null, channel });
   const { sha256Hex } = await import('@realty/core/compliance');
   return { ok: true, channel, body, pendingFacts: facts.map((f, k) => ({ ...f, lineSha256: sha256Hex(lines[k]!) })) };
+}
+
+/**
+ * The footer of a competition message (R-MLS-2; ISA-3 audit F4): each feed's own attribution, then its disclaimer, for
+ * every feed a line came from, in the lines' order, each text once (as comps.ts footerOf does for comps). A line from a
+ * second MLS never goes out under the first feed's attribution alone.
+ */
+export function footerOfFeeds(e: Pick<MlsEligibility, 'connections'>, connectionIds: readonly string[], channel: 'sms' | 'email'): string | null {
+  const foot: string[] = [];
+  for (const id of [...new Set(connectionIds)]) {
+    const c = e.connections.find((x) => x.id === id);
+    for (const t of c ? [c.pack.attributionText, c.pack.disclaimerText] : []) if (t !== null && t.trim() !== '' && !foot.includes(t)) foot.push(t);
+  }
+  return foot.length === 0 ? null : foot.join(channel === 'email' ? '\n\n' : '\n');
 }
 
 /** Writes the pending facts of a queued seller facts message (TX-B; 0084's trigger, lane number 0191, refuses a sold fact on non-email). */
