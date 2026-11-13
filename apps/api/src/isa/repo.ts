@@ -92,8 +92,13 @@ export async function liveAssignmentOf(tx: Tx, contactId: string, lock: RowLock 
   return r.rows[0] ? rowOf(r.rows[0]) : null;
 }
 
+/**
+ * The latest assignment of the person of `contactId` (b12 review F6): every record of its merge tree, a merged-away
+ * record's included (0081's root-survivor branch lets the survivor's audience read it). The panel's read-only history.
+ */
 export async function latestAssignmentOf(tx: Tx, contactId: string): Promise<AssignmentRow | null> {
-  const r = await sql<Raw>`SELECT ${COLS} FROM ai_isa_assignments WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
+  const r = await sql<Raw>`SELECT ${COLS} FROM ai_isa_assignments WHERE tenant_id = app.tenant_id()
+      AND contact_id = ANY (app.contact_merge_tree_ids(app.tenant_id(), app.contact_merge_root(app.tenant_id(), ${contactId}::uuid)))
     ORDER BY started_at DESC LIMIT 1`.execute(tx);
   return r.rows[0] ? rowOf(r.rows[0]) : null;
 }
@@ -139,9 +144,15 @@ export async function stopSignalSince(tx: Tx, a: Pick<AssignmentRow, 'contactId'
   return r.rows[0] ?? null;
 }
 
+/**
+ * The person's newest unlifted block. b12 review db-isa-merge-1: the records come from the definer merge-tree helpers
+ * (0075), so a merged-away record the caller's contacts RLS hides still counts; 0081's root-survivor branch lets the
+ * survivor's audience read its block row (the guard asks app.ai_isa_person_blocked, past RLS, at start).
+ */
 export async function activeBlock(tx: Tx, contactId: string): Promise<{ id: string; reason: string; createdAt: Instant } | null> {
   const r = await sql<{ id: string; reason: string; created_at: Date }>`SELECT id, reason, created_at FROM ai_isa_person_blocks
-    WHERE tenant_id = app.tenant_id() AND lifted_at IS NULL AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid))
+    WHERE tenant_id = app.tenant_id() AND lifted_at IS NULL
+      AND contact_id = ANY (app.contact_merge_tree_ids(app.tenant_id(), app.contact_merge_root(app.tenant_id(), ${contactId}::uuid)))
     ORDER BY created_at DESC LIMIT 1`.execute(tx);
   const b = r.rows[0];
   return b ? { id: b.id, reason: b.reason, createdAt: instantFromDate(b.created_at) } : null;
@@ -255,7 +266,8 @@ export async function evaluateChain(tx: Tx, a: AssignmentRow, env: ChainEnv): Pr
   const sig = await stopSignalSince(tx, a);
   const blk = await activeBlock(tx, a.contactId);
   links.push(sig !== null ? L(7, 'Opt-outs', 'end', 'ISA_STOPPED', sig.reason, 'They opted out, were suppressed or asked not to be contacted.')
-    : blk !== null && blk.createdAt >= a.startedAt ? L(7, 'Opt-outs', 'end', 'ISA_STOPPED', 'opted_out', 'This person declined AI care.')
+    // b12 review db-isa-merge-1: any unlifted block of the person, whenever written (lifts are explicit; the guard agrees)
+    : blk !== null ? L(7, 'Opt-outs', 'end', 'ISA_STOPPED', 'opted_out', 'This person declined AI care.')
     : L(7, 'Opt-outs', 'ok', null, null, 'No opt-out since care started.'));
   const ex = await exclusivity(tx, a.contactId);
   links.push(ex.shared ? L(8, 'Exclusivity', 'end', 'ISA_SHARED_ADDRESS', 'shared_address', 'Another person shares one of their addresses.')

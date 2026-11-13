@@ -171,14 +171,35 @@ export function unownedHandbackTarget(people: PeopleFacts | undefined, previousO
   return tls[0] ?? people?.admins[0] ?? null;
 }
 
-/** ARCHITECTURE §10: open handbacks and their feed items follow the CURRENT owner (or the TL). */
-export async function rehomeHandbacks(tx: Tx, contactId: ContactId, target: UserId): Promise<number> {
-  const moved = await sql<{ id: string }>`
+/**
+ * A pending AI ISA handoff can have one open card per escalation user (TL and Owner/Admin, for a lead with no owner):
+ * before its cards move to `target`, every card but one is closed (the target's own when it has one), so the move never
+ * meets the (user, dedupe) uniqueness of open cards. Nothing happens without a target.
+ */
+export async function collapseHandoffCards(tx: Tx, actionIds: string[], target: UserId | null, now: Instant): Promise<void> {
+  if (target === null || actionIds.length === 0) return;
+  await sql`
+    UPDATE priority_feed_items SET state = 'done', snoozed_until = NULL, resolved_at = ${toIso(now)}::timestamptz
+     WHERE tenant_id = app.tenant_id() AND id IN (
+       SELECT id FROM (SELECT f.id, row_number() OVER (PARTITION BY f.assistant_action_id ORDER BY (f.user_id = ${target}::uuid) DESC, f.created_at, f.id) AS rn
+                         FROM priority_feed_items f
+                        WHERE f.tenant_id = app.tenant_id() AND f.assistant_action_id = ANY (${actionIds}::uuid[]) AND f.state IN ('open', 'snoozed')) r
+        WHERE r.rn > 1)`.execute(tx);
+}
+
+/**
+ * ARCHITECTURE §10: open handbacks and their feed items follow the CURRENT owner (or the TL). A pending AI ISA handoff
+ * card is routed like a handback (AI_ISA.md §10; b12 review F3).
+ */
+export async function rehomeHandbacks(tx: Tx, contactId: ContactId, target: UserId, now: Instant): Promise<number> {
+  const moved = await sql<{ id: string; kind: string }>`
     UPDATE assistant_actions SET owner_user_id = ${target}, updated_at = now()
-     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'handback' AND status = 'proposed'
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind IN ('handback', 'ai_isa_handoff') AND status = 'proposed'
        AND owner_user_id IS DISTINCT FROM ${target}::uuid
-    RETURNING id`.execute(tx);
+    RETURNING id, kind`.execute(tx);
   const ids = moved.rows.map((r) => r.id);
+  const handoffs = moved.rows.filter((r) => r.kind === 'ai_isa_handoff').map((r) => r.id);
+  if (handoffs.length > 0) await collapseHandoffCards(tx, handoffs, target, now);
   if (ids.length > 0) {
     await sql`
       UPDATE priority_feed_items SET user_id = ${target}, updated_at = now()
@@ -245,7 +266,7 @@ export async function applyEffects(tx: Tx, c: EffectContext, effects: readonly E
         const carried = (e as { previousOwnerUserId?: UserId | null }).previousOwnerUserId;
         const previousOwner = carried !== undefined ? carried : (c.before?.ownerUserId ?? null);
         const target = cur?.state === 'owned' ? cur.ownerUserId : (e.toUserId ?? unownedHandbackTarget(c.people, previousOwner));
-        if (target) await rehomeHandbacks(tx, c.contactId, target);
+        if (target) await rehomeHandbacks(tx, c.contactId, target, c.now);
         break;
       }
       case 'routingCursor':

@@ -23,7 +23,7 @@ export async function adminView(tx: Tx, liveSends: boolean) {
   const t = await tenantIsaFacts(tx);
   const s = await sql<{ by: string | null; at: Date | null }>`SELECT ai_isa_enabled_by AS by, ai_isa_enabled_at AS at FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx);
   const c = await sql<{ live: number; overdue: number }>`SELECT (SELECT count(*)::int FROM ai_isa_assignments WHERE tenant_id = app.tenant_id() AND ended_at IS NULL) AS live,
-    (SELECT count(*)::int FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND sla_met_at IS NULL AND sla_due_at < now()) AS overdue`.execute(tx);
+    (SELECT count(*)::int FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND sla_class <> 'none' AND sla_met_at IS NULL AND sla_due_at < now()) AS overdue`.execute(tx);
   const hold = !t.packCleared ? 'Waiting on counsel review (platform:ai_isa). Nothing is sent until counsel clears it.'
     : !liveSends ? 'AI assistant sending is off on this deployment.'
     : t.sentToday >= t.dailyCap ? "The team's daily AI assistant limit is reached; it continues tomorrow." : null;

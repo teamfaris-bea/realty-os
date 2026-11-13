@@ -1,0 +1,177 @@
+// Batch 12 interaction review fixes for module 75 (D12 PROPOSED; fakes only). Each describe names the finding it covers.
+import { randomUUID } from 'node:crypto';
+import { withTenantTx } from '@realty/db';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { depsFromPlatform } from '../comms/runtime.js';
+import { command } from '../leads/testing.js';
+import { systemActor } from '../worker/systemActor.js';
+import { slaSweepInTx } from './handoff.js';
+import { assignmentOf, call, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
+
+let h: ApiHarness;
+let w: IsaWorld;
+
+beforeAll(async () => {
+  h = await createApiHarness();
+  w = await isaWorld(h);
+  // agent 1 holds the survivor in the merge cases and takes reassigned leads; it opts in too
+  const { optInAgent } = await import('./testing.js');
+  await optInAgent(h, w.agents[1]!, w.versionId);
+}, 240_000);
+afterAll(async () => {
+  await h?.close();
+});
+
+const handoffs = async (ids: string[]) => (await h.su.query<{ id: string; contact_id: string; reason: string; recipient_user_id: string | null; sla_class: string; sla_met_at: Date | null; sla_escalation_level: number; package: { nextSteps: string[] } }>(
+  `SELECT id, contact_id, reason, recipient_user_id, sla_class, sla_met_at, sla_escalation_level, package FROM ai_isa_handoffs WHERE contact_id = ANY($1::uuid[])`, [ids])).rows;
+const cards = async (ids: string[]) => (await h.su.query<{ contact_id: string; user_id: string; state: string; text: string }>(
+  `SELECT contact_id, user_id, state, reasons->0->>'text' AS text FROM priority_feed_items WHERE contact_id = ANY($1::uuid[]) AND item_type = 'ai_isa_handoff'`, [ids])).rows;
+const actions = async (ids: string[]) => (await h.su.query<{ contact_id: string; owner_user_id: string; status: string }>(
+  `SELECT contact_id, owner_user_id, status FROM assistant_actions WHERE contact_id = ANY($1::uuid[]) AND kind = 'ai_isa_handoff'`, [ids])).rows;
+const overdue = async (contactIds: string[]) => (await h.su.query(`SELECT user_id FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = ANY($1::uuid[])`, [contactIds])).rows.length;
+/** Ages the handoff's deadline (the guard lets only the system move it; the superuser seeds the instant) and sweeps. */
+async function ageAndSweep(handoffId: string) {
+  await h.su.query(`SET session_replication_role = replica`);
+  try {
+    await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '1 minute', created_at = now() - interval '2 minutes' WHERE id = $1 AND sla_class <> 'none'`, [handoffId]);
+  } finally {
+    await h.su.query(`SET session_replication_role = origin`);
+  }
+  const deps = depsFromPlatform(h.app.platform);
+  return withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => slaSweepInTx(tx, deps.ids, now), { db: h.database });
+}
+const touch = (contactId: string) => h.su.query(`UPDATE contacts SET last_human_touch_at = now() WHERE id = $1`, [contactId]);
+
+describe('b12 review db-isa-merge-1: a person block on a merged-away record (R-ISA-31, R-ISA-16; E505, E526)', () => {
+  it('R-ISA-31 E505: the survivor\'s panel shows the merged-away record\'s block and a start on the survivor is refused AI_ISA_PERSON_DECLINED', async () => {
+    const agent = w.agents[0]!;
+    const loser = await isaLead(h, agent);
+    const survivor = await isaLead(h, agent);
+    await h.su.query(`INSERT INTO ai_isa_person_blocks (tenant_id, id, contact_id, reason, created_at) VALUES ($1, $2, $3, 'ai_declined', now() - interval '1 hour')`, [w.tenantId, randomUUID(), loser.id]);
+    const m = await command(w.owner, survivor.id, 'merge', { loserId: loser.id, ownerChoice: agent.userId });
+    expect(m.status).toBe(200);
+    await runIsa(h, w.tenantId, 1);
+    const p = await call<{ block: { reason: string } | null; canStart: boolean; startRefusal: { code: string } | null }>(agent, 'GET', `/contacts/${survivor.id}/ai-isa`);
+    expect(p.status).toBe(200);
+    expect(p.body.block?.reason).toBe('ai_declined');
+    expect(p.body.canStart).toBe(false);
+    expect(p.body.startRefusal?.code).toBe('AI_ISA_PERSON_DECLINED');
+    const s = await startCare(agent, survivor.id);
+    expect(s.status).toBe(409);
+    expect(s.body).toMatchObject({ error: { code: 'AI_ISA_PERSON_DECLINED' } });
+  });
+});
+
+describe('b12 review F1, F6, B12X-3: a merge that ends live AI care on the merged-away record (R-ISA-16, R-ISA-30; E526, E521)', () => {
+  it('R-ISA-16 E526: the handoff, its action and its card land on the survivor for the survivor\'s owner ("this lead moved"); a touch on the survivor clears the deadline; the survivor\'s panel shows it', async () => {
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const loser = await isaLead(h, a0);
+    const survivor = await isaLead(h, a1);
+    expect((await startCare(a0, loser.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const m = await command(w.owner, survivor.id, 'merge', { loserId: loser.id, ownerChoice: a1.userId });
+    expect(m.status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await assignmentOf(h, loser.id))!.end_reason).toBe('merged');
+    const [ho] = await handoffs([loser.id, survivor.id]);
+    expect(ho).toMatchObject({ contact_id: survivor.id, reason: 'merged', recipient_user_id: a1.userId });
+    expect(await cards([loser.id, survivor.id])).toEqual([{ contact_id: survivor.id, user_id: a1.userId, state: 'open', text: 'AI care ended because this lead moved. Here is what it did.' }]);
+    expect(await actions([loser.id, survivor.id])).toEqual([{ contact_id: survivor.id, owner_user_id: a1.userId, status: 'proposed' }]);
+    // the survivor's owner reads the person's AI history on the survivor and acknowledges the handoff
+    const panel = await call<{ assignment: { id: string; endReason: string } | null; handoff: { id: string } | null }>(a1, 'GET', `/contacts/${survivor.id}/ai-isa`);
+    expect(panel.status, JSON.stringify(panel.body)).toBe(200);
+    expect(panel.body.assignment?.endReason).toBe('merged');
+    expect(panel.body.handoff?.id).toBe(ho!.id);
+    const ack = await call(a1, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {});
+    expect(ack.status).toBe(200);
+    await touch(survivor.id);
+    expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 1, escalated: 0 });
+    expect(await overdue([loser.id, survivor.id])).toBe(0);
+  });
+});
+
+describe('b12 review F2, B12X-3: a merge after a pending AI handoff on the merged-away record (R-ISA-16, R-ISA-30; E526)', () => {
+  it('R-ISA-16 E526: the pending handoff card stays open and follows the survivor and its owner; a touch on the survivor clears the deadline', async () => {
+    const agent = w.agents[0]!;
+    const loser = await isaLead(h, agent);
+    const survivor = await isaLead(h, agent);
+    expect((await startCare(agent, loser.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${loser.id}/ai-isa/end`, {})).status).toBe(200);
+    await h.su.query(`UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1 AND finalize_at IS NOT NULL`, [loser.id]);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([loser.id]);
+    expect(ho).toBeTruthy();
+    expect((await cards([loser.id]))[0]?.state).toBe('open');
+    const m = await command(w.owner, survivor.id, 'merge', { loserId: loser.id, ownerChoice: agent.userId });
+    expect(m.status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect(await cards([loser.id, survivor.id])).toEqual([expect.objectContaining({ contact_id: survivor.id, user_id: agent.userId, state: 'open' })]);
+    expect(await actions([loser.id, survivor.id])).toEqual([{ contact_id: survivor.id, owner_user_id: agent.userId, status: 'proposed' }]);
+    await touch(survivor.id);
+    expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 1, escalated: 0 });
+    expect(await overdue([loser.id, survivor.id])).toBe(0);
+  });
+});
+
+describe('b12 review F3: an owner change or a close ends AI care (R-ISA-16, R-ISA-30; E525, E521)', () => {
+  it('R-ISA-16 E525: after a reassignment the new owner gets the handoff ("this lead moved"); the old owner gets nothing; a pending handoff card follows a later owner change', async () => {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const r = await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a1.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids });
+    expect(r.ok).toBe(true);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
+    expect(await cards([l.id])).toEqual([{ contact_id: l.id, user_id: a1.userId, state: 'open', text: 'AI care ended because this lead moved. Here is what it did.' }]);
+    // the lead moves on again: the pending card and its action follow the current owner (ARCHITECTURE §10)
+    const back = await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a0.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids });
+    expect(back.ok).toBe(true);
+    await runIsa(h, w.tenantId, 1);
+    expect(await cards([l.id])).toEqual([expect.objectContaining({ user_id: a0.userId, state: 'open' })]);
+    expect((await actions([l.id]))[0]?.owner_user_id).toBe(a0.userId);
+    // the current owner acknowledges it
+    expect((await call(a0, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {})).status).toBe(200);
+  });
+
+  it('R-ISA-30 E521: a close (not a lead) ends care with a handoff to the Team Lead and Owner/Admin ("this lead was closed") and no deadline: nobody can touch a closed lead', async () => {
+    const a0 = w.agents[0]!;
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const c = await command(a0, l.id, 'close', { reason: 'not_a_lead' });
+    expect(c.status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: null, sla_class: 'none' });
+    const cs = await cards([l.id]);
+    expect(cs.map((x) => x.user_id)).not.toContain(a0.userId);
+    expect(cs.map((x) => x.user_id)).toContain(w.teamLead!.userId);
+    expect(new Set(cs.map((x) => x.text))).toEqual(new Set(['AI care ended because this lead was closed. Here is what it did.']));
+    expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 0, escalated: 0 });
+    expect(await overdue([l.id])).toBe(0);
+  });
+});
+
+describe('b12 review B12X-2: an end D1 makes unreachable (R-ISA-30, R-ISA-31; E521)', () => {
+  it('R-ISA-30 E521: a person-level do-not-contact ends care with a handoff that has no deadline and no call_now step; the sweep sends no overdue alert and the panel is not overdue', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect(['do_not_contact', 'opted_out']).toContain((await assignmentOf(h, l.id))!.end_reason);
+    const [ho] = await handoffs([l.id]);
+    expect(ho!.sla_class).toBe('none');
+    expect(ho!.package.nextSteps).not.toContain('call_now');
+    expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 0, escalated: 0 });
+    expect(await overdue([l.id])).toBe(0);
+    const panel = await call<{ handoff: { overdue: boolean } | null }>(agent, 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(panel.body.handoff?.overdue).toBe(false);
+  });
+});

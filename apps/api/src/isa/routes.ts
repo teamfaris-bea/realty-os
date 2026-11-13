@@ -14,7 +14,7 @@ import type { RouteModule } from '../routes.js';
 import { actorOf, platformOf } from '../workspace/common.js';
 import { continueCare, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
-import { activeBlock, evaluateChain, latestAssignmentOf } from './repo.js';
+import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf } from './repo.js';
 import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
 import { adminLoosening, adminPut, adminView, meView, optIn, optInLoosening, reattest, revokeOptIn } from './settings.js';
@@ -47,8 +47,11 @@ async function panel(req: FastifyRequest, contactId: string) {
       return { ...base, assignment: null, canResume: false, chain: [], capabilities: [], consent: [], zones: { zones: [], source: 'union' as const, sentence: 'Not under AI care.' },
         nextAllowedSendAt: null, capsSentence: '', lastDecision: null, factsSent: [], openOffer: null, heldTopics: [], handoff: null };
     }
-    const chain = await evaluateChain(tx, a, chainEnvOf(deps));
-    const ctx = await contextFor(tx, a, now);
+    // b12 review F6: the latest assignment can be a merged-away record's (ended by the merge): read-only history, its
+    // turns, facts and handoff only (that record's own facts are not the survivor's, and its contact row stays hidden)
+    const history = a.contactId !== contactId;
+    const chain = history ? { links: [], effect: 'end' as const, worst: null } : await evaluateChain(tx, a, chainEnvOf(deps));
+    const ctx = history ? null : await contextFor(tx, a, now);
     const opt = await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx);
     const turn = await sql<{ status: string; decision: Record<string, unknown>; denied: unknown[]; created_at: Date; not_before: Date | null }>`SELECT status, decision, denied, created_at, not_before
       FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} ORDER BY created_at DESC LIMIT 1`.execute(tx);
@@ -56,7 +59,7 @@ async function panel(req: FastifyRequest, contactId: string) {
       WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND status = 'sent' ORDER BY created_at`.execute(tx);
     const sent = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching') AND dispatched_at > now() - interval '24 hours'`.execute(tx);
-    const h = await sql<{ id: string; reason: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string }>`SELECT id, reason, sla_due_at, sla_met_at, confirmation_status
+    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
     const last = turn.rows[0];
     const capsOn = new Set(opt.rows[0]?.c ?? []);
@@ -69,23 +72,24 @@ async function panel(req: FastifyRequest, contactId: string) {
         pausedSentence: a.pausedAt ? STATE_SENTENCES.paused : null, endedAt: a.endedAt ? new Date(a.endedAt).toISOString() : null, endReason: a.endReason,
         undoUntil: a.finalizeAt ? new Date(a.finalizeAt).toISOString() : null, ownerUserId: a.ownerUserId,
       },
-      canResume: a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && actor.userId === a.ownerUserId && (chain.effect === 'ok' || chain.effect === 'hold'),
+      canResume: !history && a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && actor.userId === a.ownerUserId && (chain.effect === 'ok' || chain.effect === 'hold'),
       chain: chain.links.map((l) => ({ link: l.link, name: l.name, effect: l.effect, code: l.code, sentence: l.sentence })),
-      capabilities: (['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const).map((cap) => {
+      capabilities: ctx === null ? [] : (['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const).map((cap) => {
         const allowed = ctx.content.capabilities.includes(cap) && capsOn.has(cap) && (cap === 'converse');
         return { capability: cap, allowed, sentence: allowed ? 'Allowed.' : cap === 'seller_sold_comps' ? 'Can share recent sales: no — waiting for counsel review (platform:cma) and the seller-data pack.' : cap === 'converse' ? 'Not in your opt-in.' : 'Not available yet on this deployment.' };
       }),
-      consent: ctx.channels.map((ch) => ({ channel: ch, sentence: ch === 'sms'
+      consent: (ctx?.channels ?? []).map((ch) => ({ channel: ch, sentence: ch === 'sms'
         ? "Texts: OK for replies within 24 h of their text. Listings and follow-ups need written consent naming the team, from their own form, plus a fresh Do Not Call check."
         : 'Email: OK for replies within 24 h of their own verified email. Follow-ups need consent from their own form.' })),
-      zones: { zones: ctx.zones, source: ctx.zoneSource, sentence: ctx.zoneSource === 'explicit' ? 'Their time zone was set on the person.' : 'Every time zone they may be in (area code, addresses, the team zone and the continental US): effectively 12:00–20:00 Eastern.' },
+      zones: ctx === null ? { zones: [], source: 'union' as const, sentence: 'AI care ended on a record merged into this one.' }
+        : { zones: ctx.zones, source: ctx.zoneSource, sentence: ctx.zoneSource === 'explicit' ? 'Their time zone was set on the person.' : 'Every time zone they may be in (area code, addresses, the team zone and the continental US): effectively 12:00–20:00 Eastern.' },
       nextAllowedSendAt: last?.not_before?.toISOString() ?? null,
-      capsSentence: `${sent.rows[0]!.n} of ${ctx.content.caps.ai24h} today`,
+      capsSentence: ctx === null ? '' : `${sent.rows[0]!.n} of ${ctx.content.caps.ai24h} today`,
       lastDecision: last ? { status: last.status, codes: (last.denied as string[]).slice(0, 10), at: last.created_at.toISOString(), sentence: `Last turn: ${last.status.replace(/_/g, ' ')}.` } : null,
       factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString() })),
       openOffer: null,
-      heldTopics: a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
-      handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_met_at === null && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status } : null,
+      heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
+      handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status } : null,
     };
   }, { db: deps.db });
 }
@@ -140,7 +144,7 @@ async function register(app: FastifyInstance): Promise<void> {
     return withTenantTx(actor, async (tx) => {
       const rows = await sql<{ id: string; contact_id: string; name: string | null; side: string; owner_user_id: string; owner_name: string | null; release: Date | null; overdue: boolean; next: Date | null; ended_at: Date | null }>`
         SELECT a.id, a.contact_id, c.display_name AS name, a.side, a.owner_user_id, u.display_name AS owner_name, c.inactivity_release_at AS release, a.next_follow_up_at AS next, a.ended_at,
-               EXISTS (SELECT 1 FROM ai_isa_handoffs h WHERE h.tenant_id = a.tenant_id AND h.assignment_id = a.id AND h.sla_met_at IS NULL AND h.sla_due_at < now()) AS overdue
+               EXISTS (SELECT 1 FROM ai_isa_handoffs h WHERE h.tenant_id = a.tenant_id AND h.assignment_id = a.id AND h.sla_class <> 'none' AND h.sla_met_at IS NULL AND h.sla_due_at < now()) AS overdue
           FROM ai_isa_assignments a JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id LEFT JOIN users u ON u.id = a.owner_user_id
          WHERE a.tenant_id = app.tenant_id()
            ${q.scope === 'mine' ? sql`AND a.owner_user_id = ${actor.userId}` : sql``}
@@ -148,7 +152,7 @@ async function register(app: FastifyInstance): Promise<void> {
          ORDER BY a.started_at DESC LIMIT 200`.execute(tx);
       const out = [];
       for (const x of rows.rows) {
-        const a = (await latestAssignmentOf(tx, x.contact_id))!;
+        const a = (await assignmentById(tx, x.id))!;
         out.push({ assignmentId: x.id, contactId: x.contact_id, name: x.name ?? 'Someone', side: x.side as 'buyer', chip: chipOf(a, null), lastAction: null,
           nextTouchAt: x.next?.toISOString() ?? null, capsSentence: '', inactivityReleaseAt: x.release?.toISOString() ?? null, ownerUserId: x.owner_user_id, ownerName: x.owner_name ?? '', handoffOverdue: x.overdue });
       }
@@ -187,7 +191,9 @@ async function register(app: FastifyInstance): Promise<void> {
   // ---- handoffs and held topics ----
   const handoffFacts = async (req: FastifyRequest) => {
     const p = platformOf(req);
-    const c = await withTenantTx(actorOf(req), (tx) => sql<{ c: string }>`SELECT contact_id AS c FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${idOfParam(req)}`.execute(tx), { db: p.db });
+    // b12 review F2/F6: a handoff on a merged-away record is decided on the record its merge chain ends at (0081)
+    const c = await withTenantTx(actorOf(req), (tx) => sql<{ c: string }>`SELECT app.contact_merge_root(tenant_id, contact_id) AS c FROM ai_isa_handoffs
+      WHERE tenant_id = app.tenant_id() AND id = ${idOfParam(req)}`.execute(tx), { db: p.db });
     return c.rows[0] ? detailFacts(req, () => c.rows[0]!.c) : null;
   };
   r.post('/ai-isa/handoffs/:id/ack', { config: { auth: 'ai_isa.handoff' }, preHandler: authorize('ai_isa.handoff', handoffFacts), schema: { params: S.IdParams, body: S.EmptyBody, response: { 200: S.AckResult } } }, async (req) => {

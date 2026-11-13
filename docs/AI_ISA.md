@@ -536,7 +536,7 @@ Readiness is computed by core only from **usable** claims: verified, not needs_r
   - high: 2 hours;
   - normal: by the end of the next business day.
 
-  It is cleared **only** by a gate-allowed human touch as R-OWN-14 defines it, never by "Got it". On a breach, `ai_isa_handoff_overdue` goes to `teamLeadsOf(owner)` (the first-touch escalation mechanism, ownership/decide.ts:188-189, :220), then to Owner/Admin. A handoff with no owner (pond or deactivated) goes to the previous owner's team leads and Owner/Admin. Task due times come from the deadline. The list and panel show "Waiting on {Agent}: {class} since {time}", and Admin sees a count of overdue handoffs.
+  It is cleared **only** by a gate-allowed human touch as R-OWN-14 defines it, never by "Got it". The touch is read on the record the person lives on now (the root survivor of a merge; b12 review B12X-3). A handoff no touch can clear has no deadline (`sla_class` `none`, 0081; b12 review B12X-2, F3): when D1 leaves no human channel to the person (person-level do-not-contact, or every phone and email blocked for text, call and email), or the lead is closed. Its card and notification still go, and it is never counted overdue. On a breach, `ai_isa_handoff_overdue` goes to `teamLeadsOf(owner)` (the first-touch escalation mechanism, ownership/decide.ts:188-189, :220), then to Owner/Admin. A handoff with no owner (pond or deactivated) goes to the previous owner's team leads and Owner/Admin. Task due times come from the deadline. The list and panel show "Waiting on {Agent}: {class} since {time}", and Admin sees a count of overdue handoffs.
 
 ---
 

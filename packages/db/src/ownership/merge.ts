@@ -7,9 +7,9 @@
 //   - the loser's live enrollment is stopped ('merged'); the survivor's continues, and is paused if
 //     the loser's side was paused (one live enrollment per contact always holds); the loser's scheduled
 //     trigger firings (module 26, no enrollment) are skipped as CONTACT_REMOVED;
-//   - the loser's open handbacks and drafts move to the survivor; handbacks go to the surviving
-//     owner (or the Team Lead / an Admin when unowned); drafts bound to the loser's period are
-//     invalidated.
+//   - the loser's open handbacks and drafts move to the survivor; handbacks (and pending AI ISA
+//     handoff cards, b12 review F2) go to the surviving owner (or the Team Lead / an Admin when
+//     unowned); drafts bound to the loser's period are invalidated.
 // Parity module 66 (R-PAR-45): the loser's points (copied, so every opt-out keeps blocking the merged
 // person), tags, custom values, relationships, notes and stage history move in the merge transaction
 // itself, by the definer trigger app.contacts_merge_children on contacts.merged_into_contact_id.
@@ -24,7 +24,7 @@ import { toIso } from '@realty/core/foundation';
 import type { PeopleFacts } from '@realty/core/ownership';
 import { sql } from 'kysely';
 import type { Tx } from '../tenantTx.js';
-import { unownedHandbackTarget } from './effects.js';
+import { collapseHandoffCards, unownedHandbackTarget } from './effects.js';
 
 /**
  * A step another module runs in the merge's move transaction, after the communication move, as the same tenant-wide
@@ -126,7 +126,7 @@ export async function mergeCommunication(
   const target = survivingOwner ?? unownedHandbackTarget(people, previousOwner);
   const movedActions = await sql<{ id: string; kind: string }>`
     UPDATE assistant_actions SET contact_id = ${survivorId},
-           owner_user_id = CASE WHEN kind = 'handback' AND ${target}::uuid IS NOT NULL THEN ${target}::uuid ELSE owner_user_id END,
+           owner_user_id = CASE WHEN kind IN ('handback', 'ai_isa_handoff') AND ${target}::uuid IS NOT NULL THEN ${target}::uuid ELSE owner_user_id END,
            status = CASE WHEN kind IN ('message_draft', 'autonomous_message', 'seller_update_draft', 'next_step', 'ai_isa_message') THEN 'invalidated'
                          ELSE status END,
            updated_at = now()
@@ -144,14 +144,19 @@ export async function mergeCommunication(
     INSERT INTO jobs (tenant_id, queue, kind, payload, run_at)
     SELECT s.tenant_id, 'realtime', 'ai_isa.stop_signal', jsonb_build_object('signalId', s.id), clock_timestamp() FROM ai_isa_stop_signals s
      WHERE s.tenant_id = app.tenant_id() AND s.reason = 'merged' AND s.source_id = ${loserId}::uuid AND s.created_at >= now()`.execute(tx);
-  const handbacks = movedActions.rows.filter((r) => r.kind === 'handback').map((r) => r.id);
+  // b12 review F2: a pending AI ISA handoff card is routed like a handback (AI_ISA.md §10): it stays open and follows the
+  // survivor and its owner. Its ai_isa_handoffs row stays frozen on the loser; the deadline sweep and the ack read the
+  // merge root (0081). One open card per handoff remains for the target (a pond handoff had one per escalation user).
+  const handoffCards = movedActions.rows.filter((r) => r.kind === 'ai_isa_handoff').map((r) => r.id);
+  if (handoffCards.length > 0) await collapseHandoffCards(tx, handoffCards, target, now);
+  const handbacks = movedActions.rows.filter((r) => r.kind === 'handback' || r.kind === 'ai_isa_handoff').map((r) => r.id);
   if (handbacks.length > 0) {
     await sql`
       UPDATE priority_feed_items SET contact_id = ${survivorId},
              user_id = COALESCE(${target}::uuid, user_id), updated_at = now()
        WHERE tenant_id = app.tenant_id() AND assistant_action_id = ANY (${handbacks}::uuid[]) AND state IN ('open', 'snoozed')`.execute(tx);
   }
-  const invalidated = movedActions.rows.filter((r) => r.kind !== 'handback').map((r) => r.id);
+  const invalidated = movedActions.rows.filter((r) => r.kind !== 'handback' && r.kind !== 'ai_isa_handoff').map((r) => r.id);
   if (invalidated.length > 0) {
     await sql`
       UPDATE priority_feed_items SET state = 'done', snoozed_until = NULL, resolved_at = ${toIso(now)}::timestamptz
