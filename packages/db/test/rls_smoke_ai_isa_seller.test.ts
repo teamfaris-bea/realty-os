@@ -167,6 +167,49 @@ describe('ai_isa_seller_watch per role (R-ISA-18, R-ISA-26, E536, E538)', () => 
     expect([row.subject_confirmed_at, row.subject_cleared_reason, row.contact_address_id]).toEqual([null, 'address_deleted', null]);
   });
 
+  it('R-ISA-18 E538 (b13 review F1): nulling the address in the same UPDATE never carries owner-only or system-only columns past the guard; the address delete still clears the subject', async () => {
+    const l = await sellerLead();
+    const tl = w.tl!.actor;
+    await run(x.agent.actor, confirmSql(l, x.agent.id));
+    expect(await codeOf(run(w.system('assistant'), sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE assignment_id = ${l.assignmentId}`))).toBe('ok');
+    // alone, the Team Lead's clear of the suspension is refused (as before)
+    expect(await codeOf(run(tl, sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = NULL WHERE assignment_id = ${l.assignmentId}`))).toBe('ISA_SUBJECT_OWNER_ONLY');
+    // with the address nulled in the same UPDATE: each owner-only or system-only column is still refused
+    const withAddressGone = [
+      sql`comps_suspended_at = NULL`,
+      sql`comps_resumed_at = now() - interval '1 day', comps_resumed_reason = 'owner_resume', comps_resumed_by_user_id = ${x.agent.id}`,
+      sql`near_match_dismissed = ARRAY[${uuid()}]::uuid[]`,
+      sql`last_snapshot = '{"forged":1}'::jsonb`,
+      sql`snapshot_versions = '{"forged":1}'::jsonb`,
+      sql`last_run_at = now()`,
+      sql`last_comps_check = '{"codes":["X"]}'::jsonb`,
+      sql`subject_disputed_at = now()`,
+      sql`created_at = now() - interval '9 days'`,
+    ];
+    for (const set of withAddressGone) {
+      for (const actor of [tl, x.agent.actor]) {
+        expect(await codeOf(run(actor, sql`UPDATE ai_isa_seller_watch SET contact_address_id = NULL, ${set} WHERE assignment_id = ${l.assignmentId}`)), `${withAddressGone.indexOf(set)} ${actor === tl ? "tl" : "owner"}`).toBe('ISA_SUBJECT_OWNER_ONLY');
+      }
+    }
+    const [kept] = await suRows<{ s: Date | null; r: string | null; d: string[]; snap: unknown }>(h.su, 'SELECT comps_suspended_at AS s, comps_resumed_reason AS r, near_match_dismissed AS d, last_snapshot AS snap FROM ai_isa_seller_watch WHERE assignment_id = $1', [l.assignmentId]);
+    expect(kept!.s).not.toBeNull();
+    expect([kept!.r, kept!.d, kept!.snap]).toEqual([null, [], {}]);
+    // the address alone (what the foreign key's SET NULL writes): accepted, the subject cleared with it
+    expect(await codeOf(run(tl, sql`UPDATE ai_isa_seller_watch SET contact_address_id = NULL WHERE assignment_id = ${l.assignmentId}`))).toBe('ok');
+    const row = await watchOf(l);
+    expect([row.subject_confirmed_at, row.subject_cleared_reason, row.contact_address_id]).toEqual([null, 'address_deleted', null]);
+    const [after] = await suRows<{ s: Date | null }>(h.su, 'SELECT comps_suspended_at AS s FROM ai_isa_seller_watch WHERE assignment_id = $1', [l.assignmentId]);
+    expect(after!.s).not.toBeNull();
+    // the cleared reason is the guard's: on an unconfirmed watch a caller's own reason with the address nulled is refused
+    const u = await sellerLead();
+    expect(await codeOf(run(tl, sql`UPDATE ai_isa_seller_watch SET contact_address_id = NULL, subject_cleared_reason = 'record_changed' WHERE assignment_id = ${u.assignmentId}`))).toBe('ISA_SUBJECT_OWNER_ONLY');
+    expect(await codeOf(run(tl, sql`UPDATE ai_isa_seller_watch SET contact_address_id = NULL WHERE assignment_id = ${u.assignmentId}`))).toBe('ok');
+    expect([(await watchOf(u)).subject_cleared_reason, (await watchOf(u)).contact_address_id]).toEqual([null, null]);
+    // the system's own write with the address nulled is unchanged (the foreign key path and the purge are not users)
+    const v = await sellerLead();
+    expect(await codeOf(run(w.system('assistant'), sql`UPDATE ai_isa_seller_watch SET contact_address_id = NULL, last_run_at = now() WHERE assignment_id = ${v.assignmentId}`))).toBe('ok');
+  });
+
   it('R-PERM-11: support writes nothing; R-TEN-1: another tenant reads and writes nothing', async () => {
     const l = await sellerLead();
     expect(await codeOf(run(support(), sql`UPDATE ai_isa_seller_watch SET last_run_at = now() WHERE assignment_id = ${l.assignmentId}`))).not.toBe('ok');
