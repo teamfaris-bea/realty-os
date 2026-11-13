@@ -420,6 +420,12 @@ export const ERROR_STATUS = {
   REPLY_IN_PROGRESS: 409, // a reply to this review is being posted right now (E464)
   COACHING_TRENDS_SCOPE: 404, // trends of members the caller may not read (R-COACH-8)
   CMA_SUBJECT_ADDRESS_GONE: 409, // the draft's contact address was deleted (S0 keeps the draft open with no address), so it cannot be re-run; prepare a new CMA (details.sentence; F15)
+  // ---- api/isa/seller (module 75 seller part, ISA-3; R-ISA-18, R-ISA-26; details.sentence on each) ----
+  SUBJECT_NOT_IN_MLS: 409, // the seller's home has no MLS record of an admitted connection: no comps; next step "Prepare a CMA (enter type and size)" (E373, E536)
+  SUBJECT_INCOMPLETE: 409, // the newest MLS record lacks the property type, beds or size, or they are not displayable to clients (E536)
+  SUBJECT_CHANGED: 409, // the home's record, address or default address changed since the owner confirmed it, or the confirm hash is stale (E536)
+  SUBJECT_RECORD_OLD: 409, // the newest MLS record of the home is older than 10 years (VERIFY; E536)
+  SUBJECT_NOT_SELLER: 409, // the lead is not under seller- or both-side AI care (no live assignment of that side)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
