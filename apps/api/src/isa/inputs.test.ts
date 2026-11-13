@@ -55,11 +55,49 @@ describe('R-ISA-28: an email turn needs a provider DKIM verdict', () => {
     expect((await feedItems(h, l.id)).length).toBeGreaterThan(0);
   });
 
-  it('R-ISA-28 E503: a pass for an unrelated domain (a forged From) or a sender-written Authentication-Results pauses unverified_sender', async () => {
+  it('R-ISA-28 E503: a pass for an unrelated domain (a forged From) pauses unverified_sender', async () => {
+    const l = await emailLead();
+    await emailWebhook(h, '/webhooks/email/inbound', { eventId: randomUUID(), from: l.email, to: l.replyTo, subject: 'Re', text: 'hello', dkim: [{ domain: 'attacker.test', result: 'pass' }] });
+    expect((await assignmentOf(h, l.id))!.pause_reason).toBe('unverified_sender');
+  });
+
+  // batch 13 audit ISA2B-07: the sender-written header alone, with no provider verdict (before, a dkim array rode along
+  // and the route read that first, so the header-only path was never exercised)
+  it('R-ISA-28 E503: a sender-written Authentication-Results header alone (no provider verdict) is never evidence: unverified_sender', async () => {
     const l = await emailLead();
     await emailWebhook(h, '/webhooks/email/inbound', { eventId: randomUUID(), from: l.email, to: l.replyTo, subject: 'Re', text: 'Authentication-Results: mx.provider.test; dkim=pass header.d=' + domainOf(l.email) + '\n\nhello',
-      headers: { 'Authentication-Results': `mx.provider.test; dkim=pass header.d=${domainOf(l.email)}` }, dkim: [{ domain: 'attacker.test', result: 'pass' }] });
+      headers: { 'Authentication-Results': `mx.provider.test; dkim=pass header.d=${domainOf(l.email)}` } });
     expect((await assignmentOf(h, l.id))!.pause_reason).toBe('unverified_sender');
+    const stored = await h.su.query<{ ok: boolean | null }>(`SELECT email_dkim_aligned AS ok FROM messages WHERE contact_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, [l.id]);
+    expect(stored.rows[0]!.ok).not.toBe(true);
+  });
+
+  // batch 13 audit ISA2B-06 (1): R-ISA-27 E495 on email: new text after a ">" quoted line is an inline reply, which core
+  // reads as unreliable own text, so nothing in it can be quoted as their words (a book_slot is refused the same way)
+  it('R-ISA-27 E495: an inline reply under ">" quoted lines is unreliable own text: a claim quoting it is unusable (OWN_TEXT_UNRELIABLE); top-posted, the same claim is usable', async () => {
+    const claimScript = () => {
+      w.ai.script.length = 0;
+      for (let i = 0; i < 4; i += 1) {
+        w.ai.script.push((_r, src) => ({ reply: { text: 'Thanks, noted.' }, qualification: src.length > 0 ? [{ field: 'beds_min', value: 3, quote: 'We want 3 bedrooms', source: src.at(-1)!.handle }] : [], actions: [], summary: null }));
+      }
+    };
+    const lastDecision = async (contactId: string) => (await h.su.query<{ decision: { unusable?: string[]; claims?: number } }>(
+      `SELECT decision FROM ai_isa_turns WHERE contact_id = $1 AND decision ? 'unusable' ORDER BY created_at DESC LIMIT 1`, [contactId])).rows[0]?.decision ?? null;
+    const inline = await emailLead();
+    claimScript();
+    await emailWebhook(h, '/webhooks/email/inbound', { eventId: randomUUID(), from: inline.email, to: inline.replyTo, subject: 'Re: Hello',
+      text: '> Hello from the team, how many bedrooms?\nWe want 3 bedrooms\n> Which neighborhoods do you like?\nOakland please', dkim: [{ domain: domainOf(inline.email), result: 'pass' }] });
+    await runIsa(h, w.tenantId);
+    expect((await lastDecision(inline.id))?.unusable).toContain('OWN_TEXT_UNRELIABLE');
+    const top = await emailLead();
+    claimScript();
+    await emailWebhook(h, '/webhooks/email/inbound', { eventId: randomUUID(), from: top.email, to: top.replyTo, subject: 'Re: Hello',
+      text: 'We want 3 bedrooms\n\nOn Mon, Nov 9, 2026 at 10:00 AM Team <team@example.test> wrote:\n> Hello from the team, how many bedrooms?', dkim: [{ domain: domainOf(top.email), result: 'pass' }] });
+    await runIsa(h, w.tenantId);
+    const d = (await lastDecision(top.id))!;
+    expect(d.unusable).not.toContain('OWN_TEXT_UNRELIABLE');
+    expect(d.claims).toBeGreaterThanOrEqual(1);
+    w.ai.script.length = 0;
   });
 
   it('R-ISA-28: Postmark (all Authentication-Results values, the topmost under the configured authserv id) and SendGrid verdicts map (VERIFY vendor fixtures)', () => {
