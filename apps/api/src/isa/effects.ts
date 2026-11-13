@@ -126,6 +126,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
   let pendingMessageId: string | null = null;
   let handoffAction: Extract<IsaAction, { kind: 'handoff' }> | null = null;
   let bookNotOffered = false;
+  let confirmationNotQueued = false;
   for (const act of r.actions) {
     switch (act.kind) {
       case 'cancel_messages':
@@ -139,7 +140,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         if (id !== null) {
           out.queued.push(id);
           if (handoffAction !== null || r.state.ended !== null) pendingMessageId = id;
-        }
+        } else if (act.messageKind === 'confirmation') confirmationNotQueued = true; // b13 review B13-MRG-3
         break;
       }
       case 'handoff':
@@ -205,7 +206,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
   }
   if (handoffAction !== null) {
     const ins = await inFlightNotes(tx, ctx.a.contactId, pendingMessageId);
-    out.handoffId = await writeHandoffInTx(tx, deps.ids, env.actor, ctx.a, { handoff: handoffAction.handoff, pendingMessageId, notes: [...(env.handoffExtra?.notes ?? []), ...ins],
+    out.handoffId = await writeHandoffInTx(tx, deps.ids, env.actor, ctx.a, { handoff: handoffAction.handoff, pendingMessageId, confirmationNotQueued, notes: [...(env.handoffExtra?.notes ?? []), ...ins],
       ...(env.handoffExtra?.appointmentDetail ? { appointmentDetail: env.handoffExtra.appointmentDetail } : {}) }, now);
   }
   if (!out.ended) {

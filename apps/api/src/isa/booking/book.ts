@@ -20,7 +20,8 @@
 //        the confirmation the handoff's pending message (E528). Booked but paused after step 2 (E523): end with no
 //        confirmation, notes BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT. Booked after care ended: the handoff is
 //        frozen, so a separate critical card, unless care ended ON this booking (its own handoff carries the
-//        appointment: a replay, b13 review B13-MRG-1). Booked but the machine did not hold the offer as accepting, or held it
+//        appointment: a replay, b13 review B13-MRG-1). Care ending under the result (a stop signal since start, or a
+//        merge that made the record no longer its own root, b13 review B13-MRG-3) counts as ended: the card, nothing queued. Booked but the machine did not hold the offer as accepting, or held it
 //        and did not end on the result: a system pause (check_this) and the same card. AI care is never live after a
 //        booking.
 import type { Instant, SystemActor, TenantId } from '@realty/core/foundation';
@@ -161,6 +162,17 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
       if (handed.rows.length > 0) return 'HANDED_BACK';
       await bookedCardInTx(tx, deps, a, o, 'AI_ISA_BOOKED_AFTER_END', now);
       return 'BOOKED_AFTER_END';
+    }
+    // b13 review B13-MRG-3: care is ending under this result. A merge of the lead (or a STOP, an owner change...) that
+    // committed after tx#1's care read left a stop signal and, for a merge, a record that is no longer its own root
+    // (tx#1 booked on the root survivor). Stepping here would queue the confirmation to the merged-away record (refused
+    // CONTACT_MERGED) and write a handoff saying no confirmation was planned. Care is treated as ended: the separate
+    // critical card asks for a hand confirmation, nothing is queued; the stop signal's job ends care.
+    const merged = (await sql<{ m: boolean }>`SELECT app.contact_merge_root(app.tenant_id(), ${a.contactId}::uuid) <> ${a.contactId}::uuid AS m`.execute(tx)).rows[0]?.m === true;
+    if (merged || (await stopSignalSince(tx, a)) !== null) {
+      if (!booked) return 'STOPPED';
+      await bookedCardInTx(tx, deps, a, o, 'AI_ISA_BOOKED_AFTER_END', now);
+      return 'BOOKED_AFTER_STOP';
     }
     const ctx = await contextFor(tx, a, now);
     const turn = await ensureTurn(tx, deps.ids, ctx, { triggerKind: 'booking', triggerKey: `booking:${o.id}`, pinnedSeq: a.lastInboundSeq, status: 'no_reply' });

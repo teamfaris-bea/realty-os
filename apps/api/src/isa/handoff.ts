@@ -119,6 +119,13 @@ export interface HandoffInput {
   nextSteps?: string[];
   /** TX-C (ISA-2b item 9): the booked appointment's detail (ids, kind, times, organizer, offer, the agreed message and quote, the link and the read time) */
   appointmentDetail?: Record<string, unknown>;
+  /**
+   * b13 review B13-MRG-3: the step planned a confirmation and it could not be queued (refused at queue time: a
+   * merged-away record, a removed point, no shared window). Stored as confirmation_status 'refused' with the
+   * CONFIRMATION_NOT_SENT note, and the card asks for a hand confirmation (or says none is possible), never "No
+   * confirmation was planned".
+   */
+  confirmationNotQueued?: boolean;
 }
 
 /** Writes the one handoff of `a` (idempotent on the assignment). Returns the handoff id, or null if one exists. */
@@ -165,7 +172,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, messageId: f.message_id })),
     unansweredInbound: unanswered.rows.map((r) => r.id),
     nextSteps,
-    notes: i.notes ?? [],
+    notes: i.confirmationNotQueued && !i.pendingMessageId && !(i.notes ?? []).includes('CONFIRMATION_NOT_SENT') ? [...(i.notes ?? []), 'CONFIRMATION_NOT_SENT'] : i.notes ?? [],
     startedAt: a.startedAt,
     epoch: a.epoch,
     inactivityReleaseAt: releaseAt?.toISOString() ?? null,
@@ -190,7 +197,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
       pending_message_id, confirmation_status, sla_class, sla_due_at, recipient_user_id)
     VALUES (app.tenant_id(), ${handoffId}, ${a.id}, ${target.contactId}, ${h.reason}, ${JSON.stringify(h.basis ? { rule: h.basis.rule, ruleVersion: codeOf(h.basis.ruleVersion), claimIds: h.basis.claimIds } : {})}::jsonb,
       ${actionId}, ${h.appointment?.appointmentId ?? null}, ${body}::jsonb, encode(sha256(convert_to(${body}::jsonb::text, 'UTF8')), 'hex'),
-      ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? pendingStatus : 'none'}, ${cls}, ${due === null ? sql`now()` : sql`${new Date(due)}`}, ${target.primary})`.execute(tx);
+      ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? pendingStatus : i.confirmationNotQueued ? 'refused' : 'none'}, ${cls}, ${due === null ? sql`now()` : sql`${new Date(due)}`}, ${target.primary})`.execute(tx);
   const hot = h.priority === 'critical';
   // R-ISA-16 E516 (ISA-2b item 3): the inactivity warning's card names the pond date in the team zone
   const cardText = h.reason === 'inactivity_warning' && releaseAt !== null ? inactivityCardText(label, releaseAt, inact.rows[0]!.tz) : target.sentence;
@@ -210,6 +217,9 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
       subjectType: 'contact', subjectId: target.contactId, dedupeKey: `ai_isa_ended:${a.id}` }, now);
   }
   await audit(tx, actor, { action: 'ai_isa.handoff_created', entity: { type: 'ai_isa_handoff', id: handoffId }, reason: h.reason });
+  if (i.confirmationNotQueued && !i.pendingMessageId) {
+    await confirmationNotSentInTx(tx, ids, { id: handoffId, assignmentId: a.id, contactId: target.contactId, recipientUserId: target.primary }, 'not_sent', now);
+  }
   return handoffId;
 }
 

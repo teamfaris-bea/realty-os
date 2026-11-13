@@ -538,8 +538,10 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
       expect(await apptsOf(x.o.id)).toEqual([]);
       await release();
       expect(await inFlight).toBe(200);
-      // the job's next run: the merge stopped care (its stop signal), so nothing is booked and the offer is refused
-      expect(await x.run()).toBe('REFUSED:CARE_NOT_LIVE');
+      // the job's next run: the merge stopped care (its stop signal), so nothing is booked and the offer is refused;
+      // TX-C does not step the refusal into care that is ending (b13 review B13-MRG-3: nothing is queued to the
+      // merged-away record)
+      expect(await x.run()).toBe('STOPPED');
     } finally {
       bookTestHooks.afterCareRead = undefined;
       if (fallback) clearTimeout(fallback);
@@ -548,6 +550,49 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     }
     expect((await offerOf(x.l.id))!.status).toBe('refused');
     expect((await h.su.query(`SELECT count(*)::int AS n FROM appointments WHERE contact_id = $1`, [x.l.id])).rows[0]).toEqual({ n: 0 });
+  });
+
+  it('R-OWN-24 E526 R-ISA-14 (b13 review B13-MRG-3): a merge that commits after tx#1\'s care read: the appointment is on the survivor, nothing is queued to the merged-away record, and the survivor\'s card asks for a hand confirmation; no handoff says no confirmation was planned', async () => {
+    const x = await acceptingOffer();
+    const { bookTestHooks } = await import('./booking/book.js');
+    bookTestHooks.afterCareRead = async () => {
+      bookTestHooks.afterCareRead = undefined;
+      expect(await merge(x.survivor.id, x.l.id)).toBe(200);
+    };
+    const out = await x.run().finally(() => { bookTestHooks.afterCareRead = undefined; });
+    expect(out).toBe('BOOKED_AFTER_STOP');
+    expect(await apptsOf(x.o.id)).toEqual([x.survivor.id]);
+    await runIsa(h, bw.tenantId, 4);
+    const conf = await h.su.query(`SELECT 1 FROM messages WHERE contact_id IN ($1, $2) AND action_category = 'ai_isa_confirmation'`, [x.l.id, x.survivor.id]);
+    expect(conf.rows).toEqual([]);
+    const card = await h.su.query<{ contact_id: string; state: string; code: string; text: string }>(`SELECT contact_id, state, reasons->0->>'code' AS code, reasons->0->>'text' AS text FROM priority_feed_items WHERE dedupe_key = $1`, [`ai_isa_booked:${x.o.id}`]);
+    expect(card.rows.map((r) => [r.contact_id, r.state, r.code])).toEqual([[x.survivor.id, 'open', 'AI_ISA_BOOKED_AFTER_END']]);
+    expect(card.rows[0]!.text).toMatch(/the confirmation was not sent: confirm or cancel it yourself/);
+    // care ends on the merge; a handoff that carries the appointment never says no confirmation was planned
+    expect((await assignmentOf(h, x.l.id))!.ended_at).not.toBeNull();
+    const silent = await h.su.query(`SELECT 1 FROM ai_isa_handoffs WHERE appointment_id = (SELECT appointment_id FROM ai_isa_slot_offers WHERE id = $1) AND confirmation_status = 'none'`, [x.o.id]);
+    expect(silent.rows).toEqual([]);
+  });
+
+  it('R-ISA-14 E533 (b13 review B13-MRG-3): a confirmation refused at queue time (the bound number removed after tx#1\'s read) is recorded as not sent: status refused, the CONFIRMATION_NOT_SENT note, the card asks for a hand confirmation', async () => {
+    const { l } = await offered();
+    const { bookTestHooks } = await import('./booking/book.js');
+    bookTestHooks.afterCareRead = async () => {
+      bookTestHooks.afterCareRead = undefined;
+      await h.su.query(`UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'old' WHERE contact_id = $1 AND kind = 'phone'`, [l.id]);
+    };
+    try {
+      await reply(l, '2');
+    } finally {
+      bookTestHooks.afterCareRead = undefined;
+    }
+    expect((await offerOf(l.id))!.status).toBe('accepted');
+    expect((await aiMessages(h, l.id)).some((m) => m.action_category === 'ai_isa_confirmation')).toBe(false);
+    const ho = (await handoffOf(h, l.id))[0]!;
+    expect([ho.reason, ho.pending_message_id, ho.confirmation_status]).toEqual(['appointment_booked', null, 'refused']);
+    expect(ho.package['notes']).toEqual(expect.arrayContaining(['CONFIRMATION_NOT_SENT']));
+    const card = await h.su.query<{ score: number; code: string }>(`SELECT score, reasons->0->>'code' AS code FROM priority_feed_items WHERE dedupe_key = $1 AND state = 'open'`, [`ai_isa_handoff:${(await assignmentOf(h, l.id))!.id}`]);
+    expect(card.rows.map((r) => [r.score, r.code])).toEqual([[98, expect.stringMatching(/^AI_ISA_CONFIRMATION_NOT_SENT/)]]);
   });
 
   it('R-ISA-15 E523: a pause while tx#1 holds lock 5 → booked, no confirmation, critical, BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT', async () => {
