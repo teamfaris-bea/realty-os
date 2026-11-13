@@ -13,6 +13,7 @@ import { depsFromPlatform } from '../comms/runtime.js';
 import { inboundSms, sendText } from '../comms/testing.js';
 import { defaultIsaOutput } from '../providers/fake/isaAi.js';
 import { mlsConnection, REVIEWED_PACK } from '../mls/testing.js';
+import type * as CoreSeam from './coreSeam.js';
 import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, seedClaims, startCare } from './testing.js';
 
 let h: ApiHarness;
@@ -24,7 +25,7 @@ const google = () => h.providers.integrations.calendar.google;
 // other case runs core's step unchanged.
 const coreStub = vi.hoisted(() => ({ bookingDoesNotEnd: false }));
 vi.mock('./coreSeam.js', async (importOriginal) => {
-  const m = await importOriginal<typeof import('./coreSeam.js')>();
+  const m = await importOriginal<typeof CoreSeam>();
   const step: typeof m.step = (s, e, f) => (coreStub.bookingDoesNotEnd && e.type === 'booking_result' && e.ok ? { state: { ...s, offer: null }, actions: [] } : m.step(s, e, f));
   return { ...m, step };
 });
