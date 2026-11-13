@@ -15,7 +15,7 @@ import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
-import { withTenantTx } from '../src/tenantTx.js';
+import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, drainFollowups, type Harness, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
 import {
   closedZone, dispatchCode, hmacHex, inbound, type IsaWorld, type Lead, leadUnderCare, markSent, queueAi, setupIsaWorld, sha, startCare,
@@ -404,6 +404,37 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
       VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'message_draft', 'ai_isa_message', 'requires_approval', 'proposed', ${x.agent.id}, 'x', '{}'::jsonb)`))).toMatch(/ai_isa/);
   });
 
+  it('R-ISA-24 (isa-2-2): an assistant message carrying an AI ISA category under a within_playbook or requires_approval action is refused ISA_NOT_AUTHORIZED', async () => {
+    const l = await leadUnderCare(x);
+    await inbound(x, l);
+    const pb = uuid();
+    const pv = uuid();
+    await suFixture(h.su, `
+      INSERT INTO playbooks (tenant_id, id, kind, scope, owner_user_id, name) VALUES ($1, $2, 'nurture', 'team', NULL, 'Nurture ' || $2);
+      INSERT INTO playbook_versions (tenant_id, id, playbook_id, version_no, steps, content_sha256, status, created_by_user_id)
+        VALUES ($1, $3, $2, 1, '[]', repeat('ab', 32), 'approved', $4);`, [w.tenantId, pb, pv, x.agent.id]);
+    const send = async (autonomy: 'within_playbook' | 'requires_approval', category: string) => {
+      const action = uuid();
+      const auto = autonomy === 'within_playbook';
+      await suFixture(h.su, `INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, playbook_version_id, status, owner_user_id,
+          decided_by_user_id, decided_at, explanation, payload)
+        VALUES ($1, $2, $3, $4, 'speed_to_lead_reply', $5, $6, $7, $8, $9, $10, 'Reply', '{}')`,
+        [w.tenantId, action, l.contactId, auto ? 'autonomous_message' : 'message_draft', autonomy, auto ? pv : null,
+          auto ? 'proposed' : 'approved', x.agent.id, auto ? null : x.agent.id, auto ? null : new Date().toISOString()]);
+      return errOf(q(w.system('assistant'), sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address,
+          to_address, body, status, initiator, purpose, action_category, assistant_action_id, dispatched_at, occurred_at)
+        VALUES (app.tenant_id(), ${uuid()}, ${l.conversationId}, ${l.contactId}, 'sms', 'outbound', ${x.numberId}, '+15555559200', ${l.phone}, 'Hi',
+          'dispatching', 'assistant', 'marketing', ${category}, ${action}, now(), now())`));
+    };
+    for (const autonomy of ['within_playbook', 'requires_approval'] as const) {
+      for (const category of ['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']) {
+        expect(await send(autonomy, category), `${autonomy} ${category}`).toBe('ISA_NOT_AUTHORIZED');
+      }
+      // the same action with its own category still goes (the refusal is the AI ISA category, not the action)
+      expect(await send(autonomy, 'speed_to_lead_reply'), autonomy).toBe('ok');
+    }
+  });
+
   it('R-ISA-11 E515: two sends racing for the tenant\'s last daily slot: exactly one passes (the guarded upsert)', async () => {
     const w4 = await createWorld(h.app, { agents: 1 });
     const x4 = await setupIsaWorld(h, w4, { clear: false, d12: false });
@@ -562,6 +593,95 @@ describe('post-handoff messages and the handoff record (R-ISA-14)', () => {
     expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET sla_met_at = now() WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
     expect(await errOf(q(w.system('worker'), sql`UPDATE ai_isa_handoffs SET package = '{"x":1}'::jsonb WHERE id = ${hd!.id}`))).toMatch(/AI_ISA_HANDOFF_FROZEN|package_sha256/);
     expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET acknowledged_at = now(), acknowledged_by_user_id = ${x.agent.id} WHERE id = ${hd!.id}`))).toBe('ok');
+  });
+});
+
+describe('erasure and the retention purge of a person who was under AI care (isa-2-1; R-DATA-4, R-DATA-5, R-DATA-7, R-ISA-15)', () => {
+  const erase = (id: string) => errOf(q(w.owner.actor, sql`SELECT app.erase_contact(${id}::uuid, ${uuid()}::uuid, 'PRIVACY_REQUEST')`));
+  const sweep = () => withPreTenant(async (tx) => (await sql<{ r: Record<string, number> }>`SELECT app.retention_sweep(now()) AS r`.execute(tx)).rows[0]!.r, { db: h.app });
+  const control = (l: Lead, kind: string) => q(w.system('assistant'), sql`INSERT INTO ai_isa_controls (tenant_id, id, assignment_id, contact_id, kind, by_kind, reason)
+    VALUES (app.tenant_id(), ${uuid()}, ${l.assignmentId}, ${l.contactId}, ${kind}, 'system', 'erasure_test')`);
+  const left = async (contactId: string) => {
+    const [r] = await suRows<Record<string, number>>(h.su, `SELECT
+      (SELECT count(*) FROM contacts WHERE id = $1)::int AS contacts,
+      (SELECT count(*) FROM ai_isa_assignments WHERE contact_id = $1)::int AS assignments,
+      (SELECT count(*) FROM ai_isa_controls WHERE contact_id = $1)::int AS controls,
+      (SELECT count(*) FROM ai_isa_turns WHERE contact_id = $1)::int AS turns,
+      (SELECT count(*) FROM ai_isa_shared_facts WHERE contact_id = $1)::int AS facts,
+      (SELECT count(*) FROM ai_isa_handoffs WHERE contact_id = $1)::int AS handoffs,
+      (SELECT count(*) FROM messages WHERE contact_id = $1)::int AS messages,
+      (SELECT count(*) FROM assistant_actions WHERE contact_id = $1)::int AS actions,
+      (SELECT count(*) FROM ai_isa_stop_signals WHERE contact_id = $1)::int AS stop_signals`, [contactId]);
+    return r!;
+  };
+  /** A person whose care ran its whole course: controls, a sent AI reply with a sent fact, a handoff whose confirmation
+   *  is queued (its mandate action still proposed), the assignment ended, and a stop signal naming them. */
+  async function caredFor(): Promise<Lead> {
+    const l = await leadUnderCare(x);
+    await control(l, 'system_pause');
+    await control(l, 'resume');
+    await inbound(x, l);
+    const sent = await queueAi(x, l);
+    await markSent(x, sent.messageId);
+    await q(w.system('assistant'), sql`INSERT INTO ai_isa_shared_facts (tenant_id, id, assignment_id, contact_id, turn_id, message_id, status, fact_kind, line_sha256)
+      VALUES (app.tenant_id(), ${uuid()}, ${l.assignmentId}, ${l.contactId}, ${sent.turnId}, ${sent.messageId}, 'sent', 'listing_active', ${sha('line')})`);
+    await h.su.query(`UPDATE ai_isa_turns SET status = 'sent' WHERE id = $1`, [sent.turnId]);
+    const confirmation = await queueAi(x, l, { category: 'ai_isa_confirmation' });
+    const handoffAction = uuid();
+    const pkg = { reason: 'appointment_booked', codes: ['B1'] };
+    await withTenantTx(w.system('assistant'), async (tx) => {
+      await sql`UPDATE ai_isa_assignments SET ended_at = now(), end_reason = 'appointment_booked', ended_by_kind = 'system', state = 'ended' WHERE id = ${l.assignmentId}`.execute(tx);
+      await sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, dedupe_key)
+        VALUES (app.tenant_id(), ${handoffAction}, ${l.contactId}, 'ai_isa_handoff', 'internal', 'internal', 'proposed', ${x.agent.id}, 'AI care handed off', '{}'::jsonb, ${'ai_isa_handoff:' + l.assignmentId})`.execute(tx);
+      await sql`INSERT INTO ai_isa_handoffs (tenant_id, id, assignment_id, contact_id, reason, assistant_action_id, package, package_sha256, pending_message_id,
+          confirmation_status, sla_class, sla_due_at, recipient_user_id)
+        VALUES (app.tenant_id(), ${uuid()}, ${l.assignmentId}, ${l.contactId}, 'appointment_booked', ${handoffAction}, ${JSON.stringify(pkg)}::jsonb,
+          encode(sha256(convert_to(${JSON.stringify(pkg)}::jsonb::text, 'UTF8')), 'hex'), ${confirmation.messageId}, 'queued', 'critical', now() + interval '15 minutes', ${x.agent.id})`.execute(tx);
+      await sql`INSERT INTO ai_isa_stop_signals (tenant_id, contact_id, reason, source_table) VALUES (app.tenant_id(), ${l.contactId}, 'owner_change', 'contacts')`.execute(tx);
+    }, { db: h.app });
+    await control(l, 'system_end');
+    const before = await left(l.contactId);
+    expect(before).toMatchObject({ contacts: 1, assignments: 1, controls: 3, turns: 2, facts: 1, handoffs: 1, stop_signals: 1 });
+    return l;
+  }
+
+  it('app.erase_contact erases a person with an ended assignment, its controls, a sent turn and fact, a handoff and a proposed confirmation; the stop signal stays as opt-out evidence', async () => {
+    const l = await caredFor();
+    expect(await erase(l.contactId)).toBe('ok');
+    expect(await left(l.contactId)).toEqual({ contacts: 0, assignments: 0, controls: 0, turns: 0, facts: 0, handoffs: 0, messages: 0, actions: 0, stop_signals: 1 });
+  });
+
+  it('app.erase_contact erases a person whose care is still live, with a control row and a queued AI message bound to its turn', async () => {
+    const l = await leadUnderCare(x);
+    await control(l, 'system_pause');
+    await inbound(x, l);
+    await queueAi(x, l);
+    expect(await erase(l.contactId)).toBe('ok');
+    expect(await left(l.contactId)).toMatchObject({ contacts: 0, assignments: 0, controls: 0, turns: 0, messages: 0 });
+  });
+
+  it('the retention sweep purges a soft-deleted person who was under AI care, and the other due person in the same run', async () => {
+    const l = await caredFor();
+    const plain = await selfCreated(h.app, w, x.agent, 'No Care Person');
+    for (const id of [l.contactId, plain]) {
+      expect((await cmd(h.app, w.owner.actor, id as never, { kind: 'soft_delete' })).outcome.ok).toBe(true);
+      await suFixture(h.su, "UPDATE contacts SET purge_after = now() - interval '1 minute' WHERE id = $1", [id]);
+    }
+    const r = await sweep();
+    expect(r.contacts_purged).toBeGreaterThanOrEqual(2);
+    expect(await left(l.contactId)).toMatchObject({ contacts: 0, assignments: 0, controls: 0, turns: 0, facts: 0, handoffs: 0, messages: 0, stop_signals: 1 });
+    expect((await left(plain)).contacts).toBe(0);
+  });
+
+  it('outside erasure the ledgers stay frozen: a control row is never deleted, a bound turn or a sent fact never loses its message', async () => {
+    const l = await leadUnderCare(x);
+    await control(l, 'system_pause');
+    await inbound(x, l);
+    const m = await queueAi(x, l, { channel: 'email', facts: 'listing_active' });
+    await h.su.query(`UPDATE ai_isa_shared_facts SET status = 'sent' WHERE message_id = $1`, [m.messageId]);
+    expect(await errOf(h.su.query(`DELETE FROM ai_isa_controls WHERE contact_id = $1`, [l.contactId]))).toBe('AI_ISA_LEDGER_APPEND_ONLY');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_turns SET message_id = NULL WHERE id = ${m.turnId}`))).toBe('AI_ISA_TURN_PLAN_FROZEN');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_shared_facts SET message_id = NULL WHERE message_id = ${m.messageId}`))).toBe('AI_ISA_FACT_FROZEN');
   });
 });
 

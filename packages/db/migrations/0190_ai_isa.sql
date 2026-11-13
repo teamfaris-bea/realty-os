@@ -17,7 +17,7 @@
 --  4. Stop-signal triggers on consent_events, suppressions and contacts.do_not_contact_at (R-ISA-31).
 --  5. The appointments lock and assistant-overlap trigger (R-ISA-13, E532).
 --  6. app.ai_isa_send_check (invoker, EXECUTE only for app_definer) and the guard's ai_isa_mandate branch (§5.4).
--- SECURITY REVIEW ITEMS: docs/ARCHITECTURE.md §21 "AI ISA (D12): the dispatch guard's ai_isa_mandate branch".
+-- SECURITY REVIEW ITEMS: docs/ARCHITECTURE.md §21.37 "Security notes: AI ISA".
 
 -- =============================================================================
 -- 1. Changed objects
@@ -436,7 +436,9 @@ CREATE TABLE ai_isa_handoffs (
   PRIMARY KEY (tenant_id, id),
   UNIQUE (tenant_id, assignment_id),
   FOREIGN KEY (tenant_id, assignment_id) REFERENCES ai_isa_assignments (tenant_id, id) ON DELETE CASCADE,
-  FOREIGN KEY (tenant_id, assistant_action_id) REFERENCES assistant_actions (tenant_id, id),
+  -- CASCADE (isa-2-1): only erasure deletes an assistant action, and it deletes the person's actions one cascade level
+  -- before their handoffs (contacts -> assignments -> handoffs); a NO ACTION check there would refuse the erasure
+  FOREIGN KEY (tenant_id, assistant_action_id) REFERENCES assistant_actions (tenant_id, id) ON DELETE CASCADE,
   CHECK (package_sha256 = encode(sha256(convert_to(package::text, 'UTF8')), 'hex')),
   CHECK ((acknowledged_at IS NULL) = (acknowledged_by_user_id IS NULL))
 );
@@ -819,9 +821,21 @@ BEGIN
 END $$;
 CREATE TRIGGER ai_isa_handoffs_guard BEFORE UPDATE ON ai_isa_handoffs FOR EACH ROW EXECUTE FUNCTION app.ai_isa_handoffs_guard();
 
--- controls, stop signals and shared facts (sent rows) are append-only ledgers
+-- controls, stop signals and shared facts (sent rows) are append-only ledgers.
+-- Erasure (isa-2-1; R-DATA-7): app.purge_contact_internal deletes the person's contacts rows and the children cascade
+-- (contacts -> assignments -> controls, turns, facts, slot offers, handoffs). The guards below let exactly that
+-- cascade through and nothing else: a control row is deleted only by the foreign-key cascade of its deleted assignment
+-- (pg_trigger_depth() > 1: fired from the cascade's trigger, never a direct DELETE; the parent row already gone), and
+-- the bound message_id of a turn or a fact becomes NULL only by its ON DELETE SET NULL (the message row already gone,
+-- every other column unchanged). Nobody else can delete an assignment or a message (no DELETE grant; the purge is the
+-- only path). Stop signals have no foreign key and are never deleted: they stay as opt-out evidence, like
+-- consent_events, holding only the keyed address hash or the erased contact's id (docs/AI_ISA.md §8.2).
 CREATE FUNCTION app.ai_isa_ledger_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF TG_OP = 'DELETE' AND TG_TABLE_NAME = 'ai_isa_controls' AND pg_trigger_depth() > 1
+     AND NOT EXISTS (SELECT 1 FROM public.ai_isa_assignments a WHERE a.tenant_id = OLD.tenant_id AND a.id = OLD.assignment_id) THEN
+    RETURN OLD;   -- the cascade of an erased person's assignment
+  END IF;
   RAISE EXCEPTION 'AI_ISA_LEDGER_APPEND_ONLY: % is insert-only', TG_TABLE_NAME USING ERRCODE = 'check_violation';
 END $$;
 CREATE TRIGGER ai_isa_controls_immutable BEFORE UPDATE OR DELETE ON ai_isa_controls FOR EACH ROW EXECUTE FUNCTION app.ai_isa_ledger_immutable();
@@ -830,6 +844,12 @@ CREATE FUNCTION app.ai_isa_shared_facts_guard() RETURNS trigger LANGUAGE plpgsql
 BEGIN
   -- another tenant's row: RLS refuses it (the guard never runs ahead of the tenant policy)
   IF app.tenant_id() IS DISTINCT FROM NEW.tenant_id THEN RETURN NEW; END IF;
+  -- erasure (isa-2-1): the fact's message was deleted; the fact goes with its assignment in the same statement
+  IF OLD.message_id IS NOT NULL AND NEW.message_id IS NULL AND pg_trigger_depth() > 1
+     AND (to_jsonb(OLD) - 'message_id') = (to_jsonb(NEW) - 'message_id')
+     AND NOT EXISTS (SELECT 1 FROM public.messages m WHERE m.tenant_id = OLD.tenant_id AND m.id = OLD.message_id) THEN
+    RETURN NEW;
+  END IF;
   IF OLD.status <> 'pending' OR NEW.status NOT IN ('pending','sent','canceled')
      OR (NEW.tenant_id, NEW.id, NEW.assignment_id, NEW.contact_id, NEW.listing_id, NEW.fact_kind, NEW.price_cents, NEW.line_sha256, NEW.created_at)
         IS DISTINCT FROM (OLD.tenant_id, OLD.id, OLD.assignment_id, OLD.contact_id, OLD.listing_id, OLD.fact_kind, OLD.price_cents,
@@ -852,7 +872,13 @@ BEGIN
        IS DISTINCT FROM (OLD.tenant_id, OLD.id, OLD.assignment_id, OLD.contact_id, OLD.seq, OLD.trigger_key, OLD.created_at) THEN
     RAISE EXCEPTION 'AI_ISA_TURN_IMMUTABLE' USING ERRCODE = 'check_violation';
   END IF;
-  -- the frozen send plan never changes once a message is bound
+  -- the frozen send plan never changes once a message is bound, except (isa-2-1) the ON DELETE SET NULL of an erased
+  -- message: the turn goes with its assignment in the same statement
+  IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT NULL AND NEW.message_id IS NULL AND pg_trigger_depth() > 1
+     AND (to_jsonb(OLD) - 'message_id' - 'updated_at') = (to_jsonb(NEW) - 'message_id' - 'updated_at')
+     AND NOT EXISTS (SELECT 1 FROM public.messages m WHERE m.tenant_id = OLD.tenant_id AND m.id = OLD.message_id) THEN
+    RETURN NEW;
+  END IF;
   IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT NULL
      AND (NEW.message_id, NEW.body_sha256, NEW.channel, NEW.message_kind) IS DISTINCT FROM (OLD.message_id, OLD.body_sha256, OLD.channel, OLD.message_kind) THEN
     RAISE EXCEPTION 'AI_ISA_TURN_PLAN_FROZEN' USING ERRCODE = 'check_violation';
@@ -1214,7 +1240,8 @@ END $$;
 REVOKE ALL ON FUNCTION app.ai_isa_send_check(public.messages) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.ai_isa_send_check(public.messages) TO app_definer;
 
--- The guard: the newest body (0065, telephony S3) verbatim, plus the one ai_isa_mandate branch in the autonomy CASE.
+-- The guard: the newest body (0065, telephony S3) verbatim, plus the ai_isa_mandate branch in the autonomy CASE and
+-- (batch 12, isa-2-2) the refusal of an AI ISA category under any other autonomy.
 CREATE OR REPLACE FUNCTION app.messages_dispatch_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
 DECLARE a record; paused timestamptz; ch text; pk text; own bytea[]; others bytea[]; exempt boolean; person uuid[];
@@ -1300,6 +1327,9 @@ BEGIN
       FROM public.assistant_actions aa WHERE aa.tenant_id = NEW.tenant_id AND aa.id = NEW.assistant_action_id;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'ASSISTANT_ACTION_MISSING' USING ERRCODE = 'check_violation';
+    ELSIF NEW.action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND a.autonomy IS DISTINCT FROM 'ai_isa_mandate' THEN
+      -- 0190 (batch 12, isa-2-2): an AI ISA category goes out only under the mandate, whoever sends it
+      RAISE EXCEPTION 'ISA_NOT_AUTHORIZED: AI assistant categories are sent only under the AI assistant mandate (assistant)' USING ERRCODE = 'check_violation';
     ELSIF a.autonomy = 'within_playbook' THEN
       -- b7 sends/F2: an autonomous message goes out only while its action is still proposed (it turns executed only
       -- after the provider accepted it); an action a merge or an ownership change invalidated withdrew the message
@@ -1347,6 +1377,7 @@ BEGIN
              OR position('im.from_address = NEW.to_address' IN p.prosrc) = 0
              OR position('NEW.channel = ''sms'' AND im.channel = ''mms''' IN p.prosrc) = 0
              OR position('app.ai_isa_send_check(NEW)' IN p.prosrc) = 0
+             OR position('a.autonomy IS DISTINCT FROM ''ai_isa_mandate''' IN p.prosrc) = 0
         FROM pg_proc p WHERE p.oid = 'app.messages_dispatch_guard()'::regprocedure) THEN
     RAISE EXCEPTION 'messages_dispatch_guard lost a rule';
   END IF;
