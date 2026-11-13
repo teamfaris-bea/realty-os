@@ -35,7 +35,7 @@ import { bookSlotInTx, type CalendarDeps } from '../../calendar/service.js';
 import { systemActor } from '../../worker/systemActor.js';
 import { confirmationInTime, formatSlot, type IsaSlot, step } from '../coreSeam.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaDeps } from '../effects.js';
-import { recipientFor } from '../handoff.js';
+import { UNREACHABLE_WHY_WORDS, humanReachable, recipientFor } from '../handoff.js';
 import { activeBlock, assignmentById, evaluateChain, lockForTurn, stopSignalSince } from '../repo.js';
 import { nextSendAtInTx, offerById, type OfferRow, openAppointmentOf } from './rows.js';
 
@@ -116,10 +116,16 @@ async function bookedCardInTx(tx: Tx, deps: IsaDeps, a: { id: string; contactId:
   const label = (await contactLabel(tx, a.contactId)) ?? 'A lead';
   // b12 review F1: the card goes where the handoff would (the root survivor's record and its recipient; recipientFor)
   const rec = await recipientFor(tx, a);
+  // b14 to-do (b13 review low): as confirmationNotSentInTx (718451fe), never invite a hand confirmation D1 leaves no
+  // channel for (a STOP or a do-not-contact that ended care under the booking, every point removed): keep or cancel it
+  const reach = await humanReachable(tx, rec.contactId);
+  const reasons = reach.any
+    ? [{ code, text: `Booked ${when} after AI care ended; the confirmation was not sent: confirm or cancel it yourself.`.slice(0, 200) }]
+    : [{ code, text: `Booked ${when} after AI care ended; the confirmation was not sent, and no text, call or email can reach them now (${UNREACHABLE_WHY_WORDS[reach.why ?? 'opted_out']}): keep or cancel the appointment.`.slice(0, 200) },
+       { code: 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE', text: 'No text, call or email can reach them now, so it cannot be confirmed by hand.' }];
   for (const userId of rec.primary ? [rec.primary] : rec.escalation) {
     await upsertFeedItem(tx, deps.ids, { userId, itemType: 'ai_isa_escalation', band: 'pinned', contactId: rec.contactId, subjectType: 'ai_isa_assignment', subjectId: a.id,
-      assistantActionId: null, score: 98, reasons: [{ code, text: `Booked ${when} after AI care ended; the confirmation was not sent: confirm or cancel it yourself.`.slice(0, 200) }],
-      dedupeKey: `ai_isa_booked:${o.id}` });
+      assistantActionId: null, score: 98, reasons, dedupeKey: `ai_isa_booked:${o.id}` });
     await notifyUser(tx, deps.ids, { userId, kind: 'ai_isa_handoff_hot', priority: 'critical', title: `Appointment needs you: ${label}`.slice(0, 120), body: null,
       subjectType: 'contact', subjectId: rec.contactId, dedupeKey: `ai_isa_booked:${o.id}` }, now);
   }

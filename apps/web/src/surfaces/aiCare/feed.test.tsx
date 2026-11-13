@@ -199,6 +199,16 @@ describe('AI care feed cards (module 76)', () => {
     expect(c.textContent).not.toMatch(/\b[A-Z]{2,}_[A-Z_]+\b/);
   });
 
+  it('E521 (b14 to-do, b13 review low): a booked-after-end card whose person no text, call or email can reach says keep or cancel, never "confirm it yourself"', async () => {
+    const label = 'Booked Tue Nov 17, 3:00–3:30 PM ET after AI care ended; the confirmation was not sent, and no text, call or email can reach them now (they opted out): keep or cancel the appointment.';
+    const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_BOOKED_AFTER_END', label }, { code: 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE', label: 'No text, call or email can reach them now, so it cannot be confirmed by hand.' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    isaApp(feedOf([esc]).on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel({ state: 'ended' }) }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_escalation');
+    expect(await within(c).findByText('An appointment was booked for Tue Nov 17, 3:00–3:30 PM ET after AI care ended. The confirmation was not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.')).toBeInTheDocument();
+    expect(within(c).getByRole('link', { name: 'Keep or cancel it in Tasks' })).toHaveAttribute('href', '/tasks');
+    expect(c.textContent).not.toMatch(/confirm or cancel it yourself|Confirm or cancel it in Tasks/);
+  });
+
   it('E521 (batch 13 isa-4 F1): a booked-not-handed-back card says an appointment was booked and the state care is in now, never that care ended', async () => {
     const label = 'Booked Tue Nov 17, 3:00–3:30 PM ET after AI care ended; the confirmation was not sent: confirm or cancel it yourself.';
     const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_BOOKED_NOT_HANDED_BACK', label }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });

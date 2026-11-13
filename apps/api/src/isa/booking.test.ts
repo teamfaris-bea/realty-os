@@ -674,7 +674,8 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect([ho.reason, ho.pending_message_id, ho.sla_class, ho.confirmation_status]).toEqual(['appointment_booked', null, 'none', 'refused']);
     expect(ho.package['notes']).toEqual(expect.arrayContaining(['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT']));
     expect(card.map((c) => [c.score, c.code])).toEqual([[98, 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE']]);
-    expect(card[0]!.text).toMatch(/cannot be confirmed by hand: keep or cancel the appointment/);
+    // b14 to-do (b13 final low): every point was removed, so the card says there are no contact details, never "they opted out"
+    expect(card[0]!.text).toBe('The appointment confirmation was not sent, and no text, call or email can reach them now (no contact details), so it cannot be confirmed by hand: keep or cancel the appointment.');
     expect(card[0]!.due_at).toBeNull();
     expect(notifications.length).toBeGreaterThanOrEqual(1);
     expect(notifications.every((n) => /^Appointment not confirmed: /.test(n.title))).toBe(true);
@@ -857,6 +858,32 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     const card = await h.su.query<{ reasons: { code: string; text: string }[]; score: number }>(`SELECT reasons, score FROM priority_feed_items WHERE contact_id = $1 AND dedupe_key LIKE 'ai_isa_booked:%'`, [l.id]);
     expect(card.rows[0]!.reasons[0]!.text).toMatch(/after AI care ended; the confirmation was not sent: confirm or cancel it yourself/);
     expect((await aiMessages(h, l.id)).some((m) => m.action_category === 'ai_isa_confirmation')).toBe(false);
+  });
+
+  it('R-ISA-15 E523 R-ISA-14 (b14 to-do, b13 review low): a STOP during tx#1 that leaves no text, call or email (every point removed too) → the booked-after-end card says keep or cancel, never "confirm it yourself"', async () => {
+    const { l } = await offered();
+    const { bookTestHooks } = await import('./booking/book.js');
+    bookTestHooks.afterCareRead = async () => {
+      bookTestHooks.afterCareRead = undefined;
+      await inboundSms(h, l.phone, bw.mainNumber, 'STOP');
+      await h.su.query(`UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'old' WHERE contact_id = $1 AND status <> 'removed'`, [l.id]);
+      await runIsa(h, bw.tenantId, 2, { beforeTick: async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND kind = 'ai_isa.book' AND status = 'pending'`, [bw.tenantId]); } });
+    };
+    try {
+      await reply(l, '2');
+    } finally {
+      bookTestHooks.afterCareRead = undefined;
+    }
+    await runIsa(h, bw.tenantId, 3);
+    expect((await assignmentOf(h, l.id))!.end_reason).toBe('opted_out');
+    expect((await offerOf(l.id))!.status).toBe('accepted');
+    const card = await h.su.query<{ reasons: { code: string; text: string }[] }>(`SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND dedupe_key LIKE 'ai_isa_booked:%'`, [l.id]);
+    expect(card.rows).toHaveLength(1);
+    const [booked, unreachable] = card.rows[0]!.reasons;
+    expect(booked!.code).toBe('AI_ISA_BOOKED_AFTER_END');
+    expect(booked!.text).toMatch(/^Booked .+ after AI care ended; the confirmation was not sent, and no text, call or email can reach them now \(no contact details\): keep or cancel the appointment\.$/);
+    expect(booked!.text).not.toMatch(/confirm or cancel it yourself/);
+    expect(unreachable).toEqual({ code: 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE', text: 'No text, call or email can reach them now, so it cannot be confirmed by hand.' });
   });
 
   it('R-ISA-13 E529: "2 works. Also what\'s our house worth?" books and holds pricing, one message carrying both lines', async () => {

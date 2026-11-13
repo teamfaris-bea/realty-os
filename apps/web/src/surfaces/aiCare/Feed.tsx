@@ -129,19 +129,21 @@ export type EscalationType = 'hold_topic' | 'check_this' | 'booked_after_end' | 
  * carry AI_ISA_BOOKED_AFTER_END or AI_ISA_BOOKED_NOT_HANDED_BACK with the booked time in their sentence (batch 13 isa-4
  * F1); any other code is an unknown check (type null), said as "Another check" with no claim.
  */
-export function escalationOf(card: Pick<FeedCard, 'reasons'>): { type: EscalationType; cls: string; when: string | null } {
+export function escalationOf(card: Pick<FeedCard, 'reasons'>): { type: EscalationType; cls: string; when: string | null; unreachable: boolean } {
   const r = card.reasons.find((x) => x.code.startsWith('AI_ISA_'));
   const code = r?.code ?? '';
-  if (code === 'AI_ISA_BOOKED_AFTER_END') return { type: 'booked_after_end', cls: '', when: bookedWhen(r?.label) };
-  if (code === 'AI_ISA_BOOKED_NOT_HANDED_BACK') return { type: 'booked_not_handed_back', cls: '', when: bookedWhen(r?.label) };
+  // b14 to-do: a booking card whose person D1 leaves no text, call or email carries this second reason (bookedCardInTx)
+  const unreachable = card.reasons.some((x) => x.code === 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE');
+  if (code === 'AI_ISA_BOOKED_AFTER_END') return { type: 'booked_after_end', cls: '', when: bookedWhen(r?.label), unreachable };
+  if (code === 'AI_ISA_BOOKED_NOT_HANDED_BACK') return { type: 'booked_not_handed_back', cls: '', when: bookedWhen(r?.label), unreachable };
   const m = /^AI_ISA_(HOLD_TOPIC|CHECK_THIS):([a-z_]+)$/.exec(code);
-  return m ? { type: m[1] === 'HOLD_TOPIC' ? 'hold_topic' : 'check_this', cls: m[2]!, when: null } : { type: null, cls: '', when: null };
+  return m ? { type: m[1] === 'HOLD_TOPIC' ? 'hold_topic' : 'check_this', cls: m[2]!, when: null, unreachable: false } : { type: null, cls: '', when: null, unreachable: false };
 }
 
 function EscalationBody({ card, viewer, ownerName }: { card: FeedCard; viewer: ViewerInfo; ownerName: string | null }) {
   const contactId = card.contact?.id ?? '';
   const panel = usePanel(contactId);
-  const { type, cls, when } = escalationOf(card);
+  const { type, cls, when, unreachable } = escalationOf(card);
   const resolve = useIsaAction<{ class: string }, { cleared: string }>('POST', { kind: 'resolve', contactId });
   const [line, setLine] = useState<string | null>(null);
   const p = panel.data;
@@ -181,10 +183,10 @@ function EscalationBody({ card, viewer, ownerName }: { card: FeedCard; viewer: V
     const now = state === null || (type === 'booked_after_end' && state === 'ended') ? null : CARE_STATE_WORDS[state];
     return (
       <>
-        <p className="text-[15px] text-ink">{bookedWords(type, when)}</p>
+        <p className="text-[15px] text-ink">{bookedWords(type, when, unreachable)}</p>
         {now ? <p className="text-[15px] text-ink">{now}</p> : null}
         <Link to="/tasks" className="inline-flex min-h-tap items-center text-[15px] font-medium text-accent underline">
-          Confirm or cancel it in Tasks
+          {unreachable ? 'Keep or cancel it in Tasks' : 'Confirm or cancel it in Tasks'}
         </Link>
         {target && !ended ? <AiCareControls target={target} /> : null}
         <OpenThread contactId={contactId} />

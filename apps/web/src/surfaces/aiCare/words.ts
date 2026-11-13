@@ -178,9 +178,12 @@ export function bookedWhen(label: string | null | undefined): string | null {
   return t === null || t === 'the agreed time' ? null : t;
 }
 /** What a booking card says: AFTER_END is a booking after care ended; NOT_HANDED_BACK is one care did not hand back (it pauses care). */
-export function bookedWords(type: 'booked_after_end' | 'booked_not_handed_back', when: string | null): string {
+export function bookedWords(type: 'booked_after_end' | 'booked_not_handed_back', when: string | null, unreachable = false): string {
   const at = when ? ` for ${when}` : '';
-  const then = 'The confirmation was not sent: confirm or cancel it yourself.';
+  // b14 to-do: when D1 leaves no text, call or email, a hand confirmation is impossible (as CONFIRMATION_WORDS unreachable)
+  const then = unreachable
+    ? 'The confirmation was not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.'
+    : 'The confirmation was not sent: confirm or cancel it yourself.';
   return type === 'booked_after_end' ? `An appointment was booked${at} after AI care ended. ${then}` : `An appointment was booked${at}. ${then}`;
 }
 /** The state care is in now, from the panel (never assumed from a card). */

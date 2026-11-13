@@ -122,13 +122,23 @@ export async function confirmationNotSentOf(tx: Tx, h: { contactId: string; conf
   return (await humanReachable(tx, root)).any ? 'by_hand' : 'unreachable';
 }
 
-/** Whether D1 leaves any human channel to the person (a text or call to a phone, an email): its reachability. */
-async function humanReachable(tx: Tx, contactId: string): Promise<{ any: boolean; callback: boolean }> {
+/** Why D1 leaves the person no human channel (b14 to-do): they opted out (a person-level do-not-contact, or every
+ *  channel of their live points), or they have no live phone or email at all (every point removed). */
+export type UnreachableWhy = 'opted_out' | 'no_contact_details';
+/** How a card says it, in parentheses after "no text, call or email can reach them now". */
+export const UNREACHABLE_WHY_WORDS: Record<UnreachableWhy, string> = {
+  opted_out: 'they opted out',
+  no_contact_details: 'no contact details',
+};
+
+/** Whether D1 leaves any human channel to the person (a text or call to a phone, an email): its reachability, and why
+ *  not when none is left. */
+export async function humanReachable(tx: Tx, contactId: string): Promise<{ any: boolean; callback: boolean; why: UnreachableWhy | null }> {
   const o = await optOutFactsOf(tx, contactId);
-  if (o.personDoNotContact) return { any: false, callback: false };
+  if (o.personDoNotContact) return { any: false, callback: false, why: 'opted_out' };
   const any = o.reach.points.some((p) => (p.kind === 'phone' ? (['sms', 'voice'] as const) : (['email'] as const))
     .some((ch) => pointBlocks(o.reach, p, ch, 'informational').length === 0));
-  return { any, callback: phoneCallbackAllowed(o, null) };
+  return { any, callback: phoneCallbackAllowed(o, null), why: any ? null : o.reach.points.length === 0 ? 'no_contact_details' : 'opted_out' };
 }
 
 export interface HandoffInput {
@@ -540,7 +550,8 @@ export async function confirmationNotSentInTx(tx: Tx, ids: IdGenerator, h: { id:
   if (deadline) await sql`UPDATE ai_isa_handoffs SET sla_due_at = least(sla_due_at, ${due}) WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND sla_met_at IS NULL`.execute(tx);
   const reason = reach.any
     ? { code: 'AI_ISA_CONFIRMATION_NOT_SENT', text: 'The appointment confirmation was not sent: confirm it by hand.' }
-    : { code: 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE', text: 'The appointment confirmation was not sent, and no text, call or email can reach them now (they opted out), so it cannot be confirmed by hand: keep or cancel the appointment.' };
+    // b14 to-do (b13 final low): says why none is left (no contact details when every point was removed), never assumes an opt-out
+    : { code: 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE', text: `The appointment confirmation was not sent, and no text, call or email can reach them now (${UNREACHABLE_WHY_WORDS[reach.why ?? 'opted_out']}), so it cannot be confirmed by hand: keep or cancel the appointment.` };
   await sql`UPDATE priority_feed_items SET score = 98, band = 'pinned', due_at = CASE WHEN ${deadline} THEN least(COALESCE(due_at, ${due}), ${due}) ELSE due_at END,
       reasons = ${JSON.stringify([reason])}::jsonb, updated_at = now()
     WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
