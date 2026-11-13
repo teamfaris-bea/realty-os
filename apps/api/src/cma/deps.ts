@@ -66,7 +66,14 @@ export { fairHousingPack, identityOf } from '../marketing/repo.js';
 export { check as fairHousingCheck } from '@realty/core/fairhousing';
 export { money, miles } from '@realty/core/valuation';
 export { feedStale, type DisplayListing } from '@realty/core/listings';
-export { DISPATCH_DENY_SENTENCES, type CommsDeps, type DecisionView, createHumanEmailInTx, depsFromPlatform, dispatchOutbound, previewHumanMessage } from '../comms/index.js';
+// Each from its own module, not the comms/index.ts barrel: the barrel also re-exports comms/routes.ts (webhooks, voice
+// take-over, the AI call's facts), and cma/deps.ts is reachable from mailSync/** through the AI ISA's seller seam, so
+// the barrel would give mailSync a value import path to assistant/** (R-GMAIL-14; batch 13 integration).
+export { DISPATCH_DENY_SENTENCES } from '../comms/gateInput.js';
+export type { CommsDeps, DecisionView } from '../comms/types.js';
+export { createHumanEmailInTx, previewHumanMessage } from '../comms/compose.js';
+export { depsFromPlatform } from '../comms/runtime.js';
+export { dispatchOutbound } from '../comms/dispatch.js';
 
 /** V1-A's tier read names → V1-B's tier names (the same areas: V1-A reads geo cells, V1-B measures the real distance). */
 export const ENGINE_TIER: Readonly<Record<SoldTier, CmaTier | 'rate_pool'>> = Object.freeze({

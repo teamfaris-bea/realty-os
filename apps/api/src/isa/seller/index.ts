@@ -368,4 +368,3 @@ export async function factPlaceholdersInTx(tx: Tx, messageIds: readonly string[]
   return new Map(r.rows.map((x) => [x.message_id, x.sold ? COMPS_PLACEHOLDER : FACTS_PLACEHOLDER]));
 }
 
-export { sellerRoutes } from './routes.js';
