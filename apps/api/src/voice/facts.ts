@@ -8,7 +8,6 @@
 // Everything runs as the system actor inside the caller's transaction (RLS-scoped to the tenant). Hot-rule storage
 // does not exist (O2): deps.hotRuleFor answers null in production, so nobody is transferred live (R-VOICE-24).
 import type { IdentityFacts } from '@realty/core/assistant';
-import type { ReachabilityInput, ReachPoint, ReachSuppression } from '@realty/core/compliance';
 import { type BusinessCalendar, type CallId, type ContactId, type Instant, type PlaybookVersionId, type UserId, instantFromDate } from '@realty/core/foundation';
 import type { MemberFacts } from '@realty/core/ownership';
 import { type CallFacts, type HotRule, type PlatformVoicePack, type VoiceFacts, type VoicePlaybookFacts, type VoiceSettings, DEFAULT_TRANSFER_HOLD_SECONDS, MAX_TRANSFER_HOLD_SECONDS, MIN_TRANSFER_HOLD_SECONDS, approvedVoiceContent } from '@realty/core/voice';
@@ -169,25 +168,6 @@ export async function hasVerifiedAlertPhone(tx: Tx, userId: string | null): Prom
   return r.rows[0]?.ok === true;
 }
 
-/** The caller's opt-out facts as the send-time gate reads them (comms/reachability.ts:280-286; R-PAR-12). */
-export async function optOutFactsOf(tx: Tx, contactId: string): Promise<VoiceFacts['optOuts']> {
-  const pts = ((await rr.pointsForContacts(tx, [contactId])).get(contactId) ?? []).filter((p): p is typeof p & { kind: 'phone' | 'email' } => p.kind === 'phone' || p.kind === 'email');
-  const removedPhoneHmacs = (await rr.removedFanoutPhones(tx, [contactId])).get(contactId) ?? [];
-  const dnc = (await rr.personDoNotContactFor(tx, [contactId])).get(contactId) ?? null;
-  const own = new Set(pts.map((p) => p.hmac));
-  const keys = new Set([...own, ...removedPhoneHmacs]);
-  const consent = await rr.consentStateFor(tx, [...keys]);
-  const sups = await rr.suppressionsFor(tx, [...own]);
-  const reach: ReachabilityInput = {
-    points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
-    removedPhoneHmacs,
-    consent: consent.filter((r) => keys.has(r.addressHmac)),
-    suppressions: sups.filter((x) => own.has(x.addressHmac)).map((x): ReachSuppression => ({ id: x.id, addressHmac: x.addressHmac, channel: x.channel, reason: x.reason, liftedAt: x.liftedAt ? instantFromDate(x.liftedAt) : null })),
-    personDoNotContact: dnc !== null,
-  };
-  return { reach, personDoNotContact: dnc !== null };
-}
-
 export interface SessionFacts {
   facts: VoiceFacts;
   /** side facts module 48 needs (not core's) */
@@ -215,7 +195,7 @@ export async function loadSessionFacts(tx: Tx, call: AnswerCall, o: { playbook: 
     hotRule: o.hotRule,
     offeredSlots: [],
     keywords: policy.keywords,
-    optOuts: await optOutFactsOf(tx, call.contactId),
+    optOuts: await rr.optOutFactsOf(tx, call.contactId),
     coveredLanguages: COVERED_LANGUAGES,
     maxTurnLatencyMs: o.pack.maxTurnLatencyMs,
     identity,

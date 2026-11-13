@@ -292,12 +292,8 @@ export async function upsertFeed(tx: Tx, ids: IdGenerator, f: FeedSpec): Promise
 }
 
 /**
- * Closes the caller's open feed items about an action (approve / reject / dismiss). resolved_by stays NULL: the module
- * that owns the subject handled it, which is final for the card's key (workspace/feed.ts). An AI ISA handoff that is
- * done closes its card this way too (isa/handoff.ts closeHandoffInTx; b12 recheck R22).
+ * Closes the caller's open feed items about an action (approve / reject / dismiss): comms/repos/notify.ts
+ * resolveFeedFor, re-exported here for the assistant's own callers. It lives there so that isa/handoff.ts, which is
+ * reachable from mailSync/**, closes a handoff's card with no value import of assistant/** (R-GMAIL-14).
  */
-export async function resolveFeedFor(tx: Tx, actionId: string, now: Instant): Promise<void> {
-  await sql`
-    UPDATE priority_feed_items SET state = 'done', resolved_at = ${toIso(now)}::timestamptz, snoozed_until = NULL, updated_at = now()
-     WHERE tenant_id = app.tenant_id() AND assistant_action_id = ${actionId} AND state IN ('open','snoozed')`.execute(tx);
-}
+export { resolveFeedFor } from '../../comms/repos/notify.js';

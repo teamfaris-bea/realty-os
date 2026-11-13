@@ -2,8 +2,9 @@
 // A fixed number of queries per request, never one per point or per message (no N+1), all under the
 // caller's RLS: consent_events are visible only for the caller's visible contact points or tenant-wide
 // roles, import batches only where import_records are visible, user names only for members.
-import type { ConsentStateRow, SuppressionReason } from '@realty/core/compliance';
+import type { ConsentStateRow, ReachabilityInput, ReachPoint, ReachSuppression, SuppressionReason } from '@realty/core/compliance';
 import { instantFromDate } from '@realty/core/foundation';
+import type { OptOutFacts } from '@realty/core/voice';
 import { type Tx, hmacBytes } from '@realty/db';
 import { sql } from 'kysely';
 import type { PointRow } from './gate.js';
@@ -213,6 +214,32 @@ export async function personDoNotContactFor(tx: Tx, contactIds: readonly string[
            AND x.id = ANY ((SELECT app.contact_person_ids(app.tenant_id(), c.id))::uuid[])
          ORDER BY x.do_not_contact_at, x.id LIMIT 1) d`.execute(tx);
   return new Map(r.rows.map((x) => [x.contact_id, { eventId: x.event_id, at: x.at }]));
+}
+
+/**
+ * One contact's opt-out facts as the send-time gate reads them (comms/reachability.ts:280-286; R-PAR-12): core's
+ * ReachabilityInput (live phone and email points, the removed phones whose opt-out still counts, consent, suppressions)
+ * and the person-level do-not-contact. Read by the AI call (voice/facts.ts loadSessionFacts) and by the AI ISA handoff
+ * (isa/handoff.ts humanReachable). It lives here, not in voice/facts.ts, so that isa/handoff.ts, which is reachable
+ * from mailSync/**, reads it with no value import path to assistant/** (voice/facts.ts reads the assistant's identity
+ * facts; R-GMAIL-14).
+ */
+export async function optOutFactsOf(tx: Tx, contactId: string): Promise<OptOutFacts> {
+  const pts = ((await pointsForContacts(tx, [contactId])).get(contactId) ?? []).filter((p): p is typeof p & { kind: 'phone' | 'email' } => p.kind === 'phone' || p.kind === 'email');
+  const removedPhoneHmacs = (await removedFanoutPhones(tx, [contactId])).get(contactId) ?? [];
+  const dnc = (await personDoNotContactFor(tx, [contactId])).get(contactId) ?? null;
+  const own = new Set(pts.map((p) => p.hmac));
+  const keys = new Set([...own, ...removedPhoneHmacs]);
+  const consent = await consentStateFor(tx, [...keys]);
+  const sups = await suppressionsFor(tx, [...own]);
+  const reach: ReachabilityInput = {
+    points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
+    removedPhoneHmacs,
+    consent: consent.filter((r) => keys.has(r.addressHmac)),
+    suppressions: sups.filter((x) => own.has(x.addressHmac)).map((x): ReachSuppression => ({ id: x.id, addressHmac: x.addressHmac, channel: x.channel, reason: x.reason, liftedAt: x.liftedAt ? instantFromDate(x.liftedAt) : null })),
+    personDoNotContact: dnc !== null,
+  };
+  return { reach, personDoNotContact: dnc !== null };
 }
 
 /**
