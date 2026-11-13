@@ -6,7 +6,9 @@
 import { randomUUID } from 'node:crypto';
 import type { TenantId } from '@realty/core/foundation';
 import type { ResoLike } from '@realty/core/listings';
+import { withTenantTx } from '@realty/db';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
+import { depsFromPlatform } from '../comms/index.js';
 import { type LeadsWorld, call, leadsWorld, randomPhone } from '../leads/testing.js';
 import { syncConnection } from '../mls/sync.js';
 import { REVIEWED_PACK, makeDue, mlsConnection, mlsDeps, pagedFeed } from '../mls/testing.js';
@@ -239,4 +241,105 @@ export const codes = (b: CmaBody) => b.cma.clientShare.blockers.map((x) => x.cod
 
 export async function oneTap(client: TestClient, contactId: string, body: Record<string, unknown> = {}) {
   return call<CmaBody>(client, 'POST', `/contacts/${contactId}/cma`, body);
+}
+
+// ---- V2-A sharing fixtures (append only; synthetic, fakes only) ---------------------------------------------------
+
+export interface ShareWorld extends CmaWorld {
+  /** the agent of agents[0]'s email identity (a verified fixture domain; the fake email provider records every send) */
+  identityId: string;
+}
+
+/**
+ * A CMA world whose agents[0] can send email: a verified fixture sending domain on the fake provider, an identity for
+ * agents[0], and the brokerage's postal address (the email footer). Nothing real is configured or sent.
+ */
+export async function shareWorld(h: ApiHarness, o: Parameters<typeof cmaWorld>[1] = {}): Promise<ShareWorld> {
+  const w = await cmaWorld(h, o);
+  const { freshReauth, suFixture } = await import('../leads/testing.js');
+  await freshReauth(h, w.owner);
+  const domain = `mail-${randomUUID().slice(0, 8)}.example.test`;
+  h.providers.email.verifiedDomains.add(domain);
+  const dom = await call<{ domain: { id: string } }>(w.owner, 'POST', '/sending-domains', { domain });
+  if (dom.status !== 201) throw new Error(`sending domain: ${dom.status} ${JSON.stringify(dom.body)}`);
+  await call(w.owner, 'POST', `/sending-domains/${dom.body.domain.id}/verify`);
+  const ident = await call<{ identity: { id: string } }>(w.owner, 'POST', '/email-identities', { fromAddress: `agent-${randomUUID().slice(0, 6)}@${domain}`, displayName: 'Agent A (test)', userId: w.agents[0]!.userId, domainId: dom.body.domain.id });
+  if (ident.status !== 201) throw new Error(`identity: ${ident.status} ${JSON.stringify(ident.body)}`);
+  await suFixture(h, [{ text: "UPDATE tenant_settings SET brokerage_postal_address = '1 Sample Plaza, Oakland, CA 94110', brokerage_legal_name = 'Sample Brokerage (test)' WHERE tenant_id = $1", values: [w.tenantId] }]);
+  return { ...w, identityId: ident.body.identity.id };
+}
+
+let emailN = 0;
+/** A synthetic email address on the reserved example domain. */
+export function fixtureEmail(): string {
+  emailN += 1;
+  return `seller-${Date.now() % 1_000_000}-${emailN}@example.test`;
+}
+
+/** A seller of `agent` with an email, a property address and an earlier MLS sale of the home (the CMA's facts). */
+export async function emailSeller(w: CmaWorld, agent: TestClient, o: { name?: string; line1?: string; email?: string | null } = {}): Promise<{ c: string; email: string | null; line1: string }> {
+  const email = o.email === undefined ? fixtureEmail() : o.email;
+  const r = await call<{ contact: { id: string } }>(agent, 'POST', '/contacts', { commandId: randomUUID(), displayName: o.name ?? 'Sam Seller', firstName: (o.name ?? 'Sam Seller').split(' ')[0], phones: [randomPhone()], ...(email === null ? {} : { emails: [email] }), confirmDistinct: true });
+  if (r.status !== 201 && r.status !== 200) throw new Error(`contact: ${r.status} ${JSON.stringify(r.body)}`);
+  const c = r.body.contact.id;
+  const line1 = o.line1 ?? `${1000 + Math.floor(Math.random() * 8000)} Sample Avenue`;
+  await address(w.h, w.tenantId, c, { kind: 'property', line1 });
+  await mlsSale(w, { line1, closeDate: daysAgo(4 * 365), sqft: 1500, beds: 3 });
+  return { c, email, line1 };
+}
+
+/** Records platform:cma's counsel review in THIS test database only, for `fn`, and clears it again (D9, D11). */
+export async function withPlatformCmaCleared<T>(h: ApiHarness, fn: () => Promise<T>): Promise<T> {
+  await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:cma'");
+  try {
+    return await fn();
+  } finally {
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma'");
+  }
+}
+
+export interface PreviewBody {
+  preview: {
+    cmaId: string;
+    contentSha256: string;
+    reportSha256: string | null;
+    subject: string | null;
+    reportText: string | null;
+    body: string | null;
+    recipients: { contactId: string; firstName: string; relationship: string; emails: { id: string; address: string; status: string }[] }[];
+    recipientContactId: string | null;
+    toPointId: string | null;
+    decision: { outcome: string; reasons: string[]; explanation: string } | null;
+    warnings: { code: string; role: string; codePoints?: string[] }[];
+    statement: { ok: boolean; part: string | null; reason: string | null; codePoints: string[] };
+    tooLong: { parts: { role: string; chars: number }[] } | null;
+    disclosureMissing: string[];
+    fairHousing: { hard: { termId: string; where: string }[]; soft: { termId: string; where: string }[] };
+    blockers: { code: string; sentence: string }[];
+    stale: string | null;
+    canShare: boolean;
+    sentence: string | null;
+  };
+}
+
+export async function sharePreview(client: TestClient, cmaId: string, q: { recipientContactId?: string; toPointId?: string } = {}) {
+  const qs = new URLSearchParams(q as Record<string, string>).toString();
+  return call<PreviewBody>(client, 'GET', `/cma/${cmaId}/share-preview${qs ? `?${qs}` : ''}`);
+}
+
+export interface ShareBodyOut {
+  cma: CmaBody['cma'] & { share: { sharedByUserId: string; message: { id: string; status: string; statusReason: string | null; sentence: string } | null } | null; pdfAvailable: boolean; contentSha256: string };
+  message: { id: string; status: string; result: string };
+}
+
+/** POST /cma/:id/share with what the preview showed (overrides for the stale and recipient cases). */
+export async function shareFrom(client: TestClient, p: PreviewBody['preview'], o: Partial<{ recipientContactId: string; toPointId: string; contentSha256: string; reportSha256: string }> = {}) {
+  return call<ShareBodyOut>(client, 'POST', `/cma/${p.cmaId}/share`, { recipientContactId: p.recipientContactId, toPointId: p.toPointId, contentSha256: p.contentSha256, reportSha256: p.reportSha256, ...o });
+}
+
+/** The share with dispatch:false (tests only, unreachable over HTTP): the email stays queued for the sweep and R-GATE-14 tests. */
+export async function shareQueued(h: ApiHarness, client: TestClient, pv: PreviewBody['preview']) {
+  const { shareCma } = await import('./share.js');
+  const actor = client.actor();
+  return shareCma((fn) => withTenantTx(actor, (tx, now) => fn(tx, now as number, actor), { db: h.app.platform.db }), depsFromPlatform(h.app.platform), actor, pv.cmaId, { recipientContactId: pv.recipientContactId!, toPointId: pv.toPointId!, contentSha256: pv.contentSha256, reportSha256: pv.reportSha256! }, { dispatch: false, recheck: async () => {} });
 }

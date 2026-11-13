@@ -330,6 +330,93 @@ async function viewOf(actor: UserActor, messageId: string, deps: CommsDeps): Pro
   });
 }
 
+// ---- a human email inside the caller's transaction (module 71's CMA share; flagged export, PHASE2_3_PLAN §5.3) -------
+
+export interface HumanEmailSpec {
+  contactId: string;
+  toPointId: string;
+  subject: string;
+  body: string;
+  /** the command's key; stored as `h:{user}:{key}` like composeHumanMessage's, so a replay finds the same message */
+  idempotencyKey: string;
+}
+
+export type HumanEmailResult = { ok: true; messageId: string; created: boolean } | { ok: false; code: 'CONTACT_POINT_MISSING' | 'SENDER_UNAVAILABLE' | 'CONTACT_MERGED' };
+
+/**
+ * The compose box's immediate human email (ARCHITECTURE §9 path 1), created in the CALLER's user transaction, so a
+ * module can create it in the same transaction as its own write (the CMA share freezes the CMA with this message: the
+ * S0 guard needs the person, and messages_insert admits a non-tenant-wide person only for their own human message;
+ * module 71 finding F-A). It follows composeHumanMessage's email transaction step by step: the `h:{user}:` key and its
+ * replay, the visible contact and the merge refusal, SUBJECT_REQUIRED, draftFor with the actor and the human purpose
+ * classification (never forced), the unsubscribe link when marketing, the signature and footer, initiator 'human' with
+ * actionCategory 'none', and the insert race. Two stated differences: (a) it enqueues comms.dispatch in the same
+ * transaction (the due-work sweep never re-enqueues an immediate message, so a crash after commit would otherwise leave
+ * it queued forever); (b) with no sender it returns SENDER_UNAVAILABLE and stores no blocked decision (the caller's
+ * preview showed that deny; a caller that refuses rolls back the thread draftFor ensured). It never sends: the caller
+ * runs dispatchOutbound after commit, and the send-time gate decides (D1, R-GATE-14). Throws NOT_FOUND for a contact
+ * the actor cannot see in detail and SUBJECT_REQUIRED for an empty subject. Like composeHumanMessage, a message it
+ * creates takes over live AI care (R-ISA-3: ISA-2's takeoverInTx, in the same transaction; batch 13); a replay does not.
+ */
+export async function createHumanEmailInTx(tx: Tx, deps: Pick<CommsDeps, 'ids' | 'publicBaseUrl' | 'linkSecret'>, actor: UserActor, spec: HumanEmailSpec, now: Instant): Promise<HumanEmailResult> {
+  const key = `h:${actor.userId}:${spec.idempotencyKey}`;
+  const prior = await msgs.messageByIdempotencyKey(tx, key);
+  if (prior) {
+    if (prior.contactId !== spec.contactId) throw new AppError('NOT_FOUND');
+    return { ok: true, messageId: prior.id, created: false };
+  }
+  const c = await detailVisibleContact(tx, spec.contactId);
+  if (!c) throw new AppError('NOT_FOUND');
+  if (c.mergedIntoContactId !== null) return { ok: false, code: 'CONTACT_MERGED' };
+  if (!spec.subject.trim()) throw new AppError('SUBJECT_REQUIRED');
+  let d: Draft;
+  try {
+    d = await draftFor(tx, deps as CommsDeps, spec.contactId, actor.userId, 'email', spec.toPointId, now);
+  } catch (e) {
+    if (e instanceof AppError && e.code === 'CONTACT_POINT_MISSING') return { ok: false, code: 'CONTACT_POINT_MISSING' };
+    throw e;
+  }
+  if (!d.fromAddress) return { ok: false, code: 'SENDER_UNAVAILABLE' };
+  const messageId = deps.ids.next<'MessageId'>();
+  const { tenant } = await resolvedPolicy(tx);
+  const unsub = d.purpose === 'marketing' ? unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, actor.tenantId, messageId) : null;
+  const body = renderHumanBody(spec.body, { channel: 'email', purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub, signature: await senderSignature(tx) });
+  const inserted = await msgs.insertOutbound(tx, {
+    id: messageId,
+    conversationId: d.conversationId,
+    contactId: spec.contactId,
+    channel: 'email',
+    phoneNumberId: d.phoneNumberId,
+    emailIdentityId: d.emailIdentityId,
+    fromAddress: d.fromAddress,
+    toAddress: d.point.address,
+    subject: spec.subject.trim().slice(0, 300),
+    body,
+    status: 'queued',
+    scheduledFor: null,
+    initiator: 'human',
+    initiatedByUserId: actor.userId,
+    purpose: d.purpose,
+    actionCategory: 'none',
+    assistantActionId: null,
+    playbookStepRunId: null,
+    pinnedInboundSeq: d.inboundSeq,
+    idempotencyKey: key,
+    occurredAt: now,
+    bulkActionId: null,
+    integrationConnectionId: null,
+    marketingPieceId: null,
+  });
+  if (!inserted) {
+    const winner = await msgs.messageByIdempotencyKey(tx, key);
+    if (!winner || winner.contactId !== spec.contactId) throw new AppError('NOT_FOUND');
+    return { ok: true, messageId: winner.id, created: false };
+  }
+  await takeoverInTx(tx, deps.ids, actor, spec.contactId, now); // R-ISA-3: a one-to-one human message takes over live AI care
+  await enqueueTyped(tx, COMMS_DISPATCH, { messageId }, { dedupeKey: COMMS_DISPATCH.dedupeKey({ messageId }) });
+  return { ok: true, messageId, created: true };
+}
+
 // ---- assistant / system messages -----------------------------------------------------------------
 
 export interface QueueSpec {

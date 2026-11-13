@@ -29,11 +29,26 @@ export const CmaSubjectFactsSchema = z
 export type CmaSubjectFacts = z.infer<typeof CmaSubjectFactsSchema>;
 
 const Id = z.uuid();
-const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** A real calendar date (a round trip, so '2026-02-30' is a 422 naming the field, never a 500 at the ::date cast; E607). */
+export function isCalendarDay(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+const Day = z.string().refine(isCalendarDay, { message: 'not_a_date' });
+/** The agent's own text: no control character other than a line break (R-CMA-9; the report is plain text). */
+export function noControlCharacter(s: string): boolean {
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if ((c < 0x20 && c !== 0x0a) || c === 0x7f) return false;
+  }
+  return true;
+}
+const AgentText = (max: number) => z.string().trim().max(max).refine(noControlCharacter, { message: 'control_character' });
 const Purpose = z.enum(['listing_price', 'buyer_offer', 'other']);
 const Inspection = z.enum(['none', 'exterior', 'interior_and_exterior']);
 const IdList = z.array(Id).max(100);
-const Short = z.string().trim().max(2000).nullable();
+const Short = AgentText(2000).nullable();
 
 export const IdParams = z.object({ id: Id });
 
@@ -67,7 +82,7 @@ export const PatchBody = z
     purpose: Purpose.optional(),
     inspection: Inspection.optional(),
     inspectedOn: Day.nullable().optional(),
-    notes: z.string().trim().max(4000).nullable().optional(),
+    notes: AgentText(4000).nullable().optional(),
     disclosure: z.object({ intendedUsers: Short.optional(), agentInterest: Short.optional(), conflicts: Short.optional(), valueDefinition: Short.optional(), limitingConditions: Short.optional() }).strict().optional(),
     nearMatchDismissed: IdList.optional(),
   })
@@ -188,7 +203,20 @@ export const CmaViewSchema = z.object({
   backtest: z.object({ salesTested: z.number(), notValued: z.number(), medianMissBps: N, within10PctBps: N, windowStart: z.string(), sentence: z.string() }),
   /** avmDisplayAllowed is null while the record has not been re-read since the feed's flag was added (gates/F4) */
   nearMatches: z.array(z.object({ listingId: z.string(), mlsNumber: z.string().nullable(), address: z.string(), status: z.string(), listingBrokerageName: z.string().nullable(), avmDisplayAllowed: z.boolean().nullable(), dismissed: z.boolean() })),
-  /** client readiness (R-CMA-7); D9: nothing is shared in V1, so sharingAvailable is false and the sentence says so */
+  /** the stored content hash (the share preview and the share compare it: E601) */
+  contentSha256: z.string(),
+  /** what CMA_DISCLOSURE_INCOMPLETE would name now: SoP items for purpose 'other', and the inspection date (E606) */
+  disclosureMissing: z.array(z.enum(['intendedUsers', 'agentInterest', 'conflicts', 'valueDefinition', 'limitingConditions', 'inspectedOn'])),
+  /** the share (R-CMA-9): who shared it, and its email as the viewer may read it (null: not visible to the viewer) */
+  share: z
+    .object({
+      sharedByUserId: Id,
+      message: z.object({ id: Id, status: z.string(), statusReason: z.string().nullable(), sentence: z.string() }).nullable(),
+    })
+    .nullable(),
+  /** the report PDF may be downloaded now: the CMA is shared and readiness holds (R-CMA-9) */
+  pdfAvailable: z.boolean(),
+  /** client readiness (R-CMA-7), the V1 field kept unchanged; sharing is the share preview's (R-CMA-9, share-preview) */
   clientShare: z.object({
     ready: z.boolean(),
     sharingAvailable: z.literal(false),
@@ -222,5 +250,50 @@ export const CmaListResponse = z.object({
   ),
 });
 
+// ---- V2-A sharing (R-CMA-9) ----------------------------------------------------------------------------------
+
+export const SharePreviewQuery = z.object({ recipientContactId: Id.optional(), toPointId: Id.optional() }).strict();
+
+const Sha = z.string().regex(/^[0-9a-f]{64}$/);
+export const ShareBody = z.object({ recipientContactId: Id, toPointId: Id, contentSha256: Sha, reportSha256: Sha }).strict();
+
+const Where = z.enum(['notes', 'intendedUsers', 'agentInterest', 'conflicts', 'valueDefinition', 'limitingConditions', 'inspectedOn']);
+const FhMatch = z.object({ termId: z.string(), label: z.string(), where: Where });
+const Role = z.enum(['title', 'range', 'estimate', 'provider', 'statement', 'comp', 'as_of', 'inspection', 'sop', 'notes', 'attribution', 'disclaimer']);
+
+export const SharePreviewResponse = z.object({
+  preview: z.object({
+    cmaId: Id,
+    contentSha256: z.string(),
+    reportSha256: z.string().nullable(),
+    subject: z.string().nullable(),
+    reportText: z.string().nullable(),
+    body: z.string().nullable(),
+    recipients: z.array(
+      z.object({
+        contactId: Id,
+        name: z.string(),
+        firstName: z.string(),
+        relationship: z.enum(['self', 'co_seller', 'spouse_partner']),
+        emails: z.array(z.object({ id: Id, address: z.string(), status: z.string() })),
+      }),
+    ),
+    recipientContactId: Id.nullable(),
+    toPointId: Id.nullable(),
+    decision: z.object({ id: z.string().nullable(), outcome: z.string(), reasons: z.array(z.string()), explanation: z.string(), phase: z.enum(['preview', 'send']) }).nullable(),
+    warnings: z.array(z.object({ code: z.enum(['WONT_PRINT', 'CHECK_WORDING']), role: Role, codePoints: z.array(z.string()).optional() })),
+    statement: z.object({ ok: z.boolean(), part: z.string().nullable(), reason: z.string().nullable(), codePoints: z.array(z.string()) }),
+    tooLong: z.object({ parts: z.array(z.object({ role: Role, chars: z.number() })) }).nullable(),
+    disclosureMissing: z.array(Where),
+    fairHousing: z.object({ hard: z.array(FhMatch), soft: z.array(FhMatch) }),
+    blockers: z.array(z.object({ code: z.enum(BLOCKER_CODES), sentence: z.string(), count: z.number().optional(), listingIds: z.array(z.string()).optional() })),
+    stale: z.enum(['DATA_OLD', 'SALE_CHANGED']).nullable(),
+    canShare: z.boolean(),
+    sentence: z.string().nullable(),
+  }),
+});
+
+export const ShareResponse = z.object({ cma: CmaViewSchema, message: z.object({ id: Id, status: z.string(), result: z.string() }) });
+
 /** Every response schema of the module (the R-AST-13 snapshot walks these). */
-export const CMA_RESPONSE_SCHEMAS = { CmaResponse, CmaListResponse } as const;
+export const CMA_RESPONSE_SCHEMAS = { CmaResponse, CmaListResponse, SharePreviewResponse, ShareResponse } as const;

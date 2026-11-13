@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import type { DocumentRenderer, RenderedPdf } from './types.js';
 
-const SIZE: Record<string, number> = { display: 28, heading: 18, body: 12, small: 9, footnote: 7 };
+export const SIZE: Record<string, number> = { display: 28, heading: 18, body: 12, small: 9, footnote: 7 };
 const FIXED_DATE = new Date(Date.UTC(2026, 0, 1));
 const PAGE: [number, number] = [612, 792]; // US Letter
 const MARGIN = 54;

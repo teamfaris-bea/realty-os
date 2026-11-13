@@ -642,6 +642,9 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             },
           ],
         },
+        "contentSha256": {
+          "type": "string",
+        },
         "context": {
           "items": {
             "additionalProperties": false,
@@ -775,6 +778,20 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "limitingConditions",
           ],
           "type": "object",
+        },
+        "disclosureMissing": {
+          "items": {
+            "enum": [
+              "intendedUsers",
+              "agentInterest",
+              "conflicts",
+              "valueDefinition",
+              "limitingConditions",
+              "inspectedOn",
+            ],
+            "type": "string",
+          },
+          "type": "array",
         },
         "id": {
           "format": "uuid",
@@ -1022,6 +1039,9 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "null",
           ],
         },
+        "pdfAvailable": {
+          "type": "boolean",
+        },
         "purpose": {
           "enum": [
             "listing_price",
@@ -1138,6 +1158,64 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "distanceSpanM",
           ],
           "type": "object",
+        },
+        "share": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "sentence": {
+                          "type": "string",
+                        },
+                        "status": {
+                          "type": "string",
+                        },
+                        "statusReason": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "id",
+                        "status",
+                        "statusReason",
+                        "sentence",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "sharedByUserId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "sharedByUserId",
+                "message",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
         },
         "sharedAt": {
           "type": [
@@ -1764,6 +1842,10 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
         "market",
         "backtest",
         "nearMatches",
+        "contentSha256",
+        "disclosureMissing",
+        "share",
+        "pdfAvailable",
         "clientShare",
       ],
       "type": "object",
@@ -1771,6 +1853,2257 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
   },
   "required": [
     "cma",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > SharePreviewResponse 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "preview": {
+      "additionalProperties": false,
+      "properties": {
+        "blockers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "PLATFORM_NOT_CLEARED",
+                  "FEED_DISCONNECTED",
+                  "VALUATION_USE_WITHDRAWN",
+                  "MLS_CLIENT_DISPLAY_OFF",
+                  "FEED_STALE",
+                  "CLIENT_USE_NOT_ALLOWED",
+                  "VALUATION_NOT_REVIEWED",
+                  "NO_VALUATION_STATEMENT",
+                  "COMPS_HIDDEN",
+                  "SUBJECT_ADDRESS_UNKNOWN",
+                  "SELLER_WITHHELD",
+                  "POSSIBLE_LIVE_LISTING",
+                  "SIZE_NOT_LIVING_AREA",
+                  "NO_VALUE",
+                ],
+                "type": "string",
+              },
+              "count": {
+                "type": "number",
+              },
+              "listingIds": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "sentence": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "code",
+              "sentence",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "body": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "canShare": {
+          "type": "boolean",
+        },
+        "cmaId": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "contentSha256": {
+          "type": "string",
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "explanation": {
+                  "type": "string",
+                },
+                "id": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "outcome": {
+                  "type": "string",
+                },
+                "phase": {
+                  "enum": [
+                    "preview",
+                    "send",
+                  ],
+                  "type": "string",
+                },
+                "reasons": {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+              },
+              "required": [
+                "id",
+                "outcome",
+                "reasons",
+                "explanation",
+                "phase",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "disclosureMissing": {
+          "items": {
+            "enum": [
+              "notes",
+              "intendedUsers",
+              "agentInterest",
+              "conflicts",
+              "valueDefinition",
+              "limitingConditions",
+              "inspectedOn",
+            ],
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "fairHousing": {
+          "additionalProperties": false,
+          "properties": {
+            "hard": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                  },
+                  "termId": {
+                    "type": "string",
+                  },
+                  "where": {
+                    "enum": [
+                      "notes",
+                      "intendedUsers",
+                      "agentInterest",
+                      "conflicts",
+                      "valueDefinition",
+                      "limitingConditions",
+                      "inspectedOn",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "termId",
+                  "label",
+                  "where",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "soft": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                  },
+                  "termId": {
+                    "type": "string",
+                  },
+                  "where": {
+                    "enum": [
+                      "notes",
+                      "intendedUsers",
+                      "agentInterest",
+                      "conflicts",
+                      "valueDefinition",
+                      "limitingConditions",
+                      "inspectedOn",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "termId",
+                  "label",
+                  "where",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "hard",
+            "soft",
+          ],
+          "type": "object",
+        },
+        "recipientContactId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "recipients": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "emails": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "status": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "address",
+                    "status",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "firstName": {
+                "type": "string",
+              },
+              "name": {
+                "type": "string",
+              },
+              "relationship": {
+                "enum": [
+                  "self",
+                  "co_seller",
+                  "spouse_partner",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "contactId",
+              "name",
+              "firstName",
+              "relationship",
+              "emails",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "reportSha256": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "reportText": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "sentence": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "stale": {
+          "anyOf": [
+            {
+              "enum": [
+                "DATA_OLD",
+                "SALE_CHANGED",
+              ],
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "statement": {
+          "additionalProperties": false,
+          "properties": {
+            "codePoints": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "ok": {
+              "type": "boolean",
+            },
+            "part": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "ok",
+            "part",
+            "reason",
+            "codePoints",
+          ],
+          "type": "object",
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "toPointId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "tooLong": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "parts": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "chars": {
+                        "type": "number",
+                      },
+                      "role": {
+                        "enum": [
+                          "title",
+                          "range",
+                          "estimate",
+                          "provider",
+                          "statement",
+                          "comp",
+                          "as_of",
+                          "inspection",
+                          "sop",
+                          "notes",
+                          "attribution",
+                          "disclaimer",
+                        ],
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "role",
+                      "chars",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+              },
+              "required": [
+                "parts",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "warnings": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "WONT_PRINT",
+                  "CHECK_WORDING",
+                ],
+                "type": "string",
+              },
+              "codePoints": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "role": {
+                "enum": [
+                  "title",
+                  "range",
+                  "estimate",
+                  "provider",
+                  "statement",
+                  "comp",
+                  "as_of",
+                  "inspection",
+                  "sop",
+                  "notes",
+                  "attribution",
+                  "disclaimer",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "code",
+              "role",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "cmaId",
+        "contentSha256",
+        "reportSha256",
+        "subject",
+        "reportText",
+        "body",
+        "recipients",
+        "recipientContactId",
+        "toPointId",
+        "decision",
+        "warnings",
+        "statement",
+        "tooLong",
+        "disclosureMissing",
+        "fairHousing",
+        "blockers",
+        "stale",
+        "canShare",
+        "sentence",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "preview",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > ShareResponse 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cma": {
+      "additionalProperties": false,
+      "properties": {
+        "area": {
+          "additionalProperties": false,
+          "properties": {
+            "lookbackMonths": {
+              "type": "number",
+            },
+            "reads": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "limitReached": {
+                    "type": "boolean",
+                  },
+                  "ran": {
+                    "type": "boolean",
+                  },
+                  "rows": {
+                    "type": "number",
+                  },
+                  "tier": {
+                    "enum": [
+                      "subdivision",
+                      "within_1mi",
+                      "postal_code",
+                      "within_3mi",
+                      "city",
+                      "rate_pool",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "tier",
+                  "ran",
+                  "rows",
+                  "limitReached",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "recordsLeftOut": {
+              "type": "number",
+            },
+            "sentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "tier": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "subdivision",
+                    "within_1mi",
+                    "postal_code",
+                    "within_3mi",
+                    "city",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "tiersSkipped": {
+              "items": {
+                "enum": [
+                  "subdivision",
+                  "within_1mi",
+                  "postal_code",
+                  "within_3mi",
+                  "city",
+                ],
+                "type": "string",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "tier",
+            "lookbackMonths",
+            "tiersSkipped",
+            "reads",
+            "recordsLeftOut",
+            "sentences",
+          ],
+          "type": "object",
+        },
+        "backtest": {
+          "additionalProperties": false,
+          "properties": {
+            "medianMissBps": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "notValued": {
+              "type": "number",
+            },
+            "salesTested": {
+              "type": "number",
+            },
+            "sentence": {
+              "type": "string",
+            },
+            "windowStart": {
+              "type": "string",
+            },
+            "within10PctBps": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "salesTested",
+            "notValued",
+            "medianMissBps",
+            "within10PctBps",
+            "windowStart",
+            "sentence",
+          ],
+          "type": "object",
+        },
+        "canEdit": {
+          "type": "boolean",
+        },
+        "clientShare": {
+          "additionalProperties": false,
+          "properties": {
+            "blockers": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "PLATFORM_NOT_CLEARED",
+                      "FEED_DISCONNECTED",
+                      "VALUATION_USE_WITHDRAWN",
+                      "MLS_CLIENT_DISPLAY_OFF",
+                      "FEED_STALE",
+                      "CLIENT_USE_NOT_ALLOWED",
+                      "VALUATION_NOT_REVIEWED",
+                      "NO_VALUATION_STATEMENT",
+                      "COMPS_HIDDEN",
+                      "SUBJECT_ADDRESS_UNKNOWN",
+                      "SELLER_WITHHELD",
+                      "POSSIBLE_LIVE_LISTING",
+                      "SIZE_NOT_LIVING_AREA",
+                      "NO_VALUE",
+                    ],
+                    "type": "string",
+                  },
+                  "count": {
+                    "type": "number",
+                  },
+                  "listingIds": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "sentence": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "code",
+                  "sentence",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "estimateSentence": {
+              "type": "string",
+            },
+            "ready": {
+              "type": "boolean",
+            },
+            "sentence": {
+              "type": "string",
+            },
+            "sharingAvailable": {
+              "const": false,
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "ready",
+            "sharingAvailable",
+            "sentence",
+            "estimateSentence",
+            "blockers",
+          ],
+          "type": "object",
+        },
+        "comps": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "additionalProperties": false,
+                "properties": {
+                  "city": {
+                    "type": "string",
+                  },
+                  "line1": {
+                    "type": "string",
+                  },
+                  "line2": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "postalCode": {
+                    "type": "string",
+                  },
+                  "region": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "line1",
+                  "line2",
+                  "city",
+                  "region",
+                  "postalCode",
+                ],
+                "type": "object",
+              },
+              "adjustedPriceCents": {
+                "type": "number",
+              },
+              "adjustments": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "amountCents": {
+                      "type": "number",
+                    },
+                    "compValue": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "feature": {
+                      "type": "string",
+                    },
+                    "rate": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "sentence": {
+                      "type": "string",
+                    },
+                    "subjectValue": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "support": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "first": {
+                          "type": "number",
+                        },
+                        "kind": {
+                          "enum": [
+                            "with_without",
+                            "above_below",
+                            "sales_months",
+                            "none",
+                          ],
+                          "type": "string",
+                        },
+                        "pairs": {
+                          "type": "number",
+                        },
+                        "second": {
+                          "type": "number",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "first",
+                        "second",
+                        "pairs",
+                      ],
+                      "type": "object",
+                    },
+                  },
+                  "required": [
+                    "feature",
+                    "subjectValue",
+                    "compValue",
+                    "rate",
+                    "amountCents",
+                    "support",
+                    "sentence",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "closeDate": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "closePriceCents": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "contractDate": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "distanceM": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "facts": {
+                "additionalProperties": false,
+                "properties": {
+                  "bathsX10": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "beds": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "concessionsCents": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "daysOnMarket": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "lotSqft": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "propertyType": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "sizeSource": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "sqft": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "yearBuilt": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                },
+                "required": [
+                  "propertyType",
+                  "sqft",
+                  "sizeSource",
+                  "beds",
+                  "bathsX10",
+                  "yearBuilt",
+                  "lotSqft",
+                  "daysOnMarket",
+                  "concessionsCents",
+                ],
+                "type": "object",
+              },
+              "grossAdjustmentBps": {
+                "type": "number",
+              },
+              "includedByAgent": {
+                "type": "boolean",
+              },
+              "labels": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "listingBrokerageName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "listingId": {
+                "type": "string",
+              },
+              "mlsNumber": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "saleConditions": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "saleListingId": {
+                "type": "string",
+              },
+              "sourceLabel": {
+                "enum": [
+                  "MLS",
+                  "Team",
+                ],
+                "type": "string",
+              },
+              "tier": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "subdivision",
+                      "within_1mi",
+                      "postal_code",
+                      "within_3mi",
+                      "city",
+                    ],
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "weightBasisBps": {
+                "type": "number",
+              },
+              "weightBps": {
+                "type": "number",
+              },
+              "why": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "listingId",
+              "saleListingId",
+              "sourceLabel",
+              "mlsNumber",
+              "listingBrokerageName",
+              "address",
+              "closePriceCents",
+              "closeDate",
+              "contractDate",
+              "distanceM",
+              "tier",
+              "facts",
+              "adjustments",
+              "adjustedPriceCents",
+              "grossAdjustmentBps",
+              "weightBasisBps",
+              "weightBps",
+              "why",
+              "labels",
+              "saleConditions",
+              "includedByAgent",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "contactId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "contentSha256": {
+          "type": "string",
+        },
+        "context": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string",
+              },
+              "bathsX10": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "beds": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "listPriceCents": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "listingBrokerageName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "listingId": {
+                "type": "string",
+              },
+              "mlsNumber": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "sourceLabel": {
+                "enum": [
+                  "MLS",
+                  "Team",
+                ],
+                "type": "string",
+              },
+              "sqft": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "status": {
+                "type": "string",
+              },
+              "why": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "listingId",
+              "sourceLabel",
+              "mlsNumber",
+              "listingBrokerageName",
+              "status",
+              "listPriceCents",
+              "beds",
+              "bathsX10",
+              "sqft",
+              "address",
+              "why",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "contextSentence": {
+          "type": "string",
+        },
+        "createdAt": {
+          "type": "string",
+        },
+        "createdByUserId": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "disclosure": {
+          "additionalProperties": false,
+          "properties": {
+            "agentInterest": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "conflicts": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "intendedUsers": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "limitingConditions": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "valueDefinition": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "intendedUsers",
+            "agentInterest",
+            "conflicts",
+            "valueDefinition",
+            "limitingConditions",
+          ],
+          "type": "object",
+        },
+        "disclosureMissing": {
+          "items": {
+            "enum": [
+              "intendedUsers",
+              "agentInterest",
+              "conflicts",
+              "valueDefinition",
+              "limitingConditions",
+              "inspectedOn",
+            ],
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "inspectedOn": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "inspection": {
+          "enum": [
+            "none",
+            "exterior",
+            "interior_and_exterior",
+          ],
+          "type": "string",
+        },
+        "market": {
+          "additionalProperties": false,
+          "properties": {
+            "poolMonths": {
+              "type": "number",
+            },
+            "poolSales": {
+              "type": "number",
+            },
+            "poolTier": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "subdivision",
+                    "within_1mi",
+                    "postal_code",
+                    "within_3mi",
+                    "city",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "rates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "applied": {
+                    "type": "boolean",
+                  },
+                  "feature": {
+                    "type": "string",
+                  },
+                  "rate": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "sentence": {
+                    "type": "string",
+                  },
+                  "support": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "first": {
+                        "type": "number",
+                      },
+                      "kind": {
+                        "enum": [
+                          "with_without",
+                          "above_below",
+                          "sales_months",
+                          "none",
+                        ],
+                        "type": "string",
+                      },
+                      "pairs": {
+                        "type": "number",
+                      },
+                      "second": {
+                        "type": "number",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "first",
+                      "second",
+                      "pairs",
+                    ],
+                    "type": "object",
+                  },
+                },
+                "required": [
+                  "feature",
+                  "applied",
+                  "rate",
+                  "support",
+                  "sentence",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "sentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "poolTier",
+            "poolMonths",
+            "poolSales",
+            "rates",
+            "sentences",
+          ],
+          "type": "object",
+        },
+        "methodVersion": {
+          "type": "string",
+        },
+        "mine": {
+          "type": "boolean",
+        },
+        "mlsDataAsOf": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "mlsDataAsOfSentence": {
+          "type": "string",
+        },
+        "nearMatches": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string",
+              },
+              "avmDisplayAllowed": {
+                "type": [
+                  "boolean",
+                  "null",
+                ],
+              },
+              "dismissed": {
+                "type": "boolean",
+              },
+              "listingBrokerageName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "listingId": {
+                "type": "string",
+              },
+              "mlsNumber": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "status": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "listingId",
+              "mlsNumber",
+              "address",
+              "status",
+              "listingBrokerageName",
+              "avmDisplayAllowed",
+              "dismissed",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "notUsed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string",
+              },
+              "conditions": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "distanceM": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "includable": {
+                "type": "boolean",
+              },
+              "listingId": {
+                "type": "string",
+              },
+              "mlsNumber": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "reason": {
+                "type": "string",
+              },
+              "sentence": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "listingId",
+              "mlsNumber",
+              "address",
+              "reason",
+              "conditions",
+              "distanceM",
+              "sentence",
+              "includable",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "notUsedTotal": {
+          "type": "number",
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "pdfAvailable": {
+          "type": "boolean",
+        },
+        "purpose": {
+          "enum": [
+            "listing_price",
+            "buyer_offer",
+            "other",
+          ],
+          "type": "string",
+        },
+        "result": {
+          "additionalProperties": false,
+          "properties": {
+            "available": {
+              "type": "boolean",
+            },
+            "closeDateSpan": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "earliest": {
+                      "type": "string",
+                    },
+                    "latest": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "earliest",
+                    "latest",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "distanceSpanM": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "type": "number",
+                    },
+                    "min": {
+                      "type": "number",
+                    },
+                  },
+                  "required": [
+                    "min",
+                    "max",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "highCents": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "lowCents": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "NO_SALES",
+                    "INSUFFICIENT_COMPS",
+                    "SUBJECT_INCOMPLETE",
+                    "SUBJECT_TYPE_NOT_SUPPORTED",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "sentence": {
+              "type": "string",
+            },
+            "sentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "valueCents": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "available",
+            "reason",
+            "sentence",
+            "sentences",
+            "valueCents",
+            "lowCents",
+            "highCents",
+            "closeDateSpan",
+            "distanceSpanM",
+          ],
+          "type": "object",
+        },
+        "share": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "sentence": {
+                          "type": "string",
+                        },
+                        "status": {
+                          "type": "string",
+                        },
+                        "statusReason": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "id",
+                        "status",
+                        "statusReason",
+                        "sentence",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "sharedByUserId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "sharedByUserId",
+                "message",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "sharedAt": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "shared",
+            "superseded",
+          ],
+          "type": "string",
+        },
+        "subject": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "line1": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "line2": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "postalCode": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "region": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "line1",
+                "line2",
+                "city",
+                "region",
+                "postalCode",
+              ],
+              "type": "object",
+            },
+            "contactAddressId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "exclude": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "factSentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "facts": {
+              "additionalProperties": false,
+              "properties": {
+                "agentEnteredSqft": {
+                  "type": [
+                    "number",
+                    "null",
+                  ],
+                },
+                "bathsX10": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "beds": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "garageSpacesX10": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "lotSqft": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "mapLocation": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "known": {
+                      "type": "boolean",
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "known",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "poolPrivate": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "boolean",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "propertyType": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "single_family",
+                            "condo",
+                            "townhouse",
+                            "multi_family",
+                            "land",
+                            "manufactured",
+                            "other",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "sqft": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "storiesX10": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "subdivision": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+                "yearBuilt": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "mls",
+                            "team",
+                            "agent",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "value",
+                    "source",
+                  ],
+                  "type": "object",
+                },
+              },
+              "required": [
+                "propertyType",
+                "sqft",
+                "agentEnteredSqft",
+                "beds",
+                "bathsX10",
+                "yearBuilt",
+                "lotSqft",
+                "garageSpacesX10",
+                "storiesX10",
+                "poolPrivate",
+                "subdivision",
+                "mapLocation",
+              ],
+              "type": "object",
+            },
+            "include": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "kind": {
+              "enum": [
+                "listing",
+                "contact_address",
+                "entered",
+              ],
+              "type": "string",
+            },
+            "listingId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "nearMatchDismissed": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "saleHistory": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "closeDate": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "closePriceCents": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "listingBrokerageName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "listingId": {
+                    "type": "string",
+                  },
+                  "mlsNumber": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "status": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "listingId",
+                  "mlsNumber",
+                  "status",
+                  "closeDate",
+                  "closePriceCents",
+                  "listingBrokerageName",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "sizeSentence": {
+              "type": "string",
+            },
+            "state": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "kind",
+            "listingId",
+            "contactAddressId",
+            "address",
+            "state",
+            "sizeSentence",
+            "factSentences",
+            "facts",
+            "saleHistory",
+            "include",
+            "exclude",
+            "nearMatchDismissed",
+          ],
+          "type": "object",
+        },
+        "subjectSales": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "closeDate": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "closePriceCents": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "listingId": {
+                "type": "string",
+              },
+              "status": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "listingId",
+              "closeDate",
+              "closePriceCents",
+              "status",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "updatedAt": {
+          "type": "string",
+        },
+        "valuationDate": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+        "contactId",
+        "status",
+        "purpose",
+        "inspection",
+        "inspectedOn",
+        "disclosure",
+        "notes",
+        "createdByUserId",
+        "mine",
+        "canEdit",
+        "createdAt",
+        "updatedAt",
+        "sharedAt",
+        "valuationDate",
+        "mlsDataAsOf",
+        "mlsDataAsOfSentence",
+        "methodVersion",
+        "subject",
+        "result",
+        "comps",
+        "notUsed",
+        "notUsedTotal",
+        "subjectSales",
+        "context",
+        "contextSentence",
+        "area",
+        "market",
+        "backtest",
+        "nearMatches",
+        "contentSha256",
+        "disclosureMissing",
+        "share",
+        "pdfAvailable",
+        "clientShare",
+      ],
+      "type": "object",
+    },
+    "message": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "result": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+        "status",
+        "result",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "cma",
+    "message",
   ],
   "type": "object",
 }

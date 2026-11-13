@@ -13,6 +13,8 @@ export interface SweepIds {
   playbookId: string;
   importId: string;
   duplicateId: string;
+  /** module 72: one CMA draft of the agent's seller (Owner, Admin and Team Lead read it) */
+  cmaId: string;
 }
 
 export interface SweepPage {
@@ -109,6 +111,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/ai-care', roles: NOT_TC, url: at('/ai-care') },
   { path: '/settings/ai-assistant', roles: ['owner', 'admin', 'team_lead', 'agent'], url: at('/settings/ai-assistant') },
   { path: '/settings/ai-assistant/team', roles: ADMINS, url: at('/settings/ai-assistant/team') },
+  // module 72 (web/cma, lane V2-A): the roles with cma.prepare
+  { path: '/cma/:cmaId', roles: ['owner', 'admin', 'team_lead', 'agent'], url: (i) => `/cma/${i.cmaId}` },
 ];
 
 /** Screens outside the app frame (signed out). */

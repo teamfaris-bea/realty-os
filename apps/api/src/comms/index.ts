@@ -11,6 +11,8 @@ export { type DispatchOptions, type AlertResult, PROVIDER_OPT_OUT_CODES, dispatc
 export { type CallStatusEvent, type StartCallResult, RECORDING_ANNOUNCEMENT, applyCallStatus, dialOutbound, startCall } from './dial.js';
 export { type InboundEvent, type IngestResult, ingestInbound, systemReplyText } from './inbound.js';
 export { type ComposeInput, type ComposeResult, type QueueResult, type QueueSpec, composeHumanMessage, previewHumanMessage, queueOutboundInTx } from './compose.js';
+// module 71 (CMA share): the compose box's human email in the caller's transaction (flagged export, PHASE2_3_PLAN §5.3)
+export { type HumanEmailResult, type HumanEmailSpec, createHumanEmailInTx } from './compose.js';
 export { type RecordingReady, onRecordingReady, transcribeRecording } from './recordings.js';
 export { type StatusEvent, applyMessageStatus, nextStatus } from './status.js';
 export { DISPATCH_DENY_SENTENCES, PolicyUnavailableError, buildGateInput, evaluateGate } from './gateInput.js';

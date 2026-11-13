@@ -181,6 +181,7 @@ export const ACTIONS = [
   'gbp.reply', // module 53: draft, post or discard a public reply to a Google review (Owner/Admin; always a tap, R-GBP-1)
   'ai_isa.seller_facts', // module 75 seller part (ISA-3): the assistant builds and re-checks seller facts (system 'assistant' only; never a user; R-ISA-18)
   'ai_isa.subject_confirm', // module 75 seller part (ISA-3): confirm the seller's home, mark a near match a different home, resume comps (the lead's owner, as themselves; DB guard)
+  'cma.share', // module 71 (D9 V2-A): share a CMA, preview it, download its report (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; creator only for share and preview; R-CMA-9)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -408,6 +409,8 @@ export const AUDIT_ACTIONS = [
   'ai_isa.subject_disputed', // module 75 seller part (ISA-3): the seller's home facts were disputed (codes only)
   'ai_isa.comps_resumed', // module 75 seller part (ISA-3): the owner let the assistant keep sharing recent sales (reason code only)
   'ai_isa.near_match_dismissed', // module 75 seller part (ISA-3): the owner said a live listing is a different home (listing ids only)
+  'cma.shared', // module 71 (D9 V2-A): a CMA was shared by email (message, recipient and connection ids, soft term ids, method version; R-CMA-9)
+  'cma.report_downloaded', // module 71 (D9 V2-A): a shared CMA's report PDF was downloaded (cma id and the PDF's sha256; R-CMA-9)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -762,6 +765,9 @@ const MATRIX: Record<Action, ActionRule> = {
   // the lead's owner only, as themselves (ai_isa_seller_watch_guard is the backstop).
   'ai_isa.seller_facts': { roles: {}, system: ['assistant'] },
   'ai_isa.subject_confirm': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
+  // Module 71 (D9 V2-A, DATA_MODEL §8 "Share a CMA, preview it, download its report"): ✅ | ✅ | T | O | — | — | —; the share
+  // and its preview are the creator's only (api/cma share.ts, owner question g). A person only, never the system.
+  'cma.share': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

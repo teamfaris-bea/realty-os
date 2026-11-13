@@ -9,7 +9,8 @@
 //   patchCma      PATCH /cma/:id: drafts only (CMA_NOT_DRAFT); re-runs the engine; nearMatchDismissed is stored in the
 //                 subject (so the content hash covers it) and audited with ids only.
 //   listCmas      GET /contacts/:id/cmas: summaries for the contact and its merged-away records.
-// Every read and write runs as the caller under RLS. Nothing is sent in V1 (comms/** is not called).
+//   readinessOf   client readiness of a stored CMA now (R-CMA-7): the view, and V2-A's share, sweep and PDF.
+// Every read and write runs as the caller under RLS. The share (V2-A) is share.ts; nothing here sends.
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '@realty/core/compliance';
 import { type IanaZone, type Instant, type Role, type SystemActor, type UserActor, can, canAsRole, ianaZone, isRole, localDateOf } from '@realty/core/foundation';
@@ -43,7 +44,8 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type ClientShare, type CmaConnections, type NearMatch, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
+import { type ClientShare, type CmaConnections, type NearMatch, type ReadinessInput, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
+import { shareMessageSentence } from './report.js';
 import {
   type CmaInspection,
   type CmaPurpose,
@@ -60,6 +62,7 @@ import {
   myOpenDraft,
   myOpenDrafts,
   relinkAddress,
+  shareMessage,
   supersede,
   supersedeMyDraftsForHome,
   survivorSeenByCaller,
@@ -148,7 +151,7 @@ interface Inputs {
   nearMatchDismissed: string[];
 }
 
-async function zoneOf(tx: Tx): Promise<IanaZone> {
+export async function zoneOf(tx: Tx): Promise<IanaZone> {
   return (ianaZone(await tenantZoneName(tx)) ?? ('UTC' as IanaZone)) as IanaZone;
 }
 
@@ -395,7 +398,7 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
  * survivor only to a caller who sees it (R-PERM-5), also when contacts RLS hides the record itself from the caller
  * (its former agent opening their own CMA of it: db-public/F1, F2); any other contact the caller cannot see is 404.
  */
-async function assertContact(tx: Tx, contactId: string): Promise<void> {
+export async function assertContact(tx: Tx, contactId: string): Promise<void> {
   const c = await contactLive(tx, contactId);
   if (c !== null && c.live) return;
   const survivor = c === null || c.mergedInto !== null ? await survivorSeenByCaller(tx, contactId) : null;
@@ -417,6 +420,20 @@ async function supersedeMergedAwayDrafts(tx: Tx, contactId: string, w: CmaWrite)
   await supersedeMyDraftsForHome(tx, (await mergeTreeIds(tx, contactId)).filter((id) => id !== contactId), key);
 }
 
+/** The earliest inspection date accepted (E607). */
+export const EARLIEST_INSPECTION = '1900-01-01';
+
+/**
+ * The inspection date rules (E607, R-CMA-8): a date sent with an inspection of 'none' is refused, never dropped
+ * silently; a date must fall between 1900-01-01 and the valuation date (today in the tenant's zone). Paths only.
+ */
+async function checkInspectedOn(tx: Tx, now: Instant, inspection: CmaInspection, sent: string | null | undefined): Promise<void> {
+  if (sent === undefined || sent === null) return;
+  if (inspection === 'none') throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/inspectedOn', code: 'no_inspection' }] });
+  const today = localDateOf(now, await zoneOf(tx)) as string;
+  if (sent < EARLIEST_INSPECTION || sent > today) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/inspectedOn', code: 'out_of_range' }] });
+}
+
 export interface PrepareBody {
   subject: SubjectInput;
   contactId?: string | undefined;
@@ -429,6 +446,7 @@ export async function prepare(tx: Tx, actor: UserActor, now: Instant, b: Prepare
   const contactId = b.contactId ?? null;
   if (contactId !== null) await assertContact(tx, contactId);
   if (b.subject.kind === 'contact_address' && contactId === null) throw new AppError('VALIDATION_FAILED', { reason: 'CONTACT_REQUIRED' });
+  await checkInspectedOn(tx, now, b.inspection ?? 'none', b.inspectedOn);
   const { write } = await compute(tx, now, { subject: b.subject, contactId, purpose: b.purpose, inspection: b.inspection ?? 'none', inspectedOn: b.inspectedOn ?? null, notes: null, disclosure: NO_DISCLOSURE, include: [], exclude: [], nearMatchDismissed: [] });
   // an explicit prepare supersedes the caller's open drafts for this contact and address, a draft whose address was
   // deleted and put back included (F15: on one record, one open draft per address row; an entered or listing subject
@@ -537,6 +555,7 @@ export async function patch(tx: Tx, actor: UserActor, now: Instant, id: string, 
   const s = row.subject as unknown as StoredSubject;
   const input: SubjectInput = b.subjectFacts === undefined ? s.input : ({ ...s.input, facts: { ...s.input.facts, ...b.subjectFacts } } as SubjectInput);
   const inspection = b.inspection ?? row.inspection;
+  await checkInspectedOn(tx, now, inspection, b.inspectedOn);
   const inputs: Inputs = {
     subject: input,
     contactId: row.contact_id,
@@ -624,6 +643,72 @@ function summaryOf(actor: UserActor, contactId: string, r: CmaRow): Omit<CmaSumm
   };
 }
 
+/** The readiness of a stored CMA and what it was judged on (V2-A reuses both: the report and the stale checks). */
+export interface Readiness extends Awaited<ReturnType<typeof clientReadiness>> {
+  input: ReadinessInput;
+}
+
+/**
+ * Client readiness of a stored CMA now (R-CMA-7), as every view computes it: from the stored subject and comps and the
+ * live rows. Readiness never needs the agent gate to pass: a feed disconnected or a valuation use withdrawn after the
+ * CMA was prepared is its own blocker beside every other one that holds, and the stored CMA stays readable (gates/F5,
+ * api-ui/F1). `conns` lets a caller judging many CMAs (the sweep) read the connections once per pass.
+ */
+export async function readinessOf(tx: Tx, now: Instant, row: CmaRow, conns?: CmaConnections): Promise<Readiness> {
+  const s = row.subject as unknown as StoredSubject;
+  const r = row.result as unknown as StoredResult;
+  const input: ReadinessInput = {
+    conns: conns ?? (await readinessConnections(tx, now)),
+    now,
+    state: s.resolved.state,
+    addressKey: s.resolved.addressKey,
+    addressLine: s.resolved.address.line1,
+    subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
+    compSales: r.comps.map((c) => {
+      const l = listingOf(r, c.ref.identity);
+      return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
+    }),
+    readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
+    nearMatchDismissed: s.nearMatchDismissed,
+    hasValue: row.value_cents !== null,
+    // R-MLS-7: a stored subject or comp size from a field that is never finished living area blocks under every use
+    notLivingArea: storedNotLivingArea(s, r),
+  };
+  return { ...(await clientReadiness(tx, input)), input };
+}
+
+/**
+ * R-MLS-7 (the owner's MLS size rule): whether the stored subject's or any stored comp's size came from a field that is
+ * never finished living area (core SIZE_FIELDS_NEVER_USED, BuildingAreaTotal among them). Every readiness input of a
+ * stored CMA computes it here, never a literal false: the view, the share, the sweep and the PDF.
+ */
+export function storedNotLivingArea(s: Pick<StoredSubject, 'resolved'>, r: Pick<StoredResult, 'comps'>): boolean {
+  return notLivingAreaSize([s.resolved.sizeSource, ...r.comps.map((c) => c.sale.sizeSource)]);
+}
+
+/** The listing behind one engine identity (the engine's references carry no address). */
+export function listingOf(r: StoredResult, identity: string): RefListing {
+  return r.listings[identity] ?? { saleListingId: identity, teamListingId: null, sourceLabel: 'MLS', mlsNumber: null, listingBrokerageName: null, address: { line1: '', line2: null, city: '', region: '', postalCode: '' } };
+}
+
+const SOP_KEYS = ['intendedUsers', 'agentInterest', 'conflicts', 'valueDefinition', 'limitingConditions'] as const;
+export type DisclosureField = (typeof SOP_KEYS)[number] | 'inspectedOn';
+
+/** What CMA_DISCLOSURE_INCOMPLETE names (E606): SoP 11-1 items for purpose 'other', and an inspection's date. */
+export function disclosureMissing(row: Pick<CmaRow, 'purpose' | 'inspection' | 'inspected_on'> & { disclosure: Disclosure }): DisclosureField[] {
+  const out: DisclosureField[] = [];
+  if (row.purpose === 'other') for (const k of SOP_KEYS) if (row.disclosure[k] === null || row.disclosure[k]!.trim() === '') out.push(k);
+  if (row.inspection !== 'none' && row.inspected_on === null) out.push('inspectedOn');
+  return out;
+}
+
+/** The share as the viewer may read it (null: never shared). */
+async function shareView(tx: Tx, row: CmaRow) {
+  if (row.shared_by_user_id === null) return null;
+  const m = row.shared_message_id === null ? null : await shareMessage(tx, row.shared_message_id);
+  return { sharedByUserId: row.shared_by_user_id, message: m === null ? null : { id: m.id, status: m.status, statusReason: m.status_reason, sentence: shareMessageSentence(m) } };
+}
+
 // ---- the view ----------------------------------------------------------------------------------
 
 export type CmaView = Awaited<ReturnType<typeof viewOf>>;
@@ -632,29 +717,11 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
   const s = row.subject as unknown as StoredSubject;
   const r = row.result as unknown as StoredResult;
   const zone = await zoneOf(tx);
-  const listing = (identity: string): RefListing =>
-    r.listings[identity] ?? { saleListingId: identity, teamListingId: null, sourceLabel: 'MLS', mlsNumber: null, listingBrokerageName: null, address: { line1: '', line2: null, city: '', region: '', postalCode: '' } };
+  const listing = (identity: string): RefListing => listingOf(r, identity);
   // R-MLS-7: a CMA stored before 0082 with sizes from total building area (or another never-used field) stays as stored
-  // (R-CMA-8), but its view leads with why it does not hold, and readiness blocks it
-  const notLivingArea = notLivingAreaSize([s.resolved.sizeSource, ...r.comps.map((c) => c.sale.sizeSource)]);
-  // readiness never needs the agent gate to pass: a feed disconnected or a valuation use withdrawn after the CMA was
-  // prepared is its own blocker beside every other one that holds, and the stored CMA stays readable (gates/F5, api-ui/F1)
-  const { share, nearMatches: matches } = await clientReadiness(tx, {
-    conns: await readinessConnections(tx, now),
-    now,
-    state: s.resolved.state,
-    addressKey: s.resolved.addressKey,
-    addressLine: s.resolved.address.line1,
-    subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
-    compSales: r.comps.map((c) => {
-      const l = listing(c.ref.identity);
-      return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
-    }),
-    readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
-    nearMatchDismissed: s.nearMatchDismissed,
-    hasValue: row.value_cents !== null,
-    notLivingArea,
-  });
+  // (R-CMA-8), but its view leads with why it does not hold, and readiness blocks it (readinessOf computes the same)
+  const notLivingArea = storedNotLivingArea(s, r);
+  const { share, nearMatches: matches } = await readinessOf(tx, now, row);
   const facts = s.resolved.facts;
   const comp = (c: StoredResult['comps'][number]) => {
     const l = listing(c.ref.identity);
@@ -767,6 +834,10 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     },
     backtest: r.backtest,
     nearMatches: matches,
+    contentSha256: row.content_sha256,
+    disclosureMissing: disclosureMissing({ ...row, disclosure: disclosureOf(row) }),
+    share: await shareView(tx, row),
+    pdfAvailable: row.status === 'shared' && share.ready,
     clientShare: share,
   };
 }
