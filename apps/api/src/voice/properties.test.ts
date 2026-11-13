@@ -39,7 +39,7 @@ const ext: fc.Arbitrary<Ext> = fc.oneof(
   fc.record({ kind: fc.constant('wait' as const), ms: fc.integer({ min: 0, max: 30 }) }),
 );
 
-describe('R-VOICE-7 R-VOICE-16 property: one handback, one transfer outcome, no foreign id', () => {
+describe('R-VOICE-7 R-VOICE-15 R-VOICE-19 property: one handback, one transfer outcome, no foreign id', () => {
   it('R-VOICE-7: any interleaving', async () => {
     await fc.assert(
       fc.asyncProperty(fc.constantFrom('hotTransfer', 'ownerNoAnswer', 'booking', 'hangupMidBooking') as fc.Arbitrary<keyof typeof SCRIPTS>, fc.array(ext, { maxLength: 6 }), fc.boolean(), fc.integer({ min: 0, max: 80 }), async (name, actions, ignorePending, delay) => {

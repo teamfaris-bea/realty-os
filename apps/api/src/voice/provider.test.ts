@@ -30,8 +30,8 @@ async function drain(t: FakeVoiceTransport, untilMs = 60_000) {
   return out;
 }
 
-describe('R-VOICE-11: the voice agent is a source-neutral port with a deterministic fake and an honest unconfigured state', () => {
-  it('R-VOICE-11: production without ALLOW_FAKE_PROVIDERS gets UnconfiguredVoiceAgent, whose connect and reconnect refuse with VOICE_VENDOR_NOT_CONFIGURED', async () => {
+describe('R-VOICE-12: the voice agent is a source-neutral port with a deterministic fake and an honest unconfigured state', () => {
+  it('R-VOICE-12: production without ALLOW_FAKE_PROVIDERS gets UnconfiguredVoiceAgent, whose connect and reconnect refuse with VOICE_VENDOR_NOT_CONFIGURED', async () => {
     expect(createFakeProviders().voiceAgent).toBeInstanceOf(FakeVoiceAgent);
     expect(createProviders(testConfig(), { clock: clock as never }).voiceAgent).toBeInstanceOf(FakeVoiceAgent);
     const prod = createProviders({ ...testConfig(), env: 'production', allowFakeProviders: false }, { clock: clock as never }).voiceAgent;
@@ -48,7 +48,7 @@ describe('R-VOICE-11: the voice agent is a source-neutral port with a determinis
     for (const k of VOICE_SESSION_CONTEXT_KEYS) expect(k).not.toMatch(/contact|name|phone|email|address|claim|owner/i);
   });
 
-  it('R-VOICE-11: the fake replays a script on its virtual clock, drops the events module 48 makes and turns claims into raw proposals after a caller turn', async () => {
+  it('module 48 item 1: the fake replays a script on its virtual clock, drops the events module 48 makes and turns claims into raw proposals after a caller turn', async () => {
     const f = new FakeVoiceAgent(clock);
     f.nextCall(SCRIPTS.hotTransfer);
     const { response, transport } = await f.connect({ callRef: 'CA1', sessionId: 'sess-1', tenantId: 't1', context: CONTEXT });
@@ -81,7 +81,7 @@ describe('R-VOICE-11: the voice agent is a source-neutral port with a determinis
     expect(await c.next({ until: (c.clock.now() + 1) as never, pending: null })).toBeNull();
   });
 
-  it('R-VOICE-11: says issued while handed off are queued until reconnect; reconnect of an unknown session refuses', async () => {
+  it('R-VOICE-19: says issued while handed off are queued until reconnect; reconnect of an unknown session refuses', async () => {
     const f = new FakeVoiceAgent(clock);
     const { transport } = await f.connect({ callRef: 'CA1', sessionId: 's1', tenantId: 't1', context: CONTEXT });
     await transport.handOff('<Response/>');

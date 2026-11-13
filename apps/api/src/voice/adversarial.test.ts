@@ -1,4 +1,4 @@
-// Module 48 adversarial (R-VOICE-4, R-VOICE-6, R-VOICE-8, R-TEN-1, R-DATA-6; E438): injected transfer numbers and foreign
+// Module 48 adversarial (R-VOICE-4, R-VOICE-6, R-VOICE-8, R-TEN-1, R-DATA-6): injected transfer numbers and foreign
 // member ids, a cross-tenant signed ref and reconnect, PII in tool args, model turns that claim to be human.
 import { OTHER_MEMBER_ID, OWNER_ID, SCRIPTS, SCRIPT_EVENTS as ev, FIXTURE_HOT_RULE, HOT_CLAIMS } from '@realty/core/voice/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -64,8 +64,8 @@ describe('R-VOICE-6 R-VOICE-4: the model\'s words never choose a target', () => 
   });
 });
 
-describe('E438 R-TEN-1: a ref or a session of another tenant does nothing', () => {
-  it("E438: tenant A's signed ref naming tenant B's call, on screen, accept and dial-result, changes nothing in B; A's fake cannot reconnect B's session", async () => {
+describe('R-TEN-1: a ref or a session of another tenant does nothing', () => {
+  it("R-TEN-1: tenant A's signed ref naming tenant B's call, on screen, accept and dial-result, changes nothing in B; A's fake cannot reconnect B's session", async () => {
     const c = await aiCall(h, b, SCRIPTS.hotTransfer, { faults: { idMap: { [OWNER_ID]: b.agents[0]!.userId! }, pauseOnHandOff: true }, settle: false });
     await waitFor(() => h.providers.voiceAgent.transportOf(b.tenantId, c.callId)?.isHandedOff === true, 'the transfer hand-off');
     const forged = inboundCallRef(depsFromPlatform(h.app.platform), a.tenantId, c.callId);

@@ -253,6 +253,13 @@ timers and provider health, and can retry or cancel a job (audited).
 - **Turn it back on** only after that check, by the same DEPLOY steps (dry run with live calls off first).
 - **Escalate:** to the owner when the county's terms or permission changed; to the D10 lane owner for a code change.
 
+### 4.16 VOICE_HANDBACK_MISSING (P1 `WORKER_ERROR`, module 48 voice answering)
+- **Means:** `voice.reconcile` (every 5 minutes per tenant) found an AI-answered call with no handback 10 minutes after it ended, or `maxCallSeconds` + 10 minutes after the takeover (DATA_MODEL R-VOICE-21). It has already written one critical recovery handback for that call (audit `voice.handback_recovered`), so the agent has a card; a re-run writes nothing more. It can fire only where AI answering is on, which needs `platform:voice` cleared, a configured voice vendor and the Owner's attested switch: none of these is true in any environment today. The alert carries the tenant and call ids only, never the caller's number or words.
+- **Likely cause:** the process that ran the session restarted or crashed mid-call (sessions live in the process that took the call), or the end transaction failed.
+- **Fix first:** confirm the recovery handback reached the contact's owner (or the person the lead was offered to). If AI calls keep losing their sessions, turn AI answering off (`POST /api/voice/answering/disable`, Owner or Admin) and redeploy; every call then follows Phase 1's voicemail flow.
+- **Then check:** worker and API logs for a crash or restart at the call's time, and whether the vendor transport closed early (vendor items are **VERIFY**, N12).
+- **Escalate:** to the module 48 owner for a code fix; to the vendor for transport faults.
+
 ---
 
 ## 5. Error reporting

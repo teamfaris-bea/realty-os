@@ -1,4 +1,4 @@
-// Module 48: opt-outs heard in an AI call and the confirmation draft (R-VOICE-15, R-VOICE-17, D1, R-PAR-12,
+// Module 48: opt-outs heard in an AI call and the confirmation draft (R-VOICE-18, R-VOICE-17, D1, R-PAR-12,
 // R-CONSENT-7, R-CONSENT-8, R-CHAN-3, R-GATE-14; E112).
 import { randomUUID } from 'node:crypto';
 import { SCRIPTS, SCRIPT_EVENTS as ev, SLOT_A, SLOT_ARGS } from '@realty/core/voice/testing';
@@ -25,7 +25,7 @@ const hmacOf = (contactId: string, kind: string) => h.su.query("SELECT encode(ad
 
 const OPEN = [ev.disclosed(4000), ev.announced(7000), ev.model(7500, 'How can I help you today?')];
 
-describe('R-VOICE-15 R-CONSENT-7: an opt-out heard in the call is applied as planInboundEffects on voice', () => {
+describe('R-VOICE-18 R-CONSENT-7: an opt-out heard in the call is applied as planInboundEffects on voice', () => {
   it('R-CONSENT-7: a spoken STOP revokes voice on the caller\'s address only, cites the call, and the ledger carries core\'s channel', async () => {
     const second = `+1555010${String(Date.now()).slice(-4)}`;
     const c0 = await ownedContact(w.agents[0]!, { consent: false });

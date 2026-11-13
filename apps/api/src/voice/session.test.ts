@@ -1,5 +1,6 @@
 // Module 48 items 5 and 7: the runner's ledger, ordering, booking, recording and merge edges
-// (R-VOICE-2, R-VOICE-4, R-VOICE-7, R-VOICE-10, R-VOICE-14, R-VOICE-18, R-VOICE-20; E116, E117, E423–E431).
+// (R-VOICE-2, R-VOICE-4, R-VOICE-7, R-VOICE-10, R-VOICE-11, R-VOICE-14, R-VOICE-15, R-VOICE-16; E116, E117, E421, E423–E425,
+// E427, E429, E430).
 import { SCRIPTS, SCRIPT_EVENTS as ev, SLOT_A, SLOT_ARGS, type VoiceScript } from '@realty/core/voice/testing';
 import { withTenantTx } from '@realty/db';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -28,8 +29,8 @@ afterAll(async () => {
 
 const OPEN = [ev.disclosed(4000), ev.announced(7000), ev.model(7500, 'How can I help you today?')];
 
-describe('R-VOICE-4 R-VOICE-14 E429 E431: the ledger is written exactly as core decided', () => {
-  it('R-VOICE-2 R-VOICE-4: a request before both disclosures is only in unlogged; allowed rows pass the DB allowlist', async () => {
+describe('R-VOICE-4 R-VOICE-14 E429: the ledger is written exactly as core decided', () => {
+  it('R-VOICE-2 R-VOICE-4 E429: a request before both disclosures is only in unlogged; allowed rows pass the DB allowlist', async () => {
     const c = await aiCall(h, w, SCRIPTS.booking);
     const r = await settled(h, w.tenantId, c.callId);
     expect(r!.unlogged).toEqual([expect.objectContaining({ seq: 1, reason: 'VOICE_TOOL_BEFORE_DISCLOSURE' })]);
@@ -46,7 +47,7 @@ describe('R-VOICE-4 R-VOICE-14 E429 E431: the ledger is written exactly as core 
     expect(await handbacksOf(h, c.callId)).toHaveLength(1);
   });
 
-  it(`R-VOICE-14 E431: the ${VOICE_LEDGER_CAP + 1}st request is not written; the session ends through vendor_error (LEDGER_CAP)`, async () => {
+  it(`R-VOICE-14 E429: the ${VOICE_LEDGER_CAP + 1}st request is not written; the session ends through vendor_error (LEDGER_CAP)`, async () => {
     const steps = [...OPEN, ...Array.from({ length: VOICE_LEDGER_CAP + 5 }, (_, i) => ev.tool(8000 + i * 5, 'take_message', { topic: 'GENERAL' }))];
     const c = await aiCall(h, w, { name: 'flood', steps });
     const r = await settled(h, w.tenantId, c.callId);
@@ -56,8 +57,8 @@ describe('R-VOICE-4 R-VOICE-14 E429 E431: the ledger is written exactly as core 
   });
 });
 
-describe('E422 E423 E424 R-VOICE-2: provider ordering', () => {
-  it("E423: an AI call's retried /voice fetch and retried dial-result replay the stream, never Phase 1's hang-up or its voicemail switch", async () => {
+describe('E423 E424 R-VOICE-2 R-VOICE-11: provider ordering', () => {
+  it("E423 R-VOICE-11: an AI call's retried /voice fetch and retried dial-result replay the stream, never Phase 1's hang-up or its voicemail switch", async () => {
     const c = await aiCall(h, w, { name: 'hold', steps: [...OPEN] }, { faults: { holdBeforeStep: 3 }, settle: false });
     await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
     expect((await callRowOf(h, c.callSid)).status).toBe('in_progress');
@@ -70,7 +71,7 @@ describe('E422 E423 E424 R-VOICE-2: provider ordering', () => {
     await settled(h, w.tenantId, c.callId);
   });
 
-  it('E422 E426 R-VOICE-2: the provider\'s in_progress status before the announcement sets no answered_at; a hang-up before the announcement answers nothing', async () => {
+  it('E424 R-VOICE-2: the provider\'s in_progress status before the announcement sets no answered_at; a hang-up before the announcement answers nothing', async () => {
     const c = await aiCall(h, w, { name: 'disclosure only', steps: [ev.disclosed(4000)] }, { faults: { holdBeforeStep: 1 }, settle: false });
     await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
     const st = await callStatus(h, w, c.callSid, c.from, 'in-progress');
@@ -79,14 +80,14 @@ describe('E422 E423 E424 R-VOICE-2: provider ordering', () => {
     expect(row.answered_at).toBeNull();
     expect(row.status).toBe('ringing');
     expect(row.ai_disclosed_at).not.toBeNull();
-    // E426: the caller hangs up before the announcement played: nothing was answered, one handback
+    // E424: the caller hangs up before the announcement played: nothing was answered, one handback
     await callStatus(h, w, c.callSid, c.from, 'completed', { CallDuration: '5' });
     const r = await settled(h, w.tenantId, c.callId);
     expect(r!.handback.endReason).toBe('CALLER_HUNG_UP');
     expect((await callRowOf(h, c.callSid)).answered_at).toBeNull();
   });
 
-  it('E424: a retried fetch for an AI call whose session is unknown here (a restart) gets voicemail', async () => {
+  it('R-VOICE-10 R-VOICE-21: a retried fetch for an AI call whose session is unknown here (a restart) gets voicemail', async () => {
     const c = await aiCall(h, w, SCRIPTS.booking);
     h.providers.voiceAgent.transports.delete(`${w.tenantId}:${c.callId}`);
     const again = await ringing(h, w, c.callSid, c.from);
@@ -96,7 +97,7 @@ describe('E422 E423 E424 R-VOICE-2: provider ordering', () => {
   });
 });
 
-describe('E421 E425 E427 E428: takeover and booking edges', () => {
+describe('E421 E425 E427: takeover and booking edges', () => {
   it('E421: nobody can be rung: the assistant answers at once; ai_takeover_at is the decision instant', async () => {
     const x = await voiceWorld(h);
     await h.su.query('UPDATE memberships SET alert_phone_verified_at = NULL WHERE tenant_id = $1', [x.tenantId]); // nobody is ringable
@@ -108,7 +109,7 @@ describe('E421 E425 E427 E428: takeover and booking edges', () => {
     expect(Math.abs(new Date(row.ai_takeover_at).getTime() - new Date(row.started_at).getTime())).toBeLessThan(10_000);
   });
 
-  it('E425 R-VOICE-10 R-VOICE-20: the vendor does not connect: the session starts and ends with vendor_error, to voicemail, never answered; its voicemail is kept', async () => {
+  it('E425 R-VOICE-10: the vendor does not connect: the session starts and ends with vendor_error, to voicemail, never answered; its voicemail is kept', async () => {
     const c = await aiCall(h, w, SCRIPTS.booking, { faults: { connectFailure: true } });
     expect(c.answer).toContain(VOICEMAIL_NOTICE);
     expect(c.answer).toContain('recording?vm=');
@@ -123,7 +124,7 @@ describe('E421 E425 E427 E428: takeover and booking edges', () => {
     expect((await h.su.query('SELECT 1 FROM recordings WHERE call_id = $1', [c.callId])).rows).toHaveLength(1);
   });
 
-  it('R-VOICE-20: an answered AI call\'s recording is kept under its announcement; a call review of it is refused (coaching reviews human calls only)', async () => {
+  it('R-VOICE-2 R-COACH-3: an answered AI call\'s recording is kept under its announcement; a call review of it is refused (coaching reviews human calls only)', async () => {
     const c = await aiCall(h, w, SCRIPTS.booking);
     const row = await callRowOf(h, c.callSid);
     expect(row).toMatchObject({ recording_mode: 'announced_all_parties' });
@@ -135,7 +136,18 @@ describe('E421 E425 E427 E428: takeover and booking edges', () => {
     await expect(withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => tx.executeQuery({ sql: 'INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count) VALUES (app.tenant_id(), $1, $2, $3, $4, $5, 0, 0)', parameters: [c.callId, 'rubric/1', w.agents[0]!.userId, c.contactId, '[]'], query: { kind: 'RawNode' } } as never), { db: h.database })).rejects.toThrow(/CALL_REVIEW_SUBJECT|COACHING/);
   });
 
-  it('E427: a booking that settles after the session ended is canceled and its calendar push enqueued', async () => {
+  it('E426 R-VOICE-10: a vendor error mid-call, after both announcements, ends in voicemail under the announced basis with the reason in the handback', async () => {
+    const script: VoiceScript = { name: 'vendor error mid-call', steps: [...OPEN, ev.caller(10_000, 'Hi, I saw the house on Main Street.'), ev.model(10_500, 'Thanks for calling.')] };
+    const c = await aiCall(h, w, script, { faults: { vendorErrorAtStep: 4 } });
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(r!.handback).toMatchObject({ endReason: 'VENDOR_ERROR', outcome: 'fallback_voicemail' });
+    const row = await callRowOf(h, c.callSid);
+    expect(row).toMatchObject({ handled_by: 'assistant', voice_outcome: 'fallback_voicemail', recording_mode: 'announced_all_parties' });
+    expect(row.answered_at).not.toBeNull();
+    expect(await handbacksOf(h, c.callId)).toHaveLength(1);
+  });
+
+  it('E427 R-VOICE-16: a booking that settles after the session ended is canceled and its calendar push enqueued', async () => {
     setVoiceTestSeams(h.app.platform, { bookSlot: async (...a: Parameters<typeof bookSlot>) => {
       await new Promise((r) => setTimeout(r, 300));
       return bookSlot(...a);
@@ -149,7 +161,7 @@ describe('E421 E425 E427 E428: takeover and booking edges', () => {
     expect((await h.su.query("SELECT 1 FROM jobs WHERE kind LIKE 'calendar.%' AND payload::text LIKE '%' || $1 || '%'", [r!.appointmentId])).rows.length).toBeGreaterThan(0);
   });
 
-  it('E428 R-VOICE-6: an unowned caller is offered no slots and cannot book; the handback goes to whoever the offer reaches', async () => {
+  it('R-VOICE-6 O8: an unowned caller is offered no slots and cannot book; the handback goes to whoever the offer reaches', async () => {
     const contact = await ownedContact(w.agents[0]!, { consent: false });
     await h.su.query("UPDATE contacts SET owner_user_id = NULL, ownership_state = 'unassigned' WHERE id = $1", [contact.id]).catch(() => undefined);
     const c = await aiCall(h, w, SCRIPTS.booking, { contact });
@@ -161,7 +173,22 @@ describe('E421 E425 E427 E428: takeover and booking edges', () => {
   });
 });
 
-describe('E430 R-VOICE-18: one handback, merged into a ring-time handback', () => {
+describe('R-VOICE-22: an AI call is never a touch, first contact, speed-to-lead event or ownership change', () => {
+  it('R-VOICE-22: after a booked AI call the contact\'s owner, ownership state, first touch and ownership events are unchanged', async () => {
+    const contact = await ownedContact(w.agents[0]!, { consent: false });
+    const COLS = 'owner_user_id, ownership_state, owned_at, first_touch_due_at, first_touch_at, first_touch_breached_at, release_due_at';
+    const before = (await h.su.query(`SELECT ${COLS} FROM contacts WHERE id = $1`, [contact.id])).rows[0];
+    const events = async () => (await h.su.query('SELECT count(*)::int AS n FROM lead_ownership_events WHERE contact_id = $1', [contact.id])).rows[0].n as number;
+    const eventsBefore = await events();
+    const c = await aiCall(h, w, SCRIPTS.booking, { contact });
+    await settled(h, w.tenantId, c.callId);
+    expect((await callRowOf(h, c.callSid)).handled_by).toBe('assistant');
+    expect((await h.su.query(`SELECT ${COLS} FROM contacts WHERE id = $1`, [contact.id])).rows[0]).toEqual(before);
+    expect(await events()).toBe(eventsBefore);
+  });
+});
+
+describe('E430 R-VOICE-15: one handback, merged into a ring-time handback', () => {
   it('E430: a ring-time handback with a pending enrich job keeps the confirmation draft after the job runs', async () => {
     const contact = await ownedContact(w.agents[0]!, { consent: false });
     const callSid = sid();

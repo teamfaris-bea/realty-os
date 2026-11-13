@@ -38,7 +38,7 @@ class StubAgent extends FakeVoiceAgent {
   override readonly kind = 'stub-vendor' as 'fake';
 }
 
-describe('E420 E436 R-VOICE-12: refusals at the ring are Phase 1 voicemail, with no assistant row', () => {
+describe('E420 E436 R-VOICE-11 R-VOICE-12: refusals at the ring are Phase 1 voicemail, with no assistant row', () => {
   it('R-VOICE-1 E420: a revoked voice playbook', async () => {
     const w = await voiceWorld(h);
     const r = await call(w.owner, 'POST', `/playbook-versions/${w.playbookVersionId}/revoke`, { attestation: 'I revoke this playbook.', contentSha256: w.playbookSha });
@@ -62,44 +62,44 @@ describe('E420 E436 R-VOICE-12: refusals at the ring are Phase 1 voicemail, with
     await refusedAtRing(w, 'VOICE_ANSWERING_OFF');
   });
 
-  it('R-INT-6 E436: platform:voice not counsel-reviewed', async () => {
+  it('R-INT-6 E420: platform:voice not counsel-reviewed', async () => {
     const w = await voiceWorld(h);
     await setVoicePack(h, { reviewed: false, vendorReady: true });
     await refusedAtRing(w, 'VOICE_NOT_CLEARED');
   });
 
-  it('R-INT-6 E436 D11: counsel reviewed but no vendor passed the latency spike: still not cleared', async () => {
+  it('R-INT-6 E420 D11: counsel reviewed but no vendor passed the latency spike: still not cleared', async () => {
     const w = await voiceWorld(h);
     await setVoicePack(h, { reviewed: true, vendorReady: false });
     await refusedAtRing(w, 'VOICE_NOT_CLEARED');
   });
 
-  it('R-VOICE-12 E436: a pack whose max_turn_latency_ms is not a positive integer refuses the takeover', async () => {
+  it('R-VOICE-10 E420: a pack whose max_turn_latency_ms is not a positive integer refuses the takeover', async () => {
     const w = await voiceWorld(h);
     await setVoicePack(h, { reviewed: true, vendorReady: true, maxTurnLatencyMs: 'fast' });
     await refusedAtRing(w, 'VOICE_NOT_CLEARED');
   });
 
-  it('R-VOICE-12: the team turned the assistant off (ai_enabled false)', async () => {
+  it('R-VOICE-12 E436: the team turned the assistant off (ai_enabled false)', async () => {
     const w = await voiceWorld(h);
     await setAiEnabled(h, w.tenantId, false);
     await refusedAtRing(w, 'AI_DISABLED');
   });
 
-  it('R-VOICE-12 O13: recording off in the active policy', async () => {
+  it('R-VOICE-12 E436 O13: recording off in the active policy', async () => {
     const w = await voiceWorld(h);
     const r = await call(w.owner, 'POST', '/compliance-policies', { recordingEnabled: false, activate: true });
     expect(r.status).toBe(201);
     await refusedAtRing(w, 'VOICE_RECORDING_OFF');
   });
 
-  it('R-VOICE-11 R-VOICE-12: no voice vendor configured (the production stand-in)', async () => {
+  it('R-VOICE-12 E436: no voice vendor configured (the production stand-in)', async () => {
     const w = await voiceWorld(h);
     setVoiceTestSeams(h.app.platform, { voiceAgent: new UnconfiguredVoiceAgent() });
     await refusedAtRing(w, 'VOICE_VENDOR_NOT_CONFIGURED');
   });
 
-  it('R-VOICE-12: the fake voice agent never answers real telephony (TELEPHONY_PROVIDER=twilio)', async () => {
+  it('R-VOICE-12 E436: the fake voice agent never answers real telephony (TELEPHONY_PROVIDER=twilio)', async () => {
     const w = await voiceWorld(h);
     setVoiceTestSeams(h.app.platform, { telephonyProvider: 'twilio' });
     await refusedAtRing(w, 'VOICE_FAKE_ON_REAL_TELEPHONY');
@@ -112,7 +112,7 @@ describe('E420 E436 R-VOICE-12: refusals at the ring are Phase 1 voicemail, with
   });
 });
 
-describe('R-VOICE-1 R-VOICE-9 E150 E420: the DB refuses at the takeover when things changed after the ring', () => {
+describe('R-VOICE-1 R-VOICE-9 R-VOICE-11 E150 E420: the DB refuses at the takeover when things changed after the ring', () => {
   async function ringThen(w: VoiceWorld, change: () => Promise<void>, code: string) {
     const c = await ownedContact(w.agents[0]!, { consent: false });
     const callSid = sid();

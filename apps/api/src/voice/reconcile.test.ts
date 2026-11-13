@@ -1,4 +1,4 @@
-// Module 48 item 8: voice.reconcile (R-VOICE-7, R-VOICE-21; E439). A runner lost mid-call gives one recovery handback
+// Module 48 item 8: voice.reconcile (R-VOICE-7, R-VOICE-21). A runner lost mid-call gives one recovery handback
 // and one P1; a re-run writes nothing.
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -28,8 +28,8 @@ async function runReconcile(): Promise<Alert[]> {
   return alerts;
 }
 
-describe('E439 R-VOICE-7: voice.reconcile recovers a lost session', () => {
-  it('E439: a session lost mid-call gets one recovery handback and one P1; a re-run and the late session itself write nothing more', async () => {
+describe('R-VOICE-21 R-VOICE-7: voice.reconcile recovers a lost session', () => {
+  it('R-VOICE-21: a session lost mid-call gets one recovery handback and one P1; a re-run and the late session itself write nothing more', async () => {
     const c = await aiCall(h, w, { name: 'stuck', steps: [ev.disclosed(4000), ev.announced(7000)] }, { faults: { holdBeforeStep: 2 }, settle: false });
     await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
     expect(await runReconcile()).toEqual([]); // not lost yet

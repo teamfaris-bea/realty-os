@@ -1,4 +1,4 @@
-// Module 48 item 6: the live transfer legs (R-VOICE-6, R-VOICE-16; E432, E433, E434, E435). calls.transfer_outcome is
+// Module 48 item 6: the live transfer legs (R-VOICE-6, R-VOICE-19; E432, E433, E434). calls.transfer_outcome is
 // the single arbiter: of a press, the hold end and the dial result exactly one wins.
 import { FIXTURE_HOT_RULE, OWNER_ID, SCRIPTS } from '@realty/core/voice/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -33,7 +33,7 @@ async function inTransfer(owner = w.agents[0]!): Promise<{ c: AiCall; ring: stri
   return { c, ring };
 }
 
-describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', () => {
+describe('E432 E433 E434 R-VOICE-6 R-VOICE-19: transfer to the contact\'s own agent', () => {
   it('R-VOICE-23: the hold is the pack\'s voice_transfer_hold_seconds when set, else the content\'s 20 s', async () => {
     await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || '{"voice_transfer_hold_seconds": 15}' WHERE key = 'platform:voice' AND status = 'published'`);
     try {
@@ -47,7 +47,7 @@ describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', 
     }
   });
 
-  it('R-VOICE-19: in-call claims are never stored; the handback\'s claims cite the call\'s own fields with the stored value, or carry no evidence (needs review)', async () => {
+  it('R-VOICE-15: in-call claims are never stored; the handback\'s claims cite the call\'s own fields with the stored value, or carry no evidence (needs review)', async () => {
     const { c } = await inTransfer();
     transport(c).advance(25_000);
     transport(c).resume();
@@ -65,7 +65,7 @@ describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', 
     expect(claims.some((x) => /pre-approved|this week/.test(x.text))).toBe(false); // the caller's in-call claims
   });
 
-  it('E432 R-VOICE-6 R-VOICE-19: (hot only by the caller\'s own quoted words) the owner is rung from the team number for the hold, hears the whisper, presses 1: connected', async () => {
+  it('R-VOICE-6 R-VOICE-19: (hot only by the caller\'s own quoted words) the owner is rung from the team number for the hold, hears the whisper, presses 1: connected', async () => {
     const { c, ring } = await inTransfer();
     expect(ring).toContain(`callerId="${w.mainNumber}"`);
     expect(ring).toContain('timeout="20"');
@@ -86,7 +86,7 @@ describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', 
     expect((await h.su.query('SELECT priority FROM notifications WHERE subject_id = $1', [hb.id])).rows.map((x) => x.priority)).toEqual(['high']);
   });
 
-  it('E433 R-VOICE-16: the hold ends first; a later press is refused and the caller is back with the assistant', async () => {
+  it('E432 R-VOICE-19: the hold ends first; a later press is refused and the caller is back with the assistant', async () => {
     const { c, ring } = await inTransfer();
     transport(c).advance(25_000); // past the 20 s hold
     for (let i = 0; i < 300; i++) {
@@ -107,7 +107,7 @@ describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', 
     expect((await callRowOf(h, c.callSid)).agent_user_id).toBe(w.agents[0]!.userId); // the owner of the contact, unchanged
   });
 
-  it('E433: the owner declines (any other key): declined, the owner leg hangs up, a promise task follows', async () => {
+  it('E432: the owner declines (any other key): declined, the owner leg hangs up, a promise task follows', async () => {
     const { c, ring } = await inTransfer();
     const screen = await telephonyWebhook(h, hookPath(ring, 'url'), { CallSid: 'CAleg3', ParentCallSid: c.callSid });
     const no = await telephonyWebhook(h, hookPath(screen.body, 'action'), { CallSid: 'CAleg3', Digits: '7' });
@@ -120,7 +120,7 @@ describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', 
     expect((await h.su.query("SELECT 1 FROM tasks WHERE source_action_id = $1 AND kind = 'promise'", [hb.id])).rows).toHaveLength(1);
   });
 
-  it('E435: the caller hangs up during the hold: the session ends with one handback; the owner\'s late dial result changes nothing', async () => {
+  it('E433: the caller hangs up during the hold: the session ends with one handback; the owner\'s late dial result changes nothing', async () => {
     const { c, ring } = await inTransfer();
     await callStatus(h, w, c.callSid, c.from, 'completed', { CallDuration: '30' });
     const r = await settled(h, w.tenantId, c.callId);

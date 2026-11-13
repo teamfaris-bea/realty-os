@@ -1,4 +1,4 @@
-// Module 48 item 9: Owner enablement and read routes (R-VOICE-9, R-VOICE-22, R-PERM-5; E150, E437).
+// Module 48 item 9: Owner enablement and read routes (R-VOICE-9, R-VOICE-20, R-PERM-5; E150).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { ATTESTATION_TEXT } from '../admin/policy.js';
@@ -24,7 +24,7 @@ afterAll(async () => {
 
 type View = { state: string; reasons: { code: string }[]; enabled: { on: boolean; sentence: string }; settings: { answerAfterSeconds: number; answerWhen: string; version: number }; transfers: string; attestationText: string; provider: { configured: boolean } };
 
-describe('R-VOICE-22 R-PERM-5: the AI answering routes', () => {
+describe('R-VOICE-20 R-PERM-5: the AI answering routes', () => {
   it('R-PERM-5: Owner and Admin read the state; a Team Lead or an agent cannot', async () => {
     const admin = await h.invite(w.owner, 'admin');
     const o = await call<View>(w.owner, 'GET', '/voice/answering');
@@ -35,7 +35,7 @@ describe('R-VOICE-22 R-PERM-5: the AI answering routes', () => {
     expect((await call(w.agents[0]!, 'GET', '/voice/answering')).status).not.toBe(200);
   });
 
-  it('R-VOICE-22 E437: enabling needs the Owner, a fresh re-auth and the exact attestation; an Admin cannot', async () => {
+  it('R-VOICE-20: enabling needs the Owner, a fresh re-auth and the exact attestation; an Admin cannot', async () => {
     const admin = await h.invite(w.owner, 'admin');
     await freshReauth(h, admin);
     expect((await call(admin, 'POST', '/voice/answering/enable', { attestation: VOICE_ATTESTATION_TEXT })).status).not.toBe(200);
@@ -53,7 +53,7 @@ describe('R-VOICE-22 R-PERM-5: the AI answering routes', () => {
     expect(pol).toEqual({ voice_answering_enabled: true, voice_answering_attestation: VOICE_ATTESTATION_TEXT });
   });
 
-  it('R-VOICE-22 E437: answer settings: narrowing is Owner or Admin; widening is the Owner with re-auth and the attestation; stale versions conflict', async () => {
+  it('R-VOICE-20 O4: answer settings: narrowing is Owner or Admin; widening is the Owner with re-auth and the attestation; stale versions conflict', async () => {
     const admin = await h.invite(w.owner, 'admin');
     const cur = (await call<View>(w.owner, 'GET', '/voice/answering')).body.settings;
     const narrow = await call<View>(admin, 'PUT', '/voice/answering/settings', { answerAfterSeconds: 30, answerWhen: 'after_hours_only', version: cur.version });
@@ -70,7 +70,7 @@ describe('R-VOICE-22 R-PERM-5: the AI answering routes', () => {
     expect((await h.su.query("SELECT 1 FROM audit_log WHERE tenant_id = $1 AND action = 'settings.changed' AND entity_type = 'tenant_settings'", [w.tenantId])).rows.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('R-VOICE-22: the policy copy carries every column of compliance_policy_versions (drift test against the catalog)', async () => {
+  it('R-VOICE-20: the policy copy carries every column of compliance_policy_versions (drift test against the catalog)', async () => {
     const cols = (await h.su.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'compliance_policy_versions'")).rows.map((r) => r.column_name).sort();
     expect([...POLICY_COPY_COLUMNS, ...POLICY_FRESH_COLUMNS].sort()).toEqual(cols);
   });
@@ -82,7 +82,7 @@ describe('R-VOICE-22 R-PERM-5: the AI answering routes', () => {
     }
   });
 
-  it('R-VOICE-22: the test call simulates a scripted caller in memory and saves nothing but its audit row', async () => {
+  it('O12: the test call simulates a scripted caller in memory and saves nothing but its audit row', async () => {
     const before = (await h.su.query('SELECT count(*)::int AS n FROM calls WHERE tenant_id = $1', [w.tenantId])).rows[0].n;
     const r = await call<{ sentence: string; lines: { text: string }[]; handback: { outcome: string } }>(w.owner, 'POST', '/voice/test-call', { script: 'priceQuestion' });
     expect(r.status).toBe(200);

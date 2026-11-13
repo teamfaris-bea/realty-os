@@ -1,4 +1,4 @@
-// Module 48 architecture (R-VOICE-1, R-VOICE-11, R-VOICE-13, R-VOICE-24, R-GATE-9, R-TWL-3, R-TWL-5, D1, D7): source scans
+// Module 48 architecture (R-VOICE-1, R-VOICE-13, R-VOICE-22, R-VOICE-24, R-GATE-9, R-TWL-3, R-TWL-5, D1, D7): source scans
 // of apps/api/src/voice prove that the module sends, dials and books nothing on its own path, changes no ownership, makes
 // no network call, configures no number, reads no prediction or call score, keeps the fixtures out of production code
 // except the fake and the in-memory test call, ships no hot rule and hands the vendor no contact field.
@@ -16,7 +16,7 @@ const src = (n: string) => readFileSync(join(DIR, n), 'utf8');
 /** Source without comments, so a doc line naming a forbidden symbol does not count. */
 const code = (n: string) => src(n).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-describe('R-VOICE-11 D1 R-GATE-9: what module 48 may not do', () => {
+describe('D1 R-GATE-9: what module 48 may not do', () => {
   it('the scan is not vacuous', () => {
     expect(RUNTIME.sort()).toEqual(['answering.ts', 'effects.ts', 'facts.ts', 'fake.ts', 'handback.ts', 'handlers.ts', 'ledger.ts', 'optout.ts', 'provider.ts', 'routes.ts', 'runtime.ts', 'schemas.ts', 'session.ts', 'slots.ts', 'takeover.ts', 'transfer.ts']);
   });
@@ -25,7 +25,7 @@ describe('R-VOICE-11 D1 R-GATE-9: what module 48 may not do', () => {
     for (const n of RUNTIME) expect(code(n), n).not.toMatch(/dispatchOutbound|queueOutbound|dialOutbound|(?<!config\.)providers\.telephony|deps\.providers\.telephony/);
   });
 
-  it('R-VOICE-6: no ownership command and no ownership import', () => {
+  it('R-VOICE-6 R-VOICE-22: no ownership command and no ownership import', () => {
     for (const n of RUNTIME) expect(code(n), n).not.toMatch(/applyOwnershipCommand|ownershipCommand|setOwnershipCommand|leads\/intake|ownership\/commands/);
   });
 
