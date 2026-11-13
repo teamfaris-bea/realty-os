@@ -919,6 +919,22 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect((await call<{ earlierHandoff: H }>(agent, 'GET', `/contacts/${l.id}/ai-isa`)).body.earlierHandoff).toBeNull();
   });
 
+  it('R-ISA-30 E521 R-OWN-24 (b13 review B13-MRG-7): a handoff written on a record later merged away, then care restarted on the survivor with no touch: the survivor\'s panel reports it as the earlier open handoff, and overdue once past its deadline', async () => {
+    type H = { id: string; overdue: boolean; closedReason: string | null; slaClass: string } | null;
+    const { agent, l, ho } = await endedByAgent();
+    const survivor = await isaLead(h, agent);
+    expect((await command(w.owner, survivor.id, 'merge', { loserId: l.id, ownerChoice: agent.userId })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await startCare(agent, survivor.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await handoffs([l.id]))[0]).toMatchObject({ id: ho.id, contact_id: l.id, sla_met_at: null });
+    const p = await call<{ assignment: { id: string } | null; earlierHandoff: H }>(agent, 'GET', `/contacts/${survivor.id}/ai-isa`);
+    expect(p.status).toBe(200);
+    expect(p.body.earlierHandoff).toMatchObject({ id: ho.id, overdue: false, closedReason: null });
+    await ageAndSweep(ho.id);
+    expect((await call<{ earlierHandoff: H }>(agent, 'GET', `/contacts/${survivor.id}/ai-isa`)).body.earlierHandoff).toMatchObject({ id: ho.id, overdue: true });
+  });
+
   it('R-ISA-30 (b12 recheck R16): a restart after a human touch since the handoff closes it (care_restarted) and records the deadline as met; it then never alerts', async () => {
     const { agent, l, ho } = await endedByAgent();
     await touch(l.id);

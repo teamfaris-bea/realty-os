@@ -69,10 +69,13 @@ async function panel(req: FastifyRequest, contactId: string) {
         closed_at IS NOT NULL AS done, contact_id, pending_message_id
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
     // batch 13 isa-4 (b12 recheck R16 follow-up): a restart with no human touch leaves an earlier handoff open, and its
-    // deadline still alerts; the panel reports the person's newest such handoff so it never reads as nothing pending
+    // deadline still alerts; the panel reports the person's newest such handoff so it never reads as nothing pending.
+    // b13 review B13-MRG-7: across the merge tree, as latestAssignmentOf reads it (a handoff keeps the record it was
+    // written on; the deadline sweep alerts it through contact_merge_root)
     const eh = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; closed_reason: HandoffCloseReason | null; contact_id: string; pending_message_id: string | null }>`SELECT id, reason, sla_class,
         sla_due_at, sla_met_at, confirmation_status, closed_reason, contact_id, pending_message_id
-      FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND assignment_id <> ${a.id} AND closed_at IS NULL AND sla_met_at IS NULL
+      FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id <> ${a.id} AND closed_at IS NULL AND sla_met_at IS NULL
+        AND contact_id = ANY (app.contact_merge_tree_ids(app.tenant_id(), app.contact_merge_root(app.tenant_id(), ${contactId}::uuid)))
       ORDER BY created_at DESC, id DESC LIMIT 1`.execute(tx);
     const last = turn.rows[0];
     const capsOn = new Set(opt.rows[0]?.c ?? []);
