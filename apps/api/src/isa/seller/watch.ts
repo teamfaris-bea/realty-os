@@ -5,7 +5,9 @@
 // absence: new_competitor, competitor_pending, competitor_back_on_market, competitor_price_change; competitor_sold and
 // competitor_off_market are recorded, never rendered. At most 3 events per run; the rest carry over. Delivery goes
 // through STUB(ISA-2) enqueueListingEventInTx (not built yet: ISA-2 has no listing_event turn). Each run re-checks
-// link 10 (H5): a listing at the home ends or pauses care.
+// link 10 (H5): a listing at the home ends or pauses care. VERIFY WITH MLS: whether replication re-sends unchanged rows
+// and drops off-market ones (events come only from a row's own newer record, never from absence, so either way no event
+// is invented; a dropped row simply stops being watched).
 import { type Instant, type SystemActor, localDateOf, ianaZone, type IanaZone } from '@realty/core/foundation';
 import { canonicalJson } from '@realty/core/compliance';
 import type { Tx } from '@realty/db';

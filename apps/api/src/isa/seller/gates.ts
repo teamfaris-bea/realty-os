@@ -100,6 +100,7 @@ export interface SubjectLink {
   listingIds: string[];
 }
 
+/** VERIFY WITH COUNSEL (C-ISA-8; Art. 16): ending AI care when the home is listed elsewhere, and these sentences. */
 export const LINK_SENTENCES = Object.freeze({
   ok: 'No live listing of the seller’s home.',
   active_client: 'The seller’s home is listed by your team, so they are a client now. AI care ended.',

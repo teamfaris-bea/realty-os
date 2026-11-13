@@ -13,6 +13,7 @@ import { versionsOf } from './versions.js';
 
 /** Owner question 2: counts are never sent to clients in this version. */
 export const COUNT_SHARE_ENABLED = false;
+/** VERIFY WITH COUNSEL: the count wording (core countSentence) before any count is sent; agent-only today. */
 export const COUNT_SENTENCE = 'Not sent to clients yet: counts of homes like theirs are shown to you only.';
 
 export async function marketCountsInTx(tx: Tx, e: MlsEligibility, s: { postalCode: string; facts: SubjectFactsRow }, now: Instant, prev: CountSnapshot | null): Promise<{ counts: StatusCounts; snapshot: CountSnapshot; delta: ReturnType<typeof marketDeltas>; sentence: string }> {

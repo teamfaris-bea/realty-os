@@ -55,7 +55,11 @@ export async function competitorsInTx(tx: Tx, e: MlsEligibility, subject: { reco
   return { ok: true, code: null, rows: listings.map((l) => byId.get(l.id!)!).filter((r) => r !== undefined) };
 }
 
-/** A row's own source and as-of (§6.1): min(last_seen_in_feed_at, lastSyncedAt); fresh within max_staleness_hours. */
+/**
+ * A row's own source and as-of (§6.1): min(last_seen_in_feed_at, lastSyncedAt); fresh within max_staleness_hours.
+ * VERIFY (engineering, verify item 4): the incremental feed moves last_seen_in_feed_at only on a changed record
+ * (mls/sync.ts), so row freshness offers only recently changed rows; ISA-2b's buyer search has the same effect.
+ */
 export function sourceOf(e: MlsEligibility, row: ListingRow, teamName: string, now: Instant): FactSource | null {
   const conn = e.connections.find((c) => c.id === row.mls_connection_id);
   if (!conn || conn.lastSyncedAt === null) return null;

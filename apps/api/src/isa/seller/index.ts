@@ -22,7 +22,11 @@ import { type AssignmentRow, type LinkResult, assignmentById, contextFor, queueF
 import { currentSubjectInTx, ensureWatchInTx, watchOf } from './subject.js';
 import { displayRulesVersion } from './versions.js';
 
-/** The fixed prompt placeholders of sent facts messages (R-ISA-20): never a price, an address or a brokerage. */
+/**
+ * The fixed prompt placeholders of sent facts messages (R-ISA-20): never a price, an address or a brokerage.
+ * VERIFY WITH MLS (and the model vendor): whether listing data may reach the AI model vendor at all. No price, sold
+ * fact, address or brokerage does; H1's handle labels do carry a competitor's beds, baths, property type and city.
+ */
 export const COMPS_PLACEHOLDER = '[recent sales emailed]';
 export const FACTS_PLACEHOLDER = '[listing details sent]';
 
@@ -57,7 +61,10 @@ export interface SellerBundle {
 
 const EMPTY: SellerBundle = { handles: [], handleMap: {}, unavailable: [], competitionHandles: [], compsAvailable: false, mlsListedElsewhere: false, subjectConfirmed: false };
 
-/** The current competitors as handles (deterministic: competingSet's order, fresh rows only, at most 3). */
+/**
+ * The current competitors as handles (deterministic: competingSet's order, fresh rows only, at most 3). VERIFY WITH MLS:
+ * the labels (beds, baths, property type, city) reach the model vendor in the prompt (see COMPS_PLACEHOLDER).
+ */
 async function competitionHandlesInTx(tx: Tx, a: AssignmentRow, now: Instant): Promise<{ labels: HandleLabel[]; map: Record<string, string> }> {
   const w = await watchOf(tx, a.id);
   if (w === null || w.subject_record_listing_id === null || w.subject_facts === null) return { labels: [], map: {} };
@@ -78,7 +85,11 @@ async function competitionHandlesInTx(tx: Tx, a: AssignmentRow, now: Instant): P
   return { labels, map };
 }
 
-/** H1 (TX-A): what the model may see and propose for a seller lead. No MLS price or sold fact (R-ISA-20). */
+/**
+ * H1 (TX-A): what the model may see and propose for a seller lead. No MLS price or sold fact (R-ISA-20). VERIFY
+ * (engineering, verify item 6): H1, H2 and H3 each run the gates and, for comps, the whole pipeline under the contact
+ * lock; proposed budget on the 500k-listing fixture: TX-A p95 < 800 ms, TX1 p95 < 300 ms. Not measured yet.
+ */
 export async function sellerBundleInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant): Promise<SellerBundle> {
   if (!seller(a)) return EMPTY;
   await ensureWatchInTx(tx, a);
@@ -138,7 +149,8 @@ export interface SellerChannels {
  * by SMS only when the whole message as queued (intro, every line, every feed's footer, the sign-off) fits three
  * segments (fitsSms and smsSegments, scope 7), else by email; with no allowed email it is refused (FACTS_DO_NOT_FIT),
  * never sent as a long SMS. VERIFY (owner): scope 7's last fallback, the 'email_details_pointer' line by SMS, is not
- * sent: it is not a facts message, and it would offer an email the lead has not given.
+ * sent: it is not a facts message, and it would offer an email the lead has not given. VERIFY (engineering, verify item
+ * 6): TX-B re-runs the gates and, for comps, the pipeline (performance budget at H1).
  */
 export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant, q: { messageKind: string; handles: readonly string[] }, plan: SellerChannels): Promise<SellerFacts> {
   if (q.messageKind !== 'facts' || !seller(a)) return null;
@@ -268,7 +280,8 @@ export async function writeSellerFactsInTx(tx: Tx, ids: IdGenerator, a: Pick<Ass
  * H3 (TX1, under lock_contact): whether a message's pending seller facts are still current. Codes join chainFailures
  * (terminal, core gate.ts); `licenceOk` is the licence part of sellerPacksCleared (ai_isa_comps on every comp's feed).
  * A change enqueues one model-free re-render per turn (ai_isa.seller_rerender). A sync that moves only last_synced_at
- * changes nothing here (E537).
+ * changes nothing here (E537). VERIFY (engineering, verify item 6): TX1 re-runs the comps pipeline under lock_contact;
+ * proposed budget TX1 p95 < 300 ms on the 500k-listing fixture, not measured yet.
  */
 export async function sellerFactsCurrentInTx(tx: Tx, actor: Actor, messageId: string, now: Instant): Promise<{ codes: string[]; licenceOk: boolean }> {
   const facts = (await sql<{ fact_kind: string; listing_id: string | null; mls_connection_id: string | null; price_kind: string | null; price_cents: string | null; status_at_build: string | null;
@@ -332,7 +345,11 @@ export async function sellerSubjectLinkInTx(tx: Tx, a: AssignmentRow): Promise<L
   return { link: 10, name: 'Seller home', effect: l.effect, code: l.code, reason: l.reason, sentence: l.sentence };
 }
 
-/** H6: an escalation's seller effects (E502; owner question 9: a disputed subject after a sent comps email). */
+/**
+ * H6: an escalation's seller effects (E502; owner question 9: a disputed subject after a sent comps email). Nearby
+ * sales are refusal only: a nearby question reaches the agent as data_unavailable and no nearby_sale row is written.
+ * VERIFY WITH COUNSEL: whether a merely nearby sale may be described to a seller at all (owner question 11).
+ */
 export async function onEscalationInTx(tx: Tx, a: Pick<AssignmentRow, 'id' | 'side'>, cls: string): Promise<void> {
   if (!seller(a)) return;
   if (cls === 'pricing_negotiation') {

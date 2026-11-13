@@ -87,7 +87,12 @@ export type CompsBuild =
 
 const refuse = (codes: string[]): CompsBuild => ({ ok: false, codes: [...new Set(codes)] });
 
-/** The adapter (scope 6): one engine comp → the narrow view ISA-1 renders, from the client DisplayListing only. */
+/**
+ * The adapter (scope 6): one engine comp → the narrow view ISA-1 renders, from the client DisplayListing only.
+ * VERIFY WITH MLS: the distance tier and the subdivision of a comp whose address is withheld (the tier's name stands in,
+ * never a distance); the source line "{display_name} via {Team}"; InternetAutomatedValuationDisplayYN read under either
+ * avm_flag_scope for this use (SELLER_WITHHELD). VERIFY WITH COUNSEL: V1-B's tier sentence "In within 1 mile".
+ */
 export function adaptComp(c: StoredResult['comps'][number], d: DisplayListing, sale: ListingRow): IsaCompView | null {
   if (c.tier === null || d.closePriceCents === undefined || d.closePriceCents === null || d.closeDate === undefined || d.closeDate === null) return null;
   const tier = c.tier;
