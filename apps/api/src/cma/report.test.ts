@@ -56,7 +56,7 @@ const input = (o: Partial<ReportInput> = {}): ReportInput => ({
 });
 
 describe('R-CMA-9 rule 4: the report carries exactly its parts', () => {
-  it('E614 E617 R-CMA-4 R-AVM-1: range and estimate sentence, provider, statement, comps (client fields only), as-of, inspection, attribution and disclaimer, in order', () => {
+  it('E617 R-CMA-4 R-AVM-1: range and estimate sentence, provider, statement, comps (client fields only), as-of, inspection, attribution and disclaimer, in order', () => {
     const r = buildReport(input());
     expect(r.blocks.map((b) => b.role)).toEqual(['title', 'range', 'estimate', 'provider', 'statement', 'comp', 'comp', 'as_of', 'inspection', 'attribution', 'disclaimer']);
     expect(r.blocks[1]!.text).toBe('Estimated value range: $500,000 to $560,000');

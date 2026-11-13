@@ -283,7 +283,7 @@ describe('E604 E605 statements at share', () => {
 });
 
 describe('E614 E615 E617 E619 the report\'s contents', () => {
-  it('E614 E615 E617 E619 R-CMA-4 R-MLS-2: the email holds exactly the client parts: the range, the estimate sentence, every connection\'s statement, attribution and disclaimer (a rate-pool-only one too), the comps as rendered for clients (a hidden street shows its locality), and none of the agent-only data', async () => {
+  it('E615 E617 E619 R-CMA-4 R-MLS-2: the email holds exactly the client parts: the range, the estimate sentence, every connection\'s statement, attribution and disclaimer (a rate-pool-only one too), the comps as rendered for clients (a hidden street shows its locality), and none of the agent-only data', async () => {
     const w4 = await shareWorld(h);
     const pool = { h, tenantId: w4.tenantId, mls: await mlsConnection(h, w4.tenantId, w4.owner.userId!, { lastSyncedAt: new Date(), pack: { ...cmaPack({ valuation: { statements: { CA: { text: 'Pool connection statement (fixture).', min_point_size: 10 } } } }), attribution_text: 'Pool attribution (fixture).', disclaimer_text: 'Pool disclaimer (fixture).' } }) };
     await localSales(w4, 4);
@@ -435,7 +435,7 @@ describe('E609 E610 never shared', () => {
     expect(await messagesOf(s.c)).toBe(0);
   });
 
-  it('E610 R-OWN-24: a CMA of a contact merged away is CONTACT_MERGED at preview and share', async () => {
+  it('E610 R-OWN-24: a CMA of a contact merged away is CONTACT_MERGED at preview and share; the survivor still lists the old one, unshared and read only', async () => {
     const d = await draftFor();
     const survivor = await emailSeller(w, agent(), { name: 'Pat Survivor' });
     const pv = await withPlatformCmaCleared(h, () => preview(d.id));
@@ -444,6 +444,11 @@ describe('E609 E610 never shared', () => {
     expect(errorOf(await sharePreview(agent(), d.id)).code).toBe('CONTACT_MERGED');
     const r = await shareFrom(agent(), pv);
     expect([r.status, errorOf(r).code]).toEqual([409, 'CONTACT_MERGED']);
+    // audit cma-v2a F11: "Prepare a new CMA on the survivor, which still lists the old one" (E610)
+    const list = await call<{ cmas: { id: string; contactId: string | null; status: string; canEdit: boolean }[] }>(agent(), 'GET', `/contacts/${survivor.c}/cmas`);
+    expect(list.status).toBe(200);
+    expect(list.body.cmas.filter((x) => x.id === d.id)).toEqual([expect.objectContaining({ id: d.id, contactId: d.c, status: 'draft', canEdit: false })]);
+    expect((await h.su.query('SELECT status, shared_message_id FROM cma_reports WHERE id = $1', [d.id])).rows[0]).toEqual({ status: 'draft', shared_message_id: null });
   });
 });
 
@@ -523,6 +528,21 @@ describe('E600 E618 races', () => {
       expect((await shareFrom(agent(), pv)).status).toBe(404);
     });
     await nothingStored(d);
+  });
+
+  // audit cma-v2a F11: E618 names both ways of losing the contact; the reassignment above, the pond here
+  it('E618 R-PERM-5: the contact released to the pond between preview and tap is 404, nothing stored or sent', async () => {
+    const d = await draftFor();
+    await withPlatformCmaCleared(h, async () => {
+      const pv = await preview(d.id);
+      expect(pv.canShare).toBe(true);
+      const { command } = await import('../leads/testing.js');
+      expect((await command(agent(), d.c, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+      expect((await h.su.query('SELECT owner_user_id FROM contacts WHERE id = $1', [d.c])).rows[0].owner_user_id).toBeNull();
+      expect((await shareFrom(agent(), pv)).status).toBe(404);
+    });
+    await nothingStored(d);
+    expect(sent(d.email)).toHaveLength(0);
   });
 });
 
