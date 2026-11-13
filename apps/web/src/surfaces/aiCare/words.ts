@@ -129,6 +129,31 @@ export const escalationSentence = (c: string) => (ESCALATION_WORDS as Record<str
 export const endWords = (r: string | null | undefined) => (r ? ((END_WORDS as Record<string, string>)[r] ?? OTHER_CHECK) : OTHER_CHECK);
 export const pauseWords = (r: string | null | undefined) => (r ? ((PAUSE_WORDS as Record<string, string>)[r] ?? OTHER_CHECK) : OTHER_CHECK);
 
+// ---- who holds a handoff (batch 13 isa-4 F4; ISA-2b Q1: isa/handoff.ts recipientFor) ---------------------------------
+
+/**
+ * Who holds a handoff, for this reader. ISA-2b's recipient is the assignment's owner, the lead's new owner after a move,
+ * or whoever took over. "you" for the reader; a first name only where the web knows it (the assignment's owner, the
+ * contact's current owner); "the person who took over" after a take over; otherwise "someone else on the team". Null
+ * when nobody is the recipient: the card went to the previous owner's team lead and Owner/Admin.
+ */
+export function handoffHolder(o: {
+  recipientUserId: string | null;
+  viewerUserId: string | null;
+  ownerUserId: string | null | undefined;
+  ownerFirst: string;
+  currentOwner?: { userId: string; displayName: string | null } | null;
+  tookOver: boolean;
+}): string | null {
+  const r = o.recipientUserId;
+  if (!r) return null;
+  if (r === o.viewerUserId) return 'you';
+  if (o.ownerUserId && r === o.ownerUserId) return o.ownerFirst;
+  if (o.currentOwner && r === o.currentOwner.userId) return firstOf(o.currentOwner.displayName, "the lead's owner");
+  return o.tookOver ? 'the person who took over' : 'someone else on the team';
+}
+export const NO_RECIPIENT_WORDS = 'The handoff went to the team leads and Owner/Admin.';
+
 // ---- ISA-2b's booking cards (isa/booking/book.ts bookedCardInTx; batch 13 isa-4 F1) ---------------------------------
 
 /**

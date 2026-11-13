@@ -15,7 +15,7 @@ import { type ControlResult, type HandoffView, type ListRow, type PanelResponse,
 import { controlsFor } from './controls.js';
 import { localSeconds, localTime } from './time.js';
 import { closeUndo, getUndo, openUndo, registerHost, useIsFirstHost, useUndo, windowFromPanel, windowFromResponse } from './undoStore.js';
-import { CHAIN_CODE_WORDS, type Viewer, endWords, firstOf, pauseWords } from './words.js';
+import { CHAIN_CODE_WORDS, NO_RECIPIENT_WORDS, type Viewer, endWords, firstOf, handoffHolder, pauseWords } from './words.js';
 
 // ---- the viewer -----------------------------------------------------------------------------------------------------
 
@@ -373,12 +373,15 @@ function AfterWindow({ state, ownerUserId, ownerName, onDone }: { state: { conta
       while (!stop && Date.now() < state.until) {
         const p = await freshState(qc, api, state.contactId);
         if (p?.assignment?.endedAt) {
-          let who = 'The handoff went to the team leads and Owner/Admin.';
+          let who = NO_RECIPIENT_WORDS;
           if (p.handoff) {
             try {
               const h = await api.get<HandoffView>(`/ai-isa/handoffs/${p.handoff.id}`);
-              if (h.recipientUserId && h.recipientUserId === viewer.userId) who = 'The handoff is in your feed.';
-              else if (h.recipientUserId && h.recipientUserId === p.assignment.ownerUserId) who = `${cap(viewer.ownerFirst)} gets the handoff.`;
+              // batch 13 isa-4 F4: the recipient as ISA-2b routes it (the owner, the lead's new owner, or whoever took over)
+              const a = p.assignment;
+              const holder = handoffHolder({ recipientUserId: h.recipientUserId, viewerUserId: viewer.userId, ownerUserId: a.ownerUserId,
+                ownerFirst: !ownerUserId || ownerUserId === a.ownerUserId ? viewer.ownerFirst : 'the owner', tookOver: a.pauseReason === 'taking_over' || h.reason === 'taken_over' });
+              who = holder === 'you' ? 'The handoff is in your feed.' : holder ? `${cap(holder)} gets the handoff.` : NO_RECIPIENT_WORDS;
             } catch {
               /* not visible: keep the general sentence */
             }

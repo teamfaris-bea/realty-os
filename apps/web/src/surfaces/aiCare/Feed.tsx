@@ -20,7 +20,7 @@ import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
 import { localTime } from './time.js';
-import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, bookedWhen, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, bookedWhen, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -86,7 +86,7 @@ export function AiCareFeedCard({ card }: { card: FeedCard }) {
         </h3>
       </div>
       <HoldBanner hold={hold} first={firstOf(card.contact?.name, 'them')} viewer={viewer} />
-      {card.itemType === 'ai_isa_handoff' ? <HandoffBody card={card} viewer={viewer} /> : escalation ? <EscalationBody card={card} viewer={viewer} ownerName={o.ownerName} /> : <ActivityBody card={card} row={row} hold={hold} viewer={viewer} />}
+      {card.itemType === 'ai_isa_handoff' ? <HandoffBody card={card} viewer={viewer} ownerUserId={o.ownerUserId} /> : escalation ? <EscalationBody card={card} viewer={viewer} ownerName={o.ownerName} /> : <ActivityBody card={card} row={row} hold={hold} viewer={viewer} />}
       <UndoToastHost ownerUserId={o.ownerUserId ?? undefined} ownerName={o.ownerName} />
     </Card>
   );
@@ -238,7 +238,7 @@ function pendingLine(m: NonNullable<HandoffView['pendingMessage']>): string {
   return m.kind === 'confirmation' ? 'not sent: confirm by hand' : 'not sent';
 }
 
-function HandoffBody({ card, viewer }: { card: FeedCard; viewer: ViewerInfo }) {
+function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: ViewerInfo; ownerUserId: string | null }) {
   const h = useHandoff(card.subjectId);
   const { session } = useSession();
   const team = session?.tenant?.name ?? 'the team';
@@ -251,7 +251,8 @@ function HandoffBody({ card, viewer }: { card: FeedCard; viewer: ViewerInfo }) {
   const d = h.data;
   const pkg = d.package;
   const agent = viewer.isOwner ? firstOf(session?.user.displayName, 'your agent') : viewer.ownerFirst;
-  const recipientName = d.recipientUserId && d.recipientUserId === viewer.userId ? 'you' : d.recipientUserId && !viewer.isOwner ? viewer.ownerFirst : null;
+  // batch 13 isa-4 F4: who besides Owner/Admin may mark it seen: the recipient as ISA-2b routes it (Q1), named when known
+  const holder = handoffHolder({ recipientUserId: d.recipientUserId, viewerUserId: viewer.userId, ownerUserId, ownerFirst: viewer.ownerFirst, tookOver: d.reason === 'taken_over' });
   return (
     <div className="flex flex-col gap-3">
       <Block title="Why">{handoffWhy(d.reason, pkg.escalation ?? null)}</Block>
@@ -353,7 +354,7 @@ function HandoffBody({ card, viewer }: { card: FeedCard; viewer: ViewerInfo }) {
           </Button>
         </div>
       ) : !d.canAcknowledge ? (
-        <p className="text-[14px] text-ink-muted">Only {recipientName ?? 'Owner/Admin'} can mark this seen.</p>
+        <p className="text-[14px] text-ink-muted">Only {holder && holder !== 'you' ? `${holder} or Owner/Admin` : 'Owner/Admin'} can mark this seen.</p>
       ) : null}
       {sheet ? (
         <Dialog title="Handoff seen" onClose={() => setSheet(null)}>

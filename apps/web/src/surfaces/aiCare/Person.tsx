@@ -31,10 +31,12 @@ import {
   closedReasonWords,
   confirmationWords,
   decisionCodeWords,
+  NO_RECIPIENT_WORDS,
   endWords,
   escalationSentence,
   escalationTopic,
   firstOf,
+  handoffHolder,
   handoffWhy,
   isaMessage,
   noDeadlineWords,
@@ -80,7 +82,8 @@ export function AiCareStrip({ contact }: { contact: Contact }) {
         </p>
       ) : (
         <p className="text-[15px] text-ink">
-          <span className="font-semibold">AI care ended:</span> {endWords(a.endReason)} {p.handoff ? <HandoffLink handoffId={p.handoff.id} viewer={viewer} /> : null}
+          <span className="font-semibold">AI care ended:</span> {endWords(a.endReason)}{' '}
+          {p.handoff ? <HandoffLink handoffId={p.handoff.id} viewer={viewer} ownerUserId={a.ownerUserId} currentOwner={contact.owner} tookOver={a.pauseReason === 'taking_over' || p.handoff.reason === 'taken_over'} /> : null}
         </p>
       )}
       {state !== 'ended' || undo ? <AiCareControls target={target} /> : null}
@@ -94,16 +97,18 @@ export function AiCareStrip({ contact }: { contact: Contact }) {
   );
 }
 
-function HandoffLink({ handoffId, viewer }: { handoffId: string; viewer: ViewerInfo }) {
+/** Who has the handoff (batch 13 isa-4 F4): the reader, the owner, the lead's new owner or whoever took over (ISA-2b Q1). */
+function HandoffLink({ handoffId, viewer, ownerUserId, currentOwner, tookOver }: { handoffId: string; viewer: ViewerInfo; ownerUserId: string; currentOwner: Contact['owner']; tookOver: boolean }) {
   const h = useHandoff(handoffId);
   if (!h.data) return null;
-  if (h.data.recipientUserId === viewer.userId)
+  const who = handoffHolder({ recipientUserId: h.data.recipientUserId, viewerUserId: viewer.userId, ownerUserId, ownerFirst: viewer.ownerFirst, currentOwner, tookOver: tookOver || h.data.reason === 'taken_over' });
+  if (who === 'you')
     return (
       <Link to="/" className="font-medium text-accent underline">
         The handoff is in your feed.
       </Link>
     );
-  return <span className="text-ink-muted">{h.data.recipientUserId ? `${cap(viewer.ownerFirst)} got the handoff.` : 'The handoff went to the team leads and Owner/Admin.'}</span>;
+  return <span className="text-ink-muted">{who ? `${cap(who)} got the handoff.` : NO_RECIPIENT_WORDS}</span>;
 }
 
 // ---- the panel section ----------------------------------------------------------------------------------------------

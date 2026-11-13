@@ -306,6 +306,43 @@ describe('Take over, End and the Undo toast (R-ISA-15, E496)', () => {
     expect(windowFromPanel(new Date(now - 1000).toISOString(), now)).toBeLessThanOrEqual(now);
   });
 
+  it('R-ISA-30 ISA-2b Q1 (batch 13 isa-4 F4): after a team lead took over, the owner never reads her own name as the handoff recipient', async () => {
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    ended.assignment!.endReason = 'taken_over';
+    ended.assignment!.pauseReason = 'taking_over';
+    const fake = person(ended, { live: false }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ reason: 'taken_over', recipientUserId: ISA_IDS.tl, canAcknowledge: false }) });
+    isaApp(fake, `/contacts/${IDS.jane}`, 'agent');
+    const strip = await screen.findByTestId('ai-strip');
+    expect(await within(strip).findByText('The person who took over got the handoff.')).toBeInTheDocument();
+    expect(strip.textContent).not.toMatch(/Ava got the handoff|team leads and Owner\/Admin/);
+  });
+
+  it('R-ISA-30 (batch 13 isa-4 F4): a lead that moved names its new owner as the recipient', async () => {
+    const ended = panel({ state: 'ended', owner: ISA_IDS.other, handoff: { id: ISA_IDS.handoff, reason: 'owner_change', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    ended.assignment!.endReason = 'owner_change';
+    const fake = person(ended, { live: false }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ reason: 'owner_change', recipientUserId: IDS.me }) });
+    isaApp(fake, `/contacts/${IDS.jane}`, 'admin', { userId: ISA_IDS.tl });
+    const strip = await screen.findByTestId('ai-strip');
+    expect(await within(strip).findByText('Ava got the handoff.')).toBeInTheDocument();
+  });
+
+  it('R-ISA-15 E496 (batch 13 isa-4 F4): after a team lead took over, an Admin whose window was restored reads that the person who took over gets the handoff, never the team leads and Owner/Admin', async () => {
+    const closing = panel({ state: 'paused' });
+    closing.assignment!.undoUntil = new Date(Date.now() + 400).toISOString();
+    closing.assignment!.pauseReason = 'taking_over';
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    ended.assignment!.pauseReason = 'taking_over';
+    let n = 0;
+    const fake = person(closing, { live: false })
+      .on(`GET /contacts/${IDS.jane}/ai-isa`, () => ({ status: 200, body: ++n <= 2 ? closing : ended }))
+      .on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ reason: 'taken_over', recipientUserId: ISA_IDS.tl }) });
+    isaApp(fake, `/contacts/${IDS.jane}/thread`, 'admin', { userId: ISA_IDS.other });
+    await screen.findByTestId('ai-undo-toast');
+    const after = await screen.findByTestId('ai-after-toast', {}, { timeout: 4000 });
+    await waitFor(() => expect(after.textContent).toBe('AI care ended. The person who took over gets the handoff.'), { timeout: 5000 });
+    await act(async () => {});
+  });
+
   it('R-ISA-15 E496: after the window (here restored from panel.undoUntil after a reload) it says "Finishing…", then who has the handoff (the actual recipient)', async () => {
     const closing = panel({ state: 'paused' });
     closing.assignment!.undoUntil = new Date(Date.now() + 400).toISOString();

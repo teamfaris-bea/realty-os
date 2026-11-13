@@ -55,6 +55,19 @@ describe('AI care feed cards (module 76)', () => {
     expect(within(c).getByText(/from Ava or a collaborator does\./)).toBeInTheDocument();
   });
 
+  it('R-ISA-30 ISA-2b Q1 (batch 13 isa-4 F4): after a team lead took over, the owner without Got it reads who can mark it seen, never "Only Owner/Admin" alone', async () => {
+    isaApp(feedOf([handoffCard()], { handoff: handoffView({ reason: 'taken_over', canAcknowledge: false, recipientUserId: ISA_IDS.tl }) }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('Only the person who took over or Owner/Admin can mark this seen.')).toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: 'Got it' })).toBeNull();
+  });
+
+  it('R-ISA-30 (batch 13 isa-4 F4): a team lead reads that the owner or Owner/Admin can mark the owner\'s handoff seen', async () => {
+    isaApp(feedOf([handoffCard()], { handoff: handoffView({ canAcknowledge: false, recipientUserId: IDS.me }) }), '/', 'team_lead', { userId: ISA_IDS.tl });
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('Only Ava or Owner/Admin can mark this seen.')).toBeInTheDocument();
+  });
+
   it('R-ISA-30 E521 (batch 13 merge, 0081): a handoff with no deadline says why and never "Respond by" or "Overdue"; a closed one says why it is closed', async () => {
     isaApp(feedOf([handoffCard()], { handoff: handoffView({ slaClass: 'none', slaDueAt: iso(-60_000) }) }), '/', 'agent');
     let c = await screen.findByTestId('ai-card-ai_isa_handoff');
