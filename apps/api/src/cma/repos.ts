@@ -118,6 +118,16 @@ export async function supersede(tx: Tx, id: string): Promise<void> {
   await sql`UPDATE cma_reports SET status = 'superseded' WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid AND status = 'draft'`.execute(tx);
 }
 
+/**
+ * The contact and every record merged into it, along merge chains (0075's definer app.contact_merge_tree_ids: ids of
+ * the caller's tenant only). Contacts RLS hides a merged-away record (closed, no owner) from the survivor's agent and
+ * Team Lead, so the invoker tree would stop at the survivor; cma_reports_select (0077) still decides each CMA row.
+ */
+export async function mergeTreeIds(tx: Tx, contactId: string): Promise<string[]> {
+  const r = await sql<{ ids: string[] }>`SELECT app.contact_merge_tree_ids(app.tenant_id(), ${contactId}::uuid) AS ids`.execute(tx);
+  return r.rows[0]?.ids ?? [];
+}
+
 /** The CMAs of contacts, newest first (RLS decides which rows the caller reads). */
 export async function cmasOfContacts(tx: Tx, contactIds: readonly string[]): Promise<CmaRow[]> {
   return (await sql<CmaRow>`SELECT ${COLS} FROM cma_reports WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...contactIds]}::uuid[])

@@ -15,6 +15,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Tx } from '@realty/db';
 import { adminTx } from '../admin/common.js';
+import { mergedIntoRoot } from '../admin/repos/erasure.js';
 import { personFacts } from '../lists/repos/catalog.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
@@ -32,7 +33,14 @@ export async function contactCmaFacts(tx: Tx, contactId: string): Promise<Resour
 async function cmaFacts(tx: Tx, req: FastifyRequest, id: string): Promise<ResourceFacts | null> {
   const row = await getCma(tx, id);
   if (!row) return null;
-  if (row.contact_id !== null) return contactCmaFacts(tx, row.contact_id);
+  if (row.contact_id !== null) {
+    // b11 ownership-data/F1 (0077): a merged-away record's CMA is read through the record its merge chain ends at, which
+    // the survivor's agent and Team Lead see (contacts RLS hides the merged-away record itself from them)
+    const own = await contactCmaFacts(tx, row.contact_id);
+    if (own) return own;
+    const root = await mergedIntoRoot(tx, row.contact_id);
+    return root ? contactCmaFacts(tx, root) : null;
+  }
   return { own: row.created_by_user_id === req.actor?.userId };
 }
 

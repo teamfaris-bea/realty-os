@@ -17,7 +17,6 @@ import { type CompetingRule, type ListingFacts, competingSet, dedupeMirrors, lis
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { ZodError } from 'zod';
-import { mergeTree } from '../admin/repos/erasure.js';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import {
@@ -56,6 +55,7 @@ import {
   defaultAddress,
   getCma,
   insertDraft,
+  mergeTreeIds,
   myOpenDraft,
   supersede,
   tenantZoneName,
@@ -522,7 +522,9 @@ export interface CmaSummary {
 }
 
 export async function listForContact(tx: Tx, actor: UserActor, contactId: string): Promise<CmaSummary[]> {
-  const ids = await mergeTree(tx, contactId); // the contact and every record merged into it (merge moves no CMA)
+  // the contact and every record merged into it (merge moves no CMA; b11 ownership-data/F1: the definer tree, because
+  // contacts RLS hides a merged-away record from the survivor's agent and Team Lead)
+  const ids = await mergeTreeIds(tx, contactId);
   const rows = await cmasOfContacts(tx, ids);
   return rows.map((r) => {
     const s = r.subject as unknown as StoredSubject;

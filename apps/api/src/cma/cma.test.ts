@@ -539,11 +539,39 @@ describe('erasure and merge (R-CMA-8)', () => {
     expect(cma.status).toBe(201);
     const m = await command(w.owner, survivor, 'merge', { loserId: loser, ownerChoice: w.agents[0]!.userId });
     expect(m.status).toBe(200);
-    // listed for whoever can see the merged-away record (contacts RLS hides a closed, unowned loser from its former agent:
-    // a reported gap, no policy is widened here)
+    // listed for whoever sees the survivor (b11 ownership-data/F1, 0077: the agents and Team Lead case is the next test)
     const list = await call<{ cmas: { id: string; contactId: string; fromMergedRecord: boolean }[] }>(w.owner, 'GET', `/contacts/${survivor}/cmas`);
     expect(list.status).toBe(200);
     expect(list.body.cmas.find((x) => x.id === cma.body.cma.id)).toMatchObject({ contactId: loser, fromMergedRecord: true });
     expect((await h.su.query('SELECT contact_id FROM cma_reports WHERE id = $1', [cma.body.cma.id])).rows[0].contact_id).toBe(loser);
+  });
+
+  // b11 ownership-data/F1 (the CMA half; 0077): contacts RLS hides a closed, unowned merged-away record from the
+  // survivor's agent and Team Lead, so cma_reports_select admitted its CMAs only to tenant-wide roles and the creator
+  it('R-CMA-6 R-CMA-8: after a merge the survivor\'s agent (not the CMA\'s creator) and its Team Lead list and open the merged-away record\'s CMA; an agent who sees neither record still gets 404', async () => {
+    const { command } = await import('../leads/testing.js');
+    const survivor = await contact(w.agents[0]!, 'Pat Survivor');
+    const { c: loser } = await seller({ client: w.agents[1]! });
+    const cma = await oneTap(w.agents[1]!, loser);
+    expect(cma.status).toBe(201);
+    const id = cma.body.cma.id;
+    const m = await command(w.owner, survivor, 'merge', { loserId: loser, ownerChoice: w.agents[0]!.userId });
+    expect(m.status).toBe(200);
+    expect((await h.su.query('SELECT merged_into_contact_id, owner_user_id FROM contacts WHERE id = $1', [loser])).rows[0]).toEqual({ merged_into_contact_id: survivor, owner_user_id: null });
+    for (const viewer of [w.agents[0]!, w.teamLead]) {
+      const list = await call<{ cmas: { id: string; contactId: string; fromMergedRecord: boolean; mine: boolean }[] }>(viewer, 'GET', `/contacts/${survivor}/cmas`);
+      expect(list.status).toBe(200);
+      expect(list.body.cmas.find((x) => x.id === id)).toMatchObject({ contactId: loser, fromMergedRecord: true, mine: false });
+      const one = await call<CmaBody>(viewer, 'GET', `/cma/${id}`);
+      expect(one.status).toBe(200);
+      expect(one.body.cma.id).toBe(id);
+    }
+    // the merged-away record itself stays hidden from them (only its CMA is read through the survivor)
+    expect((await call(w.agents[0]!, 'GET', `/contacts/${loser}/cmas`)).status).toBe(404);
+    const peer = await h.invite(w.owner, 'agent');
+    expect((await call(peer, 'GET', `/contacts/${survivor}/cmas`)).status).toBe(404);
+    expect((await call(peer, 'GET', `/cma/${id}`)).status).toBe(404);
+    // the CMA did not move, and a merged-away record takes no new CMA (cma_reports_insert still needs its own detail)
+    expect((await h.su.query('SELECT contact_id FROM cma_reports WHERE id = $1', [id])).rows[0].contact_id).toBe(loser);
   });
 });
