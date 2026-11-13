@@ -41,6 +41,12 @@ export interface FakeFaults {
   ignorePending?: boolean;
   /** Stand still (real time passes, virtual time does not) before scripted step n until resume(). */
   holdBeforeStep?: number;
+  /**
+   * Freeze before scripted step n until resume(): next() does not return at all, so the runner neither polls the call
+   * row nor ends the session. This is a runner whose process stopped mid-call (R-VOICE-21); holdBeforeStep keeps the
+   * runner looping, so it would see a call ended meanwhile and write its own handback first.
+   */
+  freezeBeforeStep?: number;
 }
 
 export interface FakeSessionLog {
@@ -94,10 +100,14 @@ export class FakeVoiceTransport implements VoiceTransport {
 
   private released = false;
 
-  /** Lets virtual time run again, for good: no later hold or hand-off pauses this transport again. */
+  private thaw: (() => void) | null = null;
+
+  /** Lets virtual time run again, for good: no later hold, freeze or hand-off pauses this transport again. */
   resume(): void {
     this.paused = false;
     this.released = true;
+    this.thaw?.();
+    this.thaw = null;
   }
 
   get isPaused(): boolean {
@@ -118,6 +128,12 @@ export class FakeVoiceTransport implements VoiceTransport {
   async next(o: { until: Instant; pending: Promise<unknown> | null }): Promise<NextResult> {
     if (this.log.closed) return null;
     if (this.ready.length > 0) return this.ready.shift()!;
+    if (this.faults.freezeBeforeStep !== undefined && this.step === this.faults.freezeBeforeStep && !this.released) {
+      this.paused = true;
+      await new Promise<void>((r) => {
+        this.thaw = r;
+      });
+    }
     if (this.faults.holdBeforeStep !== undefined && this.step === this.faults.holdBeforeStep && !this.released) this.paused = true;
     if (this.paused) {
       // real time passes so the test's webhooks interleave; virtual time stands still
