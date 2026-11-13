@@ -135,6 +135,7 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   portal_login_tokens: { created_at: 'now()', expires_at: "now() + interval '15 minutes'" },
   portal_sessions: { created_at: 'now()', last_seen_at: 'now()', idle_expires_at: "now() + interval '1 hour'", absolute_expires_at: "now() + interval '1 day'", revoked_reason: 'NULL' },
   portal_stream_tokens: { created_at: 'now()', expires_at: "now() + interval '30 seconds'" },
+  portal_link_seals: { created_at: 'now()', expires_at: "now() + interval '15 minutes'" }, // b14 F2 (0242): at most 15 minutes
   user_calendar_links: { status: "'pending_review'" },
   // FUB parity schema
   bulk_actions: { kind: "'tag'", source: "'selection'", idempotency_key: "'fixture-' || gen_random_uuid()" },
