@@ -125,7 +125,10 @@ async function register(app: FastifyInstance): Promise<void> {
     async (req) => tx(req, async (t, _now, actor) => {
       const a = await liveAssignmentOf(t, req.params.id);
       if (!sellerSide(a)) throw new AppError('SUBJECT_NOT_SELLER', { sentence: 'This lead is not under seller AI care.' });
-      await ensureWatchInTx(t, a).catch(() => undefined);
+      // never an INSERT here (ISA-3 audit F2): seller_watch_insert admits only the system and the assignment's owner, and
+      // Postgres checks it before ON CONFLICT, so a Team Lead's or Admin's insert would abort the transaction. The
+      // system makes the row at the first turn (H1); with no row there is no confirmed home to dispute.
+      if ((await watchOf(t, a.id)) === null) return { ok: true as const, sentence: 'Nothing to mark yet: the owner has not confirmed the home.' };
       const u = await sql`UPDATE ai_isa_seller_watch SET subject_disputed_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND subject_disputed_at IS NULL`.execute(t);
       if (Number(u.numAffectedRows ?? 0) > 0) await audit(t, actor, { action: 'ai_isa.subject_disputed', entity: { type: 'ai_isa_assignment', id: a.id } });
       return { ok: true as const, sentence: 'Marked disputed. Recent sales stop until the owner confirms the home again.' };

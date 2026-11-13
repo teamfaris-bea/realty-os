@@ -189,6 +189,25 @@ describe('E536 R-ISA-18: the complete engine set or nothing, by email', () => {
     expect(((await build(n)) as { codes: string[] }).codes).toEqual(expect.arrayContaining(['SUBJECT_NOT_IN_MLS', 'SUBJECT_UNCONFIRMED']));
   });
 
+  it('E536 owner question 9 (ISA-3 audit F2): anyone who may pause marks the subject disputed: a Team Lead, an Admin and the Owner, never inserting the watch row', async () => {
+    const admin = await h.invite(w.owner, 'admin');
+    const disputed = (l: SellerLead) => h.su.query<{ at: Date | null }>(`SELECT subject_disputed_at AS at FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId]);
+    for (const who of [w.teamLead!, admin, w.owner]) {
+      const l = await sellerLead(h, w);
+      await confirm(w, l);
+      const r = await call<{ ok: boolean; sentence: string }>(who, 'POST', `/contacts/${l.id}/ai-isa/seller/subject-disputed`, {});
+      expect([r.status, r.body.sentence]).toEqual([200, 'Marked disputed. Recent sales stop until the owner confirms the home again.']);
+      expect((await disputed(l)).rows[0]!.at).not.toBeNull();
+      expect(((await build(l)) as { codes: string[] }).codes).toEqual(['SUBJECT_DISPUTED']);
+    }
+    // no watch row yet (the system makes it at the first turn): nothing to dispute, and a non-owner never inserts one
+    const l = await sellerLead(h, w);
+    await h.su.query(`DELETE FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId]);
+    const r = await call<{ ok: boolean; sentence: string }>(w.teamLead!, 'POST', `/contacts/${l.id}/ai-isa/seller/subject-disputed`, {});
+    expect([r.status, r.body.sentence]).toEqual([200, 'Nothing to mark yet: the owner has not confirmed the home.']);
+    expect((await disputed(l)).rows).toEqual([]);
+  });
+
   it('E536: a new property address becomes the default and unconfirms the subject (SUBJECT_CHANGED at read time)', async () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
