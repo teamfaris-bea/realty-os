@@ -18,6 +18,7 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ListingDetailView, ListingView, ShowingView } from '../feed/lib/types.js';
 import { MarketingLink } from '../marketing/MarketingLink.js';
 import { SellerUpdateCard, type SellerUpdateView } from './SellerUpdateCard.js';
+import { DocumentsSection } from '../documents/DocumentsSection.js';
 
 const STATUS_LABEL: Record<string, string> = { coming_soon: 'Coming soon', active: 'Active', pending: 'Pending', sold: 'Sold', withdrawn: 'Withdrawn', expired: 'Expired' };
 
@@ -129,6 +130,7 @@ export function ListingPage() {
         <MarketingLink listingId={l.id} />
       </Section>
       <ListingAgent listing={l} />
+      <DocumentsSection kind="listing" id={l.id} ownerUserId={l.listingAgentUserId} />
       <Section title="Showings">
         <p className="text-[15px] text-ink">
           <Ratio value={l.showings.completed} of={l.showings.total} label="showings completed" />

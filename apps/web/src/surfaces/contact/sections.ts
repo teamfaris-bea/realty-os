@@ -11,6 +11,7 @@ import { ContactFieldsSection } from '../people/ContactFields.js';
 import { ContactTagsSection } from '../people/ContactTags.js';
 import { DetailsSlotContext } from './slots.js';
 import { HomeownerPanel } from '../homeowner/HomeownerPanel.js';
+import { ContactDocumentsSection } from '../documents/DocumentsSection.js';
 
 export interface ContactSection {
   id: string;
@@ -26,6 +27,7 @@ export const contactSections: ContactSection[] = [
   { id: 'tags', order: 5, component: ContactTagsSection },
   { id: 'fields', order: 20, slot: 'details', component: ContactFieldsSection },
   { id: 'homeowner', order: 30, component: HomeownerPanel },
+  { id: 'documents', order: 40, component: ContactDocumentsSection },
   // registry: add new entries above this line
 ];
 
