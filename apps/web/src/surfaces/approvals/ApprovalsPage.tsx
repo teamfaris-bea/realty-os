@@ -19,7 +19,7 @@ import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index
 import { AgentSheetsProvider, SendOutcome, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
-import { AGENT_ERROR_MESSAGES, dealDateStaleWords } from '../feed/lib/messages.js';
+import { AGENT_ERROR_MESSAGES, dealDateStaleWords, homeValueRefusalWords } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
@@ -120,7 +120,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const titleId = useId();
   const [seenSeq, setSeenSeq] = useState<number | null>(null);
   const [stale, setStale] = useState(false);
-  // E142: the deal date this update cites changed; nothing clears it, so Send goes away and only Dismiss stays
+  // E142: the deal date this update cites changed; E624 (b13 audit V2B-2): a home-value note's estimate can no longer be
+  // shown to clients. A re-tap does not clear either, so Send goes away and only Dismiss stays
   const [dateStale, setDateStale] = useState<string | null>(null);
   const [result, setResult] = useState<ApproveResponse | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -141,6 +142,11 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const doApprove = async () => {
     const r = await approve.run(seenSeq !== null ? { reviewedInboundSeq: seenSeq } : {});
     if (!r.ok) {
+      const hv = homeValueRefusalWords(r.code, r.details);
+      if (hv?.kind === 'not_displayable') {
+        setDateStale(hv.text);
+        return;
+      }
       if (r.code === 'DRAFT_STALE') {
         const dated = dealDateStaleWords(r.details);
         if (dated !== null) {
@@ -205,7 +211,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           Read the new message, then send if this still fits.
         </Notice>
       ) : null}
-      {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{approve.error.message}</Notice> : null}
+      {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{homeValueRefusalWords(approve.error.code, approve.error.details)?.text ?? approve.error.message}</Notice> : null}
       {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
       {result && !['acknowledged', 'sent', 'queued'].includes(sentResult(result)) ? (
         <SendOutcome result={{ result: sentResult(result), decision: result.decision, message: null }} contactName={name} />

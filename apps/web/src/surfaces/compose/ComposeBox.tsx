@@ -20,6 +20,8 @@
 //   so, refreshes the thread, and the next Send carries the inbound seq the agent has now seen.
 // - DRAFT_INVALIDATED (R-AST-7): the draft no longer applies; nothing was sent. The text stays, and
 //   Send becomes the agent's own message.
+// - An in-house home-value note (E621, E624; b13 audit V2B-2): DRAFT_STALE HOME_VALUE_NOT_DISPLAYABLE and VALIDATION_FAILED
+//   HOME_VALUE_LINES_REQUIRED show the server's sentence; the client did not write, and the draft is never detached.
 // - Phase 2 (module 37): the box defaults to the client's last open channel (text, email or web chat) and
 //   says in one line why it is on another (channelChoice.ts). A channel the person cannot be reached on is
 //   never offered: its option is disabled and shows the reachability summary's reason instead of hiding the
@@ -42,7 +44,7 @@ import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } fr
 import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
 import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
-import { dealDateStaleWords } from '../feed/lib/messages.js';
+import { dealDateStaleWords, homeValueRefusalWords } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
 import { MediaAddButton, MediaTray } from './MediaTray.js';
@@ -327,6 +329,13 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   /** A draft the server would not send as approved (R-AST-6, R-AST-7): the text stays and the box says what to do. */
   const draftRefused = (code: string, message: string, details: Record<string, unknown> | null): boolean => {
+    // b13 audit V2B-2 (E621, E624): an in-house home-value note's gate or required lines, in the server's sentence. The
+    // draft stays attached (never the agent's own message, which would send the estimate around the gate) and the text stays
+    const hv = homeValueRefusalWords(code, details, 'compose');
+    if (hv !== null) {
+      setNotice({ tone: 'warn', text: hv.text });
+      return true;
+    }
     // E142: the deal date the draft cites changed; detached like an invalidated draft, the text stays as the agent's own
     const dated = code === 'DRAFT_STALE' ? dealDateStaleWords(details, 'compose') : null;
     if (dated !== null) {

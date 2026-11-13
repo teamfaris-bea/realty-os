@@ -35,7 +35,7 @@ import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
 import { useMutate } from './lib/hooks.js';
-import { dealDateStaleWords } from './lib/messages.js';
+import { dealDateStaleWords, homeValueRefusalWords } from './lib/messages.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
 import { AiCareActionNote } from '../aiCare/Compose.js'; // module 76 (flagged edit)
 
@@ -172,7 +172,8 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
   const run = async () => {
     const r = await cmd.run({});
     if (!r.ok) {
-      const dated = r.code === 'DRAFT_STALE' ? dealDateStaleWords(r.details, 'feed') : null;
+      // b13 audit V2B-2 (E621, E624): a home-value note's gate or its required lines, in the server's sentence; no thread jump
+      const dated = (r.code === 'DRAFT_STALE' ? dealDateStaleWords(r.details, 'feed') : null) ?? homeValueRefusalWords(r.code, r.details, 'feed')?.text ?? null;
       if (dated !== null) {
         setDateStale(dated);
         return;

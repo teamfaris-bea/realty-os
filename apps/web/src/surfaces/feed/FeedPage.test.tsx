@@ -169,6 +169,20 @@ describe('Priority Feed', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it('b13 audit V2B-2 E624 R-CMA-7: a home-value card whose estimate can no longer be shown says so in the server\'s sentence and to dismiss it in Approvals: no thread jump, no "replied"', async () => {
+    const c = card({ itemType: 'assistant_draft', assistantActionId: IDS.draft, reasons: [{ code: 'DRAFT_READY', label: 'Draft ready for you' }], primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'FEED_STALE', sentence: 'The MLS data is out of date: the feed last synced 3 days ago, and the licence pack allows 24 hours.' }));
+    const { router } = agentApp(fake);
+    const before = router.state.location.pathname;
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('This home-value note can’t be sent: the estimate can’t be shown to clients now. The MLS data is out of date: the feed last synced 3 days ago, and the licence pack allows 24 hours. Dismiss it in Approvals.')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(before);
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('a draft approval the send-time check blocks says why, and there is no way past it', async () => {
     const c = card({ itemType: 'assistant_draft', primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
     const blocked = decision({ outcome: 'deny', explanation: 'Opted out of texts' });

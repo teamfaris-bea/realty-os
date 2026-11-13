@@ -341,6 +341,43 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it('b13 audit V2B-2 E624 R-CMA-7: a home-value draft whose estimate can no longer be shown says so in the server\'s sentence, never that the client wrote, and is never detached into the agent\'s own message', async () => {
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'FEED_STALE', sentence: 'The MLS data is out of date: the feed last synced 3 days ago, and the licence pack allows 24 hours.' }));
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const u = user();
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?'));
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('This home-value note can’t be sent: the estimate can’t be shown to clients now. The MLS data is out of date: the feed last synced 3 days ago, and the licence pack allows 24 hours. Dismiss it in Approvals.')).toBeInTheDocument();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(screen.queryByText(/Send sends it as your own message/)).toBeNull();
+    expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?');
+    // a second Send is the same approval again (refused again), never the agent's own message
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(2));
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)[1]!.body).not.toHaveProperty('reviewedInboundSeq');
+  });
+
+  it('b13 audit V2B-2 E621 R-AVM-1: a home-value edit that drops or changes a required line says which lines to keep; the edited text stays in the box', async () => {
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(422, 'VALIDATION_FAILED', { reason: 'HOME_VALUE_LINES_REQUIRED', sentence: 'Keep the estimate sentence, the MLS statement, attribution, disclaimer and data date as written.' }));
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const u = user();
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?'));
+    await u.clear(box);
+    await u.type(box, 'Hi Jane, a shorter note.');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('This home-value note can’t be sent with those lines changed. Keep the estimate sentence, the MLS statement, attribution, disclaimer and data date as written.')).toBeInTheDocument();
+    expect(screen.queryByText(/Some of the information is missing/)).toBeNull();
+    expect(box).toHaveValue('Hi Jane, a shorter note.');
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
+  });
+
   it('R-AST-6: approving a draft the client has replied to since is refused as stale; the box says so and the next Send carries the re-reviewed inbound seq', async () => {
     const fake = threadFake()
       .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })

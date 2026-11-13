@@ -76,3 +76,23 @@ export function dealDateStaleWords(details: Record<string, unknown> | null | und
   if (where === 'compose') return DEAL_DATE_STALE_WORDS[k].replace(/ Dismiss it[;.].*$/, '');
   return DEAL_DATE_STALE_WORDS[k];
 }
+
+/**
+ * b13 audit V2B-2 (E621, E624; R-CMA-7, R-AVM-1; lane V2-B brief E6): an in-house home-value draft the server refuses,
+ * in the server's own sentence (details.sentence, apps/api cma/avm.ts homeValueDraftBlock). DRAFT_STALE with reason
+ * HOME_VALUE_NOT_DISPLAYABLE is the value gate, not a reply from the client: no "replied since", no "Send anyway", no
+ * thread jump, and the draft is never detached into the agent's own message (that would send the estimate around
+ * the gate). VALIDATION_FAILED with HOME_VALUE_LINES_REQUIRED means the edit dropped or changed a required line: the
+ * agent keeps the text and puts the lines back. Null for any other refusal.
+ */
+export function homeValueRefusalWords(code: string, details: Record<string, unknown> | null | undefined, where: 'draft' | 'feed' | 'compose' = 'draft'): { kind: 'not_displayable' | 'lines_required'; text: string } | null {
+  const reason = details?.['reason'];
+  const sentence = typeof details?.['sentence'] === 'string' && details['sentence'].trim() !== '' ? ` ${details['sentence'].trim()}` : '';
+  if (code === 'DRAFT_STALE' && reason === 'HOME_VALUE_NOT_DISPLAYABLE') {
+    return { kind: 'not_displayable', text: `This home-value note can’t be sent: the estimate can’t be shown to clients now.${sentence} ${where === 'draft' ? 'Dismiss it.' : 'Dismiss it in Approvals.'}` };
+  }
+  if (code === 'VALIDATION_FAILED' && reason === 'HOME_VALUE_LINES_REQUIRED') {
+    return { kind: 'lines_required', text: `This home-value note can’t be sent with those lines changed.${sentence || ' Keep the estimate sentence, the MLS statement, attribution, disclaimer and data date as written.'}` };
+  }
+  return null;
+}

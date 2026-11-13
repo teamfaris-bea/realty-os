@@ -26,6 +26,10 @@ const callClaim = {
   evidence: [{ sourceType: 'call', sourceId: IDS.call, locator: { kind: 'transcript_offset', startMs: 134_000, endMs: 137_000 }, snippet: 'call me Thursday around four', verified: true, sourceAvailable: true, label: '“call me Thursday around four” at 2:14 in the call' }],
 };
 
+/** b13 audit V2B-2: the server's sentences on a home-value draft refusal (apps/api cma/avm.ts). */
+const HV_SENTENCE = 'The MLS data is out of date: the feed last synced 3 days ago, and the licence pack allows 24 hours.';
+const HV_LINES = 'Keep the estimate sentence, the MLS statement, attribution, disclaimer and data date as written.';
+
 describe('Approvals inbox', () => {
   it('R-INBOX-4 (review ui-compose/F3): each draft is captioned by the channel it goes out on, a web-chat reply as a chat reply, never as an email', async () => {
     const chat = draftAction({ id: IDS.draft, draft: { channel: 'web_chat', subject: null, body: 'Happy to help with Elm!' } });
@@ -127,6 +131,30 @@ describe('Approvals inbox', () => {
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/approvals');
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
+  it('b13 audit V2B-2 E624 R-CMA-7: a home-value draft whose estimate can no longer be shown says so in the server\'s sentence, never that the client replied: no Send anyway, no re-tap, Dismiss stays', async () => {
+    const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'FEED_STALE', sentence: HV_SENTENCE }));
+    const { router } = agentApp(fake, '/approvals');
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(`This home-value note can’t be sent: the estimate can’t be shown to clients now. ${HV_SENTENCE} Dismiss it.`)).toBeInTheDocument();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Read it' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/approvals');
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
+  it('b13 audit V2B-2 E621 R-AVM-1: a home-value draft refused for its required lines says which lines to keep, never the generic "missing information" sentence', async () => {
+    const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(422, 'VALIDATION_FAILED', { reason: 'HOME_VALUE_LINES_REQUIRED', sentence: HV_LINES }));
+    agentApp(fake, '/approvals');
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(`This home-value note can’t be sent with those lines changed. ${HV_LINES}`)).toBeInTheDocument();
+    expect(screen.queryByText(/Some of the information is missing/)).toBeNull();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });
 
   it('a handback without a reply draft offers Reply and Mark handled', async () => {
