@@ -186,10 +186,13 @@ export const SELLER_DATA_LINES: readonly string[] = Object.freeze([
   'Only sales the MLS allows us to show are included.',
 ]);
 
-/** "Compared using your home's MLS record from {date}: {beds} bd, {sqft} sq ft. Tell me if that's changed." */
+/**
+ * "Compared using your home's MLS record from {date}: {beds} bd, {sqft} sq ft. Tell me if that's changed." Only the
+ * facts the record has are named: an unknown size (R-MLS-7) is left out, and with neither fact there is no list.
+ */
 export function subjectLine(s: SubjectFacts): string {
   const parts = [s.beds !== null ? `${s.beds} bd` : null, s.sqft !== null ? `${String(s.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft` : null].filter((x) => x !== null);
-  return `Compared using your home's MLS record from ${dateLabel(s.recordDate)}: ${parts.join(', ')}. Tell me if that's changed.`;
+  return `Compared using your home's MLS record from ${dateLabel(s.recordDate)}${parts.length > 0 ? `: ${parts.join(', ')}` : ''}. Tell me if that's changed.`;
 }
 
 /** The comp-set hash (dedupe and refresh, §6.3): method version, ordered identities, close prices. */
