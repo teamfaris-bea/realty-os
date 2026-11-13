@@ -82,7 +82,8 @@ export function claim(over: Partial<ClaimView> = {}): ClaimView {
   return {
     id: CLAIM1,
     ordinal: 1,
-    text: 'Closing on Dec 18, 2026',
+    // the API's claim text, as documents/extract.ts writes it (the date as stored)
+    text: 'Closing: 2026-12-18 (page 3)',
     milestone: { kind: 'closing', label: 'Closing', dueOn: '2026-12-18' },
     page: 3,
     needsReview: false,

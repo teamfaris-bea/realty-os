@@ -42,7 +42,7 @@ describe('contract-date review', () => {
     fake.on(confirmPath(CLAIM1), answer(fake, decided(x, { reviewStatus: 'confirmed', appliedDateId: DATE1 })));
     open(fake);
     const m = await page();
-    const card = within(m).getByRole('article', { name: 'Closing on Dec 18, 2026' });
+    const card = within(m).getByRole('article', { name: 'Closing: Dec 18, 2026' });
     expect(within(card).getByText('Page 3')).toBeInTheDocument();
     expect(within(card).getByText('“Closing Date: December 18, 2026” in the document')).toBeInTheDocument();
     expect(within(m).getByText(COPY.explanation)).toBeInTheDocument();
@@ -56,13 +56,15 @@ describe('contract-date review', () => {
     expect(calls[0]!.body).toEqual({ target: { kind: 'new' }, commandId: expect.stringMatching(UUID) });
     expect(within(m).queryByRole('button', { name: 'Confirm' })).toBeNull();
     expect(m.textContent).not.toMatch(RAW);
+    // the claim's stored date is said in words, never as 2026-12-18
+    expect(m.textContent).not.toMatch(/\d{4}-\d\d-\d\d/);
     expect(m.textContent).not.toMatch(/confidence|score|probab|%/i);
     noAssistant(fake);
   });
 
   it('R-STAFF-2: "Replace {label} on {date}" names the live date; the reminder (0-60) is sent; Not right sends only a commandId', async () => {
     const c1 = claim({ liveDates: [{ dateId: DATE1, label: 'Closing', dueOn: '2026-12-20', status: 'confirmed', source: 'template' }] });
-    const c2 = claim({ id: CLAIM2, ordinal: 2, text: 'Inspection by Nov 20, 2026', milestone: { kind: 'inspection', label: 'Inspection', dueOn: '2026-11-20' } });
+    const c2 = claim({ id: CLAIM2, ordinal: 2, text: 'Inspection: 2026-11-20 (page 2)', milestone: { kind: 'inspection', label: 'Inspection', dueOn: '2026-11-20' } });
     const x = extraction({ claims: [c1, c2] });
     const fake = fakeFor(x)
       .on(confirmPath(CLAIM1), { status: 200, body: { ...x, dateId: DATE1 } })
@@ -70,7 +72,7 @@ describe('contract-date review', () => {
     open(fake);
     const m = await page();
     const user = userEvent.setup();
-    const card = within(m).getByRole('article', { name: 'Closing on Dec 18, 2026' });
+    const card = within(m).getByRole('article', { name: 'Closing: Dec 18, 2026' });
     const confirm = await within(card).findByRole('button', { name: 'Confirm' });
     expect(confirm).toBeDisabled();
     await user.click(within(card).getByRole('radio', { name: 'Replace Closing on Dec 20, 2026' }));
@@ -81,7 +83,7 @@ describe('contract-date review', () => {
     await user.click(confirm);
     await waitFor(() => expect(fake.callsTo(confirmPath(CLAIM1))).toHaveLength(1));
     expect(fake.callsTo(confirmPath(CLAIM1))[0]!.body).toEqual({ target: { kind: 'existing', dateId: DATE1 }, reminderDaysBefore: 3, commandId: expect.stringMatching(UUID) });
-    await user.click(within(within(m).getByRole('article', { name: 'Inspection by Nov 20, 2026' })).getByRole('button', { name: 'Not right' }));
+    await user.click(within(within(m).getByRole('article', { name: 'Inspection: Nov 20, 2026' })).getByRole('button', { name: 'Not right' }));
     await waitFor(() => expect(fake.callsTo(rejectPath(CLAIM2))).toHaveLength(1));
     expect(fake.callsTo(rejectPath(CLAIM2))[0]!.body).toEqual({ commandId: expect.stringMatching(UUID) });
     noAssistant(fake);
@@ -89,8 +91,8 @@ describe('contract-date review', () => {
 
   it('E675: a needs-review claim shows the API\'s reviewNote and has no Confirm; conflicting claims sit side by side with the conflictNote, none preselected', async () => {
     const a = claim({ conflictsWith: [CLAIM2], conflictNote: COPY.conflict });
-    const b = claim({ id: CLAIM2, ordinal: 2, text: 'Closing on Jan 8, 2027', milestone: { kind: 'closing', label: 'Closing', dueOn: '2027-01-08' }, conflictsWith: [CLAIM1], conflictNote: COPY.conflict });
-    const c = claim({ id: CLAIM3, ordinal: 3, text: 'Appraisal by Nov 30, 2026', milestone: { kind: 'appraisal', label: 'Appraisal', dueOn: '2026-11-30' }, needsReview: true, reviewNote: COPY.needsReview, evidence: [{ sourceType: 'document', locator: { kind: 'char_range', page: 2, start: 0, end: 9 }, snippet: 'Appraisal', verified: false, line: '“Appraisal” in the document' }] });
+    const b = claim({ id: CLAIM2, ordinal: 2, text: 'Closing: 2027-01-08 (page 3)', milestone: { kind: 'closing', label: 'Closing', dueOn: '2027-01-08' }, conflictsWith: [CLAIM1], conflictNote: COPY.conflict });
+    const c = claim({ id: CLAIM3, ordinal: 3, text: 'Appraisal: 2026-11-30 (page 2)', milestone: { kind: 'appraisal', label: 'Appraisal', dueOn: '2026-11-30' }, needsReview: true, reviewNote: COPY.needsReview, evidence: [{ sourceType: 'document', locator: { kind: 'char_range', page: 2, start: 0, end: 9 }, snippet: 'Appraisal', verified: false, line: '“Appraisal” in the document' }] });
     const fake = fakeFor(extraction({ claims: [a, b, c] }));
     open(fake);
     const m = await page();
@@ -103,7 +105,7 @@ describe('contract-date review', () => {
       expect(within(card).getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true);
       expect(within(card).getByRole('button', { name: 'Confirm' })).toBeDisabled();
     }
-    const review = within(m).getByRole('article', { name: 'Appraisal by Nov 30, 2026' });
+    const review = within(m).getByRole('article', { name: 'Appraisal: Nov 30, 2026' });
     expect(within(review).getByText(COPY.needsReview)).toBeInTheDocument();
     expect(within(review).queryByRole('button', { name: 'Confirm' })).toBeNull();
     expect(within(review).getByRole('button', { name: 'Not right' })).toBeInTheDocument();
@@ -132,7 +134,7 @@ describe('contract-date review', () => {
     const m = await page();
     expect(within(m).getByText('The dates in this contract have not been read yet.')).toBeInTheDocument();
     await userEvent.setup().click(within(m).getByRole('button', { name: 'Read dates now' }));
-    expect(await within(m).findByRole('article', { name: 'Closing on Dec 18, 2026' })).toBeInTheDocument();
+    expect(await within(m).findByRole('article', { name: 'Closing: Dec 18, 2026' })).toBeInTheDocument();
     expect(within(m).queryByRole('button', { name: 'Read dates now' })).toBeNull();
     expect(fake.callsTo(`POST /documents/${DOC}/extraction/run`).map((c) => c.body)).toEqual([{}]);
     noAssistant(fake);
@@ -174,7 +176,7 @@ describe('contract-date review', () => {
     const fake = fakeFor(extraction()).on(confirmPath(CLAIM1), staffError(code));
     open(fake);
     const m = await page();
-    const card = within(m).getByRole('article', { name: 'Closing on Dec 18, 2026' });
+    const card = within(m).getByRole('article', { name: 'Closing: Dec 18, 2026' });
     await waitFor(() => expect(within(card).getByRole('radio', { name: 'Add as a new date' })).toBeChecked());
     await userEvent.setup().click(within(card).getByRole('button', { name: 'Confirm' }));
     expect(await within(m).findByText(words)).toBeInTheDocument();
@@ -193,7 +195,7 @@ describe('contract-date review', () => {
     app(fake, '/t/deal', 'agent', surface, host);
     const user = userEvent.setup();
     await user.click(await screen.findByRole('link', { name: 'Review 1 date' }));
-    const card = await screen.findByRole('article', { name: 'Closing on Dec 18, 2026' });
+    const card = await screen.findByRole('article', { name: 'Closing: Dec 18, 2026' });
     await waitFor(() => expect(within(card).getByRole('button', { name: 'Confirm' })).toBeEnabled());
     await user.click(within(card).getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(fake.callsTo(confirmPath(CLAIM1))).toHaveLength(1));

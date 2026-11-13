@@ -51,7 +51,8 @@ export function ClaimRow({ documentId, dealId, claim, canConfirm, open }: { docu
   return (
     <article aria-labelledby={heading} className="flex flex-col gap-2 rounded-xl border border-line p-3" data-needs-review={claim.needsReview || undefined}>
       <h3 id={heading} className="text-[16px] font-semibold text-ink">
-        {claim.text}
+        {/* the API's claim text carries the date as stored ("Closing: 2027-02-12 (page 3)"); the heading says it in words */}
+        {claim.milestone && localDateWords(claim.milestone.dueOn) !== '' ? `${claim.milestone.label}: ${localDateWords(claim.milestone.dueOn)}` : claim.text}
       </h3>
       {claim.page !== null ? <p className="text-[14px] text-ink-muted">Page {claim.page}</p> : null}
       {claim.evidence.length > 0 ? (
