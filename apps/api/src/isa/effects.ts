@@ -22,6 +22,7 @@ import type { BuyerBundle } from './buyer/bundle.js';
 import { pauseAiSearchesAtHandoffInTx } from './buyer/savedSearch.js';
 import { insertPendingFactsInTx, type PlannedFacts, planFactsMessageInTx } from './buyer/facts.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
+import { onEscalationInTx, renderSellerFactsInTx, writeSellerFactsInTx } from './seller/index.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
 
@@ -151,6 +152,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         break;
       case 'escalate':
         if (act.type !== 'terminal') await escalationCardInTx(env, act.class, act.type, act.priority);
+        await onEscalationInTx(tx, ctx.a, act.class); // ISA-3 H6: a pricing hold suspends comps (E502)
         break;
       case 'pause':
         await sql`UPDATE ai_isa_assignments SET paused_at = ${new Date(now)}, paused_by_kind = 'system', pause_reason = ${act.reason}
@@ -300,14 +302,18 @@ async function escalationCardInTx(env: ApplyEnv, cls: string, type: string, prio
  */
 export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: IsaState): Promise<string | null> {
   const { tx, deps, ctx, now } = env;
-  const channel = ctx.channels.includes(q.channel) ? q.channel : ctx.channels[0];
+  // ISA-3 H2: a seller facts message is server-built and re-checked here (TX-B); comps need the bound email, no fallback
+  const sf = await renderSellerFactsInTx(tx, env.actor, ctx.a, now, q);
+  if (sf !== null && !sf.ok) return null;
+  const channel = sf !== null ? sf.channel : ctx.channels.includes(q.channel) ? q.channel : ctx.channels[0];
   if (channel === undefined) return null;
   const point = ctx.a.boundPoints[channel];
   if (!point) return null;
-  // item 11: a facts message is server text only, re-checked and planned (channel, whole lines) from the bundle
+  // item 11: a buyer facts message is server text only, re-checked and planned (channel, whole lines) from the bundle;
+  // a seller facts message (sf, ISA-3 H2) was built above, and ISA-2b's plan leaves 'comps' to it
   let channelFinal: 'sms' | 'email' = channel;
   let factsPlan: PlannedFacts | null = null;
-  if (q.messageKind === 'facts') {
+  if (sf === null && q.messageKind === 'facts') {
     if (!env.bundle || q.handles.length === 0 || q.handles.some((h) => h === 'comps')) return null; // seller kinds: ISA-3
     const prior0 = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${ctx.a.contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching')`.execute(tx);
@@ -320,14 +326,14 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
     factsPlan = p.plan;
     channelFinal = p.plan.channel;
   }
-  const parts: string[] = q.lines.map((l) => fillLine(l, ctx.who));
+  const parts: string[] = sf !== null ? [sf.body] : q.lines.map((l) => fillLine(l, ctx.who));
   const offer = s.offer;
   if (q.messageKind === 'offer' && offer !== null) parts.push(renderOffer({ slots: offer.slots, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
   // the machine's slot index is 0-based (matchSlotChoice, acceptedIndex)
   if (q.messageKind === 'confirmation' && offer !== null && q.slotIndex !== null && offer.slots[q.slotIndex]) {
     parts.unshift(renderConfirmation({ slot: offer.slots[q.slotIndex]!, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
   }
-  if (q.text !== null && q.text.trim() !== '') parts.push(q.text.trim());
+  if (sf === null && q.text !== null && q.text.trim() !== '') parts.push(q.text.trim());
   const bodyCore = factsPlan ? 'facts' : parts.join(channel === 'email' ? '\n\n' : ' ').trim();
   if (bodyCore === '') return null;
   const prior = await sql<{ n: number; last: Date | null }>`SELECT count(*)::int AS n, max(dispatched_at) AS last FROM messages WHERE tenant_id = app.tenant_id()
@@ -377,6 +383,7 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
       status = 'sending', state_after = ${s.ended !== null ? 'ended' : s.phase}
     WHERE tenant_id = app.tenant_id() AND id = ${turn} AND message_id IS NULL`.execute(tx);
   if (factsPlan) await insertPendingFactsInTx(tx, deps.ids as never, ctx, turn, res.messageId, factsPlan.facts, 'display/1');
+  else if (sf !== null) await writeSellerFactsInTx(tx, deps.ids, ctx.a, turn, res.messageId, sf.pendingFacts); // ISA-3 H2: the pending facts
   return res.messageId;
 }
 

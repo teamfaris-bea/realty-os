@@ -33,6 +33,7 @@ export const ValuationPackBody = z
     agent_cma: mark(z.boolean()),
     client_cma: mark(z.boolean()),
     automated_notes: mark(z.boolean()),
+    ai_isa_comps: mark(z.boolean()),
     avm_flag_scope: mark(z.enum(['all_client_outputs', 'internet_display_only'])),
     statements: mark(z.array(Statement).max(Object.keys(USPS_REGIONS).length).refine((xs) => new Set(xs.map((x) => x.region)).size === xs.length, 'one statement per state')),
   })

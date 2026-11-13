@@ -5,13 +5,15 @@
 // the `ai_isa.send_result` job, which maps the reason class (deferrable, replan, terminal, end care).
 import type { AiIsaGateFacts } from '@realty/core/compliance';
 import type { Instant } from '@realty/core/foundation';
-import { type IanaZone, instantFromDate } from '@realty/core/foundation';
+import { type IanaZone, type TenantId, instantFromDate } from '@realty/core/foundation';
 import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { type AiIsaContent, aiIsaSendWindow, DEFAULT_AI_ISA_CONTENT, fromDisplayName, parseAiIsaContent, holidaysAround, icuOffsetMinutes, ISA_DEFAULT_CAPS, isaReasonClass, refusalClass } from './coreSeam.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
 import { assignmentById, evaluateChain, exclusivity, stopSignalSince } from './repo.js';
 import { factChangedAtSendInTx } from './buyer/facts.js';
+import { sellerFactsCurrentInTx } from './seller/index.js';
+import { systemActor } from '../worker/systemActor.js';
 
 export const AI_ISA_CATEGORIES = new Set(['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']);
 export const isAiIsaMessage = (category: string | null | undefined): boolean => category !== null && category !== undefined && AI_ISA_CATEGORIES.has(category);
@@ -139,11 +141,13 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
   const counts = await countFacts(tx, a.contactId, m.id);
   const ex = await exclusivity(tx, a.contactId);
   const sellerOk = (await sql<{ ok: boolean }>`SELECT app.platform_cleared('platform:cma') AND app.platform_cleared('platform:ai_isa_seller_data') AS ok`.execute(tx)).rows[0]!.ok;
+  // ISA-3 H3: each pending seller fact still current (FACT_CHANGED, ...) and the licence part of the seller packs
+  const sellerNow = await sellerFactsCurrentInTx(tx, systemActor((await sql<{ t: string }>`SELECT app.tenant_id()::text AS t`.execute(tx)).rows[0]!.t as TenantId, 'assistant') /* dispatch's actor for an assistant message */, m.id, now);
   const initiated = r.kind === 'initiated' || consent.tier === 'initiated';
   return {
     extra,
     facts: {
-      chainFailures: failures,
+      chainFailures: [...failures, ...sellerNow.codes],
       paused: stopped || (live ? a.pausedAt !== null : !handoffPending),
       pinnedSeqCurrent: !live || Number(r.pinned) === Number(r.conv_seq),
       epochCurrent: !live || Number(r.epoch) === a.epoch,
@@ -163,7 +167,7 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
       sharedAddress: ex.shared,
       activeClient: ex.activeClient,
       soldDerivedFact: r.sold,
-      sellerPacksCleared: sellerOk,
+      sellerPacksCleared: sellerOk && sellerNow.licenceOk,
     },
   };
   void recipientHmac;

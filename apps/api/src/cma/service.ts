@@ -12,7 +12,7 @@
 // Every read and write runs as the caller under RLS. Nothing is sent in V1 (comms/** is not called).
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '@realty/core/compliance';
-import { type IanaZone, type Instant, type UserActor, ianaZone, localDateOf } from '@realty/core/foundation';
+import { type IanaZone, type Instant, type Role, type SystemActor, type UserActor, can, canAsRole, ianaZone, isRole, localDateOf } from '@realty/core/foundation';
 import { type CompetingRule, type ListingFacts, competingSet, dedupeMirrors, listingIdentity } from '@realty/core/listings';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -31,6 +31,7 @@ import {
   EMPTY_VALUATION_FACTS,
   LISTING_COLS,
   type ListingRow,
+  mlsRowsAtAddress,
   type SoldTier,
   type TierQuery,
   addMonths,
@@ -42,7 +43,7 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type CmaConnections, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
+import { type ClientShare, type CmaConnections, type NearMatch, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
 import {
   type CmaInspection,
   type CmaPurpose,
@@ -67,7 +68,7 @@ import {
   updateDraft,
 } from './repos.js';
 import type { CmaSubjectFacts } from './schemas.js';
-import { type ResolvedSubject, type SubjectInput, engineSubject, resolveSubject } from './subject.js';
+import { type ResolvedSubject, type SubjectInput, engineSubject, newest, resolveSubject } from './subject.js';
 
 export interface Disclosure {
   intendedUsers: string | null;
@@ -774,3 +775,84 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
 export function recordsLeftOutSentence(n: number): string {
   return `${n} MLS ${n === 1 ? 'record was' : 'records were'} left out because ${n === 1 ? 'its' : 'their'} stored values are outside what the valuation reads (for example a price above $1 billion).`;
 }
+
+// ---- the AI ISA's seller comps (ISA-3, module 75 seller part; flagged, additive) -------------------------------
+
+/** The newest admitted MLS record of the seller's home (the subject's facts came from it). */
+export interface SubjectRecord {
+  listingId: string;
+  mlsModifiedAt: Date | null;
+  connectionId: string;
+}
+
+export type CompsForSubject =
+  | { ok: true; resolved: ResolvedSubject; record: SubjectRecord | null; result: StoredResult; readiness: { share: ClientShare; nearMatches: NearMatch[] }; valuationDate: string; conns: CmaConnections }
+  | { ok: false; code: string; sentence: string };
+
+const REFUSAL_SENTENCE: Readonly<Record<'SELLER_FACTS_NOT_ALLOWED' | 'CMA_SCOPE_LOST', string>> = {
+  SELLER_FACTS_NOT_ALLOWED: 'Only the assistant builds recent sales for a seller lead.',
+  CMA_SCOPE_LOST: 'The lead’s owner may no longer prepare a CMA for this contact, so the assistant shares no recent sales.',
+};
+
+/**
+ * The AI ISA's one comps pipeline (R-ISA-18; docs/AI_ISA.md §6.3): compute() minus the store, for a contact address,
+ * on behalf of the lead's owner. Read-only: no cma_reports row, no audit, no write of any kind (the system actor may
+ * not insert a CMA, 0061). Refused unless the actor holds ai_isa.seller_facts (only the assistant) and the owner is an
+ * active member whose role holds cma.prepare for the contact (canAsRole; E538). V1-C's refusals come back as codes
+ * with their sentences, never thrown. Reachable only through apps/api/src/isa/seller/cmaSeam.ts (an architecture test).
+ */
+export async function compsForSubjectInTx(
+  tx: Tx,
+  actor: SystemActor,
+  now: Instant,
+  subject: { kind: 'contact_address'; contactAddressId: string },
+  o: { contactId: string; onBehalfOf: { userId: string } },
+): Promise<CompsForSubject> {
+  if (!can(actor, 'ai_isa.seller_facts', { tenantId: actor.tenantId }).ok) return { ok: false, code: 'SELLER_FACTS_NOT_ALLOWED', sentence: REFUSAL_SENTENCE.SELLER_FACTS_NOT_ALLOWED };
+  const m = (
+    await sql<{ role: string; active: boolean; own: boolean }>`SELECT m.role, m.status = 'active' AS active,
+        EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ${o.contactId}::uuid AND c.owner_user_id = m.user_id) AS own
+      FROM memberships m WHERE m.tenant_id = app.tenant_id() AND m.user_id = ${o.onBehalfOf.userId}::uuid`.execute(tx)
+  ).rows[0];
+  const role: Role | null = m && isRole(m.role) ? m.role : null;
+  if (!m || !m.active || role === null || !canAsRole(role, 'cma.prepare', { own: m.own }).ok) return { ok: false, code: 'CMA_SCOPE_LOST', sentence: REFUSAL_SENTENCE.CMA_SCOPE_LOST };
+  try {
+    const conns = await agentGate(tx, now);
+    const zone = await zoneOf(tx);
+    const connectionIds = conns.used.map((u) => u.conn.id);
+    const sizeField = await connectionSizeField(tx, connectionIds);
+    const input: SubjectInput = { kind: 'contact_address', contactAddressId: subject.contactAddressId };
+    const resolved = await resolveSubject(tx, input, { contactId: o.contactId, sizeField, connectionIds });
+    const valuationDate = localDateOf(now, zone) as string;
+    const { result } = await run(tx, conns, resolved, valuationDate, [], []);
+    const atKey = resolved.addressKey === null ? [] : await mlsRowsAtAddress(tx, resolved.addressKey);
+    const n = newest(atKey.filter((r) => r.mls_connection_id !== null && connectionIds.includes(r.mls_connection_id)));
+    const record: SubjectRecord | null = n === null ? null : { listingId: n.id, mlsModifiedAt: n.mls_modified_at, connectionId: n.mls_connection_id! };
+    const readiness = await clientReadiness(tx, {
+      use: 'ai_isa',
+      conns: await readinessConnections(tx, now),
+      now,
+      state: resolved.state,
+      addressKey: resolved.addressKey,
+      addressLine: resolved.address.line1,
+      subjectMlsListingId: resolved.mlsRecordId ?? resolved.mirrorListingId ?? null,
+      compSales: result.comps.map((c) => {
+        const l = result.listings[c.ref.identity];
+        return { saleListingId: l?.saleListingId ?? c.ref.identity, teamListingId: l?.teamListingId ?? null };
+      }),
+      readConnectionIds: [...result.connectionIds, ...result.comps.flatMap((c) => c.ref.connectionId ?? []), ...(resolved.connectionId ? [resolved.connectionId] : [])],
+      nearMatchDismissed: [],
+      hasValue: result.available,
+      // R-MLS-7 (owner rule): a subject or comp size from a field that is never finished living area blocks every use
+      notLivingArea: notLivingAreaSize([resolved.sizeSource, ...result.comps.map((c) => c.sale.sizeSource)]),
+    });
+    return { ok: true, resolved, record, result, readiness, valuationDate, conns };
+  } catch (e) {
+    if (e instanceof AppError) {
+      const d = (e.details ?? {}) as { sentence?: unknown };
+      return { ok: false, code: e.code, sentence: typeof d.sentence === 'string' ? d.sentence : e.code };
+    }
+    throw e;
+  }
+}
+

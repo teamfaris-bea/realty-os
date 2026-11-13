@@ -256,7 +256,8 @@ function mlsSize(row: ListingRow, sizeField: string | null, lead: string, tail =
   return { sizeSource: sizeField, sizeSentence: `${lead}, taken as ${sizeField ?? 'the MLS feed’s size field'} (the record does not say which field it came from)${tail}.` };
 }
 
-function newest(rows: readonly ListingRow[]): ListingRow | null {
+/** The newest record by mls_modified_at, then id (exported for ISA-3: the seller subject's record). */
+export function newest(rows: readonly ListingRow[]): ListingRow | null {
   return [...rows].sort((a, b) => (b.mls_modified_at?.getTime() ?? 0) - (a.mls_modified_at?.getTime() ?? 0) || (a.id < b.id ? -1 : 1))[0] ?? null;
 }
 

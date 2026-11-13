@@ -54,7 +54,8 @@ export interface PackValues {
 export type PackInput = { [K in PackKey]: { value: PackValues[K]; counselReviewed: boolean } };
 
 /** The valuation section's editable values (D9), in display order (snake_case: the stored JSON keys). */
-export const VALUATION_PACK_KEYS = ['agent_cma', 'client_cma', 'automated_notes', 'avm_flag_scope', 'statements'] as const;
+/** 'ai_isa_comps' (ISA-3, R-ISA-18): sold comps in automated email to seller leads; a section stamped before it reads it false and unreviewed. */
+export const VALUATION_PACK_KEYS = ['agent_cma', 'client_cma', 'automated_notes', 'ai_isa_comps', 'avm_flag_scope', 'statements'] as const;
 export type ValuationPackKey = (typeof VALUATION_PACK_KEYS)[number];
 
 export interface ValuationStatementValue {
@@ -68,6 +69,7 @@ export interface ValuationPackValues {
   agent_cma: boolean;
   client_cma: boolean;
   automated_notes: boolean;
+  ai_isa_comps: boolean;
   avm_flag_scope: 'all_client_outputs' | 'internet_display_only';
   statements: ValuationStatementValue[];
 }
@@ -163,6 +165,7 @@ export function valuationValues(stored: unknown): { values: ValuationPackValues;
       agent_cma: v.agentCma,
       client_cma: v.clientCma,
       automated_notes: v.automatedNotes,
+      ai_isa_comps: v.aiIsaComps,
       avm_flag_scope: v.avmFlagScope,
       statements: Object.entries(v.statements).map(([region, st]) => ({ region, text: st.text, minPointSize: st.minPointSize })),
     },
@@ -212,6 +215,7 @@ export function storedValuation(input: ValuationPackInput, reviewedAt: string | 
     agent_cma: input.agent_cma.value,
     client_cma: input.client_cma.value,
     automated_notes: input.automated_notes.value,
+    ai_isa_comps: input.ai_isa_comps.value,
     avm_flag_scope: input.avm_flag_scope.value,
     statements: ordered,
     reviewed_by_counsel_at: reviewedAt,

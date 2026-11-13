@@ -20,6 +20,7 @@ import { backstopInTx } from './backstop.js';
 import { applyActionsInTx, cancelForAssignmentInTx, chainEnvOf, contextFor, control, type IsaDeps, pauseCardInTx } from './effects.js';
 import { closeHandoffInTx } from './handoff.js';
 import { type AssignmentRow, activeBlock, assignmentById, evaluateChain, exclusivity, inFlightIsaMessages, liveAssignmentOf, lockForTurn, personIds, tenantIsaFacts } from './repo.js';
+import { sellerStartRefusalInTx } from './seller/index.js';
 
 export const UNDO_MS = 10_000;
 
@@ -123,6 +124,9 @@ export async function startRefusal(tx: Tx, actor: UserActor, contactId: string, 
   if (phone && allowed.has('sms')) points.sms = { point_id: phone.id, hmac: phone.hmac };
   if (email && allowed.has('email')) points.email = { point_id: email.id, hmac: email.hmac };
   if (Object.keys(points).length === 0) return { code: 'AI_ISA_NO_CHANNEL' };
+  // ISA-3 H4 (R-ISA-26): a seller start is refused when the home is listed (another brokerage, or the team's own)
+  const listed = await sellerStartRefusalInTx(tx, contactId, (i as { side?: string }).side, Date.now() as Instant);
+  if (listed !== null) return { code: listed };
   return { code: 'OK', points, optinId: opt.rows[0].id, versionId: pol.versionId, seq: Number(cr.seq) };
 }
 

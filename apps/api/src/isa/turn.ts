@@ -24,6 +24,7 @@ import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from '
 import { calendarLiveInTx, nextSendAtInTx } from './booking/rows.js';
 import { buildBuyerBundleInTx, type BuyerBundle, EMPTY_BUNDLE } from './buyer/bundle.js';
 import { savedSearchAllowedInTx } from './buyer/savedSearch.js';
+import { factPlaceholdersInTx, sellerBundleInTx } from './seller/index.js';
 
 export type TurnDeps = IsaDeps & { envelope: EnvelopeService };
 
@@ -191,13 +192,18 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
          OR (m.direction = 'outbound' AND m.status IN ('sent','delivered')
              AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = m.tenant_id AND p.id = ANY (${bound}::uuid[]) AND p.address = m.to_address)))
      ORDER BY m.created_at DESC LIMIT 20`.execute(tx);
+  // ISA-3 H8 (R-ISA-20): a sent facts message enters the prompt as a fixed placeholder, never its body
+  const placeholders = await factPlaceholdersInTx(tx, msgs.rows.map((m) => m.id));
+  // ISA-3 H1: the seller bundle (handles, unavailable codes, flags); empty for a buyer
+  const sb = await sellerBundleInTx(tx, actor((await sql<{ t: string }>`SELECT app.tenant_id()::text AS t`.execute(tx)).rows[0]!.t), a, now);
   const caps = capabilitiesInEffect(ctx.content, (await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx)).rows[0]?.c ?? ['converse']);
   const first = (await sql<{ n: string | null }>`SELECT split_part(COALESCE(display_name, ''), ' ', 1) AS n FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${a.contactId}`.execute(tx)).rows[0]?.n ?? null;
   // R-ISA-27 E495: an inbound email's own text is reliable only when clientOwnText says so (an inline reply under a
-  // quoted offer is not); SMS and team text keep their text as written
+  // quoted offer is not); SMS and team text keep their text as written. ISA-3 H8: a sent facts message (buyer or
+  // seller) is its fixed placeholder (R-ISA-20, E509)
   const messages = msgs.rows.reverse().map((m) => {
     const own = m.direction === 'inbound' ? clientOwnText(m.body, m.channel) : null;
-    return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : m.body, at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
+    return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : (placeholders.get(m.id) ?? m.body), at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
   });
   // item 8: the calendar and the offer as decideAction sees them
   const calendarLive = await calendarLiveInTx(tx, a.ownerUserId);
@@ -212,17 +218,21 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
   const prompt = buildIsaPrompt({
     side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end',
       ...(bundle.handles.length > 0 ? ['share_listings'] : []), ...(savedSearch ? ['propose_saved_search'] : []),
+      // ISA-3: the seller actions, offered only when its bundle has something to send (decideAction re-checks both)
+      ...(caps.has('seller_competition') && sb.competitionHandles.length > 0 ? ['share_competition'] : []), ...(caps.has('seller_sold_comps') && sb.compsAvailable ? ['send_comps'] : []),
       ...(caps.has('book_appointments') && calendarLive && mo === null ? ['offer_slots'] : []), ...(caps.has('book_appointments') && mo?.status === 'offered' ? ['book_slot'] : [])],
     replyAllowedNow: ctx.facts.windowOpenNow, replyChannel, windowLabel: `${ctx.content.window.startSec / 3600}:00–${ctx.content.window.endSec / 3600}:00 local`,
-    heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: bundle.handles, unavailable: [...(bundle.unavailable ? [`listings: ${bundle.unavailable}`] : []), 'sold_comps_unavailable: PLATFORM_NOT_CLEARED'],
+    // ISA-2b's buyer bundle and ISA-3's seller bundle (H1): each is empty for the other side
+    heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: [...bundle.handles, ...sb.handles],
+    unavailable: [...(bundle.unavailable ? [`listings: ${bundle.unavailable}`] : []), ...(a.side === 'buyer' ? ['sold_comps_unavailable: PLATFORM_NOT_CLEARED'] : sb.unavailable)],
     offer: mo !== null && mo.status === 'offered' ? { handle: 'O1', slotLabels: mo.slots.map((sl, k) => `${k + 1}) ${formatSlot(sl, mo.zones[0]!)}`) } : null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
   });
   const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.ownTextReliable }));
   const decideBase: Prepared['decideBase'] = {
-    side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(bundle.handles.map((x) => x.handle)), competitionHandles: new Set(), compsAvailable: false,
+    side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(bundle.handles.map((x) => x.handle)), competitionHandles: new Set(sb.competitionHandles), compsAvailable: sb.compsAvailable,
     heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive, offer: turnOffer, meetRequested: a.machine.intents.length > 0,
     confirmationInTime: inTime, savedSearchAllowed: savedSearch, intents: a.machine.intents, priorClaims: a.machine.claims, appointmentBooked: a.machine.appointment,
-    mlsListedElsewhere: false, subjectConfirmed: false, zone: ctx.facts.zone,
+    mlsListedElsewhere: sb.mlsListedElsewhere, subjectConfirmed: sb.subjectConfirmed, zone: ctx.facts.zone,
     identity: { brokerageLegalName: ctx.who.brokerageName, teamName: ctx.who.teamName, agentFirstName: ctx.who.agentFirstName, scope: 'agent', allowedLinkHosts: [] } as never,
     promptSources: prompt.sources, claimId: (i: number) => `${turnId.slice(0, 24)}${String(i).padStart(12, '0')}`.slice(0, 36),
   };

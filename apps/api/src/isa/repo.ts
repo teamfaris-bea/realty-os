@@ -6,6 +6,7 @@ import { instantFromDate } from '@realty/core/foundation';
 import { type Tx, lockContacts } from '@realty/db';
 import { sql } from 'kysely';
 import { type IsaSide, type IsaState, initialState } from './coreSeam.js';
+import { sellerSubjectLinkInTx } from './seller/index.js';
 
 export interface BoundPoint {
   point_id: string;
@@ -273,6 +274,9 @@ export async function evaluateChain(tx: Tx, a: AssignmentRow, env: ChainEnv): Pr
   links.push(ex.shared ? L(8, 'Exclusivity', 'end', 'ISA_SHARED_ADDRESS', 'shared_address', 'Another person shares one of their addresses.')
     : ex.activeClient ? L(8, 'Exclusivity', 'end', 'ISA_ACTIVE_CLIENT', 'active_client', 'They are a client on an open deal or an active listing.')
     : L(8, 'Exclusivity', 'ok', null, null, 'No shared address and no open deal.'));
+  // ISA-3 H5: link 10 "Seller home" (R-ISA-26) for a seller- or both-side assignment
+  const home = await sellerSubjectLinkInTx(tx, a);
+  if (home !== null) links.push(home);
   let worst: LinkResult | null = null;
   for (const l of links) if (l.effect !== 'ok' && (worst === null || RANK[l.effect] > RANK[worst.effect])) worst = l;
   return { links, effect: worst?.effect ?? 'ok', worst };

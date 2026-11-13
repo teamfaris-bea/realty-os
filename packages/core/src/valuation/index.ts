@@ -7,3 +7,6 @@ export * from './types.js';
 export { prepareCma } from './prepare.js';
 export { addMonths, distanceM, monthIndex, postalKey, subdivisionKey } from './select.js';
 export { money, percent, miles } from './text.js';
+// ISA-3 (module 75 seller part): the area sentences, rebuilt for the comps email from area.tier, lookbackMonths and
+// tiersSkipped, and each comp's tier name (R-ISA-18; flagged additive export)
+export { filterSkippedSentence, tierName, tierReachedSentence, tierSkippedSentence } from './text.js';

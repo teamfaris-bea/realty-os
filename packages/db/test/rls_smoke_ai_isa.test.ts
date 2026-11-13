@@ -109,7 +109,11 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     const file = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('_b12_review_ai_isa.sql'));
     expect(file).toHaveLength(1);
     const text = readFileSync(`${MIGRATIONS_DIR}/${file[0]}`, 'utf8');
-    const selfCheck = text.slice(text.indexOf('DO $$', text.indexOf('-- 8. Self-check')));
+    // batch 13: the AI ISA seller migration (0084) gives ai_isa_seller_watch's select and update policies the same
+    // root-survivor branch, so the schema now holds 12 such ai_isa_* policies where 0081 counted its own 10
+    const counted = text.slice(text.indexOf('DO $$', text.indexOf('-- 8. Self-check')));
+    expect(counted).toContain('IF q::int <> 10 THEN');
+    const selfCheck = counted.replace('IF q::int <> 10 THEN', 'IF q::int <> 12 THEN');
     expect(selfCheck).toMatch(/self-check failed: messages_dispatch_guard lost a D1 refusal/);
     const defOf = async (fn: string) => (await suRows<{ def: string }>(h.su, `SELECT pg_get_functiondef($1::regprocedure) AS def`, [fn]))[0]!.def;
     const checkWith = async (fn: string | null, mutate: (def: string) => string = (d) => d): Promise<string> => {

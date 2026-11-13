@@ -752,6 +752,19 @@ New reason codes go into `ReasonCode` and `explain`, with sentences.
 
 ---
 
+### 6.5 Seller part as built (lane ISA-3)
+Where this differs from §6.1-§6.3 above, this section is what the code does; §6.3's design stands otherwise.
+- **Row freshness (§6.1).** On-demand competition offers only rows whose `last_seen_in_feed_at` is within the pack's `max_staleness_hours` (owner question 3: strict). The incremental feed moves `last_seen_in_feed_at` only on a changed record (`mls/sync.ts`), so in practice only rows changed recently are offered; watch events are fresh by construction. **Sold comps are exempt from per-row freshness**: the feed's age (FEED_STALE) decides (owner question 4; VERIFY WITH MLS).
+- **Permission (§6.3).** `cma.prepare` has no `system` grant (core authz "Absent: never the system actor"). The assistant holds the new `ai_isa.seller_facts` (system via `assistant` only), and the pipeline also needs the owner's role to hold `cma.prepare` for the contact (`canAsRole`).
+- **The pipeline (scope 3).** `compsForSubjectInTx(tx, actor, now, {kind: 'contact_address', contactAddressId}, {contactId, onBehalfOf})` in `apps/api/src/cma/service.ts`: compute() minus the store, include/exclude empty, readiness `clientReadiness(use 'ai_isa')`. Its one caller is `apps/api/src/isa/seller/comps.ts`.
+- **The email (scope 6).** The adapter takes facts from the client DisplayListing; the brokerage is the listing's, else the mirror's, else refused; the location is the shown address, else the allowed subdivision, else none; `why` is the engine's first line with a shown address, else "In {tier name}.". Only V1-B's own area sentences (reached, skipped, year-built filter) are rendered, each asserted to be among the engine's; never the value, tier-limit, records-left-out, weight or valuation-date sentences. Statements: one per comp feed for the subject's state, deduplicated, each printable at ≤ 12 pt under V2-A's rules (a fail-closed STUB until V2-A merges). The footer carries each feed's attribution and disclaimer; the as-of is the EARLIEST last sync of the comps' feeds; the pack's `client_lines` must equal ISA-1's `SELLER_DATA_LINES` (PACK_LINES_MISMATCH). The guard and fair housing run over the whole body; the server-text ban over ISA and engine lines only (an MLS disclaimer says "not guaranteed").
+- **Deferred.** The SMS pointer ("I've emailed you the {n} recent sales") is not sent: facts are always initiated under `initiated24h` 1, the pointer is no `IsaLineId`, and beside the email it would be superseded (owner question 8). Nearby sales are not sent: ISA-1 has no action, event or source line for them, so a nearby question goes to the agent as `data_unavailable` and no `nearby_sale` row is written (owner question 11).
+- **Counts (§6.3 "Market changes").** Computed for the agent only and never queued (`COUNT_SHARE_ENABLED = false`, owner question 2).
+- **Link 10 "Seller home" (§3.1).** A live team listing or mirror at the subject's key ends care `active_client`; another live MLS listing ends it `listed_elsewhere` (also refused at start); an undismissed live near match pauses it `possible_listing`. "Different home" plus the owner's resume lifts the pause; comps stay blocked while that listing is live (owner question 1).
+- **The pricing hold (E502).** A `pricing_negotiation` escalation (H6), or a held pricing topic in the bundle, sets `comps_suspended_at`. It clears only on the owner's own CMA for the contact created or re-run after it (an unchanged re-tap stores nothing), a CMA shared after it, or `POST …/ai-isa/seller/resume-comps`. A generic resolve does not clear it.
+- **Routes (§9.1).** `GET /contacts/:id/ai-isa/seller` (ai_isa.view; never runs the pipeline), `POST …/ai-isa/confirm-subject` and `…/seller/near-match-different` and `…/seller/resume-comps` (ai_isa.subject_confirm: the live seller assignment's owner), `POST …/ai-isa/seller/subject-disputed` (ai_isa.pause).
+- **Hooks (§9.6).** ISA-2's files call `isa/seller/index.ts` once each: H1 `sellerBundleInTx` (turn.ts prepare), H2 `renderSellerFactsInTx` + `writeSellerFactsInTx` (effects.ts queueIsaMessageInTx, before the channel choice), H3 `sellerFactsCurrentInTx` (send.ts aiIsaGateFacts), H4 `sellerStartRefusalInTx` (controls.ts startRefusal), H5 `sellerSubjectLinkInTx` (repo.ts evaluateChain), H6 `onEscalationInTx` (effects.ts escalate), H8 `factPlaceholdersInTx` (turn.ts prepare). H7 is not needed.
+
 ## 7. Prompt-injection and abuse defences (R-ISA-20)
 
 ### 7.1 Inbound text is data
@@ -812,7 +825,7 @@ Applied to model text (`reply.text`, the summary) and, for the identity check, t
 
 ---
 
-## 8. Data model (`0080_ai_isa.sql`, lane number 0190, owned by ISA-2; placeholder `0191_ai_isa_seller.sql`, owned by ISA-3, which must apply after 0080)
+## 8. Data model (`0080_ai_isa.sql`, lane number 0190, owned by ISA-2; `0084_ai_isa_seller.sql`, lane number 0191, owned by ISA-3, which applies after 0080)
 
 Every new tenant table has:
 - the composite `(tenant_id, id)` key and FORCE RLS;
@@ -912,9 +925,10 @@ Every CREATE OR REPLACE starts from the object's newest definition at merge time
 **`ai_isa_area_code_zones`, `ai_isa_state_zones`** (global reference data, like `jurisdiction_packs`)
 - Readable by app roles; seeded in 0080; no tenant column. A test checks equality with the core data.
 
-**`ai_isa_seller_watch`** (placeholder 0191, which must apply after 0080)
+**`ai_isa_seller_watch`** (`0084_ai_isa_seller`, lane number 0191, which applies after 0080)
 - Columns: tenant_id, assignment_id (PK), contact_address_id, subject_address_key, subject_connection_id, subject_confirmed_by_user_id, subject_confirmed_at, subject_facts, subject_record_date, last_snapshot, snapshot_versions, last_comp_set_hash, comps_suspended_until_agent boolean, last_run_at, last_shared_at, last_count_share_at.
 - The confirmation is cleared by a trigger on the contact address.
+- **As built (ISA-3):** see DATA_MODEL Part 2 "`ai_isa_seller_watch`" (the columns, the invoker guard and RLS; UPDATE is the contact-detail audience narrowed by the guard, wider than §8.3 so the address trigger runs as the editor).
 
 ### 8.3 RLS per role
 
@@ -1112,7 +1126,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 - **File ownership:**
   - ISA-1: `packages/core/src/isa/**`;
   - ISA-2: `apps/api/src/isa/**` except `seller/**`, `packages/db/migrations/0080_ai_isa.sql` (lane number 0190), `packages/db/test/rls_smoke_ai_isa.*`, `apps/api/src/providers/fake/{isaAi,hostileIsaAi}.ts`;
-  - ISA-3: `apps/api/src/isa/seller/**`, `0191_*` (placeholder; it must apply after 0080);
+  - ISA-3: `apps/api/src/isa/seller/**`, `packages/db/migrations/0084_ai_isa_seller.sql` (lane number 0191; it applies after 0080);
   - ISA-4: `apps/web/src/surfaces/aiCare/**`;
   - everything else is a §9.6 flagged edit.
 - **Merge order:** ISA-1 → ISA-2 → ISA-4 (buyer UI) → ISA-3, then ISA-4's seller pieces, which render "not available" until then.

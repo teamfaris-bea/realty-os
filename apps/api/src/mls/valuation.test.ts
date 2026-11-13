@@ -138,6 +138,7 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
     agent_cma: { value: o.agent ?? true, counselReviewed: o.reviewed ?? true },
     client_cma: { value: true, counselReviewed: o.reviewed ?? true },
     automated_notes: { value: false, counselReviewed: o.reviewed ?? true },
+    ai_isa_comps: { value: false, counselReviewed: o.reviewed ?? true },
     avm_flag_scope: { value: 'all_client_outputs', counselReviewed: o.reviewed ?? true },
     statements: { value: o.statements ?? [{ region: 'CA', text: 'SECRET-STATEMENT-TEXT test estimate wording.', minPointSize: 12 }], counselReviewed: o.reviewed ?? true },
   });
@@ -149,7 +150,7 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
     expect(display0).not.toBeNull();
     const v0 = (await viewOf(w.owner, conn)).licensePack.valuation;
     expect(v0).toMatchObject({ reviewedByCounselAt: null, unreviewedCount: VALUATION_PACK_KEYS.length });
-    expect(v0.values.map((x) => [x.key, x.value])).toEqual([['agent_cma', false], ['client_cma', false], ['automated_notes', false], ['avm_flag_scope', 'all_client_outputs'], ['statements', []]]);
+    expect(v0.values.map((x) => [x.key, x.value])).toEqual([['agent_cma', false], ['client_cma', false], ['automated_notes', false], ['ai_isa_comps', false], ['avm_flag_scope', 'all_client_outputs'], ['statements', []]]);
     expect(v0.sentence).toMatch(/Agent CMAs need an Owner or Admin to record/);
 
     const partial = await put(conn, { ...displayBody(REVIEWED_PACK), valuation: valuationBody({ reviewed: false }) });
@@ -211,8 +212,8 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
       expect(v.sentence).not.toMatch(/may reach clients|reach clients where/);
       expect(v.sentence).toContain(VALUATION_NO_SHARING);
     }
-    expect(none.sentence).toBe(`Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
-    expect(partial.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. 5 of 5 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(none.sentence).toBe(`Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 6 of 6 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(partial.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. 6 of 6 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
     expect(full.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. Every valuation value is marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
     expect(VALUATION_NO_SHARING).toBe('Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.');
   });

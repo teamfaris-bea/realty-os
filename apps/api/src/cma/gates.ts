@@ -181,8 +181,62 @@ export interface ReadinessInput {
   readConnectionIds: readonly string[];
   nearMatchDismissed: readonly string[];
   hasValue: boolean;
-  /** R-MLS-7: the stored subject or comp sizes came from a field that is never finished living area */
+  /** R-MLS-7: the stored subject or comp sizes came from a field that is never finished living area (blocks under every use) */
   notLivingArea: boolean;
+  /**
+   * The client use readiness is judged for (ISA-3, flagged additive): 'client_cma' (the default; V1's output is
+   * byte-identical) or 'ai_isa' (the AI ISA's comps email, R-ISA-18): platform:cma AND platform:ai_isa_seller_data
+   * (never platform:avm), the licence's ai_isa_comps, SELLER_WITHHELD under either flag scope, and no dismissal of a
+   * near match (R-CMA-7).
+   */
+  use?: ReadinessUse;
+}
+
+/** ISA-3: the client uses readiness is judged for (V2-B adds 'automated_notes' to this union and to useOf's switch). */
+export type ReadinessUse = 'client_cma' | 'ai_isa';
+/** The AI ISA's seller-data pack (docs/AI_ISA.md §6.3; 0084's 2026.11.1, lane number 0191). */
+export const AI_ISA_SELLER_PACK = 'platform:ai_isa_seller_data';
+
+interface UseRules {
+  packs: readonly string[];
+  platformSentence: string;
+  licenceUse: 'client_cma' | 'ai_isa_comps';
+  allowed: (v: MlsConnectionFacts['pack']['valuation']) => boolean;
+  clientUseSentence: string;
+  withheldEitherScope: boolean;
+  honourDismissals: boolean;
+  noValueSentence: string;
+}
+
+function useOf(use: ReadinessUse, state: string | null): UseRules {
+  switch (use) {
+    case 'client_cma':
+      return {
+        packs: [CMA_PLATFORM_PACK],
+        platformSentence: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
+        licenceUse: 'client_cma',
+        allowed: (v) => v.clientCma,
+        clientUseSentence: `Your MLS licence pack does not say sold data may be used in CMAs for clients. ${VALUATION_USE_WHERE}`,
+        withheldEitherScope: false,
+        honourDismissals: true,
+        noValueSentence: 'There is no value: not enough comparable sales.',
+      };
+    case 'ai_isa':
+      return {
+        packs: [CMA_PLATFORM_PACK, AI_ISA_SELLER_PACK],
+        platformSentence: 'Recent sales from the assistant wait for counsel review of the in-house CMA wording (platform:cma) and of the assistant’s seller-data wording (platform:ai_isa_seller_data); at least one is not recorded.',
+        licenceUse: 'ai_isa_comps',
+        allowed: (v) => v.aiIsaComps,
+        clientUseSentence: `Your MLS licence pack does not say sold data may be emailed to seller leads by the assistant. ${VALUATION_USE_WHERE}`,
+        withheldEitherScope: true,
+        honourDismissals: false,
+        noValueSentence: 'Not enough comparable recent sales to send.',
+      };
+    default: {
+      const never: never = use;
+      throw new Error(`unknown readiness use ${String(never)} (${state ?? ''})`);
+    }
+  }
 }
 
 export interface NearMatch {
@@ -258,24 +312,25 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   const blockers: Blocker[] = [];
   const { e, used } = i.conns;
   const has = (code: BlockerCode) => blockers.some((b) => b.code === code);
+  const u = useOf(i.use ?? 'client_cma', i.state);
   const sentence: Record<PlainBlocker, string> = {
-    PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
+    PLATFORM_NOT_CLEARED: u.platformSentence,
     FEED_DISCONNECTED: 'An MLS feed this CMA was built from is no longer connected, so nothing from it could be shown to a client.',
     VALUATION_USE_WITHDRAWN: `Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. ${VALUATION_USE_WHERE}`,
     MLS_CLIENT_DISPLAY_OFF: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).',
     FEED_STALE: 'The MLS feed is out of date, so nothing from it could be shown to a client until it syncs again.',
-    CLIENT_USE_NOT_ALLOWED: `Your MLS licence pack does not say sold data may be used in CMAs for clients. ${VALUATION_USE_WHERE}`,
+    CLIENT_USE_NOT_ALLOWED: u.clientUseSentence,
     VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
     NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
     SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. To check them, prepare a new CMA with the home’s full address.',
     SIZE_NOT_LIVING_AREA: SIZE_NOT_LIVING_AREA_SENTENCE,
-    NO_VALUE: 'There is no value: not enough comparable sales.',
+    NO_VALUE: u.noValueSentence,
   };
   const add = (code: PlainBlocker) => {
     if (!has(code)) blockers.push({ code, sentence: sentence[code] });
   };
 
-  if (!(await platformCleared(tx, CMA_PLATFORM_PACK))) add('PLATFORM_NOT_CLEARED');
+  for (const key of u.packs) if (!(await platformCleared(tx, key))) add('PLATFORM_NOT_CLEARED');
   const rows = await listingRows(tx, [...new Set(i.compSales.flatMap((c) => (c.teamListingId === null ? [c.saleListingId] : [c.saleListingId, c.teamListingId])))]);
   const byId = new Map(rows.map((r) => [r.id, r]));
   // Every connection the CMA's data came from, not only the ones the agent gate admits now: a connection whose valuation
@@ -296,12 +351,12 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
       if (!conn.pack.valuation.agentCma) add('VALUATION_USE_WITHDRAWN');
       if (!(packReviewed(conn.pack) && conn.pack.attributionText !== null && conn.pack.disclaimerText !== null)) add('MLS_CLIENT_DISPLAY_OFF');
       if (e.staleIds.includes(id)) add('FEED_STALE');
-      if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
+      if (!u.allowed(conn.pack.valuation)) add('CLIENT_USE_NOT_ALLOWED');
       if (conn.pack.valuation.reviewedByCounselAt === null) add('VALUATION_NOT_REVIEWED');
       if (valuationStatement(conn.pack, i.state) === null) add('NO_VALUATION_STATEMENT');
     }
     // V1-A's client gate is the authority: its refusal is always listed (a deleted connection: NO_MLS_CONNECTION)
-    const v = valuationEligible(e, id, 'client_cma', i.state, i.now);
+    const v = valuationEligible(e, id, u.licenceUse, i.state, i.now);
     if (!v.ok) add(REFUSAL_BLOCKER[v.code]);
   }
   // keep the canonical order of the codes so far (the order they were added may differ across connections)
@@ -324,7 +379,7 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   const live = await liveOnStreet(tx, i.addressKey);
   const subjectRows = [...atKey, ...(i.subjectMlsListingId ? await listingRows(tx, [i.subjectMlsListingId]) : []), ...live.filter((r) => keyOfRow(r) === i.addressKey)];
   const scopeOf = (r: ListingRow) => e.pack(r.mls_connection_id)?.valuation.avmFlagScope ?? 'all_client_outputs';
-  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && (!flagRead(r) || !r.avm_display_allowed) && scopeOf(r) === 'all_client_outputs');
+  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && (!flagRead(r) || !r.avm_display_allowed) && (u.withheldEitherScope || scopeOf(r) === 'all_client_outputs'));
   if (withheld.length > 0) {
     blockers.push({
       code: 'SELLER_WITHHELD',
@@ -336,7 +391,7 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   }
 
   // F2: a live listing that may be this home, until the agent confirms it is a different one
-  const matches = await nearMatches(tx, i.addressKey, i.nearMatchDismissed, live);
+  const matches = await nearMatches(tx, i.addressKey, u.honourDismissals ? i.nearMatchDismissed : [], live);
   for (const m of matches.filter((x) => !x.dismissed)) {
     blockers.push({
       code: 'POSSIBLE_LIVE_LISTING',

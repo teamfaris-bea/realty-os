@@ -78,6 +78,7 @@ export const STRICTEST_VALUATION_LICENCE: ValuationLicence = Object.freeze({
   agentCma: false,
   clientCma: false,
   automatedNotes: false,
+  aiIsaComps: false,
   avmFlagScope: 'all_client_outputs',
   statements: Object.freeze({}),
   reviewedByCounselAt: null,
@@ -88,6 +89,7 @@ export const ValuationLicenceSchema = z
     agent_cma: z.boolean().catch(false),
     client_cma: z.boolean().catch(false),
     automated_notes: z.boolean().catch(false),
+    ai_isa_comps: z.boolean().catch(false),
     avm_flag_scope: z.enum(['all_client_outputs', 'internet_display_only']).catch('all_client_outputs'),
     statements: Statements,
     reviewed_by_counsel_at: Reviewed,
@@ -97,6 +99,7 @@ export const ValuationLicenceSchema = z
       agentCma: j.agent_cma,
       clientCma: j.client_cma,
       automatedNotes: j.automated_notes,
+      aiIsaComps: j.ai_isa_comps,
       avmFlagScope: j.avm_flag_scope,
       statements: j.statements,
       reviewedByCounselAt: j.reviewed_by_counsel_at,
@@ -178,7 +181,26 @@ export function valuationStatement(pack: LicensePack, region: string | null): { 
  */
 export function valuationUse(pack: LicensePack, use: ValuationUse, region: string | null): ValuationUseResult {
   const v = pack.valuation;
-  const allowed = use === 'agent_cma' ? v.agentCma : use === 'client_cma' ? v.clientCma : v.automatedNotes;
+  // an exhaustive switch (ISA-3): an unknown use never falls through to another use's value (E534)
+  let allowed: boolean;
+  switch (use) {
+    case 'agent_cma':
+      allowed = v.agentCma;
+      break;
+    case 'client_cma':
+      allowed = v.clientCma;
+      break;
+    case 'automated_notes':
+      allowed = v.automatedNotes;
+      break;
+    case 'ai_isa_comps':
+      allowed = v.aiIsaComps;
+      break;
+    default: {
+      const never: never = use;
+      throw new Error(`unknown valuation use ${String(never)}`);
+    }
+  }
   if (!allowed) return { ok: false, reason: 'PACK_DOES_NOT_ALLOW' };
   if (use === 'agent_cma') return { ok: true };
   if (v.reviewedByCounselAt === null) return { ok: false, reason: 'VALUATION_NOT_REVIEWED' };
