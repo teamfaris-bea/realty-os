@@ -29,6 +29,11 @@ export interface CanceledShare {
  * not tenant-prefixed, so a join from messages would filter all of them): the tenant's shared CMAs with a message,
  * through the partial UQ cma_reports_share_message (0061; few rows: every CMA ever shared), then those messages still
  * queued or scheduled, by the messages primary key (tenant_id, id). No index is added (placeholder 0220_ unused).
+ * QUEUED_READ is given at most `limit` ids at a time, so its LIMIT never cuts a page short (audit cma-v2a F5).
+ * VERIFY 6 (open; audit cma-v2a F5): the brief's sweep reads from messages (review disposition #34 rejected driving it
+ * from cma_reports, because SHARED_READ grows with every CMA ever shared). This read stays until the orchestrator
+ * accepts it in writing, or an EXPLAIN on V1-A's volume fixture without enable_seqscan = off decides the brief's query
+ * and its 0220_ tenant-prefixed partial index.
  */
 export const SHARED_READ = sql`SELECT r.id, r.shared_message_id FROM cma_reports r
   WHERE r.tenant_id = app.tenant_id() AND r.shared_message_id IS NOT NULL AND r.status = 'shared'`;
@@ -41,9 +46,16 @@ export async function cancelIneligibleCmaSharesInTx(tx: Tx, now: Instant, o: { l
   const shared = (await sql<{ id: string; shared_message_id: string }>`${SHARED_READ}`.execute(tx)).rows;
   if (shared.length === 0) return [];
   const cmaOf = new Map(shared.map((x) => [x.shared_message_id, x.id]));
+  // Every shared message id, a page at a time in a stable order, so every queued share is re-checked on every pass. A
+  // single read with a LIMIT and no ORDER BY read the same rows each pass: a share held for a re-tap stays queued while
+  // it is ready, so more of them than the limit starved the rest (audit cma-v2a F5).
+  const page = Math.max(1, o.limit ?? 500);
+  const ids = [...cmaOf.keys()].sort();
+  const rows: { id: string; contact_id: string }[] = [];
+  for (let i = 0; i < ids.length; i += page) rows.push(...(await sql<{ id: string; contact_id: string }>`${QUEUED_READ(ids.slice(i, i + page), page)}`.execute(tx)).rows);
   // in contact order, as the lock order of every multi-contact pass (sorted here: an ORDER BY in SQL would steer the plan
   // onto messages_contact_idx and filter every message of the tenant)
-  const queued = (await sql<{ id: string; contact_id: string }>`${QUEUED_READ([...cmaOf.keys()], o.limit ?? 500)}`.execute(tx)).rows
+  const queued = rows
     .map((m) => ({ message_id: m.id, contact_id: m.contact_id, cma_id: cmaOf.get(m.id)! }))
     .sort((a, b) => (a.contact_id < b.contact_id ? -1 : a.contact_id > b.contact_id ? 1 : a.message_id < b.message_id ? -1 : 1));
   if (queued.length === 0) return [];

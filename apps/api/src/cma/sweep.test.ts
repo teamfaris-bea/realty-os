@@ -8,7 +8,7 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { depsFromPlatform, dispatchOutbound } from '../comms/index.js';
 import { complianceSweepInTx } from '../mls/sweep.js';
 import * as gates from './gates.js';
-import { QUEUED_READ, SHARED_READ } from './sweep.js';
+import { QUEUED_READ, SHARED_READ, cancelIneligibleCmaSharesInTx } from './sweep.js';
 import { randomUUID } from 'node:crypto';
 import { type CmaBody, type ShareWorld, call, cmaPack, emailSeller, feedLastSyncedAt, localSales, mlsSale, oneTap, shareFrom, sharePreview, shareQueued, shareWorld, withPlatformCmaCleared } from './testing.js';
 
@@ -158,6 +158,26 @@ describe('R-CMA-7 E612: the sweep cancels a queued share whose readiness fails',
   });
 });
 
+// Audit cma-v2a F5: QUEUED_READ had a LIMIT and no ORDER BY, so with more queued shares than the limit the same rows
+// were read every pass (a share held for a re-tap stays queued while it is ready) and the rest were never re-checked.
+// A share the sweep never reaches is one a later re-tap could send without a readiness re-check (VERIFY 9).
+describe('E612 R-CMA-7: every queued share is re-checked on every pass, whatever the page size', () => {
+  it('E612 (d): with a page of 2, a third queued share whose readiness fails is canceled while the two ready ones ahead of it stay queued', async () => {
+    const ready1 = await queuedShare();
+    const ready2 = await queuedShare();
+    const failing = await queuedShare();
+    expect([ready1.messageId < failing.messageId, ready2.messageId < failing.messageId]).toEqual([true, true]);
+    await mlsSale(w, { line1: failing.line1, status: 'active', closePriceCents: null, closeDate: null, avmDisplayAllowed: false });
+    const pass = () => withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => cancelIneligibleCmaSharesInTx(tx, now, { limit: 2 }), { db: h.app.platform.db });
+    await withPlatformCmaCleared(h, async () => {
+      expect((await pass()).map((x) => [x.messageId, x.reason])).toEqual([[failing.messageId, 'CMA_SELLER_WITHHELD']]);
+      expect(await pass()).toEqual([]); // idempotent: nothing left to cancel
+    });
+    expect(await msg(failing.messageId)).toMatchObject({ status: 'canceled', status_reason: 'CMA_SELLER_WITHHELD' });
+    for (const q of [ready1, ready2]) expect((await msg(q.messageId)).status).toBe('queued');
+  });
+});
+
 describe('VERIFY 6 VERIFY 7', () => {
   it('VERIFY 7: the system\'s UPDATE of a human message to canceled passes every messages trigger (shown by the cancels above); a direct one does too', async () => {
     const q = await queuedShare();
@@ -165,8 +185,10 @@ describe('VERIFY 6 VERIFY 7', () => {
     expect(r).toEqual([{ id: q.messageId }]);
   });
 
-  it('VERIFY 6: under FORCE RLS the sweep reads the shared CMAs through cma_reports_share_message and their messages by the messages primary key, never a scan of the tenant\'s messages', async () => {
-    // the planner's choice on a few fixture rows says nothing; with fresh statistics it is the one the shape allows
+  it('VERIFY 6: under FORCE RLS an index path exists for both reads (cma_reports_share_message, then the messages primary key), never a scan of the tenant\'s messages', async () => {
+    // the planner's choice on a few fixture rows says nothing, so sequential scans are off: this proves the path exists,
+    // not that the planner takes it at volume. VERIFY 6 stays open (audit cma-v2a F5): an EXPLAIN on V1-A's volume
+    // fixture with sequential scans on, or the orchestrator's written acceptance of this read over the brief's.
     await h.su.query('ANALYZE messages; ANALYZE cma_reports');
     const plans = await withTenantTx(systemActor(w.tenantId, 'worker'), async (tx) => {
       await sql`SET LOCAL enable_seqscan = off`.execute(tx);
