@@ -307,6 +307,22 @@ describe('E372: the backfill pass fills old rows without ever delaying new listi
     expect(ms).toBeLessThan(60_000); // one sync run's budget: the reconcile tick is every 60 s
   }, 120_000);
 
+  it('E605 R-MLS-7 R-CMA-1: the backfill writes a size only with its source: under a mapping that reads no size (Spark) a version-1 row\'s stored size is cleared, never left without a source', async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);
+    // version-1 rows as stored before size_source existed: sqft 1400, no source (v1Row), read then from the mapping of the day
+    await v1Row(h, w.tenantId, conn, { mlsNumber: 'M6051', postalCode: '94605', modifiedAt: '2026-11-10T10:00:00Z' });
+    await v1Row(h, w.tenantId, conn, { mlsNumber: 'M6052', postalCode: '94605', modifiedAt: '2026-11-10T10:00:00Z' });
+    await startBackfill(h, conn);
+    const areas = { LivingArea: 1400, BuildingAreaTotal: 2100 };
+    const noSize = { ...splitFeed({ backfill: [{ records: [soldReso(6051, { PostalCode: '94605', ...areas })], more: false }] }), fields: { sqft: null } };
+    expect(await run(conn, noSize)).toMatchObject({ outcome: 'synced', filled: 1 });
+    expect(await rowOf('M6051')).toMatchObject({ mls_normalize_version: NORMALIZE_VERSION, sqft: null, size_source: null, year_built: 1962 });
+    // the RESO default mapping (LivingArea): the size is kept and its source recorded with it
+    await startBackfill(h, conn);
+    expect(await run(conn, splitFeed({ backfill: [{ records: [soldReso(6052, { PostalCode: '94605', ...areas })], more: false }] }))).toMatchObject({ outcome: 'synced', filled: 1 });
+    expect(await rowOf('M6052')).toMatchObject({ mls_normalize_version: NORMALIZE_VERSION, sqft: 1400, size_source: 'LivingArea' });
+  });
+
   it('E372 R-TEN-1: the backfill state is the system\'s: an Owner cannot set it', async () => {
     const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);
     const { withTenantTx } = await import('@realty/db');

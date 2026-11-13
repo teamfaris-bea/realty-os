@@ -32,11 +32,12 @@
 //     reads its incremental page first, unchanged; only when that page is not full and a backfill is pending does it
 //     read one backfill page (records(mls_backfill_cursor, SYNC_BATCH), outside any transaction). The fenced write
 //     also checks that mls_backfill_cursor is unchanged. A backfill record is written by a FILL-ONLY update: it never
-//     inserts, sets only the new columns of the row with the same connection, MLS number and modification time whose
-//     version is older, so it writes no price history, is never fed to saved-search matching (R-MLS-6: no alert for an
-//     old listing) or to nurture, and never moves sync_cursor or last_synced_at (R-MLS-3: freshness is the
-//     incremental feed's). While a backfill is pending the next run is due at once; a backfill page with `more` false
-//     ends it. A record modified since is left to the incremental read (its modification no longer matches).
+//     inserts, sets only the new columns (and sqft with its size_source, R-MLS-7) of the row with the same connection,
+//     MLS number and modification time whose version is older, so it writes no price history, is never fed to
+//     saved-search matching (R-MLS-6: no alert for an old listing) or to nurture, and never moves sync_cursor or
+//     last_synced_at (R-MLS-3: freshness is the incremental feed's). While a backfill is pending the next run is due
+//     at once; a backfill page with `more` false ends it. A record modified since is left to the incremental read (its
+//     modification no longer matches).
 import { type FieldMapping, type Issue, type ListingFacts, type MlsConnectionId, NORMALIZE_VERSION, type ResoLike, addressKey, normalizeMlsListing, resoAddressParts } from '@realty/core/listings';
 import type { Instant, TenantId } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
@@ -177,8 +178,10 @@ function valuationParams(f: ListingFacts, key: string | null) {
 
 /**
  * Backfill (F14): fills the new columns of the stored version-1 row with this record's connection, MLS number and
- * modification time. Never inserts, never touches an existing column (no price history), never alerts. Returns
- * whether a row was filled.
+ * modification time. Never inserts, never alerts, never writes price history. The one existing column it writes is
+ * sqft, together with size_source (R-MLS-7): a size is stored only with the field it was read from, so a version-1 size
+ * read under an earlier mapping (Spark's read BuildingAreaTotal) is replaced by this read's, null when the current
+ * mapping reads no size; for an unchanged mapping it is the same value. Returns whether a row was filled.
  */
 export async function fillMlsListing(tx: Tx, f: ListingFacts, key: string | null): Promise<boolean> {
   const p = valuationParams(f, key);
@@ -187,7 +190,7 @@ export async function fillMlsListing(tx: Tx, f: ListingFacts, key: string | null
            original_list_price_cents = ${p.original_list_price_cents}, concessions_cents = ${p.concessions_cents}, sale_conditions = ${p.sale_conditions}::text[],
            days_on_market = ${p.days_on_market}, latitude_e6 = ${p.latitude_e6}, longitude_e6 = ${p.longitude_e6}, year_built = ${p.year_built},
            lot_sqft = ${p.lot_sqft}, subdivision_name = ${p.subdivision_name}, garage_spaces_x10 = ${p.garage_spaces_x10}, stories_x10 = ${p.stories_x10},
-           pool_private = ${p.pool_private}, size_source = ${p.size_source}, is_lease = ${p.is_lease}, avm_display_allowed = ${p.avm_display_allowed},
+           pool_private = ${p.pool_private}, sqft = ${f.sqft}, size_source = ${p.size_source}, is_lease = ${p.is_lease}, avm_display_allowed = ${p.avm_display_allowed},
            address_key = ${p.address_key}, mls_normalize_version = ${NORMALIZE_VERSION}
      WHERE tenant_id = app.tenant_id() AND source = 'mls' AND mls_connection_id = ${f.mlsConnectionId} AND mls_number = ${f.mlsNumber}
        AND mls_modified_at = ${iso(f.mlsModifiedAt!)}::timestamptz AND mls_normalize_version < ${NORMALIZE_VERSION}`.execute(tx);
