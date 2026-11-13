@@ -2,7 +2,8 @@
 // R-STAFF-10 (module 55), as a source scan over every staff screen file module 55 owns: the surfaces voice, ads,
 // documents, likely, gbp and coaching-trends, and its five Approvals cards. None imports src/portal (or any module
 // named portal) and none names a portal route, client (/portal/…, /api/portal/…) or staff (/portal-accounts,
-// /portal-grants, /portal-items: module 46's screens, not these). The scan is not vacuous: every folder and card is
+// /portal-grants, /portal-items: module 46's screens, not these; and module 45's /deals|listings/:id/portal and
+// /deals|listings/:id/portal/invite, matched anywhere in a quoted path since batch 14). The scan is not vacuous: every folder and card is
 // read, and the patterns fire on the forms they must catch. Batch 14 audit T1 (the scan covered documents only).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -39,8 +40,10 @@ function portalImport(file: string, spec: string): boolean {
   }
   return /(^|\/)portal(\/|\.|$)/.test(spec);
 }
-/** A quoted path that names a portal route: /portal…, /api/portal…, /portal-grants…, in any quote or a template. */
-const PORTAL_ROUTE = /['"`](?:https?:\/\/[^'"`/]*)?(?:\/api)?\/portal(?:\b|-)/;
+/** A quoted path that names a portal route: a /portal segment anywhere in a quoted string or a template (/portal…,
+ *  /api/portal…, /portal-grants…, and module 45's nested staff routes /deals|listings/:id/portal and …/portal/invite,
+ *  whether templated or concatenated: '/deals/' + id + '/portal'). */
+const PORTAL_ROUTE = /['"`][^'"`\n]*\/portal(?:[/\-?#'"`]|\$\{|$)/m;
 
 describe('R-STAFF-10: staff screens never import src/portal or name a portal route', () => {
   it('the scan reads every module 55 surface folder and Approvals card', () => {
@@ -55,7 +58,9 @@ describe('R-STAFF-10: staff screens never import src/portal or name a portal rou
     for (const s of ['../../shell/index.js', './words.js', '../admin/integrations/words.js']) expect(portalImport(f, s), s).toBe(false);
     expect(importsOf("import { x } from '../../portal/a.js';\nconst m = await import('../../portal/b.js');\nexport * from '../../portal/c.js';\nimport '../../portal/d.js';")).toEqual(['../../portal/a.js', '../../portal/b.js', '../../portal/c.js', '../../portal/d.js']);
     for (const s of ["api.get('/portal/session')", 'fetch("/api/portal/documents")', 'api.post(`/portal-grants/${id}/revoke`)', "'/portal-items/preview'", "'https://app.example.test/portal/me'"]) expect(s, s).toMatch(PORTAL_ROUTE);
-    for (const s of ["api.get('/documents/extractions')", "'/likely'", "'/gbp/reviews'", 'the client portal is module 45']) expect(s, s).not.toMatch(PORTAL_ROUTE);
+    // module 45's nested staff routes (portal/staff/routes.ts: /deals|listings/:id/portal and /portal/invite), b14 to-do
+    for (const s of ['api.post(`/deals/${dealId}/portal/invite`, {})', 'api.get(`/listings/${id}/portal`)', "api.get('/listings/' + id + '/portal')", "api.post('/deals/' + id + '/portal/invite')", 'fetch(`/api/deals/${id}/portal?x=1`)', "`/${kind}s/${id}/portal`"]) expect(s, s).toMatch(PORTAL_ROUTE);
+    for (const s of ["api.get('/documents/extractions')", "'/likely'", "'/gbp/reviews'", 'the client portal is module 45', "'/deals/' + id + '/portability'", "api.get(`/deals/${id}/dates`)"]) expect(s, s).not.toMatch(PORTAL_ROUTE);
   });
 
   it('no module 55 screen file imports src/portal or names a portal route', () => {
