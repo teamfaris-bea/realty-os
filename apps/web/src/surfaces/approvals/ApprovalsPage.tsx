@@ -72,7 +72,8 @@ export default function ApprovalsPage() {
 
 function Approvals() {
   const q = useInbox();
-  // module 55: "Nothing to approve" only when the marketing drafts and every Phase 3 source are empty too
+  // module 55: "Nothing to approve" only when the marketing drafts and every Phase 3 source are empty too; a source that
+  // failed to load is not known to be empty, so it only shows its notice (batch 14 audit R3)
   const marketing = useMarketingApprovals();
   const { hash } = useLocation();
   // seller updates sent from this page stay on it with their outcome (they leave the pending inbox when sent)
@@ -93,7 +94,7 @@ function Approvals() {
     return (
       <div className="flex flex-col gap-4">
         <MarketingApprovals />
-        <Phase3Approvals whenEmpty={marketing.isError || marketing.data?.pieces.length === 0 ? empty : null} />
+        <Phase3Approvals whenEmpty={!marketing.isError && marketing.data?.pieces.length === 0 ? empty : null} />
       </div>
     );
   }

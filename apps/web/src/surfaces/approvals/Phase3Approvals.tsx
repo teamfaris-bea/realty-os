@@ -3,7 +3,8 @@
 // pointers to contract extractions (every role). Each kind keeps its one decision path (R-STAFF-2): ad shifts via
 // /ads/proposals, review replies via /gbp/reviews, extractions only on the document; nothing here calls /assistant.
 // Owner/Admin reads are never requested for another role (R-STAFF-6). With every source empty it renders `whenEmpty`,
-// so the inbox says "Nothing to approve" only when there is nothing of any kind.
+// so the inbox says "Nothing to approve" only when there is nothing of any kind. A source that failed to load is not
+// known to be empty: then only its "didn't load" notice shows (brief item 11; batch 14 audit R3).
 import { type ReactNode, useState } from 'react';
 import { Notice } from '../../design/index.js';
 import { messageFor, useSession } from '../../shell/index.js';
@@ -27,7 +28,8 @@ export function Phase3Approvals({ whenEmpty = null }: { whenEmpty?: ReactNode })
   if ((admin && (ads.isPending || reviews.pending)) || extractions.isPending) return null;
   const shownReviews = [...keptReviews.filter((k) => !reviews.list.some((r) => r.id === k.id)), ...reviews.list];
   const pointers = extractions.data?.extractions ?? [];
-  const empty = kept.shown.length === 0 && shownReviews.length === 0 && pointers.length === 0;
+  const failed = (admin && ads.error !== null) || reviews.error !== null || extractions.isError;
+  const empty = !failed && kept.shown.length === 0 && shownReviews.length === 0 && pointers.length === 0;
   const keepReview = (r: ReviewView) => setKeptReviews((k) => (k.some((x) => x.id === r.id) ? k : [...k, r]));
 
   return (

@@ -215,7 +215,8 @@ describe('Marketing approval card (approvals inbox)', () => {
   });
 
   it('with nothing of either kind, the inbox says "Nothing to approve"', async () => {
-    app(inbox([]), '/approvals');
+    // every source answers empty: a source that fails to load (an unscripted route) is not empty (batch 14 audit R3)
+    app(inbox([]).on('GET /documents/extractions', { status: 200, body: { extractions: [] } }), '/approvals');
     expect(await screen.findByText('Nothing to approve')).toBeInTheDocument();
   });
 });

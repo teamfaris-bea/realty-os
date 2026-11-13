@@ -101,6 +101,23 @@ describe('the "Nothing to approve" chain', () => {
     });
   }
 
+  // brief item 11: a source that failed to load is not known to be empty, so only its notice shows (batch 14 audit R3)
+  const failed: [string, string, Role, RegExp][] = [
+    ['the marketing drafts', 'GET /marketing/approvals', 'owner', /^Marketing drafts didn't load\./],
+    ['the Google Ads proposal', 'GET /ads', 'owner', /^Google Ads proposals didn't load\./],
+    ['the Google Business Profile status', 'GET /gbp/status', 'admin', /^Review replies didn't load\./],
+    ['the reviews waiting for a reply', 'GET /gbp/reviews?filter=needs_reply', 'owner', /^Review replies didn't load\./],
+    ['the contract dates', 'GET /documents/extractions', 'agent', /^Contract dates didn't load\./],
+  ];
+  for (const [what, route, role, notice] of failed) {
+    it(`is never said when ${what} failed to load (${role}): only the notice that it didn't load`, async () => {
+      open(world().on(route, { status: 500, body: { error: { code: 'INTERNAL', requestId: '01900000-0000-7000-8000-0000000000ee' } } }), role);
+      expect(await screen.findByText(notice, {}, { timeout: 4000 })).toBeInTheDocument();
+      await settle();
+      expect(screen.queryByText('Nothing to approve')).toBeNull();
+    });
+  }
+
   it('an assistant card and a module 55 card show together', async () => {
     open(world({ items: [draftAction()], extractions: [extraction()], reviews: [review()] }));
     expect(await screen.findByText(/She asked whether Saturday works/)).toBeInTheDocument();
