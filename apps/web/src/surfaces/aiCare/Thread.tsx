@@ -124,19 +124,27 @@ export function AiThreadBanner({ contact }: { contact: ContactFullView }) {
           </>
         )}
       </p>
-      {state !== 'ended' ? <HoldBanner hold={hold} first={first} viewer={viewer} /> : null}
+      {/* b13 review F8-ui: the hold banner also after care ended while a post-handoff message is still pending */}
+      {state !== 'ended' || (p.handoff !== null && (p.handoff.confirmationStatus === 'scheduled' || p.handoff.confirmationStatus === 'queued')) ? <HoldBanner hold={hold} first={first} viewer={viewer} /> : null}
       {state !== 'ended' || undo ? <AiCareControls target={target} inThread /> : null}
-      {p.handoff ? <PendingAfterHandoff panel={p} first={first} /> : null}
+      {p.handoff ? <PendingAfterHandoff panel={p} first={first} held={hold.sentence !== null} /> : null}
       <UndoToastHost ownerUserId={a.ownerUserId} ownerName={ownerName} />
     </div>
   );
 }
 
-function PendingAfterHandoff({ panel, first }: { panel: PanelResponse; first: string }) {
+function PendingAfterHandoff({ panel, first, held }: { panel: PanelResponse; first: string; held: boolean }) {
   const h = useHandoff(panel.handoff?.id);
   const m = h.data?.pendingMessage;
   if (!m) return null;
   const what = m.kind === 'confirmation' ? 'confirmation' : 'holding message';
+  // b13 review F8-ui: under the AI_ISA_LIVE_SENDS hold dispatch refuses it: said as what would happen, and what to do
+  if (held && (m.status === 'scheduled' || m.status === 'queued'))
+    return (
+      <p className="text-[14px] text-ink" data-testid="ai-pending-after-handoff">
+        An AI {what} would be sent{m.scheduledFor ? ` at ${localTime(m.scheduledFor)}` : ''} if sending were allowed. AI messages are held, so {m.kind === 'confirmation' ? 'confirm it yourself' : `reach ${first} yourself`}.
+      </p>
+    );
   if ((m.status === 'scheduled' || m.status === 'queued') && m.scheduledFor && Date.parse(m.scheduledFor) > Date.now())
     return (
       <p className="text-[14px] text-ink" data-testid="ai-pending-after-handoff">

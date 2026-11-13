@@ -77,6 +77,20 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(document.body.textContent).not.toMatch(/confirm by hand/);
   });
 
+  it('V3 E533 (b13 review F8-ui): under the AI_ISA_LIVE_SENDS hold the strip says AI messages are held; after care ended, a scheduled confirmation keeps the hold banner on the panel and says to confirm it yourself', async () => {
+    const hold = 'AI assistant sending is off on this deployment.';
+    const v = isaApp(person(panel(), { hold }), `/contacts/${IDS.jane}`, 'agent');
+    const strip = await screen.findByTestId('ai-strip');
+    expect(await within(strip).findByText(/^AI messages are held: nothing reaches Jane from this deployment\.$/)).toBeInTheDocument();
+    v.view.unmount();
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'critical', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'scheduled', confirmationNotSent: null, closedReason: null } });
+    isaApp(person(ended, { live: false, hold }), `/contacts/${IDS.jane}`, 'agent');
+    const s = await screen.findByRole('region', { name: 'Handoff' });
+    expect(await screen.findByTestId('ai-hold')).toHaveTextContent(hold);
+    expect(within(s).getByText('A confirmation would go out if sending were allowed. AI messages are held, so confirm it yourself.')).toBeInTheDocument();
+    expect(s.textContent).not.toMatch(/A confirmation is scheduled\./);
+  });
+
   it('R-ISA-30 E521 (batch 13 isa-4, b12 recheck R16 follow-up): after a restart with no touch, the panel shows the earlier handoff that is still open and overdue', async () => {
     const p = panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');

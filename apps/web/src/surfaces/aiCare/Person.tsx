@@ -64,6 +64,7 @@ function useContactPanel(contact: Contact) {
 export function AiCareStrip({ contact }: { contact: Contact }) {
   const { p, viewer, ownerName } = useContactPanel(contact);
   const bar = useStickyBottom<HTMLDivElement>();
+  const hold = useHold(p);
   if (!p || !p.assignment) return null;
   const a = p.assignment;
   const state = stateOfPanel(p)!;
@@ -75,6 +76,8 @@ export function AiCareStrip({ contact }: { contact: Contact }) {
         <>
           <p className="text-[15px] font-semibold text-ink">AI assistant is handling this conversation</p>
           <p className="text-[14px] text-ink-muted">Calling or texting them yourself pauses AI care.</p>
+          {/* b13 review F8-ui: the header says a hold too (the full banner is in the panel below) */}
+          {hold.sentence ? <p className="text-[14px] font-medium text-warn" data-testid="ai-strip-hold">AI messages are held: nothing reaches {firstOf(contact.displayName, 'them')} from this deployment.</p> : null}
         </>
       ) : state === 'paused' ? (
         <p className="text-[15px] text-ink">
@@ -142,7 +145,8 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
   const who = (you: string, them: string) => (viewer.isOwner ? you : them);
   return (
     <div className="flex flex-col gap-3">
-      {live ? <HoldBanner hold={hold} first={first} viewer={viewer} /> : null}
+      {/* b13 review F8-ui: also after care ended while a post-handoff message is still pending: under the hold it never goes */}
+      {live || pendingAfterHandoff(p) ? <HoldBanner hold={hold} first={first} viewer={viewer} /> : null}
       {a && a.pausedAt && !a.endedAt ? <PausedLines p={p} viewer={viewer} contact={contact} /> : null}
       {p.block ? <BlockLines block={p.block} viewer={viewer} contactId={contact.id} /> : null}
       {a && live ? (
@@ -219,9 +223,9 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
         </>
       ) : null}
       {a && a.endedAt ? <p className="text-[15px] text-ink">AI care ended: {endWords(a.endReason)}</p> : null}
-      {p.handoff ? <HandoffLines h={p.handoff} viewer={viewer} first={first} /> : null}
+      {p.handoff ? <HandoffLines h={p.handoff} viewer={viewer} first={first} held={hold.sentence !== null} /> : null}
       {/* batch 13 isa-4 (b12 recheck R16 follow-up): an earlier handoff a restart left open still has its deadline */}
-      {p.earlierHandoff ? <HandoffLines h={p.earlierHandoff} viewer={viewer} first={first} title="An earlier handoff is still open" /> : null}
+      {p.earlierHandoff ? <HandoffLines h={p.earlierHandoff} viewer={viewer} first={first} held={hold.sentence !== null} title="An earlier handoff is still open" /> : null}
       {p.inactivityReleaseAt && live ? (
         <p className="text-[15px] text-ink">
           Returns to the pond on {localDate(p.inactivityReleaseAt)} unless {who('you reach them', `${viewer.ownerFirst} reaches them`)}. AI messages don't reset this.
@@ -418,7 +422,12 @@ function HeldTopics({ p, viewer, contactId }: { p: PanelResponse; viewer: Viewer
   );
 }
 
-function HandoffLines({ h, viewer, first, title = 'Handoff' }: { h: PanelHandoff; viewer: ViewerInfo; first: string; title?: string }) {
+/** b13 review F8-ui: a handoff whose post-handoff message (confirmation or holding line) is still to go out. */
+const pendingAfterHandoff = (p: PanelResponse) => [p.handoff, p.earlierHandoff].some((h) => h !== null && (h.confirmationStatus === 'scheduled' || h.confirmationStatus === 'queued'));
+/** Under a hold a pending confirmation never goes out (dispatch refuses it): it is said as what would happen. */
+export const HELD_CONFIRMATION = 'A confirmation would go out if sending were allowed. AI messages are held, so confirm it yourself.';
+
+function HandoffLines({ h, viewer, first, title = 'Handoff', held = false }: { h: PanelHandoff; viewer: ViewerInfo; first: string; title?: string; held?: boolean }) {
   return (
     <Section title={title}>
       <p>{handoffWhy(h.reason)}</p>
@@ -436,7 +445,7 @@ function HandoffLines({ h, viewer, first, title = 'Handoff' }: { h: PanelHandoff
           {h.overdue ? ' · Overdue' : ''}. A call, text or email to {first} from {viewer.isOwner ? 'you' : viewer.ownerFirst} or a collaborator meets it.
         </p>
       )}
-      <p className="text-ink-muted">{confirmationWords(h.confirmationStatus, h.confirmationNotSent)}</p>
+      <p className="text-ink-muted">{held && (h.confirmationStatus === 'scheduled' || h.confirmationStatus === 'queued') ? HELD_CONFIRMATION : confirmationWords(h.confirmationStatus, h.confirmationNotSent)}</p>
     </Section>
   );
 }

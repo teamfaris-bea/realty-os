@@ -12,12 +12,12 @@ const PLAIN = '01900000-0000-7000-8000-0000000a1004';
 const OLD = '01900000-0000-7000-8000-0000000a1005';
 const msg = (id: string, status: string, preview: string, ms: number): TimelineItem => ({ id, type: 'message', occurredAt: iso(ms), actor: null, detail: 'sms:outbound', preview, note: null, provenance: 'native', status, statusReason: status === 'blocked' ? 'ISA_QUIET_HOURS' : null });
 
-function thread(o: { turns?: ReturnType<typeof turn>[]; items?: TimelineItem[]; p?: ReturnType<typeof panel> } = {}) {
+function thread(o: { turns?: ReturnType<typeof turn>[]; items?: TimelineItem[]; p?: ReturnType<typeof panel>; hold?: string | null } = {}) {
   const items = o.items ?? [msg(ISA_IDS.aiMessage, 'sent', 'Hi from the assistant', -900_000), msg(SCHED, 'scheduled', 'Planned follow-up', -800_000), msg(BLOCKED, 'blocked', 'Blocked one', -700_000), msg(PLAIN, 'sent', 'An automated reminder', -600_000), msg(OLD, 'sent', 'From an older period', -86_400_000 * 3)].reverse();
   return contactReads(new FakeFetch())
     .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items, nextCursor: null } })
     .on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: o.p ?? panel() })
-    .on('GET /ai-isa/assignments?scope=all&state=live', { status: 200, body: { rows: [row()], holdSentence: null } })
+    .on('GET /ai-isa/assignments?scope=all&state=live', { status: 200, body: { rows: [row()], holdSentence: o.hold ?? null } })
     .on(`GET /contacts/${IDS.jane}/ai-isa/turns`, {
       status: 200,
       body: {
@@ -88,6 +88,17 @@ describe('AI labels in the thread (R-ISA-7)', () => {
     const fake = thread({ p }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ pendingMessage: { id: ISA_IDS.pending, kind: 'confirmation', channel: 'sms', status: 'canceled', scheduledFor: null } }) });
     isaApp(fake, `/contacts/${IDS.jane}/thread`, 'agent');
     await waitFor(() => expect(screen.getByTestId('ai-thread-banner').textContent).toMatch(/Confirmation not sent: confirm by hand\./));
+  });
+
+  it('E533 V3 (b13 review F8-ui): under the AI_ISA_LIVE_SENDS hold, after care ended, a scheduled confirmation keeps the hold banner and says it would go out only if sending were allowed, so confirm it yourself', async () => {
+    const p = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'critical', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'scheduled', confirmationNotSent: null, closedReason: null } });
+    const pending = { id: ISA_IDS.pending, kind: 'confirmation' as const, channel: 'sms', status: 'scheduled', scheduledFor: iso(1_800_000) };
+    const fake = thread({ p, hold: 'AI assistant sending is off on this deployment.' }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ pendingMessage: pending }) });
+    isaApp(fake, `/contacts/${IDS.jane}/thread`, 'agent');
+    const b = await screen.findByTestId('ai-thread-banner');
+    expect(await within(b).findByTestId('ai-hold')).toHaveTextContent('AI assistant sending is off on this deployment.');
+    await waitFor(() => expect(b.textContent).toMatch(/would be sent at .* if sending were allowed\. AI messages are held, so confirm it yourself\./));
+    expect(b.textContent).not.toMatch(/is scheduled for/);
   });
 
   it('E533 R-ISA-30 (b13 review B13S-3 / F4-ui): a canceled confirmation to a person D1 leaves no channel reads keep or cancel, never "confirm by hand"', async () => {
