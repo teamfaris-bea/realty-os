@@ -80,11 +80,13 @@ CREATE UNIQUE INDEX portal_items_live_source ON portal_items (tenant_id, grant_i
 -- (c) who retracted, and the replaced items guard
 -- -----------------------------------------------------------------------------
 ALTER TABLE portal_items ADD COLUMN retracted_by_user_id uuid;
--- DEFERRABLE INITIALLY DEFERRED (checked at commit): an immediate FK here made app.purge_contact_internal's cascade
--- fail a lead_email_messages inquiry FK re-check during an erase (apps/api/src/leadEmail/erasure.test.ts, admin/erasure.race.test.ts);
--- the guard already writes only the acting member's own id.
+-- An ordinary immediate FK, like published_by_user_id's (0018). Kept as well as the guard below (b14 audit F6,
+-- ARCHITECTURE §21.44): the guard decides who may be written (the acting member, or NULL for the system); the FK keeps
+-- the stored id a member of the tenant for any writer, the definers and maintenance included. An erase failure once
+-- blamed on it ("lead_email_messages_tenant_id_inquiry_id_fkey" in purge_contact_internal) comes from the name order of
+-- contacts' RI triggers, not from this FK (packages/db/test/portal_retracted_by_fk.test.ts reproduces it without it).
 ALTER TABLE portal_items ADD CONSTRAINT portal_items_retracted_by_fk FOREIGN KEY (tenant_id, retracted_by_user_id)
-  REFERENCES memberships (tenant_id, user_id) DEFERRABLE INITIALLY DEFERRED;
+  REFERENCES memberships (tenant_id, user_id);
 ALTER TABLE portal_items ADD CONSTRAINT portal_items_retracted_by_with_at CHECK (retracted_by_user_id IS NULL OR retracted_at IS NOT NULL);
 
 -- An item copies a source that belongs to its grant's own deal or listing (a confirmed milestone of the deal,
