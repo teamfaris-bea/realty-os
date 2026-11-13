@@ -661,15 +661,18 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     const { memoryAlerts, silentLogger } = await import('../worker/observability.js');
     // the poisoned row: a touch meets its deadline, but its close is refused on every pass (a test-only trigger)
     const poisoned = await handedToA1();
-    await touch(poisoned.l.id);
     // the healthy row: past its deadline, nobody touched it
     const healthy = await handedToA1();
+    // batch 13 (b12 recheck R24 follow-up): the poisoned row sorts FIRST on the first pass (the earlier deadline), so a
+    // sweep that stopped at a failed row (break, not continue) would never reach the healthy one in that pass
     await h.su.query(`SET session_replication_role = replica`);
     try {
+      await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '10 minutes', created_at = now() - interval '20 minutes' WHERE id = $1`, [poisoned.ho.id]);
       await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '1 minute', created_at = now() - interval '2 minutes' WHERE id = $1`, [healthy.ho.id]);
     } finally {
       await h.su.query(`SET session_replication_role = origin`);
     }
+    await touch(poisoned.l.id);
     const state = async (id: string) => (await h.su.query<{ level: number; met: boolean; closed: string | null; failures: number }>(
       `SELECT sla_escalation_level AS level, sla_met_at IS NOT NULL AS met, closed_reason AS closed, sweep_failure_count AS failures FROM ai_isa_handoffs WHERE id = $1`, [id])).rows[0]!;
     const deps = depsFromPlatform(h.app.platform);
@@ -706,6 +709,70 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect((await sweep()).failed).toBe(0);
     expect(await state(poisoned.ho.id)).toMatchObject({ met: true, closed: 'deadline_met' });
     expect(await closedAudit(poisoned.ho.id)).toEqual([{ reason: 'deadline_met', actor_kind: 'system' }]);
+  });
+
+  // batch 13 (b12 recheck R24 follow-up): a row gone after the read is logged, never alerted; a count that cannot be
+  // written raises one P2 for the pass, at most once an hour per tenant (not one per row every minute)
+  it('R-ISA-30 E521 (b12 recheck R24, batch 13): a failed handoff erased before its failure is counted is logged as gone with no alert; when the count cannot be written, one P2 per tenant per hour', async () => {
+    const { memoryAlerts, memoryLogger } = await import('../worker/observability.js');
+    const { slaSweepTestHooks, resetSweepAlertThrottle, AI_ISA_SWEEP_ROWS_PER_PASS } = await import('./handoff.js');
+    expect(AI_ISA_SWEEP_ROWS_PER_PASS).toBeLessThanOrEqual(63); // the rows' savepoints plus the count's stay under 64
+    const deps = depsFromPlatform(h.app.platform);
+    const actor = systemActor(w.tenantId, 'assistant');
+    const alerts = memoryAlerts();
+    const log = memoryLogger();
+    const sweep = () => withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor, { alerts, log }), { db: h.database });
+    const gone = await handedToA1();
+    await touch(gone.l.id);
+    await h.su.query(`CREATE FUNCTION public.r24b_refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.id = '${gone.ho.id}'::uuid AND OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL THEN RAISE EXCEPTION 'R24_INJECTED_FAILURE'; END IF;
+        RETURN NEW; END $$`);
+    await h.su.query(`CREATE TRIGGER r24b_refuse BEFORE UPDATE ON ai_isa_handoffs FOR EACH ROW EXECUTE FUNCTION public.r24b_refuse()`);
+    try {
+      // the handoff is erased (another transaction commits) after the pass read it and its close failed
+      slaSweepTestHooks.beforeFailureCount = async (ids) => {
+        if (!ids.includes(gone.ho.id)) return;
+        await h.su.query(`SET session_replication_role = replica`);
+        try {
+          await h.su.query(`DELETE FROM ai_isa_handoffs WHERE id = $1`, [gone.ho.id]);
+        } finally {
+          await h.su.query(`SET session_replication_role = origin`);
+        }
+      };
+      expect((await sweep()).failed).toBeGreaterThanOrEqual(1);
+    } finally {
+      slaSweepTestHooks.beforeFailureCount = undefined;
+      await h.su.query(`DROP TRIGGER r24b_refuse ON ai_isa_handoffs`);
+      await h.su.query(`DROP FUNCTION public.r24b_refuse()`);
+    }
+    expect(alerts.alerts.filter((a) => JSON.stringify(a.details).includes(gone.ho.id))).toEqual([]);
+    expect(log.lines.filter((l) => l.errorCode === 'AI_ISA_HANDOFF_SWEEP_GONE' && JSON.stringify(l.details).includes(gone.ho.id))).toHaveLength(1);
+    expect(log.lines.filter((l) => l.errorCode === 'AI_ISA_HANDOFF_SWEEP_FAILED' && JSON.stringify(l.details).includes(gone.ho.id))).toHaveLength(0);
+
+    // the count itself is refused: one P2 for the pass, and none on the next pass within the hour
+    resetSweepAlertThrottle();
+    const stuck = await handedToA1();
+    await touch(stuck.l.id);
+    await h.su.query(`CREATE FUNCTION public.r24c_refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.id = '${stuck.ho.id}'::uuid AND (OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL OR NEW.sweep_failure_count <> OLD.sweep_failure_count) THEN RAISE EXCEPTION 'R24_INJECTED_FAILURE'; END IF;
+        RETURN NEW; END $$`);
+    await h.su.query(`CREATE TRIGGER r24c_refuse BEFORE UPDATE ON ai_isa_handoffs FOR EACH ROW EXECUTE FUNCTION public.r24c_refuse()`);
+    const before = alerts.alerts.length;
+    try {
+      await sweep();
+      await sweep();
+    } finally {
+      await h.su.query(`DROP TRIGGER r24c_refuse ON ai_isa_handoffs`);
+      await h.su.query(`DROP FUNCTION public.r24c_refuse()`);
+      resetSweepAlertThrottle();
+    }
+    const raised = alerts.alerts.slice(before);
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toMatchObject({ severity: 'P2', code: 'WORKER_ERROR', tenantId: w.tenantId, details: { reason: 'AI_ISA_HANDOFF_SWEEP_COUNT_UNWRITABLE', error: 'P0001' } });
+    expect(String((raised[0]!.details as Record<string, unknown>).handoffIds)).toContain(stuck.ho.id);
+    expect((await h.su.query<{ n: number }>(`SELECT sweep_failure_count AS n FROM ai_isa_handoffs WHERE id = $1`, [stuck.ho.id])).rows[0]!.n).toBe(0);
+    // once the cause is fixed, the next pass meets it
+    expect((await sweep()).failed).toBe(0);
   });
 
   it('R-ISA-30 E521: a lead closed while its handoff has a deadline: the sweep closes the card and executes the action, never sends an overdue alert, and the deadline is not recorded as met', async () => {

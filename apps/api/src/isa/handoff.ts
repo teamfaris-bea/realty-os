@@ -336,7 +336,8 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
         LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
        WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.closed_at IS NULL AND (h.sla_class <> 'none' OR h.acknowledged_at IS NOT NULL)) s
      WHERE s.ack_close OR s.touch_met OR s.lead_closed OR s.escalate
-     ORDER BY s.sweep_failure_count > 0, s.sla_due_at, s.id LIMIT 200`.execute(tx);
+     ORDER BY s.sweep_failure_count > 0, s.sla_due_at, s.id LIMIT ${AI_ISA_SWEEP_ROWS_PER_PASS}`.execute(tx);
+  const failures: { id: string; error: string }[] = [];
   for (const r of rows.rows) {
     // b12 recheck R24: each row's work runs in its own savepoint. A row whose work fails (a close a guard keeps
     // refusing, say) is rolled back alone, counted and reported, and the pass goes on: before, one such row aborted the
@@ -349,7 +350,7 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
       await sql`ROLLBACK TO SAVEPOINT ai_isa_sla_row`.execute(tx);
       await sql`RELEASE SAVEPOINT ai_isa_sla_row`.execute(tx);
       failed += 1;
-      await sweepFailedInTx(tx, actor, r.id, err, o);
+      failures.push({ id: r.id, error: sqlstateOf(err) });
       continue;
     }
     await sql`RELEASE SAVEPOINT ai_isa_sla_row`.execute(tx);
@@ -357,8 +358,30 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
     else if (done === 'closed') closed += 1;
     else if (done === 'escalated') escalated += 1;
   }
+  // batch 13 (b12 recheck R24 follow-up): the pass's failures are counted together, in ONE savepoint, after the rows
+  if (failures.length > 0) {
+    await slaSweepTestHooks.beforeFailureCount?.(failures.map((f) => f.id));
+    await sweepFailedInTx(tx, actor, failures, now, o);
+  }
   return { met, escalated, closed, failed };
 }
+
+/**
+ * batch 13 (b12 recheck R24 follow-up): the rows one deadline pass reads. Every row's work runs in a savepoint, and a
+ * savepoint that writes holds a subtransaction id until the pass commits; past 64 of them (PGPROC_MAX_CACHED_SUBXIDS)
+ * Postgres's subxid cache overflows and every other backend's snapshot checks fall back to pg_subtrans while the pass
+ * is open. 60 rows plus the one savepoint of the failure count stay under it. A backlog drains 60 rows a minute per
+ * tenant; R17's read set (only rows with work) and the failed-rows-last order keep every due row reached in turn.
+ */
+export const AI_ISA_SWEEP_ROWS_PER_PASS = 60;
+
+/** Test seam only (no production caller sets it): runs after the rows, before the pass's failures are counted. */
+export const slaSweepTestHooks: { beforeFailureCount?: (handoffIds: string[]) => Promise<void> } = {};
+
+const sqlstateOf = (err: unknown): string => {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code) ? code : 'ERROR';
+};
 
 interface SweepRow {
   id: string;
@@ -404,34 +427,60 @@ async function sweepRowInTx(tx: Tx, ids: IdGenerator, now: Instant, actor: Syste
   return 'escalated';
 }
 
-/** b12 recheck R24: after this many failed passes on one handoff the sweep raises a P2 alert naming it (once). */
+/**
+ * b12 recheck R24: after this many failed passes on one handoff the sweep raises a P2 alert naming it (once). The count
+ * is a total over the handoff's life, never reset by a pass that succeeds (OPERATIONS §4.17 says "in 3 passes in
+ * total"); whether to reset it, and whether to repeat the alert while the row keeps failing, is an owner question.
+ */
 export const AI_ISA_SWEEP_ALERT_AFTER = 3;
 
+/** batch 13: when the failure count itself cannot be written, at most one P2 per tenant per this long (per process). */
+export const AI_ISA_SWEEP_COUNT_ALERT_EVERY_MS = 3_600_000;
+const countAlertAt = new Map<string, number>();
+/** Test seam: forget the per-tenant throttle of the count-unwritable alert. */
+export const resetSweepAlertThrottle = (): void => countAlertAt.clear();
+
 /**
- * b12 recheck R24: a row the deadline sweep failed on. Its failed passes are counted on the handoff
- * (ai_isa_handoffs.sweep_failure_count, system-only, 0081) in a savepoint of their own; each failure is logged
- * (AI_ISA_HANDOFF_SWEEP_FAILED, the handoff id and the SQLSTATE only), and the pass that reaches
- * AI_ISA_SWEEP_ALERT_AFTER raises one P2 `WORKER_ERROR` (reason AI_ISA_HANDOFF_SWEEP_FAILING; OPERATIONS §4.17), so a
- * poisoned row is surfaced rather than retried silently forever. When even the count cannot be written, every pass
- * raises it.
+ * b12 recheck R24: the rows the deadline sweep failed on in this pass. Their failed passes are counted on the handoff
+ * (ai_isa_handoffs.sweep_failure_count, system-only, 0081) by ONE update in a savepoint of its own (batch 13: one
+ * subtransaction per pass, not one per failed row); each failure is logged (AI_ISA_HANDOFF_SWEEP_FAILED, the handoff
+ * id, the count and the SQLSTATE only), and a row whose count reaches AI_ISA_SWEEP_ALERT_AFTER raises one P2
+ * `WORKER_ERROR` (reason AI_ISA_HANDOFF_SWEEP_FAILING; OPERATIONS §4.17), so a poisoned row is surfaced rather than
+ * retried silently forever. batch 13 (b12 recheck R24 follow-up):
+ * - a handoff the count no longer finds (erased, cascaded away after the read) is gone, not failing: logged only;
+ * - when the count cannot be written at all, ONE P2 for the pass (reason AI_ISA_HANDOFF_SWEEP_COUNT_UNWRITABLE, the
+ *   number of rows and up to 10 ids), at most once an hour per tenant, never one per row per minute.
  */
-async function sweepFailedInTx(tx: Tx, actor: SystemActor, handoffId: string, err: unknown, o: { alerts?: AlertSink; log?: Logger }): Promise<void> {
-  const code = (err as { code?: unknown } | null)?.code;
-  const error = typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code) ? code : 'ERROR';
-  let failures: number | null = null;
+async function sweepFailedInTx(tx: Tx, actor: SystemActor, failed: { id: string; error: string }[], now: Instant, o: { alerts?: AlertSink; log?: Logger }): Promise<void> {
+  const ids = failed.map((f) => f.id);
+  let counted: Map<string, number> | null = null;
   await sql`SAVEPOINT ai_isa_sla_count`.execute(tx);
   try {
-    const u = await sql<{ n: number }>`UPDATE ai_isa_handoffs SET sweep_failure_count = sweep_failure_count + 1 WHERE tenant_id = app.tenant_id() AND id = ${handoffId}
-      RETURNING sweep_failure_count AS n`.execute(tx);
-    failures = u.rows[0]?.n ?? null;
+    const u = await sql<{ id: string; n: number }>`UPDATE ai_isa_handoffs SET sweep_failure_count = sweep_failure_count + 1
+      WHERE tenant_id = app.tenant_id() AND id = ANY (${ids}::uuid[]) RETURNING id, sweep_failure_count AS n`.execute(tx);
+    counted = new Map(u.rows.map((x) => [x.id, x.n]));
     await sql`RELEASE SAVEPOINT ai_isa_sla_count`.execute(tx);
   } catch {
     await sql`ROLLBACK TO SAVEPOINT ai_isa_sla_count`.execute(tx);
     await sql`RELEASE SAVEPOINT ai_isa_sla_count`.execute(tx);
   }
-  o.log?.warn('AI handoff deadline sweep failed on one handoff; the pass went on', { errorCode: 'AI_ISA_HANDOFF_SWEEP_FAILED', details: { handoffId, failures, error } });
-  if (failures === null || failures === AI_ISA_SWEEP_ALERT_AFTER) {
-    o.alerts?.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: actor.tenantId, details: { reason: 'AI_ISA_HANDOFF_SWEEP_FAILING', handoffId, failures, error } });
+  for (const f of failed) {
+    const failures = counted === null ? null : (counted.get(f.id) ?? null);
+    if (counted !== null && failures === null) {
+      o.log?.info('AI handoff the deadline sweep failed on is gone (erased after the read); nothing to alert', { errorCode: 'AI_ISA_HANDOFF_SWEEP_GONE', details: { handoffId: f.id, error: f.error } });
+      continue;
+    }
+    o.log?.warn('AI handoff deadline sweep failed on one handoff; the pass went on', { errorCode: 'AI_ISA_HANDOFF_SWEEP_FAILED', details: { handoffId: f.id, failures, error: f.error } });
+    if (failures === AI_ISA_SWEEP_ALERT_AFTER) {
+      o.alerts?.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: actor.tenantId, details: { reason: 'AI_ISA_HANDOFF_SWEEP_FAILING', handoffId: f.id, failures, error: f.error } });
+    }
+  }
+  if (counted === null) {
+    const last = countAlertAt.get(actor.tenantId);
+    if (last === undefined || now - last >= AI_ISA_SWEEP_COUNT_ALERT_EVERY_MS) {
+      countAlertAt.set(actor.tenantId, now);
+      o.alerts?.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: actor.tenantId, details: { reason: 'AI_ISA_HANDOFF_SWEEP_COUNT_UNWRITABLE', rows: failed.length, handoffIds: ids.slice(0, 10).join(','), error: failed[0]!.error } });
+    }
   }
 }
 
