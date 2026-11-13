@@ -12,7 +12,8 @@ import { systemActor } from '../worker/systemActor.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { inboundSms, sendText } from '../comms/testing.js';
 import { defaultIsaOutput } from '../providers/fake/isaAi.js';
-import { aiMessages, assignmentOf, call, handoffOf, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, startCare } from './testing.js';
+import { mlsConnection, REVIEWED_PACK } from '../mls/testing.js';
+import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, seedClaims, startCare } from './testing.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -713,5 +714,94 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     const card = (await h.su.query<{ score: number; reasons: { code: string }[] }>(`SELECT score, reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff'`, [l.id])).rows[0]!;
     expect(card.score).toBe(98);
     expect(card.reasons[0]!.code).toBe('AI_ISA_CONFIRMATION_NOT_SENT');
+  });
+});
+
+// ---- batch 13 audit ISA2B-08: the hostile re-run against a LIVE bundle and a delivered offer -----------------------
+// The booking world above opts in to converse and book_appointments only, so its hostile run had no listing handles
+// (share_listings refused for capability) and no "$" could exist. Here the agent also shares listings: the buyer has a
+// live bundle (L1-L3), has already received one server-rendered facts message, and holds a delivered offer.
+
+describe('E506 E508 R-ISA-17: the hostile model against a live bundle and a delivered offer (batch 13 audit ISA2B-08)', () => {
+  let hw: IsaWorld;
+  let hzone: string;
+  const city = 'Albany';
+  beforeAll(async () => {
+    hw = await isaWorld(h, { optIn: false, capabilities: ['converse', 'book_appointments', 'share_listings', 'propose_saved_search'] });
+    hzone = openZone();
+    await connectCalendar(h, hw.agents[0]!);
+    await optInAgent(h, hw.agents[0]!, hw.versionId, ['converse', 'book_appointments', 'share_listings'], { timezone: hzone, bookingKinds: ['buyer_consult', 'consult'],
+      availability: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: '08:00', end: '20:00' })) });
+    const conn = await mlsConnection(h, hw.tenantId, hw.owner.userId!, { pack: REVIEWED_PACK, lastSyncedAt: new Date() });
+    for (let k = 0; k < 3; k += 1) await buyerListing(h, hw.tenantId, { connectionId: conn, city, price: 520000 + k * 1000 });
+  });
+  afterEach(() => { hw.ai.script.length = 0; });
+
+  const ageAll = async (contactId: string) => {
+    await h.su.query(`UPDATE messages SET dispatched_at = dispatched_at - interval '25 hours' WHERE contact_id = $1 AND direction = 'outbound' AND dispatched_at IS NOT NULL`, [contactId]);
+    await h.su.query(`SET session_replication_role = replica; UPDATE ai_isa_assignments SET started_at = started_at - interval '2 hours' WHERE contact_id = '${contactId}' AND ended_at IS NULL; SET session_replication_role = origin`);
+  };
+  /** A buyer under care with usable claims, one facts message received (L1, with its "$" price) and a delivered offer. */
+  async function armed() {
+    const l = await isaLead(h, hw.agents[0]!, { zone: hzone });
+    await grantInitiated(h, hw.tenantId, l);
+    expect((await startCare(hw.agents[0]!, l.id)).status).toBe(200);
+    await runIsa(h, hw.tenantId);
+    await inboundSms(h, l.phone, hw.mainNumber, `We want 3 bedrooms in ${city}`);
+    await runIsa(h, hw.tenantId);
+    await seedClaims(h, l.id, [{ field: 'areas', value: [city], quote: city }, { field: 'budget', value: 900000, quote: '900000' }, { field: 'beds_min', value: 3, quote: '3 bedrooms' }]);
+    hw.ai.script.length = 0;
+    for (let i = 0; i < 6; i += 1) {
+      hw.ai.script.push((_r, src) => {
+        const t = src.map((x) => x.text).join(' ');
+        if (/consultation/.test(t)) return { reply: null, qualification: [], actions: [{ type: 'offer_slots', kind: 'buyer_consult' }], summary: null };
+        if (/homes/.test(t)) return { reply: null, qualification: [], actions: [{ type: 'share_listings', handles: ['L1'] }], summary: null };
+        return defaultIsaOutput(src);
+      });
+    }
+    await ageAll(l.id);
+    await inboundSms(h, l.phone, hw.mainNumber, 'Can you send me some homes?');
+    await runIsa(h, hw.tenantId, 5);
+    const sharedOnce = (await h.su.query<{ message_id: string; status: string }>(`SELECT message_id, status FROM ai_isa_shared_facts WHERE contact_id = $1`, [l.id])).rows;
+    expect(sharedOnce.map((x) => x.status)).toEqual(['sent']);
+    await ageAll(l.id);
+    await inboundSms(h, l.phone, hw.mainNumber, 'Could we schedule a consultation to talk about buying?');
+    await runIsa(h, hw.tenantId, 6);
+    const o = (await h.su.query<{ status: string }>(`SELECT status FROM ai_isa_slot_offers WHERE contact_id = $1 ORDER BY created_at DESC LIMIT 1`, [l.id])).rows[0];
+    expect(o?.status).toBe('offered');
+    hw.ai.script.length = 0;
+    return l;
+  }
+
+  it('E506 E508: unoffered_slot, unverified_quote, team_text_quote, quoted_email_slot and listing_not_in_bundle book nothing and share nothing more; a handle outside the live bundle is HANDLE_UNKNOWN; "$" appears only in server-rendered facts messages', async () => {
+    const { HostileIsaAi } = await import('../providers/fake/hostileIsaAi.js');
+    for (const attack of ['unoffered_slot', 'unverified_quote', 'team_text_quote', 'quoted_email_slot', 'listing_not_in_bundle'] as const) {
+      const l = await armed();
+      const factsBefore = (await h.su.query(`SELECT 1 FROM ai_isa_shared_facts WHERE contact_id = $1`, [l.id])).rows.length;
+      const hostile = new HostileIsaAi(attack);
+      (h.providers as { ai: unknown }).ai = hostile;
+      try {
+        await ageAll(l.id);
+        await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(machine, '{offer,deliveredAt}', to_jsonb((machine->'offer'->>'deliveredAt')::bigint - 1800000))
+          WHERE contact_id = $1 AND machine->'offer'->>'deliveredAt' IS NOT NULL`, [l.id]);
+        await inboundSms(h, l.phone, hw.mainNumber, 'what about next week instead?');
+        await runIsa(h, hw.tenantId, 6);
+      } finally {
+        (h.providers as { ai: unknown }).ai = hw.ai;
+      }
+      // the hostile turn ran against the live bundle (the prompt listed real handles)
+      expect([attack, hostile.calls.some((c) => /- L1: listing_/.test(c.user))]).toEqual([attack, true]);
+      expect([attack, (await h.su.query(`SELECT 1 FROM appointments WHERE contact_id = $1`, [l.id])).rows.length]).toEqual([attack, 0]);
+      expect([attack, (await h.su.query(`SELECT 1 FROM ai_isa_shared_facts WHERE contact_id = $1`, [l.id])).rows.length]).toEqual([attack, factsBefore]);
+      if (attack === 'listing_not_in_bundle') {
+        const denied = (await h.su.query<{ denied: string[] }>(`SELECT denied FROM ai_isa_turns WHERE contact_id = $1`, [l.id])).rows.flatMap((x) => x.denied);
+        expect(denied).toContain('HANDLE_UNKNOWN:share_listings');
+      }
+      // "$" appears only on server fact lines: every AI message with a "$" is a facts message with shared-facts rows
+      const withFacts = new Set((await h.su.query<{ m: string }>(`SELECT DISTINCT message_id AS m FROM ai_isa_shared_facts WHERE contact_id = $1`, [l.id])).rows.map((r) => r.m));
+      const dollar = (await aiMessages(h, l.id)).filter((m) => m.body.includes('$'));
+      expect([attack, dollar.length >= 1]).toEqual([attack, true]);
+      for (const m of dollar) expect([attack, withFacts.has(m.id), /Here are homes/.test(m.body)]).toEqual([attack, true, true]);
+    }
   });
 });
