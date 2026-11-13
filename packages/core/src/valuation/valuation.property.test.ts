@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { runBacktest } from './backtest.js';
 import { type CmaCandidate, type CmaResult, type CmaSale, type CmaSaleCondition, CMA_DEFAULTS, prepareCma } from './index.js';
 import { addMonths, canonicalOrder, screen, searchTier } from './select.js';
-import { NO_SIZED_SALES, unavailableSentence } from './text.js';
+import { NO_SIZED_SALES, noSizeSentence } from './text.js';
 import { SUBJECT_LAT, SUBJECT_LON, VALUATION_DATE, cand, linearMarket, monthsBefore, shuffled, subject } from './testing/fixtures.js';
 
 const RUNS = { numRuns: 60 };
@@ -94,15 +94,10 @@ function run(candidates: readonly CmaCandidate[], extra: { include?: string[]; e
   return prepareCma({ subject: subject(extra.sqft === undefined ? {} : { sqft: extra.sqft }), candidates, tierReads: [], valuationDate: VALUATION_DATE, include: extra.include, exclude: extra.exclude });
 }
 
-/**
- * The result without the not-used list (an extra ineligible candidate is listed there, by design) and without its
- * R-MLS-7 summary: a sale left out for an unknown size is also counted in a sentence, and once one is, "no sales were
- * found" is worded "no sales with a size from the MLS were found" (E601). Value, range, comps, rates are compared.
- */
-const NO_SIZE_COUNT = /^\d[\d,]* closed sales? of this kind of home (?:was|were) not used: size not available from the MLS/;
+/** The result without the not-used list (an extra ineligible candidate is listed there, by design) and its sentences. */
 function core(r: CmaResult) {
-  const { notUsed: _n, notUsedTotal: _t, subjectSales: _s, sentences, ...rest } = r;
-  return { ...rest, sentences: sentences.filter((x) => !NO_SIZE_COUNT.test(x)).map((x) => (x === NO_SIZED_SALES ? unavailableSentence('NO_SALES', 0, CMA_DEFAULTS) : x)) };
+  const { notUsed: _n, notUsedTotal: _t, subjectSales: _s, sentences: _x, ...rest } = r;
+  return rest;
 }
 
 describe('R-CMA-5: determinism', () => {
@@ -182,7 +177,13 @@ describe('R-CMA-2: what a comp is', () => {
       fc.property(marketArb, fc.constantFrom(...BAD_KINDS), fc.nat(), (market, kind, n) => {
         if (market.length === 0) return;
         const extra = bad(kind, market[n % market.length] as CmaCandidate, 'zz-extra');
-        expect(core(run([...market, extra]))).toEqual(core(run(market)));
+        const base = run(market);
+        const withExtra = run([...market, extra]);
+        expect(core(withExtra)).toEqual(core(base));
+        // the sentences too: an unsized sale of the subject's kind is only counted (E601, E607, R-MLS-7), and every
+        // market here has sized sales of that kind, so "no sales with a size from the MLS" is never said
+        expect(withExtra.sentences).toEqual(kind === 'no_size' ? [...base.sentences, noSizeSentence(1)] : base.sentences);
+        expect(withExtra.sentences).not.toContain(NO_SIZED_SALES);
       }),
       RUNS,
     );

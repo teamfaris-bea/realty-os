@@ -14,6 +14,7 @@ import {
   poolTierIndex,
   screen,
   searchTier,
+  unsizedSales,
 } from './select.js';
 import {
   compIncludedSentence,
@@ -173,10 +174,11 @@ export function prepareCma(input: PrepareCmaInput): CmaResult {
   const include = new Set(input.include ?? []);
   const exclude = new Set(input.exclude ?? []);
 
-  const unavailable = (reason: CmaUnavailableReason, extra: Partial<Pick<CmaResult, 'comps' | 'notUsed' | 'notUsedTotal' | 'subjectSales' | 'area' | 'market' | 'backtest'>> = {}, noSize = 0): CmaResult => {
+  const unavailable = (reason: CmaUnavailableReason, extra: Partial<Pick<CmaResult, 'comps' | 'notUsed' | 'notUsedTotal' | 'subjectSales' | 'area' | 'market' | 'backtest'>> = {}, unsized = { count: 0, sizedOfKind: true }): CmaResult => {
     const comps = extra.comps ?? [];
-    // R-MLS-7: sales left out for an unknown size are said, and "no sales were found" is never said of them
-    const first = reason === 'NO_SALES' && noSize > 0 ? NO_SIZED_SALES : unavailableSentence(reason, comps.length, rule);
+    const noSize = unsized.count;
+    // R-MLS-7: sales left out for an unknown size are counted; "none with a size" only when no sale of this kind has one
+    const first = reason === 'NO_SALES' && noSize > 0 && !unsized.sizedOfKind ? NO_SIZED_SALES : unavailableSentence(reason, comps.length, rule);
     return {
       available: false,
       reason,
@@ -220,11 +222,12 @@ export function prepareCma(input: PrepareCmaInput): CmaResult {
     market,
     backtest,
   };
-  // R-MLS-7: closed sales of the subject's kind whose size is unknown (each listed as not used: no_size), counted once
-  const noSize = new Set(screened.filter((s) => s.fail === 'no_size').map((s) => s.c.ref.identity)).size;
+  // R-MLS-7: closed sales of the subject's kind the unknown size alone kept out (each listed as not used: no_size)
+  const unsized = unsizedSales(screened, valuationDate, rule);
+  const noSize = unsized.count;
   const anyEligible = screened.some((s) => s.fail === null);
-  if (!anyEligible) return unavailable('NO_SALES', common, noSize);
-  if (est === null) return unavailable('INSUFFICIENT_COMPS', common, noSize);
+  if (!anyEligible) return unavailable('NO_SALES', common, unsized);
+  if (est === null) return unavailable('INSUFFICIENT_COMPS', common, unsized);
 
   const dates = choice.comps.map((c) => c.s.c.sale.closeDate as string).sort();
   const dists = choice.comps.map((c) => c.s.distanceM).filter((d): d is number => d !== null);

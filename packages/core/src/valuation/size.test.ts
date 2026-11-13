@@ -105,3 +105,63 @@ describe('E601 R-MLS-7: unknown sizes are skipped, never invented, and said', ()
     expect(r.sentences.some((s) => /closed sales of this kind of home were not used: size not available from the MLS/.test(s))).toBe(true);
   });
 });
+
+describe('E607 R-MLS-7: "no sales with a size" is said only when no sale of this kind has a size', () => {
+  const NO_SALES = 'No value: no closed sales of this kind of home were found.';
+  const ONE_UNSIZED = '1 closed sale of this kind of home was not used: size not available from the MLS, so no size adjustment or price per sq ft can be worked out for it.';
+  const unsized = cand('u1', { sqft: null, sizeSource: null, closeDate: monthsBefore(1), contractDate: monthsBefore(2), latE6: SUBJECT_LAT + 500 });
+
+  it('E607 R-MLS-7 R-CMA-2: sized sales that fail another rule (sale condition, another size measure, too old) beside an unsized one: the size is not blamed, each keeps its own reason, the unsized one is counted', () => {
+    const shortSales = sales('s', 6, true).map((c) => ({ ...c, sale: { ...c.sale, saleConditions: ['short_sale' as const] } }));
+    const otherMeasure = sales('o', 6, true).map((c) => ({ ...c, sale: { ...c.sale, sizeSource: 'AboveGradeFinishedArea' } }));
+    const tooOld = sales('t', 6, true).map((c, i) => ({ ...c, sale: { ...c.sale, closeDate: monthsBefore(26 + i), contractDate: monthsBefore(27 + i) } }));
+    for (const [label, sized, reason] of [['short sales', shortSales, 'sale_condition'], ['another measure', otherMeasure, 'other_size_source'], ['too old', tooOld, 'too_old']] as const) {
+      const r = run({ candidates: [...sized, unsized] });
+      expect([label, r.available, r.available ? null : r.reason]).toEqual([label, false, 'NO_SALES']);
+      expect([label, r.sentences]).toEqual([label, [NO_SALES, ONE_UNSIZED]]);
+      expect(r.notUsed.filter((n) => n.ref.identity !== 'u1').map((n) => n.reason)).toEqual(Array.from({ length: 6 }, () => reason));
+    }
+    // the short sales stay the agent's to add (the fix that is actually available), never hidden behind the size
+    expect(run({ candidates: [...shortSales, unsized] }).notUsed.filter((n) => n.reason === 'sale_condition').every((n) => n.includable)).toBe(true);
+  });
+
+  it('E607 E601 R-MLS-7: only when every sale of this kind that got past the type check has no size is it worded "with a size from the MLS"', () => {
+    expect(run({ candidates: [unsized, ...sales('n', 3, false)] }).sentences[0]).toBe('No value: no closed sales of this kind of home with a size from the MLS were found.');
+    // a condo with a size is not a sale of this kind: the single-family sales still have none
+    const condo = cand('condo', { propertyType: 'condo', closeDate: monthsBefore(1) });
+    expect(run({ candidates: [unsized, condo] }).sentences[0]).toBe('No value: no closed sales of this kind of home with a size from the MLS were found.');
+  });
+});
+
+describe('E608 R-MLS-7: the unsized-sales count names only sales the size kept out, each once', () => {
+  const COUNT = /^(\d+) closed sales? of this kind of home (?:was|were) not used: size not available from the MLS/;
+  const counted = (r: CmaResult): number => Number(r.sentences.map((s) => COUNT.exec(s)?.[1]).find((x) => x !== undefined) ?? 0);
+
+  it('E608 R-MLS-7: an unsized sale closed before the extended look-back is too old whatever its size: listed, never counted', () => {
+    const oldUnsized = cand('old-u', { sqft: null, sizeSource: null, closeDate: monthsBefore(28), contractDate: monthsBefore(29) });
+    const oldSized = cand('old-s', { closeDate: monthsBefore(28), contractDate: monthsBefore(29) });
+    const r = run({ candidates: [...sales('s', 5, true), oldUnsized, oldSized] });
+    expect(r.available).toBe(true);
+    expect(counted(r)).toBe(0);
+    expect(r.sentences.some((s) => COUNT.test(s))).toBe(false);
+    expect(r.notUsed.find((n) => n.ref.identity === 'old-s')?.reason).toBe('too_old');
+    expect(r.notUsed.find((n) => n.ref.identity === 'old-u')?.reason).toBe('no_size');
+    // with only old unsized sales of this kind, nothing is blamed on the size
+    const only = run({ candidates: [oldUnsized] });
+    expect(only.sentences).toEqual(['No value: no closed sales of this kind of home were found.']);
+  });
+
+  it('E608 R-MLS-7 R-MLS-5: one sale reaching the engine twice (the same address and close date) is counted once, and not at all when another copy has a size', () => {
+    const key = '9 dup st|fairview|zz|99001';
+    const d1 = cand('d1', { sqft: null, sizeSource: null, closeDate: monthsBefore(2), contractDate: monthsBefore(3), addressKey: key });
+    const d2 = cand('d2', { sqft: null, sizeSource: null, closeDate: monthsBefore(2), contractDate: monthsBefore(3), addressKey: key });
+    expect(counted(run({ candidates: [...sales('s', 5, true), d1, d2] }))).toBe(1);
+    // the same sale as a sized team listing: that copy is the sale (a comp or listed with its own reason), so no unsized sale is counted
+    const team = cand('team-copy', { closeDate: monthsBefore(2), contractDate: monthsBefore(3), addressKey: key }, { source: 'team', teamListingId: 'team-copy' });
+    const r = run({ candidates: [...sales('s', 5, true), d1, team] });
+    expect(counted(r)).toBe(0);
+    // two different unsized sales are two
+    const other = cand('d3', { sqft: null, sizeSource: null, closeDate: monthsBefore(4), contractDate: monthsBefore(5), addressKey: '11 other st|fairview|zz|99001' });
+    expect(counted(run({ candidates: [...sales('s', 5, true), d1, d2, other] }))).toBe(2);
+  });
+});
