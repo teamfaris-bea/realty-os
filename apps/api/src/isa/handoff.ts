@@ -142,9 +142,9 @@ export interface HandoffInput {
   appointmentDetail?: Record<string, unknown>;
   /**
    * b13 review B13-MRG-3: the step planned a confirmation and it could not be queued (refused at queue time: a
-   * merged-away record, a removed point, no shared window). Stored as confirmation_status 'refused' with the
-   * CONFIRMATION_NOT_SENT note, and the card asks for a hand confirmation (or says none is possible), never "No
-   * confirmation was planned".
+   * merged-away record, a removed point, no shared window), or a booking stood while care was paused (E523, TX-C; b13
+   * final M2). Stored as confirmation_status 'refused' with the CONFIRMATION_NOT_SENT note, and the card asks for a hand
+   * confirmation (or says none is possible), never "No confirmation was planned".
    */
   confirmationNotQueued?: boolean;
 }

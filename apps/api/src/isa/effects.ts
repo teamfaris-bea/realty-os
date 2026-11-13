@@ -104,8 +104,11 @@ export interface ApplyEnv {
   now: Instant;
   turnId: string | null;
   pinnedSeq: number;
-  /** TX-C: the booking's appointment detail and notes for the handoff package (codes, ids, times, the verified quote) */
-  handoffExtra?: { appointmentDetail?: Record<string, unknown>; notes?: string[] } | undefined;
+  /**
+   * TX-C: the booking's appointment detail and notes for the handoff package (codes, ids, times, the verified quote).
+   * confirmationNotQueued: booked while paused (E523), so the planned confirmation is not queued (b13 final M2).
+   */
+  handoffExtra?: { appointmentDetail?: Record<string, unknown>; notes?: string[]; confirmationNotQueued?: boolean } | undefined;
   /** TX-B: this turn's buyer bundle (item 10); a facts message renders only from it */
   bundle?: BuyerBundle | undefined;
 }
@@ -206,7 +209,8 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
   }
   if (handoffAction !== null) {
     const ins = await inFlightNotes(tx, ctx.a.contactId, pendingMessageId);
-    out.handoffId = await writeHandoffInTx(tx, deps.ids, env.actor, ctx.a, { handoff: handoffAction.handoff, pendingMessageId, confirmationNotQueued, notes: [...(env.handoffExtra?.notes ?? []), ...ins],
+    out.handoffId = await writeHandoffInTx(tx, deps.ids, env.actor, ctx.a, { handoff: handoffAction.handoff, pendingMessageId,
+      confirmationNotQueued: confirmationNotQueued || env.handoffExtra?.confirmationNotQueued === true, notes: [...(env.handoffExtra?.notes ?? []), ...ins],
       ...(env.handoffExtra?.appointmentDetail ? { appointmentDetail: env.handoffExtra.appointmentDetail } : {}) }, now);
   }
   if (!out.ended) {

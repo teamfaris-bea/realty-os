@@ -58,9 +58,13 @@ export function compsSuspended(w: Pick<WatchRow, 'comps_suspended_at' | 'comps_r
  * VERIFY (owner question 10): whether an edited draft should clear it; until then the owner's resume-comps does.
  *
  * b13 review B13S-4 (AI_ISA.md E502: "a CMA shared through V2-A" is one whose share message went out): the share counts
- * only when its message was dispatched to the lead's own person (contact_person_ids) and was not canceled, blocked,
- * failed or undelivered. V2-A leaves a CMA shared when its email is blocked at dispatch or swept, and a share to a
- * co-seller stamps the lead's CMA without reaching the lead: none of these lifts the lead's suspension.
+ * only when its message went to the lead's own person (contact_person_ids) and is sent or delivered. V2-A leaves a CMA
+ * shared when its email is blocked at dispatch or swept, and a share to a co-seller stamps the lead's CMA without
+ * reaching the lead: none of these lifts the lead's suspension.
+ *
+ * b13 final M1: a positive list, so a bounced, failed or undelivered email never counts, and neither does one whose
+ * dispatch is unresolved (dispatching, dispatch_unknown): the conservative choice. Such a share lifts the suspension
+ * only once reconciliation resolves its message to sent or delivered (the next read sees it).
  */
 export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserActor, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>, w0: WatchRow | null): Promise<boolean> {
   let w = w0;
@@ -85,7 +89,7 @@ export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserAct
                 AND c.created_at > ${w!.comps_suspended_at}) AS prepared,
       EXISTS (SELECT 1 FROM cma_reports c JOIN messages m ON m.tenant_id = c.tenant_id AND m.id = c.shared_message_id
                WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${w!.comps_suspended_at}
-                 AND m.dispatched_at IS NOT NULL AND m.status NOT IN ('canceled','blocked','failed','undelivered')
+                 AND m.direction = 'outbound' AND m.dispatched_at IS NOT NULL AND m.status IN ('sent','delivered')
                  AND m.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid))) AS shared`.execute(tx)).rows[0]!;
   const reason = r.shared ? 'cma_shared' : r.prepared ? 'cma_prepared' : null;
   if (reason === null) return true;

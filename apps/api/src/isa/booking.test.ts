@@ -611,13 +611,15 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(card.rows.map((r) => [r.score, r.code])).toEqual([[98, expect.stringMatching(/^AI_ISA_CONFIRMATION_NOT_SENT/)]]);
   });
 
-  it('R-ISA-15 E523: a pause while tx#1 holds lock 5 → booked, no confirmation, critical, BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT', async () => {
+  /** E523: a human pause that commits while tx#1 holds lock 5 (then `also`, in the same window), and the booking. */
+  const bookedWhilePaused = async (also?: (l: { id: string }) => Promise<void>) => {
     const { l } = await offered();
     const { bookTestHooks } = await import('./booking/book.js');
     bookTestHooks.afterCareRead = async () => {
       bookTestHooks.afterCareRead = undefined;
       // the human pause commits at once: the book job holds lock 5 only
       expect((await call(agent(), 'POST', `/contacts/${l.id}/ai-isa/pause`, {})).status).toBe(200);
+      if (also) await also(l);
     };
     try {
       await reply(l, '2');
@@ -626,10 +628,47 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     }
     expect((await offerOf(l.id))!.status).toBe('accepted');
     const ho = (await handoffOf(h, l.id))[0]!;
+    const a = (await assignmentOf(h, l.id))!;
+    const card = (await h.su.query<{ score: number; due_at: Date | null; code: string; text: string }>(`SELECT score, due_at, reasons->0->>'code' AS code, reasons->0->>'text' AS text
+      FROM priority_feed_items WHERE dedupe_key = $1 AND state = 'open'`, [`ai_isa_handoff:${a.id}`])).rows;
+    const notifications = (await h.su.query<{ title: string; priority: string }>(`SELECT title, priority FROM notifications WHERE dedupe_key = $1`, [`ai_isa_confirmation_not_sent:${ho.id}`])).rows;
+    const panelHandoff = (await call<{ handoff: { confirmationStatus: string; confirmationNotSent: string | null } | null }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`)).body.handoff;
+    const view = (await call<{ confirmationStatus: string; confirmationNotSent: string | null }>(agent(), 'GET', `/ai-isa/handoffs/${ho.id}`)).body;
+    return { l, ho, card, notifications, panel: { confirmationStatus: panelHandoff?.confirmationStatus, confirmationNotSent: panelHandoff?.confirmationNotSent },
+      view: { confirmationStatus: view.confirmationStatus, confirmationNotSent: view.confirmationNotSent } };
+  };
+
+  it('R-ISA-15 E523: a pause while tx#1 holds lock 5 → booked, no confirmation, critical, BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT', async () => {
+    const { ho, card, notifications, panel, view } = await bookedWhilePaused();
     expect(ho.reason).toBe('appointment_booked');
     expect(ho.pending_message_id).toBeNull();
     expect(ho.sla_class).toBe('critical');
     expect(ho.package['notes']).toEqual(expect.arrayContaining(['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT']));
+    // b13 final M2: the confirmation was planned and not sent (never "No confirmation was planned."): stored refused,
+    // and the card, the panel and the handoff view ask for a hand confirmation
+    expect(ho.confirmation_status).toBe('refused');
+    expect(card.map((c) => [c.score, c.code, c.text])).toEqual([[98, 'AI_ISA_CONFIRMATION_NOT_SENT', 'The appointment confirmation was not sent: confirm it by hand.']]);
+    expect(card[0]!.due_at).not.toBeNull();
+    expect(notifications.length).toBeGreaterThanOrEqual(1);
+    expect(notifications.every((n) => /^Confirm the appointment: /.test(n.title) && n.priority === 'critical')).toBe(true);
+    expect(panel).toEqual({ confirmationStatus: 'refused', confirmationNotSent: 'by_hand' });
+    expect(view).toEqual({ confirmationStatus: 'refused', confirmationNotSent: 'by_hand' });
+  });
+
+  it('R-ISA-15 E523 R-ISA-14 (b13 final M2): booked while paused when D1 leaves the person no text, call or email → refused; the card, the panel and the handoff view say it cannot be confirmed by hand (keep or cancel), no deadline', async () => {
+    const { ho, card, notifications, panel, view } = await bookedWhilePaused(async (l) => {
+      // every point of the person removed in the same window: no channel is left
+      await h.su.query(`UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'old' WHERE contact_id = $1 AND status <> 'removed'`, [l.id]);
+    });
+    expect([ho.reason, ho.pending_message_id, ho.sla_class, ho.confirmation_status]).toEqual(['appointment_booked', null, 'none', 'refused']);
+    expect(ho.package['notes']).toEqual(expect.arrayContaining(['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT']));
+    expect(card.map((c) => [c.score, c.code])).toEqual([[98, 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE']]);
+    expect(card[0]!.text).toMatch(/cannot be confirmed by hand: keep or cancel the appointment/);
+    expect(card[0]!.due_at).toBeNull();
+    expect(notifications.length).toBeGreaterThanOrEqual(1);
+    expect(notifications.every((n) => /^Appointment not confirmed: /.test(n.title))).toBe(true);
+    expect(panel).toEqual({ confirmationStatus: 'refused', confirmationNotSent: 'unreachable' });
+    expect(view).toEqual({ confirmationStatus: 'refused', confirmationNotSent: 'unreachable' });
   });
 
   it('R-ISA-13 R-ISA-15 (batch 13 audit ISA2B-13): booked but the machine did not end care (a core regression, stubbed) → care is paused check_this, never live, and the card says to confirm or cancel it', async () => {

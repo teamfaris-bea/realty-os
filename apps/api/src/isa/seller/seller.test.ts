@@ -430,7 +430,7 @@ describe('E502: a pricing hold suspends comps', () => {
 });
 
 describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts a pricing suspension', () => {
-  it('E502: a share whose email was blocked or swept (never dispatched), or that went to a co-seller, keeps the suspension; a share dispatched to the lead lifts it (cma_shared)', async () => {
+  it('E502: a share whose email was blocked or swept (never dispatched), failed, bounced, undelivered or still unresolved (dispatching, dispatch_unknown), or that went to a co-seller, keeps the suspension; a share sent or delivered to the lead lifts it (cma_shared)', async () => {
     const w3 = await sellerWorld(h);
     const l = await sellerLead(h, w3);
     await confirm(w3, l);
@@ -451,7 +451,10 @@ describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts
       }
     };
     const suspendedNow = () => asSystem(h, w3, l, async (tx, a, actor) => compsSuspendedNowInTx(tx, actor, a, await watchOf(tx, a.id)));
-    for (const [m, status, dispatched] of [[toLead, 'blocked', false], [toLead, 'canceled', false], [toLead, 'failed', true], [toCoSeller, 'sent', true]] as const) {
+    // b13 final M1: only a share whose email reached the lead's own person as sent or delivered lifts it. A bounce, a
+    // failure, an undelivered email, and a dispatch still unresolved (dispatching, dispatch_unknown) do not.
+    for (const [m, status, dispatched] of [[toLead, 'blocked', false], [toLead, 'canceled', false], [toLead, 'failed', true], [toLead, 'bounced', true],
+      [toLead, 'undelivered', true], [toLead, 'dispatch_unknown', true], [toLead, 'dispatching', true], [toCoSeller, 'sent', true], [toCoSeller, 'delivered', true]] as const) {
       await share(m, status, dispatched);
       expect(await suspendedNow(), `${m === toLead ? 'lead' : 'co-seller'} ${status}`).toBe(true);
     }
@@ -459,6 +462,12 @@ describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts
     await share(toLead, 'sent', true);
     expect(await suspendedNow()).toBe(false);
     expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: 'cma_shared' });
+    // a new hold, then a share delivered to the lead: lifted again
+    await asSystem(h, w3, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    await share(toLead, 'bounced', true);
+    expect(await suspendedNow(), 'lead bounced after a new hold').toBe(true);
+    await share(toLead, 'delivered', true);
+    expect(await suspendedNow(), 'lead delivered').toBe(false);
   });
 });
 

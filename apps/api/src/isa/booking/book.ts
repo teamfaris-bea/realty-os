@@ -18,7 +18,8 @@
 //   TX-C (locks 2 → 3 → 4; trigger `booking`): step(booking_result). Codes core lacks go as CALENDAR_UNAVAILABLE
 //        (booking_unavailable), the honest code kept on the row and the turn. Booked and live: end appointment_booked,
 //        the confirmation the handoff's pending message (E528). Booked but paused after step 2 (E523): end with no
-//        confirmation, notes BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT. Booked after care ended: the handoff is
+//        confirmation, notes BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT, the confirmation stored as not sent
+//        ('refused', confirmationNotSentInTx; b13 final M2). Booked after care ended: the handoff is
 //        frozen, so a separate critical card, unless care ended ON this booking (its own handoff carries the
 //        appointment: a replay, b13 review B13-MRG-1). Care ending under the result (a stop signal since start, or a
 //        merge that made the record no longer its own root, b13 review B13-MRG-3) counts as ended: the card, nothing queued. Booked but the machine did not hold the offer as accepting, or held it
@@ -178,8 +179,11 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
     const turn = await ensureTurn(tx, deps.ids, ctx, { triggerKind: 'booking', triggerKey: `booking:${o.id}`, pinnedSeq: a.lastInboundSeq, status: 'no_reply' });
     await sql`UPDATE ai_isa_turns SET decision = ${JSON.stringify({ code: booked ? 'BOOKED' : o.refusalCode ?? 'REFUSED' })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx);
     const pausedNotes = a.pausedAt !== null ? ['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT'] : [];
+    // b13 final M2 (E523): booked while paused, the confirmation is not queued. It was planned and not sent, as when it
+    // is refused at queue time (confirmationNotQueued): stored 'refused', and the card asks for a hand confirmation (or
+    // says none is possible when D1 leaves no channel), never "No confirmation was planned".
     const env = { tx, deps, actor: actorOf(tenantId), ctx, now, turnId: turn.id, pinnedSeq: a.lastInboundSeq,
-      handoffExtra: booked ? { appointmentDetail: appointmentDetail(o, read, ctx.content.booking.minNoticeHours), notes: pausedNotes } : undefined };
+      handoffExtra: booked ? { appointmentDetail: appointmentDetail(o, read, ctx.content.booking.minNoticeHours), notes: pausedNotes, confirmationNotQueued: pausedNotes.length > 0 } : undefined };
     // AI care is never live after a booking (item 9): a system pause (check_this) that cancels anything queued, unless
     // care is already paused or ended
     const pauseAfterBooking = async (machine: typeof a.machine): Promise<void> => {
