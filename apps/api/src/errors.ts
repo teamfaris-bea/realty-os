@@ -401,6 +401,7 @@ export const ERROR_STATUS = {
   AI_ISA_BOOKING_IN_PROGRESS: 409, // ISA-2b: the AI assistant is booking an agreed time; resume after it finishes
   AI_ISA_NOT_LIVE: 409, // no live or paused assignment to control
   AI_ISA_NOT_PAUSED: 409, // resume needs a paused assignment
+  AI_ISA_NOT_CONTINUABLE: 409, // batch 13: Continue AI care is only for care paused by a reinquiry or a policy change (re-attest); other pauses resume
   AI_ISA_DO_NOT_CONTACT: 409, // the person asked not to be contacted
   AI_ISA_ATTESTATION_REQUIRED: 422, // turning on or widening needs the typed attestation
   AI_ISA_ROLE_NOT_ELIGIBLE: 403, // TC and the human ISA role cannot opt in (Q-ISA-8)

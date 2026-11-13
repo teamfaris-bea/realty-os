@@ -163,8 +163,9 @@ export async function reattest(actor: UserActor, deps: IsaDeps, versionId: strin
   for (const p of paused.rows) {
     try {
       // b12 recheck R23: each ends policy_updated (§3.2; approval_revoked is a pause reason, no end reason), never
-      // reinquiry_period, so its card, its controls row and its audit name the real cause
-      const r = await continueCare(actor, deps, p.contact_id, null, 'policy_updated');
+      // reinquiry_period, so its card, its controls row and its audit name the real cause (batch 13: continueCare
+      // derives it from these pauses, continueEndReasonOf)
+      const r = await continueCare(actor, deps, p.contact_id, null);
       continued.push({ contactId: p.contact_id, assignmentId: r.assignmentId });
     } catch (e) {
       const code = e instanceof AppError ? e.code : 'INTERNAL_ERROR';

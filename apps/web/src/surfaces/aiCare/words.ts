@@ -430,6 +430,7 @@ export const ISA_ERROR_MESSAGES: Record<string, string> = {
   AI_ISA_UNDO_EXPIRED: 'Too late to undo.',
   AI_ISA_NOT_LIVE: 'AI care is not on for this person any more.',
   AI_ISA_NOT_PAUSED: 'AI care is not paused right now.',
+  AI_ISA_NOT_CONTINUABLE: 'Continue AI care is only for care paused by a new inquiry or a change to the team rules. Resume it instead.',
   AI_ISA_DO_NOT_CONTACT: 'This person asked not to be contacted.',
   AI_ISA_ATTESTATION_REQUIRED: 'This needs your written confirmation first.',
   AI_ISA_ROLE_NOT_ELIGIBLE: "Your role can't use the AI assistant for leads.",

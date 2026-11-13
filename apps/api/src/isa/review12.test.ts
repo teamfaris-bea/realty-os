@@ -986,6 +986,71 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(keys.some((k) => k.startsWith(`ai_isa_overdue:${own.id}:`))).toBe(false);
   });
 
+  // batch 13 (b12 recheck R23 follow-up): the care_continued close runs after the automation stop, in its own savepoint
+  it('R-ISA-2 R-ISA-30 (b12 recheck R23, batch 13): a care_continued close that fails never undoes the automation stop: the Continue answers 200, the person\'s scheduled firing is skipped, the handoff stays open and alerting', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const oldId = await pausedForReinquiry(l.id);
+    // a module 26 trigger firing of the person, scheduled while care is paused
+    const firing = randomUUID();
+    await h.su.query(`INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for, contact_id, trigger_key, trigger_ref)
+      VALUES ($1, $2, NULL, $3, 'price_drop', 'scheduled', now() + interval '1 hour', $4, $5, '{"v":1,"trigger":"price_drop"}'::jsonb)`, [w.tenantId, firing, w.versionId, l.id, `zz:${firing}`]);
+    await h.su.query(`CREATE FUNCTION public.r23_refuse_close() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.closed_reason = 'care_continued' AND OLD.closed_at IS NULL THEN RAISE EXCEPTION 'R23_INJECTED_FAILURE'; END IF;
+        RETURN NEW; END $$`);
+    await h.su.query(`CREATE TRIGGER r23_refuse_close BEFORE UPDATE ON ai_isa_handoffs FOR EACH ROW EXECUTE FUNCTION public.r23_refuse_close()`);
+    let c: Awaited<ReturnType<typeof call<{ assignmentId: string }>>>;
+    try {
+      c = await call<{ assignmentId: string }>(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
+    } finally {
+      await h.su.query(`DROP TRIGGER r23_refuse_close ON ai_isa_handoffs`);
+      await h.su.query(`DROP FUNCTION public.r23_refuse_close()`);
+    }
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    // the automation stop held: the scheduled firing was skipped beside live AI care
+    expect((await h.su.query<{ status: string; reason: string | null }>(`SELECT status, trigger_ref->'skip'->>'reason' AS reason FROM playbook_step_runs WHERE id = $1`, [firing])).rows[0])
+      .toEqual({ status: 'skipped_ineligible', reason: 'AI_ISA_ACTIVE' });
+    // the close did not hold: the old assignment's handoff is open (its deadline still alerts: the safe side)
+    expect(await handoffOfAssignment(oldId)).toMatchObject({ closed_reason: null, sla_met_at: null });
+    expect((await h.su.query<{ ended: Date | null }>(`SELECT ended_at AS ended FROM ai_isa_assignments WHERE id = $1`, [c.body.assignmentId])).rows[0]!.ended).toBeNull();
+  });
+
+  // batch 13 (the older Continue follow-up): the route ends care for the pause's own cause, and only once the start would go
+  it('R-ISA-15 R-ISA-30 (batch 13): Continue is refused AI_ISA_NOT_CONTINUABLE on care paused for another cause, and nothing ends', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/ai-isa/pause`, {})).status).toBe(200);
+    const a = (await assignmentOf(h, l.id))!;
+    expect(a.pause_reason).toBe('user');
+    const c = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
+    expect([c.status, c.code]).toEqual([409, 'AI_ISA_NOT_CONTINUABLE']);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: a.id, ended_at: null, pause_reason: 'user' });
+    expect((await handoffs([l.id])).filter((x) => x.contact_id === l.id)).toEqual([]);
+  });
+
+  it('R-ISA-15 R-ISA-30 (batch 13): a Continue whose start would be refused is refused before anything ends: the reinquiry pause stays, no handoff is written', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const oldId = await pausedForReinquiry(l.id);
+    // the human first touch of the new period is not recorded yet: a start would be refused AI_ISA_FIRST_TOUCH_PENDING
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE contacts SET first_touch_at = NULL, release_due_at = now() + interval '1 hour' WHERE id = $1`, [l.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const c = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
+    expect([c.status, c.code]).toEqual([409, 'AI_ISA_FIRST_TOUCH_PENDING']);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: oldId, ended_at: null, pause_reason: 'reinquiry' });
+    expect((await h.su.query(`SELECT 1 FROM ai_isa_handoffs WHERE assignment_id = $1`, [oldId])).rows).toEqual([]);
+  });
+
   it('R-ISA-30 (b12 recheck R19): the panel\'s handoff and the "Got it" result say why a handoff is closed: null while open, then deadline_met, lead_closed, acknowledged or care_restarted', async () => {
     type PanelHandoff = { id: string; reason: string; slaClass: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; closedReason: string | null };
     const panelOf = async (as: TestClient, contactId: string) => {

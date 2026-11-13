@@ -151,12 +151,36 @@ export async function startCare(actor: UserActor, deps: IsaDeps, contactId: stri
   // (b12 review B12X-4, R-ISA-2: also the automated messages already built, which dispatch then refuses as
   // ASSISTANT_ACTION_WITHDRAWN, and the module 26 trigger firings still scheduled, skipped visibly)
   const sys = await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
+    // batch 13 (b12 recheck R23 follow-up): the automation stop runs FIRST and the handoff closes after it, each close in
+    // a savepoint of its own: a close that fails is rolled back alone, so it can never undo the stop (before, it ran
+    // first in this transaction and a failure rolled back the stop with it while the new assignment stayed live, and
+    // the start answered 5xx); the handoff then stays open and its deadline alerts, the safe side
+    const e = await sql<{ id: string }>`UPDATE playbook_enrollments SET state = 'stopped', stop_reason = 'ai_isa_started', ended_at = now(), pause_reason = NULL, paused_at = NULL
+      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state IN ('active','paused') RETURNING id`.execute(tx);
+    const d = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
+      AND kind IN ('message_draft','handback') AND status = 'proposed' RETURNING id`.execute(tx);
+    await sql`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
+      AND kind = 'autonomous_message' AND status = 'proposed'`.execute(tx);
+    await sql`UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+        trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'AI_ISA_ACTIVE', 'text', ${skipText('AI_ISA_ACTIVE')}::text))
+      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND enrollment_id IS NULL AND status = 'scheduled'`.execute(tx);
+    const inSavepoint = async (fn: () => Promise<unknown>): Promise<void> => {
+      await sql`SAVEPOINT ai_isa_start_close`.execute(tx);
+      try {
+        await fn();
+        await sql`RELEASE SAVEPOINT ai_isa_start_close`.execute(tx);
+      } catch {
+        await sql`ROLLBACK TO SAVEPOINT ai_isa_start_close`.execute(tx);
+        await sql`RELEASE SAVEPOINT ai_isa_start_close`.execute(tx);
+      }
+    };
     // b12 recheck R23: the owner's explicit "Continue AI care" (after a reinquiry, or a re-attestation) is a person's
     // decision on the handoff the continued-from assignment's end just wrote, not a touch: it closes care_continued (no
     // deadline is recorded as met) and never alerts, since care goes on in this continuation. Before, R16's touch rule
     // kept it open, so every Continue paged the Team Lead, then Owner/Admin, while AI care carried on. Any other earlier
     // handoff keeps R16's rule below.
-    if (i.continuedHandoff) await closeHandoffInTx(tx, sa, i.continuedHandoff, 'care_continued', now);
+    const continued = i.continuedHandoff;
+    if (continued) await inSavepoint(() => closeHandoffInTx(tx, sa, continued, 'care_continued', now));
     // b12 recheck R13, R16: AI care restarting on the person ends an earlier handoff only once a human touched the person
     // since it was written (R-ISA-30: only a human touch clears the deadline; a restart is no touch and earns no credit,
     // D12): its card closes, its action is executed and the deadline is recorded as met by that touch (what the sweep
@@ -167,20 +191,13 @@ export async function startCare(actor: UserActor, deps: IsaDeps, contactId: stri
       WHERE h.tenant_id = app.tenant_id() AND x.contact_id = ${contactId} AND x.kind = 'ai_isa_handoff' AND x.status = 'proposed' AND h.assignment_id <> ${assignmentId}
         AND (h.sla_met_at IS NOT NULL OR c.last_human_touch_at >= h.created_at)`.execute(tx);
     for (const p of prior.rows) {
-      await sql`UPDATE ai_isa_handoffs h SET sla_met_at = c.last_human_touch_at FROM contacts c
-        WHERE h.tenant_id = app.tenant_id() AND h.id = ${p.id} AND h.sla_class <> 'none' AND h.sla_met_at IS NULL
-          AND c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)`.execute(tx);
-      await closeHandoffInTx(tx, sa, { id: p.id, actionId: p.action_id }, 'care_restarted', now);
+      await inSavepoint(async () => {
+        await sql`UPDATE ai_isa_handoffs h SET sla_met_at = c.last_human_touch_at FROM contacts c
+          WHERE h.tenant_id = app.tenant_id() AND h.id = ${p.id} AND h.sla_class <> 'none' AND h.sla_met_at IS NULL
+            AND c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)`.execute(tx);
+        await closeHandoffInTx(tx, sa, { id: p.id, actionId: p.action_id }, 'care_restarted', now);
+      });
     }
-    const e = await sql<{ id: string }>`UPDATE playbook_enrollments SET state = 'stopped', stop_reason = 'ai_isa_started', ended_at = now(), pause_reason = NULL, paused_at = NULL
-      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state IN ('active','paused') RETURNING id`.execute(tx);
-    const d = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
-      AND kind IN ('message_draft','handback') AND status = 'proposed' RETURNING id`.execute(tx);
-    await sql`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
-      AND kind = 'autonomous_message' AND status = 'proposed'`.execute(tx);
-    await sql`UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
-        trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'AI_ISA_ACTIVE', 'text', ${skipText('AI_ISA_ACTIVE')}::text))
-      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND enrollment_id IS NULL AND status = 'scheduled'`.execute(tx);
     return { stopped: e.rows.length > 0, superseded: d.rows.length };
   });
   return { assignmentId, state: 'starting', epoch: 1, inFlight: [], canceled: 0, undoUntil: null, stoppedEnrollment: sys.stopped, supersededProposals: sys.superseded,
@@ -334,16 +351,38 @@ export async function systemPauseInTx(tx: Tx, deps: IsaDeps, actor: SystemActor,
 export type ContinueEndReason = Extract<IsaEndReason, 'reinquiry_period' | 'policy_updated'>;
 
 /**
+ * batch 13: the end reason a Continue gives, from the pause it continues: a same-owner reinquiry (E516) ends
+ * `reinquiry_period`; a policy change, widening or a revoked approval (§3.2; `approval_revoked` is a pause reason, not
+ * an end reason) ends `policy_updated`. Any other pause (a person's pause, a hold, a link failure) is not continued:
+ * it resumes (null).
+ */
+export function continueEndReasonOf(pauseReason: string | null): ContinueEndReason | null {
+  if (pauseReason === 'reinquiry') return 'reinquiry_period';
+  if (pauseReason === 'policy_updated' || pauseReason === 'approval_revoked') return 'policy_updated';
+  return null;
+}
+
+/**
  * Owner "Continue AI care" after a same-owner reinquiry (E516, `reinquiry_period`) or a re-attestation (§3.2,
  * `policy_updated`): end this one for that reason, start a linked one. b12 recheck R23: the end's handoff is handed to
  * startCare, which closes it (care_continued) once the continuation exists; if the start is refused, it stays open and
- * its deadline alerts as any other (care did not go on).
+ * its deadline alerts as any other (care did not go on). batch 13 (the older Continue follow-up): the end reason comes
+ * from the pause (continueEndReasonOf; any other pause is refused AI_ISA_NOT_CONTINUABLE: it resumes), and the start is
+ * tried first (startRefusal, the same checks startCare runs, with this assignment as the one continued), so a Continue
+ * that could not start ends nothing and writes no handoff. A start refused after all (a race between the two
+ * transactions) still leaves the handoff open and alerting.
  */
-export async function continueCare(actor: UserActor, deps: IsaDeps, contactId: string, side: StartInput['side'] | null = null, endReason: ContinueEndReason = 'reinquiry_period'): Promise<ControlOutcome & { stoppedEnrollment: boolean; supersededProposals: number }> {
-  const prev = await withTenantTx(actor, async (tx) => {
+export async function continueCare(actor: UserActor, deps: IsaDeps, contactId: string, side: StartInput['side'] | null = null): Promise<ControlOutcome & { stoppedEnrollment: boolean; supersededProposals: number }> {
+  const sharedAddress = await sharedAddressAsSystem(deps, actor.tenantId, contactId);
+  const { prev, endReason } = await withTenantTx(actor, async (tx) => {
     const a = await loadFor(tx, contactId);
     if (a.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
-    return a;
+    const why = a.pausedAt !== null && a.finalizeAt === null ? continueEndReasonOf(a.pauseReason) : null;
+    if (why === null) throw new AppError('AI_ISA_NOT_CONTINUABLE');
+    // the dry run: the checks startCare will run, before anything ends
+    const r = await startRefusal(tx, actor, contactId, { continuedFrom: a.id, sharedAddress, side: side ?? a.side } as Parameters<typeof startRefusal>[3]);
+    if (r === null || r.code !== 'OK') throw new AppError((r?.code ?? 'AI_ISA_OFF') as 'AI_ISA_OFF');
+    return { prev: a, endReason: why };
   }, { db: deps.db });
   const handoff = await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
     await lockForTurn(tx, prev.contactId, prev.id);
