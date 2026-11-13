@@ -10,7 +10,7 @@ import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { portalSyncInTx } from './sync/sync.js';
-import { PortalClient, askLink, call, client, deal, invite, json, lastToken, milestone, portalWorld, publish, setPortalCleared, sharedDocument, signIn, slugOf, type PortalWorld } from './testing.js';
+import { askLink, call, client, deal, invite, json, milestone, portalWorld, publish, setPortalCleared, sharedDocument, signIn, slugOf, type PortalWorld } from './testing.js';
 
 let h: ApiHarness;
 let w: PortalWorld;
@@ -123,11 +123,25 @@ describe('R-PORTAL-8 R-PORTAL-13 R-PORTAL-15 R-PORTAL-16 R-PORTAL-17 module 45 a
     }
   });
 
-  it('R-PORTAL-8: nginx would log no download token (deploy/nginx.conf redacts /api/portal/files/ and /api/portal/documents/)', () => {
+  it('R-PORTAL-8: nginx would log no download token: deploy/nginx.conf\'s own $log_uri rules, applied to every /api/portal capability path of capabilityPaths.json, leave no secret in the logged URI (b14 F10; apps/web/src/security-headers.nginx.test.ts checks the whole file)', () => {
     const conf = readFileSync(resolve(__dirname, '../../../../deploy/nginx.conf'), 'utf8');
-    expect(conf).toContain('(?<redact_head>/api/portal/files/)');
-    expect(conf).toContain('(?<redact_head>/api/portal/documents/)');
-    expect(new PortalClient(h)).toBeTruthy();
-    expect(lastToken(h, 'nobody@example.test')).toBeNull();
+    const rules = [...conf.matchAll(/~(\^\(\?<redact_head>\S+\$)\s+"\$\{redact_head\}-\$\{redact_tail\}";/g)].map((m) => new RegExp(m[1]!));
+    expect(rules.length).toBeGreaterThan(0);
+    const logged = (uri: string): string => {
+      for (const re of rules) {
+        const m = re.exec(uri);
+        if (m?.groups) return `${m.groups.redact_head}-${m.groups.redact_tail ?? ''}`;
+      }
+      return uri;
+    };
+    const caps = JSON.parse(readFileSync(resolve(__dirname, '../capabilityPaths.json'), 'utf8')) as { paths: { path: string; secrets: string[] }[] };
+    const portal = caps.paths.filter((p) => p.path.startsWith('/api/portal/'));
+    expect(portal.map((p) => p.path).sort()).toEqual(['/api/portal/documents/:itemId/stream-token', '/api/portal/files/:token']);
+    for (const p of portal) {
+      const secret = 'S3CRETs3cret_S3CRETs3cret_S3CRETs3cret_abc';
+      const uri = p.path.replace(/:[A-Za-z]+/g, secret);
+      expect(logged(uri), p.path).not.toContain(secret);
+      expect(logged(`${uri}?x=1`), p.path).not.toContain(secret);
+    }
   });
 });

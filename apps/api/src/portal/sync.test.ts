@@ -105,15 +105,21 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect(after.every((i) => i.retractedBy === 'Automatic' && /Removed automatically/.test(i.note ?? ''))).toBe(true);
   });
 
-  it('R-PORTAL-15: a next step whose task is done or canceled is retracted', async () => {
+  it('R-PORTAL-15: a next step whose task is done or canceled is retracted (b14 F10: both, each through the task route)', async () => {
     const { d, g } = await granted();
-    const t = await call<{ task: { id: string } }>(agent(), 'POST', '/tasks', { title: 'Book the inspector', dealId: d });
-    await publish(agent(), 'next_step', t.body.task.id, [g]);
+    const done = await call<{ task: { id: string } }>(agent(), 'POST', '/tasks', { title: 'Book the inspector', dealId: d });
+    const dropped = await call<{ task: { id: string } }>(agent(), 'POST', '/tasks', { title: 'Order the survey', dealId: d });
+    const open = await call<{ task: { id: string } }>(agent(), 'POST', '/tasks', { title: 'Confirm the appraisal', dealId: d });
+    for (const t of [done, dropped, open]) expect((await publish(agent(), 'next_step', t.body.task.id, [g])).body.results[0]!.result).toBe('published');
     await sync();
-    expect((await items(g)).filter((r) => !r.retracted)).toHaveLength(1);
-    await h.su.query(`UPDATE tasks SET status = 'done', completed_at = now() WHERE id = $1`, [t.body.task.id]).catch(() => h.su.query(`UPDATE tasks SET status = 'done' WHERE id = $1`, [t.body.task.id]));
+    const live = async () => (await items(g)).filter((r) => !r.retracted).length;
+    expect(await live()).toBe(3);
+    expect((await call(agent(), 'PATCH', `/tasks/${done.body.task.id}`, { status: 'done' })).status).toBe(200);
     await sync();
-    expect((await items(g)).filter((r) => !r.retracted)).toEqual([]);
+    expect(await live()).toBe(2);
+    expect((await call(agent(), 'PATCH', `/tasks/${dropped.body.task.id}`, { status: 'canceled' })).status).toBe(200);
+    await sync();
+    expect(await live()).toBe(1); // the open task's next step stays
   });
 
   it('E658 F10: expiry is stored once: 90 days after the later of closing and the grant (a grant made 100 days after closing too); at once when lost', async () => {

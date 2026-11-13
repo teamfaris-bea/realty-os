@@ -185,7 +185,7 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     expect(indexed.rowCount).toBe(1);
   });
 
-  it('E644: while the outcome is unknown the body still holds no link (the reconcile renders it from its seal, seal.test.ts); once final it is unchanged', async () => {
+  it('E644: while the outcome is unknown the body still holds no link (the reconcile renders it from its seal, seal.test.ts); once final it is unchanged, and the staff thread shows the line, never the link', async () => {
     const c = await invited({ firstName: 'Kit' });
     // the login point is the email; switch it to the phone so the link goes by text
     const phonePoint = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'`, [c.id])).rows[0]!.id;
@@ -204,6 +204,11 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     const after = (await linkMessages(c.id)).at(-1)!;
     expect(after.status).toBe('sent');
     expect(after.body).toBe(m!.body);
+    // b14 F10: what staff see when they open the contact's thread (the timeline route), not just the row
+    const thread = await call(w.agents[0]!, 'GET', `/contacts/${c.id}/timeline`);
+    expect(thread.status).toBe(200);
+    expect(JSON.stringify(thread.body)).toContain("sign-in link for Kit's client portal");
+    expect(JSON.stringify(thread.body)).not.toContain('#token='); // the invite notice's ?team= page link is no token
   });
 
   it('E644: a link still queued after 15 minutes is canceled PORTAL_LINK_EXPIRED; its body never held the link', async () => {
