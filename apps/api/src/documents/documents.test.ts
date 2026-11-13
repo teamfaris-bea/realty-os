@@ -525,7 +525,7 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
   it('R-DOC-4 R-DATA-4 (b11 ownership-data/F4): two held documents are told apart: each names its kind, its name, its version, when it was uploaded and the record it is on', async () => {
     const { ownedContact } = await import('../comms/testing.js');
     const { command } = await import('../leads/testing.js');
-    const a = w.agents[0]!;
+    const a = await h.invite(w.owner, 'agent'); // its own upload allowance (the file's other tests use agents[0]'s)
     const survivor = await ownedContact(a, { consent: false, firstName: 'Ada' });
     const loser = await ownedContact(a, { consent: false, firstName: 'Ada' });
     const first = await uploadClean(a, `/contacts/${survivor.id}/documents`, { kind: 'disclosure', displayName: 'Seller disclosure' });
@@ -552,7 +552,7 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
   it('R-DATA-4 R-DATA-7 R-OWN-24 (b11 ownership-data/F2): a merged-away record\'s preview counts what its erasure deletes that the merge left on it (a moved call\'s recording, its documents); erasing it deletes the recording and its transcript, and the call stays on the survivor', async () => {
     const { ownedContact } = await import('../comms/testing.js');
     const { command } = await import('../leads/testing.js');
-    const a = w.agents[0]!;
+    const a = await h.invite(w.owner, 'agent'); // its own upload allowance (the file's other tests use agents[0]'s)
     const survivor = await ownedContact(a, { consent: false, firstName: 'Cy' });
     const loser = await ownedContact(a, { consent: false, firstName: 'Cy' });
     const conv = randomUUID();
