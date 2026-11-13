@@ -62,6 +62,10 @@ Exempt: provider webhooks (signature instead), and **capability URLs**. A capabi
 | Notes, imported FUB/CSV fields, listing fields, search snippets | React text | safe |
 | Error and toast text | code → fixed sentence (`errorMessages.ts`) | safe |
 | URLs built from data | `design/safeUrl.ts` allows only http, https, mailto and tel (or an explicit list) and rejects obfuscated schemes and credentials; the MFA `otpauth:` link goes through it | fixed (a `javascript:` URI rendered as an href before) |
+| Google review text and reviewer names (module 55, `/gbp` and the Approvals review card) | React text; a review without text says "No text" | safe |
+| Document display names and versions (module 55, documents section, document page, Approvals pointers) | React text; links are built from ids, never from a name | safe |
+| Document download (module 55) | a same-origin `<a download>` to `/api/documents/:id/file`, only for a clean file; never rendered inline, no new tab (the API serves PDFs as attachments and images inline under its sandbox CSP) | safe |
+| Ad campaign names, ledger and proposal sentences (module 55, `/ads`) | React text | safe |
 | Raw HTML | the codebase has no `dangerouslySetInnerHTML`, `innerHTML`, `document.write`, `eval` or `target=_blank` | safe |
 
 **Rule for new code:** every href or src built from data goes through `safeUrl`, and a new `target="_blank"` needs `rel="noopener noreferrer"`. Tests: `apps/web/src/design/safeUrl.test.ts`, `apps/web/src/shell/auth/SignIn.security.test.tsx`.
