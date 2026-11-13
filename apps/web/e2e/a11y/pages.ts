@@ -109,6 +109,7 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/milestone-templates', roles: ADMINS, url: at('/admin/milestone-templates') },
   // module 55 (lane phase3-staff): the document page (a TC or ISA off the deal sees its not-available state)
   { path: '/documents/:documentId', roles: ALL, url: (i) => `/documents/${i.documentId}` },
+  { path: '/documents/:documentId/dates', roles: ALL, url: (i) => `/documents/${i.documentId}/dates` },
 ];
 
 /** Screens outside the app frame (signed out). */
