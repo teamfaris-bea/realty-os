@@ -510,7 +510,7 @@ export function StartSheet({ contact, onClose, fromHandbackId }: { contact: Pick
       <div className="flex flex-col gap-3">
         {done ? (
           <>
-            <p className="text-[15px]" role="status">
+            <p className="text-[15px]" role="status" data-testid="start-result">
               {done}
             </p>
             <Button variant="secondary" onClick={onClose}>

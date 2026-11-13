@@ -101,7 +101,7 @@ test('R-ISA-32 E524: an agent opts in (converse only, the exact attestation, the
   await expect(sheet).toContainText(/gets texts and emails from your AI assistant under your opt-in of .*You stay responsible for this lead\./);
   expect(await axe(page)).toEqual([]);
   await press(page, sheet.getByRole('button', { name: 'Start as a buyer' }), taps);
-  await expect(sheet.getByRole('status')).toContainText('AI care started');
+  await expect(page.getByTestId('start-result')).toContainText('AI care started');
   expect(taps.taps).toBe(2);
 });
 

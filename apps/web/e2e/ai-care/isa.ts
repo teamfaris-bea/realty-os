@@ -115,10 +115,27 @@ export async function expectNoCode(page: Page) {
   expect(text).not.toMatch(/confidence|\bscore\b/i);
 }
 
-/** Signs in as someone else in the same page: the previous session cookie goes first. */
+const sessions = new WeakMap<JourneyStack, Map<string, Awaited<ReturnType<ReturnType<Page['context']>['cookies']>>>>();
+
+/**
+ * Signs in as `who` (the previous session cookie goes first). Each person signs in once per stack: later tests reuse
+ * that session's cookies, so a spec stays under the login rate limit (R-PERM: "Too many tries in a short time").
+ */
 export async function signInAs(page: Page, stack: JourneyStack, who: { email: string; password: string }) {
-  await page.context().clearCookies();
+  const ctx = page.context();
+  await ctx.clearCookies();
+  const byStack = sessions.get(stack) ?? new Map();
+  sessions.set(stack, byStack);
+  const saved = byStack.get(who.email);
+  if (saved) {
+    await ctx.addCookies(saved);
+    await page.goto(`${stack.webUrl}/`);
+    const home = page.getByRole('heading', { level: 1, name: 'Home' });
+    if (await home.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false)) return;
+    await ctx.clearCookies();
+  }
   await signIn(page, stack, who);
+  byStack.set(who.email, await ctx.cookies());
 }
 
 /**

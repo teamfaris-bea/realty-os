@@ -31,7 +31,7 @@ test('J1 E521: start (2 taps) → the AI message is labelled → AGENT → the h
   const taps = { taps: 0 };
   await press(page, page.getByRole('button', { name: 'Start AI care' }), taps);
   await press(page, page.getByRole('dialog', { name: 'Start AI care' }).getByRole('button', { name: 'Start as a buyer' }), taps);
-  await expect(page.getByRole('dialog', { name: 'Start AI care' }).getByRole('status')).toContainText('AI care started');
+  await expect(page.getByTestId('start-result')).toContainText('AI care started');
   expect(taps.taps).toBe(2);
   await runIsa(stack);
   const ai = await stack.sql<{ id: string }>(`SELECT message_id AS id FROM ai_isa_turns WHERE contact_id = $1 AND message_id IS NOT NULL`, [lead.id]);
