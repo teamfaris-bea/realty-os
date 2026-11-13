@@ -53,11 +53,12 @@ async function locked(tx: Tx, id: string): Promise<AssignmentRow | null> {
  * The job handles the status it names (b12 recheck R1): each status change enqueues its own job (send.ts
  * emitSendResultInTx), statuses only move forward, so a job whose status the message has already left was overtaken
  * by a later status with its own job and does nothing (one carrier failure is counted once, E518). The status is
- * read after the turn lock, which the status callback and TX2 also take.
+ * read after the turn lock, which the status callback and TX2 also take. The text itself counts toward the limit on
+ * the first of its results the machine handles, whichever that is (b12 recheck R12, machine.ts onSendResult).
  */
 export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, messageId: string, status: string, now: Instant): Promise<string> {
-  const read = () => sql<{ status: string; reason: string | null; turn_id: string | null; assignment_id: string | null; category: string }>`
-    SELECT m.status, m.status_reason AS reason, t.id AS turn_id, t.assignment_id, m.action_category AS category FROM messages m
+  const read = () => sql<{ status: string; reason: string | null; accepted: boolean; turn_id: string | null; assignment_id: string | null; category: string }>`
+    SELECT m.status, m.status_reason AS reason, m.provider_message_ref IS NOT NULL AS accepted, t.id AS turn_id, t.assignment_id, m.action_category AS category FROM messages m
       LEFT JOIN ai_isa_turns t ON t.tenant_id = m.tenant_id AND t.message_id = m.id WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}`.execute(tx);
   const peek = (await read()).rows[0];
   if (!peek?.assignment_id) return 'NO_TURN';
@@ -93,7 +94,9 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
   const ctx = await contextFor(tx, a, now);
   const kind = (await sql<{ k: string | null }>`SELECT payload->>'messageKind' AS k FROM assistant_actions WHERE tenant_id = app.tenant_id()
     AND id = (SELECT assistant_action_id FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId})`.execute(tx)).rows[0]?.k ?? 'conversation';
-  const st = step(a.machine, { type: 'send_result', at: now, messageId, messageKind: kind as never, status: r.status as never, reasonCodes: reason ? [reason] : [] }, ctx.facts);
+  // b12 recheck R12: the machine counts the text once, on the first of its results it sees (a failure counts the text
+  // only once the provider had accepted it)
+  const st = step(a.machine, { type: 'send_result', at: now, messageId, messageKind: kind as never, status: r.status as never, reasonCodes: reason ? [reason] : [], accepted: r.accepted }, ctx.facts);
   await applyActionsInTx({ tx, deps, actor, ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, st);
   return ok ? 'SENT' : cls.toUpperCase();
 }

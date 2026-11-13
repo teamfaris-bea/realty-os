@@ -60,6 +60,11 @@ export interface IsaState {
   afterBooking: EscalationClass[];
   appointment: { appointmentId: string; kind: IsaOffer['appointmentKind'] } | null;
   counters: { messagesSent: number; unansweredInitiated: number; undeliveredStreak: number; schemaFailures: number; guardBlocks: number; bookingFailures: number };
+  /**
+   * The message ids `counters.messagesSent` has counted (b12 recheck R12): a text counts once, on the first of its
+   * results that shows it left, and a later result of the same text never counts it again. Absent until the first.
+   */
+  countedSends?: string[];
   lastInboundSeq: number;
   lastInboundChannel: IsaChannel | null;
   inboundUnanswered: boolean;
@@ -90,7 +95,9 @@ export type IsaEvent =
   | { type: 'listing_event'; at: Instant; factKind: 'listings' | 'competition'; handles: readonly string[] }
   | { type: 'model_output'; at: Instant; epoch: number; decision: Decision }
   | { type: 'model_failed'; at: Instant; epoch: number; reason: 'schema' | 'provider' }
-  | { type: 'send_result'; at: Instant; messageId: string; messageKind: IsaMessageKind; status: 'sent' | 'delivered' | 'failed' | 'undelivered' | 'blocked' | 'canceled' | 'dispatch_unknown'; reasonCodes?: readonly string[] }
+  | { type: 'send_result'; at: Instant; messageId: string; messageKind: IsaMessageKind; status: 'sent' | 'delivered' | 'failed' | 'undelivered' | 'blocked' | 'canceled' | 'dispatch_unknown'; reasonCodes?: readonly string[];
+      /** the provider accepted the message (it holds a provider reference): a later 'failed' still left (b12 recheck R12) */
+      accepted?: boolean }
   | { type: 'offer_ready'; at: Instant; offerId: string; slots: readonly IsaSlot[]; zones: readonly IanaZone[]; expiresAt: Instant }
   | { type: 'offer_unavailable'; at: Instant }
   | { type: 'booking_result'; at: Instant; ok: true; appointmentId: string }
@@ -455,11 +462,19 @@ function onModelOutput(s0: IsaState, e: Extract<IsaEvent, { type: 'model_output'
 function onSendResult(s: IsaState, e: Extract<IsaEvent, { type: 'send_result' }>, facts: IsaFacts): StepResult {
   if (s.ended !== null) return { state: s, actions: [] };
   const c = s.counters;
+  // R-ISA-11 (b12 recheck R12): a text counts toward the limit once, on the first of its results that shows it left
+  // (sent, delivered, undelivered, or a failure after the provider accepted it), whichever the worker handles first: a
+  // carrier status that commits before TX2's sent job overtakes that job, which then does nothing
+  const left = e.status === 'sent' || e.status === 'delivered' || e.status === 'undelivered' || (e.status === 'failed' && e.accepted === true);
+  const counted = s.countedSends ?? [];
+  const first = left && !counted.includes(e.messageId);
+  const sends: Pick<IsaState, 'countedSends'> = first ? { countedSends: [...counted, e.messageId] } : {};
+  const messagesSent = first ? c.messagesSent + 1 : c.messagesSent;
   if (e.status === 'sent' || e.status === 'delivered') {
     // E518 (b12 recheck R7): only the carrier's 'delivered' proves reach and resets the undelivered streak; the
     // provider's 'sent' (accepted, which TX2 reports for every text) leaves it as it is
     const streak = e.status === 'delivered' ? 0 : c.undeliveredStreak;
-    let st: IsaState = { ...s, counters: { ...c, undeliveredStreak: streak, messagesSent: e.status === 'sent' ? c.messagesSent + 1 : c.messagesSent }, inboundUnanswered: false };
+    let st: IsaState = { ...s, ...sends, counters: { ...c, undeliveredStreak: streak, messagesSent }, inboundUnanswered: false };
     const actions: IsaAction[] = [];
     if (e.messageKind === 'offer' && st.offer !== null && st.offer.status === 'pending_delivery') {
       st = { ...st, phase: 'scheduling', offer: { ...st.offer, status: 'offered', deliveredAt: e.at } };
@@ -470,9 +485,11 @@ function onSendResult(s: IsaState, e: Extract<IsaEvent, { type: 'send_result' }>
   }
   if (e.status === 'failed' || e.status === 'undelivered') {
     const streak = c.undeliveredStreak + 1;
-    let st: IsaState = { ...s, counters: { ...c, undeliveredStreak: streak } };
+    let st: IsaState = { ...s, ...sends, counters: { ...c, undeliveredStreak: streak, messagesSent } };
     if (e.messageKind === 'offer' && st.offer !== null && st.offer.status === 'pending_delivery') st = { ...st, offer: null, phase: 'engaged' };
     if (streak >= ISA_DEFAULT_LIMITS.undeliveredInARow && st.paused === null) return end(st, e.at, 'delivery_problem');
+    // the text this result counted may be the last one the limit allows (b12 recheck R12)
+    if (st.counters.messagesSent >= facts.content.limits.maxMessagesPerAssignment && st.paused === null) return end(st, e.at, 'limit_reached', { escalation: 'limit' });
     return { state: st, actions: [] };
   }
   if (e.status === 'blocked' || e.status === 'canceled') {

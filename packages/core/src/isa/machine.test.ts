@@ -386,6 +386,35 @@ describe('R-ISA-11 E518 limits, timers and send results', () => {
     expect(d.ended).toBeNull();
     expect(d.counters).toMatchObject({ undeliveredStreak: 1, messagesSent: 3 });
   });
+  it('R-ISA-11 (b12 recheck R12): each text counts once toward the limit, whichever of its results comes first', () => {
+    type St = 'sent' | 'delivered' | 'undelivered' | 'failed' | 'blocked' | 'canceled' | 'dispatch_unknown';
+    const r = (s: IsaState, messageId: string, status: St, accepted?: boolean) => step(s, { type: 'send_result', at: NOW, messageId, messageKind: 'conversation', status, ...(accepted === undefined ? {} : { accepted }) }, F).state;
+    // sent then delivered (the normal order): one
+    expect(r(r(start(), 'a', 'sent'), 'a', 'delivered').counters).toMatchObject({ messagesSent: 1, undeliveredStreak: 0 });
+    // the carrier's delivered first (its sent was overtaken): still one, and a late sent adds nothing
+    expect(r(start(), 'a', 'delivered').counters).toMatchObject({ messagesSent: 1, undeliveredStreak: 0 });
+    expect(r(r(start(), 'a', 'delivered'), 'a', 'sent').counters).toMatchObject({ messagesSent: 1 });
+    // undelivered first: the text once and the failure once (R1); R7's order (sent, then undelivered) is the same
+    expect(r(start(), 'a', 'undelivered').counters).toMatchObject({ messagesSent: 1, undeliveredStreak: 1 });
+    expect(r(r(start(), 'a', 'sent'), 'a', 'undelivered').counters).toMatchObject({ messagesSent: 1, undeliveredStreak: 1 });
+    // a failure after the provider accepted it counts the text; one the provider refused at dispatch never left
+    expect(r(start(), 'a', 'failed', true).counters).toMatchObject({ messagesSent: 1, undeliveredStreak: 1 });
+    expect(r(start(), 'a', 'failed', false).counters).toMatchObject({ messagesSent: 0, undeliveredStreak: 1 });
+    expect(r(start(), 'a', 'failed').counters).toMatchObject({ messagesSent: 0, undeliveredStreak: 1 });
+    // a refusal, a cancel or an unknown outcome is no send
+    for (const st of ['blocked', 'canceled', 'dispatch_unknown'] as const) expect(r(start(), 'a', st).counters.messagesSent).toBe(0);
+    expect(r(r(start(), 'a', 'dispatch_unknown'), 'a', 'sent').counters.messagesSent).toBe(1);
+  });
+  it('R-ISA-11 (b12 recheck R12): the 40th text ends limit_reached whichever of its results comes first', () => {
+    const s = { ...start(), counters: { ...start().counters, messagesSent: 39 } };
+    const r = (status: 'delivered' | 'undelivered' | 'failed', accepted?: boolean) => step(s, { type: 'send_result', at: NOW, messageId: 'x', messageKind: 'conversation', status, ...(accepted === undefined ? {} : { accepted }) }, F).state;
+    expect(r('delivered').ended).toMatchObject({ reason: 'limit_reached', escalation: 'limit' });
+    expect(r('undelivered').ended).toMatchObject({ reason: 'limit_reached', escalation: 'limit' });
+    expect(r('failed', true).ended).toMatchObject({ reason: 'limit_reached', escalation: 'limit' });
+    expect(r('failed', false).ended).toBeNull();
+    // a second failure in a row ends delivery_problem first
+    expect(step({ ...s, counters: { ...s.counters, undeliveredStreak: 1 } }, { type: 'send_result', at: NOW, messageId: 'x', messageKind: 'conversation', status: 'undelivered' }, F).state.ended).toMatchObject({ reason: 'delivery_problem' });
+  });
   it('the 40th sent message ends limit_reached', () => {
     const s = { ...start(), counters: { ...start().counters, messagesSent: 39 } };
     expect(step(s, { type: 'send_result', at: NOW, messageId: 'x', messageKind: 'conversation', status: 'sent' }, F).state.ended).toMatchObject({ reason: 'limit_reached', escalation: 'limit' });

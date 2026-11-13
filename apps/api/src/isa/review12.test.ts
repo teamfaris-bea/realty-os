@@ -480,3 +480,58 @@ describe('b12 recheck R11: an AI handoff card is decided on its own path, never 
     expect((await handoffs([l.id]))[0]!.sla_met_at).not.toBeNull();
   });
 });
+
+describe('b12 recheck R12: every AI text counts once toward the 40-message limit, whatever status the worker sees first (R-ISA-11; E518)', () => {
+  const care = async (contactId: string) => (await h.su.query<{ sent: number; n: number; end_reason: string | null; machine_sent: number }>(
+    `SELECT messages_sent AS sent, undelivered_streak AS n, end_reason, (machine->'counters'->>'messagesSent')::int AS machine_sent FROM ai_isa_assignments WHERE contact_id = $1`, [contactId])).rows[0]!;
+  /** An AI reply whose TX2 commits 'sent' while the worker is behind, then the carrier's `status` commits before the sent job runs. */
+  async function carrierFirst(l: { id: string; phone: string }, status: 'delivered' | 'undelivered') {
+    const { inboundSms } = await import('../comms/testing.js');
+    const { applyMessageStatus } = await import('../comms/status.js');
+    const { aiMessages } = await import('./testing.js');
+    await inboundSms(h, l.phone, w.mainNumber, 'Hi, we are looking for a place soon');
+    await runIsa(h, w.tenantId, 4, { hold: ['ai_isa.send_result'] });
+    const sent = (await aiMessages(h, l.id)).filter((m) => m.status === 'sent').at(-1)!;
+    expect(sent, 'an AI reply reached sent').toBeTruthy();
+    const job = async () => (await h.su.query<{ s: string; st: string }>(`SELECT payload->>'status' AS s, status AS st FROM jobs WHERE kind = 'ai_isa.send_result' AND payload->>'messageId' = $1 ORDER BY id`, [sent.id])).rows;
+    expect(await job()).toEqual([{ s: 'sent', st: 'pending' }]);
+    const r = await applyMessageStatus(systemActor(w.tenantId, 'provider'), { providerEventRef: `evt-r12-${status}-${sent.id}`, message: { id: sent.id }, providerStatus: status, mapped: status, errorCode: status === 'undelivered' ? '30003' : null, occurredAt: Date.now() as never }, depsFromPlatform(h.app.platform));
+    expect(r.kind).toBe('applied');
+    await runIsa(h, w.tenantId, 2);
+    expect((await job()).map((x) => [x.s, x.st])).toEqual([['sent', 'succeeded'], [status, 'succeeded']]);
+  }
+  async function caredLead(messagesSent = 0) {
+    const l = await isaLead(h, w.agents[0]!);
+    expect((await startCare(w.agents[0]!, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    if (messagesSent > 0) {
+      await h.su.query(`SET session_replication_role = replica`);
+      try {
+        await h.su.query(`UPDATE ai_isa_assignments SET messages_sent = $2, machine = jsonb_set(machine, '{counters,messagesSent}', to_jsonb($2::int)) WHERE contact_id = $1`, [l.id, messagesSent]);
+      } finally {
+        await h.su.query(`SET session_replication_role = origin`);
+      }
+    }
+    expect((await care(l.id)).sent).toBe(messagesSent);
+    return l;
+  }
+
+  it('R-ISA-11: the carrier\'s delivered commits before the sent job runs: the stale sent job does nothing and the text still counts once', async () => {
+    const l = await caredLead();
+    await carrierFirst(l, 'delivered');
+    expect(await care(l.id)).toEqual({ sent: 1, n: 0, end_reason: null, machine_sent: 1 });
+  });
+
+  it('R-ISA-11 E518: an undelivered that commits first counts the text once and the failure once (R1)', async () => {
+    const l = await caredLead();
+    await carrierFirst(l, 'undelivered');
+    expect(await care(l.id)).toEqual({ sent: 1, n: 1, end_reason: null, machine_sent: 1 });
+  });
+
+  it('R-ISA-11: the 40th text, delivered before its sent job runs, ends care limit_reached with a handoff', async () => {
+    const l = await caredLead(39);
+    await carrierFirst(l, 'delivered');
+    expect(await care(l.id)).toMatchObject({ sent: 40, machine_sent: 40, end_reason: 'limit_reached' });
+    expect((await handoffs([l.id])).map((x) => x.reason)).toEqual(['limit_reached']);
+  });
+});

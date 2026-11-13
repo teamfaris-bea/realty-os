@@ -598,7 +598,7 @@ Every AI ISA message has `purpose='marketing'`. `message_kind` (reply or initiat
 | Person: initiated | ≤ 1 per 24 h, ≤ 3 per 7 days |
 | Minimum gap between AI outbounds | 120 s |
 | Open AI messages per assignment | 1 (partial unique) |
-| Assignment messages | ≤ 40, then `limit_reached` and a handoff |
+| Assignment messages | ≤ 40, then `limit_reached` and a handoff. Each text counts once, on the first of its results the worker handles (`sent`, `delivered`, `undelivered`, or `failed` after the provider accepted it), so a carrier status that overtakes the `sent` job still counts it (b12 recheck R12) |
 | Unanswered initiated in a row | 3 → slow cadence (≥ 14 days); 6 → `dormant`, a handoff |
 | Undelivered in a row | 2 → end `delivery_problem`, a handoff |
 | Tenant per tenant-local day | ≤ `ai_isa_daily_cap` (default 100, CHECK 0–1,000) and the telephony cap (200); reaching either is a **hold** |

@@ -168,8 +168,10 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         out.denied.push(...act.codes);
         break;
       case 'end':
+        // the counters' columns end with the machine (b12 recheck R12: the text that reached the limit is counted there too)
         await sql`UPDATE ai_isa_assignments SET ended_at = ${new Date(now)}, end_reason = ${act.reason}, ended_by_kind = 'system', state = 'ended',
-            machine = ${JSON.stringify(r.state)}::jsonb, finalize_at = NULL, finalize_kind = NULL
+            machine = ${JSON.stringify(r.state)}::jsonb, finalize_at = NULL, finalize_kind = NULL, messages_sent = ${r.state.counters.messagesSent},
+            unanswered_initiated = ${r.state.counters.unansweredInitiated}, undelivered_streak = ${r.state.counters.undeliveredStreak}
           WHERE tenant_id = app.tenant_id() AND id = ${ctx.a.id} AND ended_at IS NULL`.execute(tx);
         await control(tx, deps.ids, ctx.a, 'system_end', act.reason);
         await audit(tx, env.actor, { action: 'ai_isa.system_ended', entity: { type: 'ai_isa_assignment', id: ctx.a.id }, reason: act.reason });
