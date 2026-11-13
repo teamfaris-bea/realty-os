@@ -149,7 +149,19 @@ describe('the one tap (R-GBP-1, R-GBP-4)', () => {
     // and both at once from two connections
     const r2 = await aReview();
     const d2 = (await draft(r2.id, { mode: 'manual', text: 'Thank you again.' })).body.review.draft!;
-    const both = await Promise.all([reply(r2.id, d2.actionId, d2.text), reply(r2.id, d2.actionId, d2.text, w.admin)]);
+    // "at once": the claim holder's Google call is held until the other tap has answered, so the two taps overlap.
+    // Without the hold the fake answers at once, and a second tap that starts after the first one finished reads the
+    // review as replied (NOT_FOUND, a different case); at the batch 12 merge that happened in 2 of 5 runs alone.
+    let otherAnswered!: () => void;
+    const held = new Promise<void>((res) => { otherAnswered = res; });
+    fake().beforeReply = async () => {
+      fake().beforeReply = null;
+      await held;
+    };
+    const taps = [reply(r2.id, d2.actionId, d2.text), reply(r2.id, d2.actionId, d2.text, w.admin)];
+    await Promise.race(taps);
+    otherAnswered();
+    const both = await Promise.all(taps);
     expect(both.map((b) => b.status).sort()).toEqual([200, 409]);
     expect(fake().replies.filter((x) => x.text === d2.text)).toHaveLength(1);
   });
