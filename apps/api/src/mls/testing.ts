@@ -28,8 +28,8 @@ export const REVIEWED_PACK = Object.freeze({
   },
 });
 
-/** A live mls_feed connection (system actor), with a placeholder credential row; returns its id. */
-export async function mlsConnection(h: ApiHarness, tenantId: string, createdByUserId: string, o: { pack?: Record<string, unknown>; status?: 'connected' | 'degraded'; lastSyncedAt?: Date | null } = {}): Promise<string> {
+/** A live mls_feed connection (system actor), with a placeholder credential row; returns its id. `spark`: its external account is 'spark:<id>', as saveSparkCredential sets it. */
+export async function mlsConnection(h: ApiHarness, tenantId: string, createdByUserId: string, o: { pack?: Record<string, unknown>; status?: 'connected' | 'degraded'; lastSyncedAt?: Date | null; spark?: boolean } = {}): Promise<string> {
   const id = randomUUID();
   const credId = randomUUID();
   await withTenantTx(
@@ -38,7 +38,7 @@ export async function mlsConnection(h: ApiHarness, tenantId: string, createdByUs
       await sql`INSERT INTO provider_credentials (tenant_id, id, provider, secret_enc, key_version, external_account_ref, created_by_user_id)
                 VALUES (app.tenant_id(), ${credId}, 'mls', ${randomBytes(48)}, 1, 'test-feed', ${createdByUserId})`.execute(tx);
       await sql`INSERT INTO integration_connections (tenant_id, id, kind, status, display_name, external_account_id, credential_id, connected_at, license_pack, last_synced_at)
-                VALUES (app.tenant_id(), ${id}, 'mls_feed', ${o.status ?? 'connected'}, 'Test MLS feed', ${`test:${id}`}, ${credId}, now(),
+                VALUES (app.tenant_id(), ${id}, 'mls_feed', ${o.status ?? 'connected'}, 'Test MLS feed', ${`${o.spark ? 'spark' : 'test'}:${id}`}, ${credId}, now(),
                         ${JSON.stringify(o.pack ?? REVIEWED_PACK)}::jsonb, ${o.lastSyncedAt === undefined ? null : o.lastSyncedAt})`.execute(tx);
     },
     { db: h.database },

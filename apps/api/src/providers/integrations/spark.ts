@@ -58,7 +58,9 @@ export const SPARK_PATHS = ['/Reso/OData/$metadata', '/Reso/OData/Property'] as 
  * Per-MLS field overrides for core normalizeMlsListing (finding 5; R-MLS-7). `sqft: null`: no Spark field is confirmed
  * as the finished living area, so every Spark size is unknown (null), LivingArea included. Never BuildingAreaTotal.
  * Flipping this to a field is an owner-approved change made here, in one place, with its tests, after the MLS answers
- * (docs/DATA_MODEL.md "VERIFY WITH MLS: size and postal code"). No setting or environment variable can turn it on.
+ * (docs/DATA_MODEL.md "VERIFY WITH MLS: size and postal code"), shipped with a migration that has the backfill re-read
+ * every Spark record: the mapping alone re-reads nothing already stored (docs/ARCHITECTURE §21.38, E613). No setting or
+ * environment variable can turn it on.
  */
 export const SPARK_FIELD_MAPPING: Readonly<{ sqft: string | null }> = Object.freeze({ sqft: null });
 

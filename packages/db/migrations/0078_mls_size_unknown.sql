@@ -23,7 +23,9 @@
 -- one of them. listing_price_history fires on list_price_cents only; listings_mls_monotonic sees an unchanged
 -- mls_modified_at; listings_valuation_facts_guard admits the table owner (this migration). A Spark row of version 1
 -- keeps its version: the backfill still re-reads it, and the fill now writes sqft with its source (apps/api
--- mls/sync.ts fillMlsListing), null under the Spark mapping.
+-- mls/sync.ts fillMlsListing), null under the Spark mapping. Nothing is kept to restore: the cleared values were total
+-- area, never finished area; an owner-approved flip of the Spark size field reads sizes again from the MLS, with its
+-- own migration that has the backfill re-read every Spark record (docs/ARCHITECTURE §21.38, E613).
 --
 -- Then a CHECK keeps a never-used field out of size_source for good (listings_size_source_not_total), the database part
 -- of R-MLS-7: a regression that maps BuildingAreaTotal again has its records refused (MLS_RECORD_REFUSED_BY_DB, the
