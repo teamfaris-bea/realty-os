@@ -107,9 +107,11 @@ export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { h
   const notDue = ['ai_isa.sweep', 'ai_isa.sla', ...(o.hold ?? [])];
   for (let i = 0; i < rounds; i += 1) {
     await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind <> ALL ($2::text[])`, [tenantId, notDue]);
-    // the debounce reads conversations.last_inbound_at: age it so a due turn runs now
+    // the debounce reads conversations.last_inbound_at: age it so a due turn runs now. The inbound messages keep their
+    // own created_at: moved back, a reply that came after care started read as older than the start, so turnInbounds
+    // and the backstop (created_at >= started_at) skipped it and the turn found NOTHING_TO_DO; and a reply that came
+    // after an AI message read as older than it, so the reply window (after the last AI outbound) never opened.
     await h.su.query(`UPDATE conversations SET last_inbound_at = last_inbound_at - interval '1 minute' WHERE tenant_id = $1 AND last_inbound_at > now() - interval '1 minute'`, [tenantId]);
-    await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > now() - interval '3 minutes'`, [tenantId]);
     await isaWorker(h, o).drain(30);
   }
 }

@@ -78,8 +78,21 @@ export function fillTemplate(template: string, who: LineIdentity): string {
 export const ISA_DISCLOSURE_TEMPLATE = "Hi, this is {Agent}'s AI assistant at {Brokerage}.";
 /** The sign-off of every AI message. Also satisfies gate check 4's brokerage name for marketing SMS. VERIFY WITH COUNSEL. */
 export const ISA_SIGN_OFF_TEMPLATE = "— {Agent}'s AI assistant, {Brokerage}";
-/** On the first message and on initiated messages after 7 days of silence. VERIFY WITH COUNSEL. */
+/**
+ * SMS only: on the first message and on initiated messages after 7 days of silence. Never in an email: an email reply
+ * of STOP is recognized only when STOP is the whole body, and most mail apps add the quoted message or a "Sent from"
+ * line, so the hint would promise an opt-out that mostly does not happen. VERIFY WITH COUNSEL.
+ */
 export const ISA_OPT_OUT_HINT = 'Reply STOP to opt out.';
+/**
+ * The unsubscribe line of every AI email (CAN-SPAM: a working opt-out in every commercial email; gate check 4,
+ * UNSUBSCRIBE_MISSING). The same wording comms renders on every other marketing email (comms/render.ts
+ * renderHumanBody), with the message's own signed link: the one dispatch also sends as List-Unsubscribe. VERIFY WITH
+ * COUNSEL (C-ISA-11).
+ */
+export const ISA_EMAIL_UNSUBSCRIBE_TEMPLATE = 'Unsubscribe: {Url}';
+/** What separates an email's body from its server footer (as in comms/render.ts renderHumanBody). */
+export const EMAIL_FOOTER_SEPARATOR = '\n\n--\n';
 /** The email From display name. VERIFY WITH COUNSEL. */
 export const ISA_FROM_NAME_TEMPLATE = "{Agent}'s AI assistant ({Team})";
 
@@ -97,16 +110,46 @@ export function fromDisplayName(who: LineIdentity): string {
   return fillPlatform(ISA_FROM_NAME_TEMPLATE, who);
 }
 
+/** The server facts of an AI email's footer. The link is bound to the message id, so the caller mints both together. */
+export interface IsaEmailFooter {
+  /** tenant_settings.brokerage_postal_address; null leaves the line out (the gate then refuses POSTAL_ADDRESS_MISSING) */
+  postalAddress: string | null;
+  /** the message's signed unsubscribe link (comms/render.ts unsubscribeUrl) */
+  unsubscribeUrl: string;
+}
+
+/** The footer lines of an AI email: the brokerage legal name, its postal address, and the unsubscribe line. */
+export function emailFooterLines(who: LineIdentity, f: IsaEmailFooter): string[] {
+  const postal = (f.postalAddress ?? '').trim();
+  return [who.brokerageName.trim(), ...(postal !== '' ? [postal] : []), ISA_EMAIL_UNSUBSCRIBE_TEMPLATE.replace('{Url}', () => f.unsubscribeUrl)];
+}
+
+export type ComposeInput =
+  | { body: string; who: LineIdentity; firstInThread: boolean; optOutHint: boolean; channel: 'sms' }
+  | { body: string; who: LineIdentity; firstInThread: boolean; channel: 'email'; footer: IsaEmailFooter };
+
 /**
- * The full body of one AI message: the disclosure when it is the first AI message of the thread, the body, the
- * sign-off, and the opt-out hint when required. The ISA guard's AI_IDENTITY_MISSING checks the result.
+ * The full body of one AI message: the disclosure when it is the first AI message of the thread, the body and the
+ * sign-off. A text adds the STOP hint when required; an email always ends with the footer (every AI ISA message is
+ * marketing, so every AI email is a commercial email). The ISA guard's AI_IDENTITY_MISSING checks the result, and the
+ * gate's check 4 checks this exact text: it is stored, hashed onto the turn and sent as it is.
  */
-export function composeMessage(i: { body: string; who: LineIdentity; firstInThread: boolean; optOutHint: boolean; channel: 'sms' | 'email' }): string {
-  const sep = i.channel === 'email' ? '\n\n' : '\n';
+export function composeMessage(i: ComposeInput): string {
   const parts: string[] = [];
   if (i.firstInThread) parts.push(disclosureLine(i.who));
   parts.push(i.body.trim());
   parts.push(signOffLine(i.who));
+  if (i.channel === 'email') return `${parts.join('\n\n')}${EMAIL_FOOTER_SEPARATOR}${emailFooterLines(i.who, i.footer).join('\n')}`;
   if (i.optOutHint) parts.push(ISA_OPT_OUT_HINT);
-  return parts.join(sep);
+  return parts.join('\n');
+}
+
+/**
+ * An outbound email's text without its server footer (everything from the last separator on), for the model's view of
+ * the thread: the footer is server text, and its unsubscribe link is a credential for the person's address that the
+ * model never needs (R-ISA-20). Any other text is returned as it is.
+ */
+export function withoutEmailFooter(text: string): string {
+  const at = text.lastIndexOf(EMAIL_FOOTER_SEPARATOR);
+  return at < 0 ? text : text.slice(0, at);
 }

@@ -422,7 +422,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   // and continues below exactly as today (R-AST-9, the E61 card included).
   const dkimOk = e.kind === 'email' ? dkimAligned(from, e.dkim ?? []) : null;
   if (e.kind === 'email' && messageId) await sql`UPDATE messages SET email_dkim_aligned = ${dkimOk} WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx);
-  const isa = await ingestForAiIsaInTx(tx, { db: deps.db, ids, providers: deps.providers, aiIsaLiveOff: deps.aiIsaLiveOff }, actor, {
+  const isa = await ingestForAiIsaInTx(tx, { db: deps.db, ids, providers: deps.providers, aiIsaLiveOff: deps.aiIsaLiveOff, publicBaseUrl: deps.publicBaseUrl, linkSecret: deps.linkSecret }, actor, {
     contactId: target, messageId, channel: e.kind === 'sms' ? ((e.mediaCount ?? 0) > 0 ? 'mms' : 'sms') : e.kind, fromAddress: from, isAutoReply: autoReply !== null,
     classification: classification.kind, dkimAligned: dkimOk, mediaCount: e.kind === 'sms' ? (e.mediaCount ?? 0) : 0,
     textParts: e.kind === 'sms' ? (e.textParts?.length ?? 0) : 0, inboundSeq,

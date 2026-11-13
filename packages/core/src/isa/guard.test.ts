@@ -88,8 +88,8 @@ describe('R-ISA-7 AI_IDENTITY_MISSING: the platform disclosure and sign-off say 
     const first = composeMessage({ body: 'What area are you looking in?', who: WHO, firstInThread: true, optOutHint: true, channel: 'sms' });
     expect(first).toBe("Hi, this is Avery's AI assistant at Example Realty LLC.\nWhat area are you looking in?\n— Avery's AI assistant, Example Realty LLC\nReply STOP to opt out.");
     expect(aiIdentityMissing(first, WHO, true)).toBe(false);
-    const later = composeMessage({ body: 'Thanks!', who: WHO, firstInThread: false, optOutHint: false, channel: 'email' });
-    expect(later).toBe("Thanks!\n\n— Avery's AI assistant, Example Realty LLC");
+    const later = composeMessage({ body: 'Thanks!', who: WHO, firstInThread: false, channel: 'email', footer: { postalAddress: '1 Main St, Springfield', unsubscribeUrl: 'https://app.example.test/api/email/unsubscribe/x' } });
+    expect(later).toBe("Thanks!\n\n— Avery's AI assistant, Example Realty LLC\n\n--\nExample Realty LLC\n1 Main St, Springfield\nUnsubscribe: https://app.example.test/api/email/unsubscribe/x");
     expect(aiIdentityMissing(later, WHO, false)).toBe(false);
   });
   it('a message without the sign-off, or a first message without the disclosure, is refused', () => {

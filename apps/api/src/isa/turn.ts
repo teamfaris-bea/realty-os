@@ -16,7 +16,7 @@ import { aiRunAad } from '../assistant/runs.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { systemActor } from '../worker/systemActor.js';
 import {
-  buildIsaPrompt, capabilitiesInEffect, clientOwnText, decideAction, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
+  buildIsaPrompt, capabilitiesInEffect, clientOwnText, decideAction, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step, withoutEmailFooter,
 } from './coreSeam.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
@@ -155,7 +155,7 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
      ORDER BY m.created_at DESC LIMIT 20`.execute(tx);
   const caps = capabilitiesInEffect(ctx.content, (await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx)).rows[0]?.c ?? ['converse']);
   const first = (await sql<{ n: string | null }>`SELECT split_part(COALESCE(display_name, ''), ' ', 1) AS n FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${a.contactId}`.execute(tx)).rows[0]?.n ?? null;
-  const messages = msgs.rows.reverse().map((m) => ({ messageId: m.id, direction: m.direction, channel: m.channel, text: m.direction === 'inbound' ? clientOwnText(m.body, m.channel).text : m.body, at: instantFromDate(m.created_at) }));
+  const messages = msgs.rows.reverse().map((m) => ({ messageId: m.id, direction: m.direction, channel: m.channel, text: m.direction === 'inbound' ? clientOwnText(m.body, m.channel).text : m.channel === 'email' ? withoutEmailFooter(m.body) : m.body, at: instantFromDate(m.created_at) }));
   const replyChannel = (a.machine.lastInboundChannel && ctx.channels.includes(a.machine.lastInboundChannel) ? a.machine.lastInboundChannel : ctx.channels[0]) ?? 'sms';
   const prompt = buildIsaPrompt({
     side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end', ...[...caps].filter((c) => c === 'book_appointments').map(() => 'offer_slots')],

@@ -350,6 +350,11 @@ export interface QueueSpec {
   /** unique per tenant: the same key never creates a second message */
   idempotencyKey: string;
   firstResponse?: boolean;
+  /**
+   * The new message's id, minted by the caller when the body already carries something bound to it (an AI ISA email's
+   * unsubscribe link, comms/render.ts unsubscribeUrl, as compose does for a human marketing email). Default: a new id.
+   */
+  messageId?: string;
 }
 
 export type QueueResult = { ok: true; messageId: string; created: boolean } | { ok: false; code: 'CONTACT_POINT_MISSING' | 'SENDER_UNAVAILABLE' | 'CONTACT_MERGED' };
@@ -371,7 +376,7 @@ export async function queueOutboundInTx(tx: Tx, deps: Pick<CommsDeps, 'ids'>, sp
     throw e;
   }
   if (!d.fromAddress) return { ok: false, code: 'SENDER_UNAVAILABLE' };
-  const messageId = deps.ids.next<'MessageId'>();
+  const messageId = spec.messageId ?? deps.ids.next<'MessageId'>();
   const inserted = await msgs.insertOutbound(tx, {
     id: messageId,
     conversationId: d.conversationId,

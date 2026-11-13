@@ -50,6 +50,7 @@ export {
   signOffLine,
   step,
   validateAiIsaContent,
+  withoutEmailFooter,
 } from '@realty/core/isa';
 export type {
   AiIsaContent,
@@ -62,6 +63,7 @@ export type {
   IsaAction,
   IsaCapability,
   IsaChannel,
+  IsaEmailFooter,
   IsaEndReason,
   IsaEvent,
   IsaFacts,

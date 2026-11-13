@@ -628,7 +628,7 @@ Notes on counting:
 **The guard's reason classes** (`ISA_GUARD_REASONS`, beside GUARD_DENY_REASONS, gateInput.ts:155-168). Unmapped guard codes would make the job retry up to 10 times (jobs.ts:98) and die with the message still queued.
 - **Deferrable** (ISA_QUIET_HOURS, ISA_CAP_REACHED, ISA_MIN_GAP, ISA_ZONE_UNRESOLVED, and the offset mismatch): set back to `scheduled` at the next window start, or cancel and plan a new turn.
 - **Replan** (ISA_STALE_REPLY, ISA_REPLY_WINDOW_CLOSED, FACT_CHANGED): cancel plus a new turn.
-- **Terminal** (every other ISA code, and ASSISTANT_ACTION_WITHDRAWN): blocked, with a gate_decision.
+- **Terminal** (every other ISA code, the gate's other codes such as check 4's UNSUBSCRIBE_MISSING or POSTAL_ADDRESS_MISSING, and ASSISTANT_ACTION_WITHDRAWN): blocked, with a gate_decision. It refuses **that message only**: no hold, no pause, and the assignment's later turns run as usual (only §5.5's codes hold, handlers.ts HOLD_CODES). A refused reply leaves its inbound unanswered, so the answered-inbound backstop (R-ISA-29) writes the owner's card at 10 minutes.
 - **The opt-out codes in GUARD_DENY_REASONS** end care.
 
 New reason codes go into `ReasonCode` and `explain`, with sentences.
@@ -783,8 +783,9 @@ Applied to model text (`reply.text`, the summary) and, for the identity check, t
 **Server-added parts, from platform constants in `platform:ai_isa` (VERIFY WITH COUNSEL, C-ISA-5):**
 - the disclosure on the first AI message in a thread: "Hi, this is {Agent first name}'s AI assistant at {Brokerage}.";
 - every message's sign-off: "— {Agent first name}'s AI assistant, {Brokerage}" (this also satisfies check 4 for marketing SMS, gate.ts:208-209);
-- "Reply STOP to opt out" on the first message and on initiated messages after 7 days of silence (VERIFY);
-- for email: the From display name "{Agent}'s AI assistant ({Team})" (a flagged edit at dispatch.ts:266). Reply-To stays the conversation token address (dispatch.ts:268-270), because that is how the reply routes back to the contact (inbound.ts:156-158). The postal address and unsubscribe are added by check 4 and List-Unsubscribe.
+- by SMS only: "Reply STOP to opt out" on the first message and on initiated messages after 7 days of silence (VERIFY). An email never says it: an email reply of STOP is recognized only when STOP is the whole body, and most mail apps add the quoted message or a "Sent from" line;
+- for email: the From display name "{Agent}'s AI assistant ({Team})" (a flagged edit at dispatch.ts:266). Reply-To stays the conversation token address (dispatch.ts:268-270), because that is how the reply routes back to the contact (inbound.ts:156-158);
+- for email, on **every** AI email (every AI ISA message is marketing, so check 4 applies to each one): the footer after `--`, with the brokerage legal name, `tenant_settings.brokerage_postal_address`, and "Unsubscribe: {link}" (the wording of every other marketing email, comms/render.ts renderHumanBody; VERIFY WITH COUNSEL, C-ISA-11). core `composeMessage` writes it; `queueIsaMessageInTx` mints the message id first and the link from it (comms/render.ts `unsubscribeUrl`, as compose does for a human marketing email), so the footer is part of the body the turn freezes (`body_sha256`, ISA_BODY_CHANGED), the gate checks (UNSUBSCRIBE_MISSING, BROKERAGE_IDENTITY_MISSING) and the provider gets. Dispatch sends the same link as List-Unsubscribe. Check 4 and List-Unsubscribe add nothing to a body: check 4 only refuses a body without them, and List-Unsubscribe is a header. No postal address set: the line is left out and the gate refuses POSTAL_ADDRESS_MISSING (terminal: that message only, §5.4). The model's view of the thread (R-ISA-20) has every outbound email without its footer (core `withoutEmailFooter`): the link is a credential for the person's address, and the model never needs it.
 
 ### 7.4 The model-output schema
 ```ts

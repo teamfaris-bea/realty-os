@@ -9,6 +9,7 @@ import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { queueOutboundInTx } from '../comms/compose.js';
+import { unsubscribeUrl } from '../comms/render.js';
 import { adminUserIds, contactLabel, notifyUser, upsertFeedItem } from '../comms/repos/notify.js';
 import type { CommsDeps } from '../comms/types.js';
 import {
@@ -18,7 +19,8 @@ import {
 import { writeHandoffInTx } from './handoff.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
 
-export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
+/** publicBaseUrl and linkSecret mint an AI email's unsubscribe link, as comms does for every marketing email. */
+export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff' | 'publicBaseUrl' | 'linkSecret'>;
 
 export function chainEnvOf(deps: Pick<CommsDeps, 'providers' | 'aiIsaLiveOff'>): ChainEnv {
   return { liveOff: deps.aiIsaLiveOff ?? { sms: false, email: false }, telephonyOff: deps.providers.telephony.liveRequestsOff?.() === true };
@@ -36,15 +38,17 @@ export interface IsaContext {
   zoneSource: 'explicit' | 'union';
   facts: IsaFacts;
   channels: ('sms' | 'email')[];
+  /** tenant_settings.brokerage_postal_address, for the email footer */
+  postalAddress: string | null;
 }
 
 /** The facts one transition needs, read in `tx` (the policy content, the identity, the zones, the thread's team texts). */
 export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promise<IsaContext> {
   const v = await sql<{ steps: unknown; sha: string }>`SELECT steps, content_sha256 AS sha FROM playbook_versions WHERE tenant_id = app.tenant_id() AND id = ${a.playbookVersionId}`.execute(tx);
   const content = parseAiIsaContent(v.rows[0]?.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
-  const id = await sql<{ first: string | null; team: string | null; brokerage: string; tz: string; ctz: string | null; csrc: string | null }>`
-    SELECT split_part(COALESCE(u.display_name, ''), ' ', 1) AS first, s.team_name AS team, s.brokerage_legal_name AS brokerage, s.default_timezone AS tz,
-           c.timezone AS ctz, c.timezone_source AS csrc
+  const id = await sql<{ first: string | null; team: string | null; brokerage: string; postal: string | null; tz: string; ctz: string | null; csrc: string | null }>`
+    SELECT split_part(COALESCE(u.display_name, ''), ' ', 1) AS first, s.team_name AS team, s.brokerage_legal_name AS brokerage,
+           s.brokerage_postal_address AS postal, s.default_timezone AS tz, c.timezone AS ctz, c.timezone_source AS csrc
       FROM tenant_settings s JOIN contacts c ON c.tenant_id = s.tenant_id AND c.id = ${a.contactId}
       LEFT JOIN users u ON u.id = ${a.ownerUserId}
      WHERE s.tenant_id = app.tenant_id()`.execute(tx);
@@ -71,7 +75,7 @@ export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promis
     who, content, windowOpenNow, teamTexts: team.rows.map((t) => t.body), recentInboundCount: recent.rows[0]!.n, zone: (rz.zones[0] ?? r.tz) as IanaZone,
     mlsListedElsewhere: false, subjectConfirmed: false,
   };
-  return { a, content, versionSha: v.rows[0]?.sha ?? '', who, zones: rz.zones, zoneSource: rz.source, facts, channels };
+  return { a, content, versionSha: v.rows[0]?.sha ?? '', who, zones: rz.zones, zoneSource: rz.source, facts, channels, postalAddress: r.postal };
 }
 
 /** One turn row (the system appends; trigger_key unique per assignment). Returns the id (an existing row is reused). */
@@ -291,7 +295,14 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
     AND status IN ('sent','delivered','dispatching')`.execute(tx);
   const first = prior.rows[0]!.n === 0;
   const silent7d = prior.rows[0]!.last !== null && now - prior.rows[0]!.last.getTime() > 7 * 86_400_000;
-  const body = composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, optOutHint: first || (q.initiated && silent7d), channel });
+  // An AI email is a marketing email (gate check 4): it carries the brokerage's postal address and its own unsubscribe
+  // link in the body, minted from the message's id exactly as comms does for a human marketing email (compose.ts), so
+  // the id is minted here. The link is part of the body the turn freezes (body_sha256) and the gate checks; dispatch
+  // sends the same URL as List-Unsubscribe.
+  const messageId = deps.ids.next<'MessageId'>() as string;
+  const body = channel === 'email'
+    ? composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, channel, footer: { postalAddress: ctx.postalAddress, unsubscribeUrl: unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, env.actor.tenantId, messageId) } })
+    : composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, optOutHint: first || (q.initiated && silent7d), channel });
   const initiated = q.initiated || q.messageKind === 'facts';
   const notBefore = aiIsaSendWindow({ at: now, zones: ctx.zones, startSec: ctx.content.window.startSec, endSec: ctx.content.window.endSec, initiated,
     initiatedDays: ctx.content.initiatedDays, noInitiatedOnHolidays: ctx.content.noInitiatedOnHolidays });
@@ -318,7 +329,7 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
   const res = await queueOutboundInTx(tx, deps, {
     contactId: ctx.a.contactId, channel, body, subject: channel === 'email' ? `A note from ${ctx.who.agentFirstName}'s AI assistant` : undefined,
     initiator: 'assistant', purpose: 'marketing', category, idempotencyKey: `ai_isa:${actionId}`, assistantActionId: actionId, toPointId: point.point_id,
-    scheduleAt: notBefore > now ? notBefore : undefined,
+    scheduleAt: notBefore > now ? notBefore : undefined, messageId,
   } as Parameters<typeof queueOutboundInTx>[2], now);
   if (!res.ok) {
     await sql`UPDATE assistant_actions SET status = 'blocked' WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx);
