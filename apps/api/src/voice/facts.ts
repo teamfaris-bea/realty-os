@@ -11,7 +11,7 @@ import type { IdentityFacts } from '@realty/core/assistant';
 import type { ReachabilityInput, ReachPoint, ReachSuppression } from '@realty/core/compliance';
 import { type BusinessCalendar, type CallId, type ContactId, type Instant, type PlaybookVersionId, type UserId, instantFromDate } from '@realty/core/foundation';
 import type { MemberFacts } from '@realty/core/ownership';
-import { type CallFacts, type HotRule, type PlatformVoicePack, type VoiceFacts, type VoicePlaybookFacts, type VoiceSettings, DEFAULT_TRANSFER_HOLD_SECONDS, approvedVoiceContent } from '@realty/core/voice';
+import { type CallFacts, type HotRule, type PlatformVoicePack, type VoiceFacts, type VoicePlaybookFacts, type VoiceSettings, DEFAULT_TRANSFER_HOLD_SECONDS, MAX_TRANSFER_HOLD_SECONDS, MIN_TRANSFER_HOLD_SECONDS, approvedVoiceContent } from '@realty/core/voice';
 import { type Tx, loadTenantFacts } from '@realty/db';
 import { sql } from 'kysely';
 import { identityFacts } from '../assistant/repos/context.js';
@@ -78,11 +78,14 @@ export interface VoicePackFacts {
   version: string | null;
   /** rules.max_turn_latency_ms; null when not a positive integer (the takeover is refused, VOICE_NOT_CLEARED) */
   maxTurnLatencyMs: number | null;
-  /** rules.voice_transfer_hold_seconds (unseeded, known gap (b)); null when absent or invalid */
+  /** rules.voice_transfer_hold_seconds (unseeded, known gap (b)); null when absent or not an integer 5-60 (R-VOICE-23) */
   holdSeconds: number | null;
 }
 
 const posInt = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : null);
+/** R-VOICE-23: the pack's hold counts only as an integer 5-60; anything else falls back to the content's value. */
+const holdInt = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= MIN_TRANSFER_HOLD_SECONDS && v <= MAX_TRANSFER_HOLD_SECONDS ? v : null;
 
 export async function voicePack(tx: Tx): Promise<VoicePackFacts> {
   const row = (await listPlatformPacks(tx)).find((p) => p.key === 'platform:voice');
@@ -92,7 +95,7 @@ export async function voicePack(tx: Tx): Promise<VoicePackFacts> {
     platform: { status: 'published', reviewedByCounselAt: row.reviewed_by_counsel_at ? instantFromDate(row.reviewed_by_counsel_at) : null, vendorReadyAt: row.vendor_ready_at },
     version: row.version,
     maxTurnLatencyMs: posInt(rules['max_turn_latency_ms']),
-    holdSeconds: posInt(rules['voice_transfer_hold_seconds']),
+    holdSeconds: holdInt(rules['voice_transfer_hold_seconds']),
   };
 }
 
@@ -143,7 +146,7 @@ export async function loadAnswerFacts(tx: Tx, call: AnswerCall): Promise<AnswerF
   };
 }
 
-/** R-VOICE-23: the hold is the pack's voice_transfer_hold_seconds, else the approved content's transferHoldSeconds, else 20 s. */
+/** R-VOICE-23: the hold is the pack's voice_transfer_hold_seconds when an integer 5-60, else the approved content's transferHoldSeconds, else 20 s. */
 export function holdSecondsFor(pack: Pick<VoicePackFacts, 'holdSeconds'>, contentHold: number | undefined): number {
   return pack.holdSeconds ?? contentHold ?? DEFAULT_TRANSFER_HOLD_SECONDS;
 }

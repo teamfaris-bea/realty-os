@@ -1,10 +1,12 @@
-// The end of an AI call: exactly one handback (R-VOICE-7, R-VOICE-16, R-VOICE-17, R-VOICE-18; E112, E115, E427, E430).
+// The end of an AI call: exactly one handback (R-VOICE-7, R-VOICE-15, R-VOICE-16, R-VOICE-17; E112, E115, E427, E430).
 //
 // One system transaction, contact lock first:
-//   (a) one handback: a proposed handback already naming this call (the ring-time one inbound.ts wrote, or a
+//   (a) one handback: a still-proposed handback already naming this call (the ring-time one inbound.ts wrote, or a
 //       recovery one) is merged into, its owner kept; payload.enriched and payload.suggested are set, so a pending
 //       assistant.enrich_handback job skips at its locked re-read and never replaces the confirmation draft (E430).
-//       Otherwise a new one (dedupe 'voice:{callId}') pinned to the contact's current inbound seq.
+//       VERIFY: setting enriched/suggested on a merged handback is the intended way to stop the enrichment.
+//       Otherwise, or when the agent already handled the ring-time one (E430), a new one (dedupe 'voice:{callId}')
+//       pinned to the contact's current inbound seq.
 //   (b) code-built, quote-free claims: facts citing the call's own fields (voice_outcome, transfer_outcome,
 //       ai_takeover_at) or the appointment's starts_at, snippet = the stored value; core's needs-review items and
 //       agent notes as needs_review claims without evidence. In-call claims are never stored.
@@ -87,7 +89,8 @@ export function confirmationDraft(channel: 'sms' | 'email', firstName: string | 
   return channel === 'email' ? { channel, subject: 'Your appointment', body } : { channel, body };
 }
 
-/** The recipient (h): the owner, else whoever holds the intake offer, else whoever handles the contact now. */
+/** The recipient (h): the owner, else whoever holds the intake offer, else whoever handles the contact now (owner question
+ *  O8's default). VERIFY: reading offered_to_user_id before handlerOf for an unowned caller (comms/repos/notify.ts). */
 async function recipientOf(tx: Tx, contactId: string, to: VoiceHandback['to']): Promise<string | null> {
   if (to.kind === 'owner') return to.userId;
   const r = await sql<{ offered_to_user_id: string | null }>`SELECT offered_to_user_id FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
@@ -101,6 +104,8 @@ export async function writeHandback(actor: SystemActor, deps: Pick<VoiceDeps, 'd
 /** The same, inside the caller's system transaction (voice.reconcile). */
 export async function writeHandbackInTx(tx: Tx, now: Instant, actor: SystemActor, deps: Pick<VoiceDeps, 'ids' | 'envelope'>, i: HandbackInput): Promise<HandbackResult | null> {
   {
+    // VERIFY: the lock order of the end transaction (the contact, then the call row, then the booking's cancel in (g)),
+    // and bookSlot's own owner lock (calendar/service.ts) waiting behind it (E427).
     await lockContact(tx, i.contactId as ContactId);
     const call = (await sql<{ handback_action_id: string | null; ai_takeover_at: Date | null; transfer_outcome: string | null; handled_by: string }>`
       SELECT handback_action_id, ai_takeover_at, transfer_outcome, handled_by FROM calls WHERE tenant_id = app.tenant_id() AND id = ${i.callId} FOR UPDATE`.execute(tx)).rows[0];
@@ -157,6 +162,7 @@ export async function writeHandbackInTx(tx: Tx, now: Instant, actor: SystemActor
     const existing = (await sql<{ id: string; owner_user_id: string | null; payload: Record<string, unknown> }>`
       SELECT id, owner_user_id, payload FROM assistant_actions
        WHERE tenant_id = app.tenant_id() AND kind = 'handback' AND contact_id = ${i.contactId} AND payload ->> 'inboundCallId' = ${i.callId}
+         AND status = 'proposed'
        ORDER BY created_at LIMIT 1 FOR UPDATE`.execute(tx)).rows[0];
     let actionId: string;
     let created = false;
@@ -227,7 +233,8 @@ export async function writeHandbackInTx(tx: Tx, now: Instant, actor: SystemActor
 
     await sql`UPDATE calls SET handback_action_id = ${actionId} WHERE tenant_id = app.tenant_id() AND id = ${i.callId}`.execute(tx);
 
-    // (e) a failed transfer: a promise task (E115); no callback wording when no phone callback is allowed (E112)
+    // (e) a failed transfer: a promise task (E115); no callback wording when no phone callback is allowed (E112).
+    // VERIFY: the due date comes from an in-call claim that is never stored, so source_claim_id is NULL.
     if (hb.promiseTask) {
       const p = hb.promiseTask;
       const title = hb.noPhoneCallback ? 'Get back to the caller who asked for you (not by phone: they opted out of calls)' : 'Call back the caller who asked for you';

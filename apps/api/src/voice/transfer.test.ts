@@ -47,6 +47,21 @@ describe('E432 E433 E434 R-VOICE-6 R-VOICE-19: transfer to the contact\'s own ag
     }
   });
 
+  it('R-VOICE-23: a pack hold outside 5-60 (or not an integer) does not count: the content\'s 20 s hold applies, never a clamped 60 s or 5 s', async () => {
+    for (const bad of ['90', '3', '0', '15.5', '"15"']) {
+      await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('voice_transfer_hold_seconds', $1::jsonb) WHERE key = 'platform:voice' AND status = 'published'`, [bad]);
+      try {
+        const { c, ring } = await inTransfer();
+        expect(ring, bad).toContain('timeout="20"');
+        transport(c).advance(21_000);
+        transport(c).resume();
+        expect((await settled(h, w.tenantId, c.callId))?.handback.transferOutcome, bad).toBe('no_answer');
+      } finally {
+        await h.su.query("UPDATE jurisdiction_packs SET rules = rules - 'voice_transfer_hold_seconds' WHERE key = 'platform:voice' AND status = 'published'");
+      }
+    }
+  });
+
   it('R-VOICE-15: in-call claims are never stored; the handback\'s claims cite the call\'s own fields with the stored value, or carry no evidence (needs review)', async () => {
     const { c } = await inTransfer();
     transport(c).advance(25_000);
@@ -125,8 +140,15 @@ describe('E432 E433 E434 R-VOICE-6 R-VOICE-19: transfer to the contact\'s own ag
     await callStatus(h, w, c.callSid, c.from, 'completed', { CallDuration: '30' });
     const r = await settled(h, w.tenantId, c.callId);
     expect(r?.handback.endReason).toBe('CALLER_HUNG_UP');
+    // E433: caller_ended, never bridged, critical
+    expect(r?.handback).toMatchObject({ outcome: 'caller_ended', critical: true });
     await telephonyWebhook(h, hookPath(ring, 'action'), { CallSid: c.callSid, DialCallStatus: 'no-answer' });
-    expect(await handbacksOf(h, c.callId)).toHaveLength(1);
+    const hbs = await handbacksOf(h, c.callId);
+    expect(hbs).toHaveLength(1);
+    const row = await callRowOf(h, c.callSid);
+    expect(row.voice_outcome).not.toBe('transferred');
+    expect(row.transfer_outcome).not.toBe('connected');
+    expect((await h.su.query('SELECT priority FROM notifications WHERE subject_id = $1', [hbs[0].id])).rows.map((x) => x.priority)).toEqual(['critical']);
   });
 
   it('E434: the owner has no verified alert phone: no ring, transfer_result no_answer at once', async () => {

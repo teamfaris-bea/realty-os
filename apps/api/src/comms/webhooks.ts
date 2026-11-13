@@ -207,7 +207,8 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       const actor = systemActor(tenantId!, 'provider');
       const deps = depsFromPlatform(p);
       // module 48: an AI call is answered when its announcement played (voice/effects.ts), never by the provider's
-      // in_progress status (it would set answered_at before the disclosure, calls_assistant_disclosed)
+      // in_progress status (it would set answered_at before the disclosure, calls_assistant_disclosed).
+      // VERIFY (Twilio, N12): whether a number's StatusCallback ever sends in-progress for an inbound call at all.
       if (inbound && status === 'in_progress' && (await aiCallByRef(actor, voiceDeps(p), b.CallSid!))) return null;
       if (inbound && status === 'completed') {
         // the final status of an inbound call: one that was never answered is missed (the caller hung up
@@ -245,19 +246,21 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     // module 48: an AI call's retried fetch replays its stream (or voicemail), before Phase 1's hang-up for a
     // call that no longer rings (E423)
     const vd = voiceDeps(req.server.platform);
-    const ai = await aiCallByRef(actor, vd, callSid);
+    // never in the way of Phase 1: a failed lookup is no AI call
+    const ai = await aiCallByRef(actor, vd, callSid).catch(() => null);
     if (ai) return reconnectTwiml(actor, vd, ai.id);
     let plan: InboundCallPlan = await planInboundCall(actor, callSid, deps);
     // a caller we could not identify (blocked or invalid caller ID) has no call row and no contact
     if (plan.kind === 'hangup') return sayAndHangupTwiml('Sorry, we could not take this call. Please call again without blocking your number.');
-    // module 48: whether the assistant takes this call over, decided once (R-VOICE-3, R-VOICE-12)
+    // module 48: whether the assistant takes this call over, decided once and stored (R-VOICE-3, R-VOICE-11, R-VOICE-12)
     // never in the way of Phase 1: a failure here is no takeover
     const takeover = await planTakeover(actor, vd, callSid, plan.kind === 'voicemail').catch(() => null);
     if (plan.kind === 'voicemail' && takeover?.at) {
-      // nobody can be rung: the assistant answers at once (E421); a refusal is Phase 1's voicemail (E420)
-      const t = await takeOver(actor, vd, plan.callId);
-      if (t.kind === 'answered') return t.response;
-      if (t.kind === 'already') return reconnectTwiml(actor, vd, plan.callId);
+      // nobody can be rung: the assistant answers at once (E421); a refusal, or any failure of the takeover, is Phase 1's
+      // voicemail (E420), as on the dial-result path
+      const t = await takeOver(actor, vd, plan.callId).catch(() => null);
+      if (t?.kind === 'answered') return t.response;
+      if (t?.kind === 'already') return reconnectTwiml(actor, vd, plan.callId);
     }
     if (plan.kind === 'ring' && takeover?.at) plan = { ...plan, timeoutS: takeover.answerAfterSeconds };
     if (plan.kind === 'voicemail') plan = await inboundDialResult(actor, plan.callId, deps);

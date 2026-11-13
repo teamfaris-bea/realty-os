@@ -9,7 +9,9 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { bookSlot } from '../calendar/service.js';
 import { VOICEMAIL_NOTICE } from '../comms/voice.js';
 import { mayKeepVoicemail } from '../comms/recordings.js';
+import { handlerOf } from '../comms/repos/notify.js';
 import { ownedContact, runJobs, telephonyWebhook } from '../comms/testing.js';
+import { importedUnassigned, randomPhone } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { VOICE_LEDGER_CAP } from './ledger.js';
 import { clearVoiceTestSeams, setVoiceTestSeams } from './runtime.js';
@@ -80,11 +82,21 @@ describe('E423 E424 R-VOICE-2 R-VOICE-11: provider ordering', () => {
     expect(row.answered_at).toBeNull();
     expect(row.status).toBe('ringing');
     expect(row.ai_disclosed_at).not.toBeNull();
-    // E424: the caller hangs up before the announcement played: nothing was answered, one handback
+    // E424: the caller hangs up before the announcement played: nothing was answered, one critical handback, no tool
+    // rows, no recording kept
     await callStatus(h, w, c.callSid, c.from, 'completed', { CallDuration: '5' });
     const r = await settled(h, w.tenantId, c.callId);
     expect(r!.handback.endReason).toBe('CALLER_HUNG_UP');
+    expect(r!.handback).toMatchObject({ outcome: 'caller_ended', critical: true });
     expect((await callRowOf(h, c.callSid)).answered_at).toBeNull();
+    expect(await ledgerOf(h, c.callId)).toHaveLength(0);
+    const hbs = await handbacksOf(h, c.callId);
+    expect(hbs).toHaveLength(1);
+    expect((await h.su.query("SELECT priority FROM notifications WHERE subject_id = $1 AND kind = 'handback_hot'", [hbs[0].id])).rows).toEqual([{ priority: 'critical' }]);
+    // a recording callback for the call (the provider's), then the copy job: nothing is kept
+    await telephonyWebhook(h, '/webhooks/telephony/recording', { CallSid: c.callSid, From: w.mainNumber, RecordingSid: `RE${c.callSid.slice(2)}`, RecordingDuration: '5' });
+    await runJobs(h, w.tenantId, ['comms.recording_copy']);
+    expect((await h.su.query('SELECT 1 FROM recordings WHERE call_id = $1', [c.callId])).rows).toHaveLength(0);
   });
 
   it('R-VOICE-10 R-VOICE-21: a retried fetch for an AI call whose session is unknown here (a restart) gets voicemail', async () => {
@@ -107,6 +119,27 @@ describe('E421 E425 E427: takeover and booking edges', () => {
     const row = await callRowOf(h, c.callSid);
     expect(row.handled_by).toBe('assistant');
     expect(Math.abs(new Date(row.ai_takeover_at).getTime() - new Date(row.started_at).getTime())).toBeLessThan(10_000);
+  });
+
+  it('E421 voice-13: with nobody ringable, a failure inside the immediate takeover falls through to Phase 1\'s voicemail, never an error to the provider', async () => {
+    const x = await voiceWorld(h);
+    await h.su.query('UPDATE memberships SET alert_phone_verified_at = NULL WHERE tenant_id = $1', [x.tenantId]); // nobody is ringable
+    const contact = await ownedContact(x.agents[0]!, { consent: false });
+    const fn = `voice13_fail_${x.tenantId.replace(/-/g, '')}`;
+    await h.su.query(`CREATE FUNCTION public.${fn}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.tenant_id = '${x.tenantId}' AND NEW.handled_by = 'assistant' THEN RAISE EXCEPTION 'INJECTED_FAILURE'; END IF; RETURN NEW; END $$`);
+    await h.su.query(`CREATE TRIGGER ${fn} BEFORE UPDATE ON calls FOR EACH ROW EXECUTE FUNCTION public.${fn}()`);
+    try {
+      const callSid = sid();
+      const r = await ringing(h, x, callSid, contact.phone);
+      expect(r.statusCode).toBe(200);
+      expect(r.body).toContain(VOICEMAIL_NOTICE);
+      expect(r.body).not.toContain('fake-voice://session/');
+      expect((await callRowOf(h, callSid)).handled_by).toBe('voicemail');
+    } finally {
+      await h.su.query(`DROP TRIGGER ${fn} ON calls`);
+      await h.su.query(`DROP FUNCTION public.${fn}()`);
+    }
   });
 
   it('E425 R-VOICE-10: the vendor does not connect: the session starts and ends with vendor_error, to voicemail, never answered; its voicemail is kept', async () => {
@@ -159,17 +192,31 @@ describe('E421 E425 E427: takeover and booking edges', () => {
     expect(r!.appointmentId).not.toBeNull();
     expect((await h.su.query('SELECT status FROM appointments WHERE id = $1', [r!.appointmentId])).rows[0].status).toBe('canceled');
     expect((await h.su.query("SELECT 1 FROM jobs WHERE kind LIKE 'calendar.%' AND payload::text LIKE '%' || $1 || '%'", [r!.appointmentId])).rows.length).toBeGreaterThan(0);
+    // E427: UNCONFIRMED_SLOT, as a needs-review claim on the one handback
+    expect(r!.handback.needsReview).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'UNCONFIRMED_SLOT' })]));
+    const hbs = await handbacksOf(h, c.callId);
+    expect(hbs).toHaveLength(1);
+    const claims = (await h.su.query('SELECT text, needs_review FROM assistant_claims WHERE action_id = $1', [hbs[0].id])).rows;
+    expect(claims).toContainEqual({ text: 'The caller picked a time, but the booking was not confirmed. Confirm a time with them.', needs_review: true });
   });
 
   it('R-VOICE-6 O8: an unowned caller is offered no slots and cannot book; the handback goes to whoever the offer reaches', async () => {
-    const contact = await ownedContact(w.agents[0]!, { consent: false });
-    await h.su.query("UPDATE contacts SET owner_user_id = NULL, ownership_state = 'unassigned' WHERE id = $1", [contact.id]).catch(() => undefined);
-    const c = await aiCall(h, w, SCRIPTS.booking, { contact });
+    // an unassigned person, made the way the ownership engine makes one (an import's import_assign)
+    const phone = randomPhone();
+    const id = await importedUnassigned(h, w.tenantId, { firstName: 'Una', lastName: 'Signed', phones: [phone] });
+    const before = (await h.su.query('SELECT owner_user_id, ownership_state, offered_to_user_id FROM contacts WHERE id = $1', [id])).rows[0];
+    expect(before).toMatchObject({ owner_user_id: null, ownership_state: 'unassigned' });
+    const c = await aiCall(h, w, SCRIPTS.booking, { contact: { id, phone } });
+    await settled(h, w.tenantId, c.callId);
     const l = await ledgerOf(h, c.callId);
-    if ((await h.su.query('SELECT owner_user_id FROM contacts WHERE id = $1', [contact.id])).rows[0].owner_user_id === null) {
-      expect(l.find((x) => x.tool === 'check_availability')).toMatchObject({ decision: 'deny', reason_code: 'CONTACT_NOT_OWNED' });
-      expect(await handbacksOf(h, c.callId)).toHaveLength(1);
-    }
+    expect(l.find((x) => x.tool === 'check_availability')).toMatchObject({ decision: 'deny', reason_code: 'CONTACT_NOT_OWNED' });
+    expect((await h.su.query('SELECT 1 FROM appointments WHERE contact_id = $1', [id])).rows).toHaveLength(0);
+    const hbs = await handbacksOf(h, c.callId);
+    expect(hbs).toHaveLength(1);
+    // O8's default: the offered agent, else whoever handles the contact now (handlerOf)
+    const expected = before.offered_to_user_id ?? (await withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => handlerOf(tx, id), { db: h.database })).userId;
+    expect(expected).not.toBeNull();
+    expect(hbs[0].owner_user_id).toBe(expected);
   });
 });
 
@@ -198,7 +245,9 @@ describe('E430 R-VOICE-15: one handback, merged into a ring-time handback', () =
     const hbId = (await h.su.query("SELECT gen_random_uuid() AS id")).rows[0].id;
     await h.su.query(`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, pinned_inbound_seq, dedupe_key)
                       VALUES ($1, $2, $3, 'handback', 'internal', 'internal', 'proposed', $4, 'They called.', jsonb_build_object('inboundCallId', $5::text), 1, 'handback:none:' || $5)`, [w.tenantId, hbId, contact.id, w.agents[0]!.userId, row.id]);
-    await h.su.query("INSERT INTO jobs (tenant_id, id, queue, kind, payload, dedupe_key, run_at) VALUES ($1, gen_random_uuid(), 'default', 'assistant.enrich_handback', jsonb_build_object('actionId', $2::text), 'assistant.enrich_handback:' || $2, now())", [w.tenantId, hbId]).catch(() => undefined);
+    await h.su.query("INSERT INTO jobs (tenant_id, queue, kind, payload, dedupe_key, run_at) VALUES ($1, 'default', 'assistant.enrich_handback', jsonb_build_object('actionId', $2::text), 'assistant.enrich_handback:' || $2, now())", [w.tenantId, hbId]);
+    const enrichJob = () => h.su.query("SELECT status FROM jobs WHERE kind = 'assistant.enrich_handback' AND payload ->> 'actionId' = $1", [hbId]).then((r) => r.rows.map((x) => x.status as string));
+    expect(await enrichJob()).toEqual(['pending']);
     h.providers.voiceAgent.nextCall(SCRIPTS.booking);
     await telephonyWebhook(h, hookPath(ring.body, 'action'), { CallSid: callSid, DialCallStatus: 'no-answer' });
     await settled(h, w.tenantId, row.id);
@@ -206,10 +255,40 @@ describe('E430 R-VOICE-15: one handback, merged into a ring-time handback', () =
     expect(hbs).toHaveLength(1);
     expect(hbs[0].id).toBe(hbId);
     expect(hbs[0].payload).toMatchObject({ enriched: true, suggested: true, voice: { outcome: 'booked' }, draft: { channel: 'sms' } });
+    expect(await enrichJob()).toEqual(['pending']);
     await runAssistantJobs(h, w.tenantId, ['assistant.enrich_handback']);
+    // the job ran (it skipped at its locked re-read) and the draft is the voice result's
+    expect(await enrichJob()).not.toContain('pending');
     const after = (await h.su.query('SELECT payload FROM assistant_actions WHERE id = $1', [hbId])).rows[0].payload;
     expect(after.draft).toEqual(hbs[0].payload.draft);
     expect((await callRowOf(h, callSid)).handback_action_id).toBe(hbId);
+    // the provider's final status: still no missed-call card, the handback is in front of the agent
+    await callStatus(h, w, callSid, contact.phone, 'completed', { CallDuration: '60' });
+    expect((await h.su.query("SELECT 1 FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'missed_call'", [contact.id])).rows).toHaveLength(0);
+    expect((await h.su.query("SELECT 1 FROM notifications WHERE subject_id = $1 AND kind = 'missed_call'", [row.id])).rows).toHaveLength(0);
+  });
+
+  it('E430: a ring-time handback the agent already handled is left alone: the voice result is a new handback', async () => {
+    const contact = await ownedContact(w.agents[0]!, { consent: false });
+    const callSid = sid();
+    const ring = await ringing(h, w, callSid, contact.phone);
+    const row = await callRowOf(h, callSid);
+    const oldId = (await h.su.query("SELECT gen_random_uuid() AS id")).rows[0].id;
+    await h.su.query(`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, pinned_inbound_seq, dedupe_key,
+                        decided_by_user_id, decided_at)
+                      VALUES ($1, $2, $3, 'handback', 'internal', 'internal', 'rejected', $4, 'They called.', jsonb_build_object('inboundCallId', $5::text), 1, 'handback:none:' || $5, $4, now())`,
+      [w.tenantId, oldId, contact.id, w.agents[0]!.userId, row.id]);
+    h.providers.voiceAgent.nextCall(SCRIPTS.booking);
+    await telephonyWebhook(h, hookPath(ring.body, 'action'), { CallSid: callSid, DialCallStatus: 'no-answer' });
+    await settled(h, w.tenantId, row.id);
+    const hbs = await handbacksOf(h, row.id);
+    expect(hbs.map((x) => x.id)).toHaveLength(2);
+    const fresh = hbs.find((x) => x.id !== oldId)!;
+    expect(fresh.payload).toMatchObject({ voice: { outcome: 'booked' } });
+    expect((await callRowOf(h, callSid)).handback_action_id).toBe(fresh.id);
+    const old = (await h.su.query('SELECT status, payload FROM assistant_actions WHERE id = $1', [oldId])).rows[0];
+    expect(old.status).toBe('rejected');
+    expect(old.payload.voice).toBeUndefined();
   });
 });
 
