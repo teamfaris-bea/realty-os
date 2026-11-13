@@ -69,7 +69,7 @@ export async function deferMessageInTx(tx: Tx, messageId: string, until: Instant
   await sql`UPDATE ai_isa_turns SET not_before = ${new Date(until)}, status = 'deferred' WHERE tenant_id = app.tenant_id() AND message_id = ${messageId}`.execute(tx);
 }
 
-/** Every terminal status of an AI ISA message emits one send_result (the job is idempotent on the message). */
+/** Every terminal status of an AI ISA message emits one send_result; the job handles that status only (handlers.ts). */
 export async function emitSendResultInTx(tx: Tx, messageId: string, status: string): Promise<void> {
   await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.send_result', payload: { messageId, status }, dedupeKey: `ai_isa.send_result:${messageId}:${status}` });
 }

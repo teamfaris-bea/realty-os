@@ -251,3 +251,27 @@ describe('b12 review B12X-5: a later carrier status of an AI ISA message reaches
     expect(again.kind).toBe('duplicate');
   });
 });
+
+describe('b12 recheck R1: one carrier failure counts once (R-ISA-14; E518)', () => {
+  it('R-ISA-14 E518: the undelivered callback commits before TX2\'s sent job runs: the stale sent job does nothing and the streak is 1, care goes on', async () => {
+    const { inboundSms } = await import('../comms/testing.js');
+    const { applyMessageStatus } = await import('../comms/status.js');
+    const { aiMessages } = await import('./testing.js');
+    const l = await isaLead(h, w.agents[0]!);
+    expect((await startCare(w.agents[0]!, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    await inboundSms(h, l.phone, w.mainNumber, 'Hi, we are looking for a place soon');
+    // the worker is behind: TX2 commits the sent message and its send_result job, which does not run yet
+    await runIsa(h, w.tenantId, 4, { hold: ['ai_isa.send_result'] });
+    const sent = (await aiMessages(h, l.id)).filter((m) => m.status === 'sent').at(-1)!;
+    expect(sent).toBeTruthy();
+    const job = async () => (await h.su.query<{ s: string; st: string }>(`SELECT payload->>'status' AS s, status AS st FROM jobs WHERE kind = 'ai_isa.send_result' AND payload->>'messageId' = $1 ORDER BY id`, [sent.id])).rows;
+    expect(await job()).toEqual([{ s: 'sent', st: 'pending' }]);
+    const r = await applyMessageStatus(systemActor(w.tenantId, 'provider'), { providerEventRef: `evt-undelivered-r1-${sent.id}`, message: { id: sent.id }, providerStatus: 'undelivered', mapped: 'undelivered', errorCode: '30003', occurredAt: Date.now() as never }, depsFromPlatform(h.app.platform));
+    expect(r.kind).toBe('applied');
+    expect((await job()).map((x) => x.s)).toEqual(['sent', 'undelivered']);
+    await runIsa(h, w.tenantId, 2);
+    const a = (await h.su.query<{ n: number; end_reason: string | null }>(`SELECT undelivered_streak AS n, end_reason FROM ai_isa_assignments WHERE contact_id = $1`, [l.id])).rows[0]!;
+    expect(a).toEqual({ n: 1, end_reason: null });
+  });
+});

@@ -48,15 +48,23 @@ async function locked(tx: Tx, id: string): Promise<AssignmentRow | null> {
   return assignmentById(tx, id, 'update');
 }
 
-/** send_result (§9.2 Dispatch): every terminal status of an AI ISA message moves its turn, facts, offer and handoff. */
-export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, messageId: string, now: Instant): Promise<string> {
-  const m = await sql<{ status: string; reason: string | null; turn_id: string | null; assignment_id: string | null; category: string }>`
+/**
+ * send_result (§9.2 Dispatch): every terminal status of an AI ISA message moves its turn, facts, offer and handoff.
+ * The job handles the status it names (b12 recheck R1): each status change enqueues its own job (send.ts
+ * emitSendResultInTx), statuses only move forward, so a job whose status the message has already left was overtaken
+ * by a later status with its own job and does nothing (one carrier failure is counted once, E518). The status is
+ * read after the turn lock, which the status callback and TX2 also take.
+ */
+export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, messageId: string, status: string, now: Instant): Promise<string> {
+  const read = () => sql<{ status: string; reason: string | null; turn_id: string | null; assignment_id: string | null; category: string }>`
     SELECT m.status, m.status_reason AS reason, t.id AS turn_id, t.assignment_id, m.action_category AS category FROM messages m
       LEFT JOIN ai_isa_turns t ON t.tenant_id = m.tenant_id AND t.message_id = m.id WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}`.execute(tx);
-  const r = m.rows[0];
-  if (!r?.assignment_id) return 'NO_TURN';
-  const a = await locked(tx, r.assignment_id);
+  const peek = (await read()).rows[0];
+  if (!peek?.assignment_id) return 'NO_TURN';
+  const a = await locked(tx, peek.assignment_id);
   if (a === null) return 'NO_ASSIGNMENT';
+  const r = (await read()).rows[0]!;
+  if (r.status !== status) return 'OVERTAKEN';
   const ok = r.status === 'sent' || r.status === 'delivered';
   await sql`UPDATE ai_isa_shared_facts SET status = ${ok ? 'sent' : 'canceled'} WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND status = 'pending'`.execute(tx);
   await sql`UPDATE ai_isa_turns SET status = ${ok ? 'sent' : r.status === 'dispatch_unknown' ? 'unknown' : r.status === 'canceled' ? 'canceled' : 'blocked'}
@@ -154,7 +162,7 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
   });
   return [
     turn as JobHandler<unknown>,
-    tx('ai_isa.send_result', SendResultPayload, (t, d, a, p, now) => sendResultInTx(t, d, a, p.messageId, now)),
+    tx('ai_isa.send_result', SendResultPayload, (t, d, a, p, now) => sendResultInTx(t, d, a, p.messageId, p.status, now)),
     tx('ai_isa.stop_signal', SignalPayload, (t, d, a, p, now) => stopSignalInTx(t, d, a, p.signalId, now)),
     tx('ai_isa.finalize', AssignmentPayload, (t, d, a, p, now) => finalizeInTx(t, d, a, p.assignmentId, now)),
     tx('ai_isa.after_control', AssignmentPayload, async (t, d, _a, p, now) => {

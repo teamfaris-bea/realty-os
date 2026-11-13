@@ -3,6 +3,7 @@
 // worker; the superuser pool only clears the counsel pack, seeds the approved ai_isa policy (the policy editor is the
 // web lane's) and moves stored instants (there is no fake clock).
 import { randomUUID } from 'node:crypto';
+import type { Instant } from '@realty/core/foundation';
 import type { AiProvider } from '../providers/types.js';
 import { call } from '../admin/testing.js';
 import type { TestClient } from '../auth/testHarness.js';
@@ -88,21 +89,25 @@ export async function startCare(agent: TestClient, contactId: string, body: Reco
   return call<{ assignmentId: string; sentence: string }>(agent, 'POST', `/contacts/${contactId}/ai-isa/start`, body);
 }
 
-/** A worker over the comms, assistant and AI ISA handlers on the harness database and fakes. */
-export function isaWorker(h: ApiHarness) {
+/** A worker over the comms, assistant and AI ISA handlers on the harness database and fakes. A `hold` kind's job is put
+ *  back, a day out, without running (a worker that is behind). */
+export function isaWorker(h: ApiHarness, o: { hold?: readonly string[] } = {}) {
   const deps = depsFromPlatform(h.app.platform);
-  const registry = new HandlerRegistry().registerAll([...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never]);
+  const all = [...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never];
+  const handlers = all.map((x) => (o.hold?.includes(x.kind) ? { ...x, run: async (ctx: { now: Instant }) => ({ retryAt: (ctx.now + 86_400_000) as Instant }) } : x)) as typeof all;
+  const registry = new HandlerRegistry().registerAll(handlers);
   return createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime', 'default'], concurrency: 1, worker: `isa-test-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger });
 }
 
-/** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. */
-export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4): Promise<void> {
+/** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. Jobs of a `hold` kind stay pending. */
+export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { hold?: readonly string[] } = {}): Promise<void> {
+  const notDue = ['ai_isa.sweep', 'ai_isa.sla', ...(o.hold ?? [])];
   for (let i = 0; i < rounds; i += 1) {
-    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind NOT IN ('ai_isa.sweep','ai_isa.sla')`, [tenantId]);
+    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind <> ALL ($2::text[])`, [tenantId, notDue]);
     // the debounce reads conversations.last_inbound_at: age it so a due turn runs now
     await h.su.query(`UPDATE conversations SET last_inbound_at = last_inbound_at - interval '1 minute' WHERE tenant_id = $1 AND last_inbound_at > now() - interval '1 minute'`, [tenantId]);
     await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > now() - interval '3 minutes'`, [tenantId]);
-    await isaWorker(h).drain(30);
+    await isaWorker(h, o).drain(30);
   }
 }
 
