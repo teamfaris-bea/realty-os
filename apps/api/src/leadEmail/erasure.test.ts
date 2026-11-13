@@ -74,7 +74,8 @@ describe('F2-ERASE-HELD-LEAD-EMAIL: a held lead email goes with the person it na
     const before = (await reviews(w.owner, 'needs_review')).body.pendingCount;
 
     await freshReauth(h, w.owner);
-    expect((await call(w.owner, 'POST', `/contacts/${c}/erase`, { reason: 'PRIVACY_REQUEST' })).status).toBe(200);
+    const er = await call(w.owner, 'POST', `/contacts/${c}/erase`, { reason: 'PRIVACY_REQUEST' }); if (process.env.DEBUG_ISA) console.log('DBG', JSON.stringify(er.body));
+    expect(er.status).toBe(200);
 
     expect(await row(held)).toEqual({ status: 'erased', content: false, parsed: false, hmacs: 0, sender_domain: null });
     for (const who of [w.owner, tl]) {

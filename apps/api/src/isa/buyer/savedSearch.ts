@@ -7,8 +7,6 @@ import type { AssistantClaimId, Instant } from '@realty/core/foundation';
 import type { Claim } from '@realty/core/assistant';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { proposeSavedSearchInTx } from '../../assistant/searches.js';
-import { contactCore } from '../../assistant/repos/context.js';
 import type { IsaContext, IsaDeps } from '../effects.js';
 import { initiatedTierPassesInTx } from '../send.js';
 import { criteriaFromClaims } from './criteria.js';
@@ -36,6 +34,9 @@ export async function proposeAiSavedSearchInTx(tx: Tx, deps: IsaDeps, ctx: IsaCo
   if (a.endedAt !== null || a.pausedAt !== null) return 'CARE_NOT_LIVE';
   if (!(await savedSearchAllowedInTx(tx, ctx, { capability: true }))) return 'SAVED_SEARCH_NOT_ALLOWED';
   const c = criteriaFromClaims(a.machine.claims)!;
+  // loaded on use: module 75's static graph never reaches assistant/** (R-GMAIL-14: mailSync → comms/inbound → isa)
+  const { contactCore } = await import('../../assistant/repos/context.js');
+  const { proposeSavedSearchInTx } = await import('../../assistant/searches.js');
   const contact = await contactCore(tx, a.contactId);
   if (contact === null) return 'NO_CONTACT';
   // one qualification Claim per usable claim, in parseCriterion's input form, with its verified own-text quote
