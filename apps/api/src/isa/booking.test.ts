@@ -402,6 +402,40 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(['blocked', 'canceled']).toContain(m.status);
   });
 
+  it('J1 (reduced to its booking half, cut 5): offer, "2", the booking, the handoff; the agent\'s own text clears the deadline ("Got it" never does)', async () => {
+    const { l } = await offered();
+    await reply(l, '2');
+    const ho = (await handoffOf(h, l.id))[0]!;
+    expect(ho.reason).toBe('appointment_booked');
+    const { slaSweepInTx } = await import('./handoff.js');
+    const sweep = () => withTenantTx(systemActor(bw.tenantId as never, 'assistant'), (tx, now) => slaSweepInTx(tx, depsFromPlatform(h.app.platform).ids, now), { db: h.database });
+    await call(agent(), 'POST', `/ai-isa/handoffs/${ho.id}/ack`, {});
+    await sweep();
+    expect((await h.su.query<{ m: Date | null }>(`SELECT sla_met_at AS m FROM ai_isa_handoffs WHERE id = $1`, [ho.id])).rows[0]!.m).toBeNull();
+    const s = await sendText(agent(), l.id, 'Hi, this is your agent. Looking forward to our consultation.');
+    expect([200, 201]).toContain(s.status);
+    await runIsa(h, bw.tenantId, 2);
+    await sweep();
+    expect((await h.su.query<{ m: Date | null }>(`SELECT sla_met_at AS m FROM ai_isa_handoffs WHERE id = $1`, [ho.id])).rows[0]!.m).not.toBeNull();
+  });
+
+  it('E506 E508: the hostile model against a delivered offer (unoffered_slot, unverified_quote, team_text_quote, quoted_email_slot, listing_not_in_bundle) books nothing and shares nothing', async () => {
+    const { HostileIsaAi } = await import('../providers/fake/hostileIsaAi.js');
+    for (const attack of ['unoffered_slot', 'unverified_quote', 'team_text_quote', 'quoted_email_slot', 'listing_not_in_bundle'] as const) {
+      const { l } = await offered();
+      (h.providers as { ai: unknown }).ai = new HostileIsaAi(attack);
+      try {
+        await reply(l, 'what about next week instead?');
+      } finally {
+        (h.providers as { ai: unknown }).ai = bw.ai;
+      }
+      expect([attack, (await h.su.query(`SELECT 1 FROM appointments WHERE contact_id = $1`, [l.id])).rows.length]).toEqual([attack, 0]);
+      expect((await h.su.query(`SELECT 1 FROM ai_isa_shared_facts WHERE contact_id = $1`, [l.id])).rows).toHaveLength(0);
+      // "$" appears only on server fact lines: never in an AI message without shared facts
+      for (const m of await aiMessages(h, l.id)) expect([attack, m.body.includes('$')]).toEqual([attack, false]);
+    }
+  });
+
   it('R-ISA-14 E533: "thanks!" and "Got it" keep the confirmation; a reschedule text cancels it (card critical, status canceled)', async () => {
     const { l } = await offered();
     // the confirmation's dispatch is held back, so it is still pending when the client writes again
