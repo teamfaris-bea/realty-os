@@ -25,6 +25,7 @@ import { detailFacts } from '../people/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { actorOf, platformOf } from '../workspace/common.js';
+import { confirmationNotSentOf } from '../isa/handoff.js';
 import { HANDOFF_CLOSE_REASONS, IdParams, SLA_CLASSES } from '../isa/schemas.js';
 
 const Iso = z.string();
@@ -72,6 +73,8 @@ export const HandoffView = z.object({
   recipientUserId: z.uuid().nullable(),
   canAcknowledge: z.boolean(),
   confirmationStatus: z.string(),
+  /** b13 review B13S-3: why a confirmation did not go out (isa/handoff.ts confirmationNotSentOf); null otherwise */
+  confirmationNotSent: z.enum(['by_hand', 'unreachable', 'not_needed']).nullable(),
   pendingMessage: z.object({ id: z.uuid(), kind: z.enum(['confirmation', 'holding_line']), channel: z.string(), status: z.string(), scheduledFor: Iso.nullable() }).nullable(),
   package: HandoffPackage,
 });
@@ -164,6 +167,7 @@ async function register(app: FastifyInstance): Promise<void> {
         // 0081's isa_update: the recipient, a tenant-wide role, or the current owner of the merge root (b13 review F3)
         canAcknowledge: ackOk && (tenantWide || (row.recipient_user_id !== null && row.recipient_user_id === actor.userId) || row.root_owner),
         confirmationStatus: row.confirmation_status,
+        confirmationNotSent: await confirmationNotSentOf(tx, { contactId: row.contact_id, confirmationStatus: row.confirmation_status, pendingMessageId: row.pending_message_id }),
         pendingMessage,
         package: webPackage(row.package) as z.infer<typeof HandoffPackage>,
       };

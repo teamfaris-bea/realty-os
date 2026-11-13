@@ -76,7 +76,7 @@ describe('AI labels in the thread (R-ISA-7)', () => {
   });
 
   it('E533 V17: a pending post-handoff message says when it goes and what stops it; a canceled one reads "confirm by hand"', async () => {
-    const p = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'high', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'queued', closedReason: null } });
+    const p = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'high', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'queued', confirmationNotSent: null, closedReason: null } });
     const pending = { id: ISA_IDS.pending, kind: 'confirmation' as const, channel: 'sms', status: 'scheduled', scheduledFor: iso(1_800_000) };
     const fake = thread({ p }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ pendingMessage: pending }) });
     isaApp(fake, `/contacts/${IDS.jane}/thread`, 'agent');
@@ -84,9 +84,17 @@ describe('AI labels in the thread (R-ISA-7)', () => {
   });
 
   it('E533 V17: a canceled confirmation reads from its own status', async () => {
-    const p = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'high', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'queued', closedReason: null } });
+    const p = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'high', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'queued', confirmationNotSent: null, closedReason: null } });
     const fake = thread({ p }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ pendingMessage: { id: ISA_IDS.pending, kind: 'confirmation', channel: 'sms', status: 'canceled', scheduledFor: null } }) });
     isaApp(fake, `/contacts/${IDS.jane}/thread`, 'agent');
     await waitFor(() => expect(screen.getByTestId('ai-thread-banner').textContent).toMatch(/Confirmation not sent: confirm by hand\./));
+  });
+
+  it('E533 R-ISA-30 (b13 review B13S-3 / F4-ui): a canceled confirmation to a person D1 leaves no channel reads keep or cancel, never "confirm by hand"', async () => {
+    const p = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'none', slaDueAt: iso(0), slaMetAt: null, overdue: false, confirmationStatus: 'canceled', confirmationNotSent: 'unreachable', closedReason: null } });
+    const fake = thread({ p }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ confirmationStatus: 'canceled', confirmationNotSent: 'unreachable', pendingMessage: { id: ISA_IDS.pending, kind: 'confirmation', channel: 'sms', status: 'canceled', scheduledFor: null } }) });
+    isaApp(fake, `/contacts/${IDS.jane}/thread`, 'agent');
+    await waitFor(() => expect(screen.getByTestId('ai-thread-banner').textContent).toMatch(/cannot be confirmed by hand: keep or cancel the appointment\./));
+    expect(screen.getByTestId('ai-thread-banner').textContent).not.toMatch(/Confirmation not sent: confirm by hand/);
   });
 });

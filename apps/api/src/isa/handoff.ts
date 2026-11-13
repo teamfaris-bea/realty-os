@@ -101,6 +101,27 @@ export async function recipientFor(tx: Tx, a: Pick<AssignmentRow, 'id' | 'contac
   return { ...target, takerUserId: taker, endedByUserId };
 }
 
+/**
+ * b13 review B13S-3 / F4-ui: why a post-handoff appointment confirmation did not go out, as the web must say it.
+ * 'not_needed': a person on the team reached them first (ISA_HANDOFF_CLOSED; the card says so, nothing to do);
+ * 'unreachable': D1 leaves the person no text, call or email now, so it cannot be confirmed by hand (keep or cancel the
+ * appointment; AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE); 'by_hand': confirm it by hand. null when no confirmation
+ * failed (none planned, still pending, sent, or the pending message is a holding line). Read now, under the reader's
+ * RLS, on the record the handoff's merge chain ends at.
+ */
+export type ConfirmationNotSent = 'by_hand' | 'unreachable' | 'not_needed';
+export async function confirmationNotSentOf(tx: Tx, h: { contactId: string; confirmationStatus: string; pendingMessageId: string | null }): Promise<ConfirmationNotSent | null> {
+  if (h.confirmationStatus !== 'canceled' && h.confirmationStatus !== 'refused') return null;
+  if (h.pendingMessageId) {
+    const m = (await sql<{ category: string | null; reason: string | null }>`SELECT action_category AS category, status_reason AS reason FROM messages
+      WHERE tenant_id = app.tenant_id() AND id = ${h.pendingMessageId}`.execute(tx)).rows[0];
+    if (m && m.category !== 'ai_isa_confirmation') return null;
+    if ((m?.reason ?? '').startsWith('ISA_HANDOFF_CLOSED')) return 'not_needed';
+  }
+  const root = (await sql<{ c: string }>`SELECT app.contact_merge_root(app.tenant_id(), ${h.contactId}::uuid) AS c`.execute(tx)).rows[0]?.c ?? h.contactId;
+  return (await humanReachable(tx, root)).any ? 'by_hand' : 'unreachable';
+}
+
 /** Whether D1 leaves any human channel to the person (a text or call to a phone, an email): its reachability. */
 async function humanReachable(tx: Tx, contactId: string): Promise<{ any: boolean; callback: boolean }> {
   const o = await optOutFactsOf(tx, contactId);

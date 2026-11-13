@@ -114,6 +114,9 @@ export interface PanelAssignment {
   undoUntil: string | null;
   ownerUserId: string;
 }
+/** b13 review B13S-3: 'by_hand' (confirm it by hand), 'unreachable' (D1 leaves no channel: keep or cancel), 'not_needed' (reached first). */
+export type ConfirmationNotSent = 'by_hand' | 'unreachable' | 'not_needed';
+
 export interface PanelHandoff {
   id: string;
   reason: string;
@@ -122,6 +125,8 @@ export interface PanelHandoff {
   slaMetAt: string | null;
   overdue: boolean;
   confirmationStatus: string;
+  /** b13 review B13S-3: why a confirmation did not go out (the API decides; null when none failed) */
+  confirmationNotSent: ConfirmationNotSent | null;
   closedReason: HandoffClosedReason | null;
 }
 export interface PanelResponse {
@@ -246,6 +251,8 @@ export interface HandoffView {
   recipientUserId: string | null;
   canAcknowledge: boolean;
   confirmationStatus: string;
+  /** b13 review B13S-3: why a confirmation did not go out (the API decides; null when none failed) */
+  confirmationNotSent: ConfirmationNotSent | null;
   pendingMessage: { id: string; kind: 'confirmation' | 'holding_line'; channel: string; status: string; scheduledFor: string | null } | null;
   package: HandoffPackage;
 }

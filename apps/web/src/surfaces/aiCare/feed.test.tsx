@@ -34,6 +34,22 @@ describe('AI care feed cards (module 76)', () => {
     expect(c.textContent).not.toMatch(/\b[A-Z]{2,}_[A-Z_]+\b|confidence|score/);
   });
 
+  it('R-ISA-14 E533 R-ISA-30 (b13 review B13S-3 / F4-ui): a confirmation that did not go out to a person D1 leaves no channel says keep or cancel, never "confirm by hand"; one a person made unnecessary says so', async () => {
+    const pkg = { ...handoffView().package, reason: 'appointment_booked', commitments: ['booked_confirmation'], nextSteps: ['confirm_appointment'], notes: ['CONFIRMATION_NOT_SENT'] };
+    const blocked = { id: ISA_IDS.pending, kind: 'confirmation' as const, channel: 'sms', status: 'blocked', scheduledFor: null };
+    const v = isaApp(feedOf([handoffCard()], { handoff: handoffView({ reason: 'appointment_booked', slaClass: 'none', confirmationStatus: 'refused', confirmationNotSent: 'unreachable', pendingMessage: blocked, package: pkg }) }), '/', 'agent');
+    let c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByRole('button', { name: 'Keep or cancel the appointment' })).toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: 'Confirm the appointment' })).toBeNull();
+    expect(c.textContent).not.toMatch(/confirm by hand|confirm it by hand/i);
+    v.view.unmount();
+    cleanup();
+    isaApp(feedOf([handoffCard()], { handoff: handoffView({ reason: 'appointment_booked', confirmationStatus: 'refused', confirmationNotSent: 'not_needed', pendingMessage: blocked, package: { ...pkg, notes: [] } }) }), '/', 'agent');
+    c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    await within(c).findByText('Why');
+    expect(c.textContent).not.toMatch(/confirm by hand|confirm it by hand/i);
+  });
+
   it('R-ISA-30: Got it opens "Seen at … The deadline still runs." with the pending message line and no Cancel (Q3)', async () => {
     const pending = { id: ISA_IDS.pending, kind: 'confirmation' as const, channel: 'sms', status: 'scheduled', scheduledFor: iso(1_800_000) };
     const fake = feedOf([handoffCard()], { handoff: handoffView({ pendingMessage: pending }) }).on(`POST /ai-isa/handoffs/${ISA_IDS.handoff}/ack`, { status: 200, body: { handoffId: ISA_IDS.handoff, acknowledgedAt: new Date().toISOString(), slaMet: false, confirmationStatus: 'queued', closedReason: null } });
@@ -77,7 +93,7 @@ describe('AI care feed cards (module 76)', () => {
     cleanup();
     // Got it closes a no-deadline handoff (the ack route's close): the sheet never says a deadline still runs
     const fake = feedOf([handoffCard()], { handoff: handoffView({ slaClass: 'none', slaDueAt: iso(-60_000) }) })
-      .on(`POST /ai-isa/handoffs/${ISA_IDS.handoff}/ack`, { status: 200, body: { handoffId: ISA_IDS.handoff, acknowledgedAt: new Date().toISOString(), slaMet: false, confirmationStatus: 'none', closedReason: 'acknowledged' } });
+      .on(`POST /ai-isa/handoffs/${ISA_IDS.handoff}/ack`, { status: 200, body: { handoffId: ISA_IDS.handoff, acknowledgedAt: new Date().toISOString(), slaMet: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: 'acknowledged' } });
     isaApp(fake, '/', 'agent');
     c = await screen.findByTestId('ai-card-ai_isa_handoff');
     await userEvent.setup().click(await within(c).findByRole('button', { name: 'Got it' }));

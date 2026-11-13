@@ -15,7 +15,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { actorOf, platformOf } from '../workspace/common.js';
 import { continueCare, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
-import { closeHandoffInTx, type HandoffCloseReason } from './handoff.js';
+import { closeHandoffInTx, confirmationNotSentOf, type HandoffCloseReason } from './handoff.js';
 import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf } from './repo.js';
 import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
@@ -65,19 +65,24 @@ async function panel(req: FastifyRequest, contactId: string) {
     const sent = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching') AND dispatched_at > now() - interval '24 hours'`.execute(tx);
     // b12 recheck R13, R21: a handoff the system closed (its stored close, 0081) is done: never overdue
-    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; done: boolean; closed_reason: HandoffCloseReason | null }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status, closed_reason,
-        closed_at IS NOT NULL AS done
+    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; done: boolean; closed_reason: HandoffCloseReason | null; contact_id: string; pending_message_id: string | null }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status, closed_reason,
+        closed_at IS NOT NULL AS done, contact_id, pending_message_id
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
     // batch 13 isa-4 (b12 recheck R16 follow-up): a restart with no human touch leaves an earlier handoff open, and its
     // deadline still alerts; the panel reports the person's newest such handoff so it never reads as nothing pending
-    const eh = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; closed_reason: HandoffCloseReason | null }>`SELECT id, reason, sla_class,
-        sla_due_at, sla_met_at, confirmation_status, closed_reason
+    const eh = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; closed_reason: HandoffCloseReason | null; contact_id: string; pending_message_id: string | null }>`SELECT id, reason, sla_class,
+        sla_due_at, sla_met_at, confirmation_status, closed_reason, contact_id, pending_message_id
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND assignment_id <> ${a.id} AND closed_at IS NULL AND sla_met_at IS NULL
       ORDER BY created_at DESC, id DESC LIMIT 1`.execute(tx);
     const last = turn.rows[0];
     const capsOn = new Set(opt.rows[0]?.c ?? []);
     const hd = h.rows[0];
     const ed = eh.rows[0];
+    // b13 review B13S-3: why a confirmation did not go out, so the web never asks for a hand confirmation D1 blocks
+    const notSent = async (x: { contact_id: string; confirmation_status: string; pending_message_id: string | null } | undefined) =>
+      x ? confirmationNotSentOf(tx, { contactId: x.contact_id, confirmationStatus: x.confirmation_status, pendingMessageId: x.pending_message_id }) : null;
+    const hdNotSent = await notSent(hd);
+    const edNotSent = await notSent(ed);
     return {
       ...base,
       assignment: {
@@ -105,9 +110,9 @@ async function panel(req: FastifyRequest, contactId: string) {
       openOffer: offerRow ? { id: offerRow.id, status: offerRow.status, slots: offerRow.slots.map((x) => ({ startsAt: new Date(x.startsAt).toISOString(), endsAt: new Date(x.endsAt).toISOString() })), expiresAt: new Date(offerRow.expiresAt).toISOString() } : null,
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
       handoff: hd ? { id: hd.id, reason: hd.reason, slaClass: hd.sla_class as (typeof S.SLA_CLASSES)[number], slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && !hd.done && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status,
-        closedReason: hd.closed_reason } : null,
+        confirmationNotSent: hdNotSent, closedReason: hd.closed_reason } : null,
       earlierHandoff: ed ? { id: ed.id, reason: ed.reason, slaClass: ed.sla_class as (typeof S.SLA_CLASSES)[number], slaDueAt: ed.sla_due_at.toISOString(), slaMetAt: null,
-        overdue: ed.sla_class !== 'none' && ed.sla_due_at.getTime() < now, confirmationStatus: ed.confirmation_status, closedReason: ed.closed_reason } : null,
+        overdue: ed.sla_class !== 'none' && ed.sla_due_at.getTime() < now, confirmationStatus: ed.confirmation_status, confirmationNotSent: edNotSent, closedReason: ed.closed_reason } : null,
     };
   }, { db: deps.db });
 }

@@ -13,7 +13,7 @@ import { type PanelResponse, type TurnRow, useHandoff, usePanel, useTurns } from
 import { AiCareControls, HoldBanner, UndoToastHost, stateOfPanel, targetOfPanel, useHold, useViewer } from './Controls.js';
 import { ownerNameOf } from './Person.js';
 import { localTime } from './time.js';
-import { decisionCodeWords, endWords, escalationTopic, firstOf, messageVerb, pauseWords, statusWords, triggerWords } from './words.js';
+import { confirmationWords, decisionCodeWords, endWords, escalationTopic, firstOf, messageVerb, pauseWords, statusWords, triggerWords } from './words.js';
 
 // ---- labels ---------------------------------------------------------------------------------------------------------
 
@@ -143,7 +143,8 @@ function PendingAfterHandoff({ panel, first }: { panel: PanelResponse; first: st
         An AI {what} is scheduled for {localTime(m.scheduledFor)}. A text from anyone on the team, or any call with {first}, before then stops it.
       </p>
     );
+  // b13 review B13S-3: why a confirmation did not go out is the API's (keep or cancel when D1 leaves no channel)
   if (m.status === 'canceled' || m.status === 'blocked' || m.status === 'failed')
-    return <p className="text-[14px] text-ink">{m.kind === 'confirmation' ? 'Confirmation not sent: confirm by hand.' : 'The AI holding message was not sent.'}</p>;
+    return <p className="text-[14px] text-ink">{m.kind === 'confirmation' ? confirmationWords('refused', h.data?.confirmationNotSent ?? null) : 'The AI holding message was not sent.'}</p>;
   return null;
 }

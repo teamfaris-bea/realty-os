@@ -1332,8 +1332,11 @@
                   "confirmationStatus": {
                     "type": "string"
                   },
-                  "closedReason": {
+                  "confirmationNotSent": {
                     "$ref": "#/$defs/__schema1"
+                  },
+                  "closedReason": {
+                    "$ref": "#/$defs/__schema2"
                   }
                 },
                 "required": [
@@ -1344,6 +1347,7 @@
                   "slaMetAt",
                   "overdue",
                   "confirmationStatus",
+                  "confirmationNotSent",
                   "closedReason"
                 ],
                 "additionalProperties": false
@@ -1395,8 +1399,11 @@
                   "confirmationStatus": {
                     "type": "string"
                   },
-                  "closedReason": {
+                  "confirmationNotSent": {
                     "$ref": "#/$defs/__schema1"
+                  },
+                  "closedReason": {
+                    "$ref": "#/$defs/__schema2"
                   }
                 },
                 "required": [
@@ -1407,6 +1414,7 @@
                   "slaMetAt",
                   "overdue",
                   "confirmationStatus",
+                  "confirmationNotSent",
                   "closedReason"
                 ],
                 "additionalProperties": false
@@ -1488,6 +1496,21 @@
             "type": "string"
           },
           "__schema1": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "by_hand",
+                  "unreachable",
+                  "not_needed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema2": {
             "anyOf": [
               {
                 "type": "string",
@@ -2685,6 +2708,21 @@
           "confirmationStatus": {
             "type": "string"
           },
+          "confirmationNotSent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "by_hand",
+                  "unreachable",
+                  "not_needed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pendingMessage": {
             "anyOf": [
               {
@@ -3114,6 +3152,7 @@
           "recipientUserId",
           "canAcknowledge",
           "confirmationStatus",
+          "confirmationNotSent",
           "pendingMessage",
           "package"
         ],

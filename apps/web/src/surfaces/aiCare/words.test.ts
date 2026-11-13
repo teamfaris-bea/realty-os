@@ -44,7 +44,9 @@ import {
   escalationSentence,
   isaMessage,
   messageVerb,
+  nextStepWords,
   noteWords,
+  confirmationWords,
 } from './words.js';
 
 const CODE = /\b[A-Z]{2,}_[A-Z_]+\b/;
@@ -125,7 +127,12 @@ describe('R-ISA-22 words (module 76)', () => {
     expect(steps).toEqual(expect.arrayContaining(['call_now', 'confirm_appointment', 'review_saved_search', 'approve_saved_search']));
     for (const s of steps) expect(NEXT_STEPS as readonly string[], s).toContain(s);
     expect(noteWords('IN_FLIGHT:01900000-0000-7000-8000-000000000001')).not.toMatch(/0190/);
-    expect(noteWords('CONFIRMATION_NOT_SENT')).toMatch(/confirm by hand/);
+    // b13 review B13S-3: the frozen note says what happened; what to do now is the confirmation line (it knows D1)
+    expect(noteWords('CONFIRMATION_NOT_SENT')).toBe('The confirmation was not sent.');
+    expect(confirmationWords('refused', 'unreachable')).toMatch(/cannot be confirmed by hand: keep or cancel the appointment/);
+    expect(confirmationWords('refused', 'by_hand')).toBe('Confirmation not sent: confirm by hand.');
+    expect(confirmationWords('refused', 'not_needed')).not.toMatch(/by hand/);
+    expect(nextStepWords('keep_or_cancel_appointment')).toBe('Keep or cancel the appointment');
     expect(noteWords('SOMETHING_NEW')).toBe(OTHER_CHECK);
   });
 

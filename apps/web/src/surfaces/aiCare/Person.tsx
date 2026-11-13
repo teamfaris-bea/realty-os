@@ -436,7 +436,7 @@ function HandoffLines({ h, viewer, first, title = 'Handoff' }: { h: PanelHandoff
           {h.overdue ? ' · Overdue' : ''}. A call, text or email to {first} from {viewer.isOwner ? 'you' : viewer.ownerFirst} or a collaborator meets it.
         </p>
       )}
-      <p className="text-ink-muted">{confirmationWords(h.confirmationStatus)}</p>
+      <p className="text-ink-muted">{confirmationWords(h.confirmationStatus, h.confirmationNotSent)}</p>
     </Section>
   );
 }

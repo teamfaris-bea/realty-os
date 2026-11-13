@@ -56,7 +56,7 @@ describe('the AI care panel and strip (module 76)', () => {
   });
 
   it('R-ISA-30 E521 (batch 13 merge, 0081): the panel never gives a no-deadline handoff a "Respond by" or "Overdue", and says why a closed one is closed', async () => {
-    const ended = (h: Partial<NonNullable<PanelResponse['handoff']>>) => panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null, ...h } });
+    const ended = (h: Partial<NonNullable<PanelResponse['handoff']>>) => panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null, ...h } });
     const v = isaApp(person(ended({ slaClass: 'none' }), { live: false }), `/contacts/${IDS.jane}`, 'agent');
     expect(await screen.findByText('No deadline: no call, text or email from the team can reach Jane now, or the lead is closed.')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/Respond by|Overdue/);
@@ -66,8 +66,19 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(document.body.textContent).not.toMatch(/Respond by|Overdue/);
   });
 
+  it('R-ISA-14 E533 R-ISA-30 (b13 review B13S-3 / F4-ui): the panel never asks for a hand confirmation D1 blocks, nor after a person reached them first', async () => {
+    const ended = (h: Partial<NonNullable<PanelResponse['handoff']>>) => panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'none', slaDueAt: iso(0), slaMetAt: null, overdue: false, confirmationStatus: 'refused', confirmationNotSent: 'unreachable', closedReason: null, ...h } });
+    const v = isaApp(person(ended({}), { live: false }), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText('Confirmation not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/confirm by hand\./);
+    v.view.unmount();
+    isaApp(person(ended({ slaClass: 'critical', slaMetAt: iso(-60_000), confirmationNotSent: 'not_needed' }), { live: false }), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText('Confirmation not needed: someone on the team reached them first.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/confirm by hand/);
+  });
+
   it('R-ISA-30 E521 (batch 13 isa-4, b12 recheck R16 follow-up): after a restart with no touch, the panel shows the earlier handoff that is still open and overdue', async () => {
-    const p = panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', closedReason: null } });
+    const p = panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');
     const s = await screen.findByRole('region', { name: 'An earlier handoff is still open' });
     expect(within(s).getByText('Someone on the team ended it.')).toBeInTheDocument();
@@ -393,7 +404,7 @@ describe('Take over, End and the Undo toast (R-ISA-15, E496)', () => {
   });
 
   it('R-ISA-30 ISA-2b Q1 (batch 13 isa-4 F4): after a team lead took over, the owner never reads her own name as the handoff recipient', async () => {
-    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     ended.assignment!.endReason = 'taken_over';
     ended.assignment!.pauseReason = 'taking_over';
     const fake = person(ended, { live: false }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ reason: 'taken_over', recipientUserId: ISA_IDS.tl, canAcknowledge: false }) });
@@ -404,7 +415,7 @@ describe('Take over, End and the Undo toast (R-ISA-15, E496)', () => {
   });
 
   it('R-ISA-30 (batch 13 isa-4 F4): a lead that moved names its new owner as the recipient', async () => {
-    const ended = panel({ state: 'ended', owner: ISA_IDS.other, handoff: { id: ISA_IDS.handoff, reason: 'owner_change', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    const ended = panel({ state: 'ended', owner: ISA_IDS.other, handoff: { id: ISA_IDS.handoff, reason: 'owner_change', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     ended.assignment!.endReason = 'owner_change';
     const fake = person(ended, { live: false }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ reason: 'owner_change', recipientUserId: IDS.me }) });
     isaApp(fake, `/contacts/${IDS.jane}`, 'admin', { userId: ISA_IDS.tl });
@@ -416,7 +427,7 @@ describe('Take over, End and the Undo toast (R-ISA-15, E496)', () => {
     const closing = panel({ state: 'paused' });
     closing.assignment!.undoUntil = new Date(Date.now() + 400).toISOString();
     closing.assignment!.pauseReason = 'taking_over';
-    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     ended.assignment!.pauseReason = 'taking_over';
     let n = 0;
     const fake = person(closing, { live: false })
@@ -432,7 +443,7 @@ describe('Take over, End and the Undo toast (R-ISA-15, E496)', () => {
   it('R-ISA-15 E496: after the window (here restored from panel.undoUntil after a reload) it says "Finishing…", then who has the handoff (the actual recipient)', async () => {
     const closing = panel({ state: 'paused' });
     closing.assignment!.undoUntil = new Date(Date.now() + 400).toISOString();
-    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } });
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'taken_over', slaClass: 'high', slaDueAt: new Date(Date.now() + 3_600_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     let n = 0;
     const fake = person(closing, { live: false })
       .on(`GET /contacts/${IDS.jane}/ai-isa`, () => ({ status: 200, body: ++n <= 2 ? closing : ended }))

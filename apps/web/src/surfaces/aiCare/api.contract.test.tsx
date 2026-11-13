@@ -13,7 +13,7 @@ describe('the AI ISA web contract (isaWeb/webContract.json)', () => {
     const cases: [string, unknown][] = [
       ['GET /contacts/:id/ai-isa', panel()],
       ['GET /contacts/:id/ai-isa', panel({ state: 'paused' })],
-      ['GET /contacts/:id/ai-isa', panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'high', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null } })],
+      ['GET /contacts/:id/ai-isa', panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'high', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } })],
       ['GET /contacts/:id/ai-isa', panel({ state: 'none', canStart: true })],
       ['GET /ai-isa/assignments', { rows: [row(), row({ chip: { kind: 'paused', sentence: 'Paused: user (nobody is following up)' } })], holdSentence: 'AI assistant sending is off on this deployment.' }],
       ['GET /contacts/:id/ai-isa/turns', { turns: [turn(), turn({ status: 'blocked', denied: ['ISA_QUIET_HOURS:reply'] })] }],
@@ -27,9 +27,9 @@ describe('the AI ISA web contract (isaWeb/webContract.json)', () => {
       ['POST /ai-isa/handoffs/:id/ack', { handoffId: ISA_IDS.handoff, acknowledgedAt: new Date().toISOString(), slaMet: false, confirmationStatus: 'none', closedReason: null }],
       // batch 13 merge (0081): a handoff with no deadline, and one the system closed
       ['GET /ai-isa/handoffs/:id', handoffView({ slaClass: 'none', closedReason: 'acknowledged' })],
-      ['GET /contacts/:id/ai-isa', panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'none', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: 'lead_closed' } })],
+      ['GET /contacts/:id/ai-isa', panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'none', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: 'lead_closed' } })],
       // batch 13 isa-4 (b12 recheck R16 follow-up): an earlier handoff still open after a restart
-      ['GET /contacts/:id/ai-isa', panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', closedReason: null } })],
+      ['GET /contacts/:id/ai-isa', panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } })],
       // batch 13 isa-4 F6: ISA-2b's package fields, as handoff.ts and booking/book.ts write them
       ['GET /ai-isa/handoffs/:id', handoffView({ package: { ...handoffView().package, appointmentDetail: { appointmentId: ISA_IDS.optin, kind: 'buyer_consult', startsAt: new Date().toISOString(), endsAt: new Date().toISOString(), organizerUserId: IDS.me, offerId: ISA_IDS.other, acceptedMessageId: IDS.message, acceptedQuote: 'Tuesday at 3 works', linkId: null, calendarReadAt: new Date().toISOString(), calendarSentence: 'x', zones: ['America/New_York'], minNoticeHours: 2 }, savedSearch: { id: ISA_IDS.turn, status: 'proposed' }, recipientUserId: IDS.me, endedByUserId: null, inactivityReleaseAt: new Date().toISOString() } })],
       ['GET /ai-isa/handoffs/:id', handoffView({ package: { ...handoffView().package, appointmentDetail: null, savedSearch: null, recipientUserId: null, endedByUserId: ISA_IDS.tl, inactivityReleaseAt: null } })],

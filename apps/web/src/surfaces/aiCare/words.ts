@@ -387,10 +387,13 @@ export const NEXT_STEP_WORDS: Record<NextStep, string> = {
   prepare_cma: 'Prepare a CMA',
   confirm_subject: "Confirm the home they're selling",
 };
-export const nextStepWords = (s: string) => (NEXT_STEP_WORDS as Record<string, string>)[s] ?? OTHER_CHECK;
+/** b13 review B13S-3: the confirm step when D1 leaves no channel (the card shows it in place of confirm_appointment). */
+const EXTRA_STEP_WORDS: Record<string, string> = { keep_or_cancel_appointment: 'Keep or cancel the appointment' };
+export const nextStepWords = (s: string) => (NEXT_STEP_WORDS as Record<string, string>)[s] ?? EXTRA_STEP_WORDS[s] ?? OTHER_CHECK;
 
 export const NOTE_WORDS: Record<string, string> = {
-  CONFIRMATION_NOT_SENT: 'The confirmation was not sent: confirm by hand.',
+  // b13 review B13S-3: a frozen note says what happened; what to do now is the confirmation line (confirmationWords)
+  CONFIRMATION_NOT_SENT: 'The confirmation was not sent.',
   BOOKED_WHILE_PAUSED: 'Booked while AI care was paused; the confirmation was not sent.',
   IN_FLIGHT: 'A message was already on its way when care stopped; it may still reach them.',
 };
@@ -407,7 +410,19 @@ export const CONFIRMATION_WORDS: Record<string, string> = {
   canceled: 'Confirmation not sent: confirm by hand.',
   refused: 'Confirmation not sent: confirm by hand.',
 };
-export const confirmationWords = (s: string) => CONFIRMATION_WORDS[s] ?? OTHER_CHECK;
+/**
+ * b13 review B13S-3 / F4-ui: a confirmation that did not go out is said as the API decides it (confirmationNotSent):
+ * never "confirm by hand" when D1 leaves the person no text, call or email (718451fe's card: keep or cancel the
+ * appointment), nor when a person on the team reached them first (nothing to do).
+ */
+export const CONFIRMATION_NOT_SENT_WORDS: Record<string, string> = {
+  by_hand: 'Confirmation not sent: confirm by hand.',
+  unreachable: 'Confirmation not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.',
+  not_needed: 'Confirmation not needed: someone on the team reached them first.',
+};
+export const confirmationWords = (s: string, notSent?: string | null) => (notSent ? CONFIRMATION_NOT_SENT_WORDS[notSent] : undefined) ?? CONFIRMATION_WORDS[s] ?? OTHER_CHECK;
+/** The short form on the feed card's line ("· not sent: …"). */
+export const CONFIRMATION_NOT_SENT_SHORT: Record<string, string> = { by_hand: 'not sent: confirm by hand', unreachable: 'not sent: keep or cancel the appointment', not_needed: 'not needed: someone reached them first' };
 
 // ---- handoff deadlines and closes (0081: sla_class 'none', b12 review B12X-2; closed_reason, b12 recheck R19, R23) ----
 

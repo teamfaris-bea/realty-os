@@ -20,7 +20,7 @@ import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
 import { localDate, localTime } from './time.js';
-import { CARE_STATE_WORDS, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, CONFIRMATION_NOT_SENT_SHORT, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -230,12 +230,13 @@ function Deadline({ dueAt, label }: { dueAt: string; label: string }) {
   );
 }
 
-function pendingLine(m: NonNullable<HandoffView['pendingMessage']>): string {
+function pendingLine(m: NonNullable<HandoffView['pendingMessage']>, notSent: HandoffView['confirmationNotSent']): string {
   const v = messageVerb(m.status);
   if (v === 'sent') return 'went out';
   if (v === 'scheduled') return m.scheduledFor ? `scheduled for ${localTime(m.scheduledFor)}` : 'scheduled';
   if (v === 'queued') return 'queued';
-  return m.kind === 'confirmation' ? 'not sent: confirm by hand' : 'not sent';
+  // b13 review B13S-3: why it did not go out is the API's (never "confirm by hand" where D1 leaves no channel)
+  return m.kind === 'confirmation' ? (CONFIRMATION_NOT_SENT_SHORT[notSent ?? 'by_hand'] ?? 'not sent') : 'not sent';
 }
 
 function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: ViewerInfo; ownerUserId: string | null }) {
@@ -293,7 +294,7 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
               const text = fillLine(l, agent, team);
               return text ? (
                 <li key={l}>
-                  “{text}”{d.pendingMessage ? ` · ${pendingLine(d.pendingMessage)}` : ''}
+                  “{text}”{d.pendingMessage ? ` · ${pendingLine(d.pendingMessage, d.confirmationNotSent)}` : ''}
                 </li>
               ) : null;
             })}
@@ -309,7 +310,8 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
       {(pkg.nextSteps ?? []).length > 0 ? (
         <Block title="Next steps">
           <div className="flex flex-wrap gap-2">
-            {pkg.nextSteps!.map((s) => (
+            {/* b13 review B13S-3: no hand confirmation is possible when D1 leaves no channel: keep or cancel it instead */}
+            {pkg.nextSteps!.map((s) => (s === 'confirm_appointment' && d.confirmationNotSent === 'unreachable' ? 'keep_or_cancel_appointment' : s)).map((s) => (
               <NextStep key={s} step={s} contactId={contactId} name={card.contact?.name ?? 'them'} />
             ))}
           </div>
@@ -388,7 +390,7 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
             </p>
             {d.pendingMessage && (d.pendingMessage.status === 'scheduled' || d.pendingMessage.status === 'queued') ? (
               <p>
-                An AI {d.pendingMessage.kind === 'confirmation' ? 'confirmation' : 'holding message'} is {pendingLine(d.pendingMessage)}. A text from anyone on the team, or any call with {first}, before then stops it.
+                An AI {d.pendingMessage.kind === 'confirmation' ? 'confirmation' : 'holding message'} is {pendingLine(d.pendingMessage, d.confirmationNotSent)}. A text from anyone on the team, or any call with {first}, before then stops it.
               </p>
             ) : null}
             <Button variant="secondary" onClick={() => setSheet(null)}>
@@ -479,6 +481,7 @@ function NextStep({ step, contactId, name }: { step: string; contactId: string; 
         </Button>
       );
     case 'confirm_appointment':
+    case 'keep_or_cancel_appointment':
       return (
         <Button variant="secondary" icon="calendar" onClick={() => navigate('/tasks')}>
           {label}

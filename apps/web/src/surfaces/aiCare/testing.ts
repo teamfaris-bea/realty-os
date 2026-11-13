@@ -201,6 +201,7 @@ export function handoffView(over: Partial<HandoffView> = {}): HandoffView {
     recipientUserId: IDS.me,
     canAcknowledge: true,
     confirmationStatus: 'none',
+    confirmationNotSent: null,
     pendingMessage: null,
     package: {
       v: 1,

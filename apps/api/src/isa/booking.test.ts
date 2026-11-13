@@ -841,6 +841,9 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     // nothing hot: no confirmation-not-sent notification (`notes` above) and the card is not re-scored
     expect(card.reasons.map((r) => r.code)).not.toContain('AI_ISA_CONFIRMATION_NOT_SENT');
     expect((await handoffOf(h, l.id))[0]!.confirmation_status).toBe('refused');
+    // b13 review B13S-3 / F4-ui: the web is told why, so it never asks for a hand confirmation here
+    expect((await call<{ confirmationNotSent: string | null }>(agent(), 'GET', `/ai-isa/handoffs/${ho.id}`)).body.confirmationNotSent).toBe('not_needed');
+    expect((await call<{ handoff: { confirmationNotSent: string | null } }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`)).body.handoff!.confirmationNotSent).toBe('not_needed');
   });
 
   // b13 integration (left open since the ISA-2b merge): confirmationNotSentInTx made the card critical, moved its due time
@@ -883,6 +886,9 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(notes.length).toBeGreaterThanOrEqual(1);
     for (const n of notes) expect(n.title).not.toMatch(/^Confirm the appointment/);
     expect(notes.every((n) => /^Appointment not confirmed: /.test(n.title))).toBe(true);
+    // b13 review B13S-3 / F4-ui: the handoff view and the panel say it cannot be confirmed by hand
+    expect((await call<{ confirmationNotSent: string | null }>(agent(), 'GET', `/ai-isa/handoffs/${ho.id}`)).body.confirmationNotSent).toBe('unreachable');
+    expect((await call<{ handoff: { confirmationNotSent: string | null } }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`)).body.handoff!.confirmationNotSent).toBe('unreachable');
   });
 
   // batch 13 audit ISA2B-14 (and ISA2B-02's untested backstop): the CONFIRMATION_LATE sweep reads the notice of the
@@ -926,6 +932,8 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     const card = (await h.su.query<{ score: number; reasons: { code: string }[] }>(`SELECT score, reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff'`, [l.id])).rows[0]!;
     expect([card.score, card.reasons[0]!.code]).toEqual([98, 'AI_ISA_CONFIRMATION_NOT_SENT']);
     expect((await h.su.query(`SELECT 1 FROM notifications WHERE subject_id = $1 AND kind = 'ai_isa_handoff_hot'`, [l.id])).rows.length).toBeGreaterThanOrEqual(1);
+    // b13 review B13S-3: reachable, so the web asks for a hand confirmation
+    expect((await call<{ confirmationNotSent: string | null }>(agent(), 'GET', `/ai-isa/handoffs/${ho.id}`)).body.confirmationNotSent).toBe('by_hand');
     // the notice the booking ran under is kept with the appointment
     expect((ho.package['appointmentDetail'] as Record<string, unknown>)['minNoticeHours']).toBe(24);
   });
