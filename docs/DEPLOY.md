@@ -521,7 +521,7 @@ Encrypt both and store them away from the host. Roles are cluster-wide, so a dum
    On the app VM (§12), with `/run/realty/owner.env` rendered for this window only, pass the key **names**, so no value lands in argv; the values are exported from the secret manager in the operator's shell:
 
    ```sh
-   docker compose -f docker-compose.app-vm.yml --profile release run --rm \
+   REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm \
      -e PREVIOUS_KEK_BASE64 -e PREVIOUS_KEK_REF=prod-kek:v1 -e KEK_BASE64 -e KEK_REF=prod-kek:v2 \
      release node apps/api/dist/crypto/rotateKekMain.js
    ```

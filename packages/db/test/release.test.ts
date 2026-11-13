@@ -10,7 +10,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, appRoleAlterations, connectionSettings, ensureAppUserRole, withCredentials, withDatabase } from '../src/dbConfig.js';
 import { runRelease } from '../src/release.js';
-import { inspectCreateWindow, openCreateWindow } from '../src/rolePreflight.js';
+import { inspectCreateWindow, openCreateWindow, postReleaseProblems } from '../src/rolePreflight.js';
+import { runPreflight } from '../src/scripts/preflight.js';
 import { createTestDb, type TestDb } from '../src/testing/index.js';
 import { type TrialOwner, admin, cleanupTrials, clusterRoleSnapshot, createTrialDb, createTrialOwner, withClient } from './trialOwner.js';
 
@@ -174,10 +175,48 @@ describe('R-DEPLOY-4: the release step as a non-superuser BYPASSRLS owner', () =
     // crash path: a window opened by hand (as a run killed inside migrate() leaves it)
     await withClient(owner.url(database), (c) => openCreateWindow(c, () => {}));
     expect((await catalog(database)).createGrants).toBeGreaterThan(0);
+    // E479: preflight --owner reports the open window, and fails (deploy-2)
+    const out: string[] = [];
+    const code = await runPreflight(['--owner'], { ownerUrl: owner.url(database), appUrl: undefined, out: (l) => out.push(l) });
+    expect(out).toContain('schema CREATE window closed: failed: left open by an earlier run (the release step closes it first)');
+    expect(out.at(-1)).toBe('preflight failed: 1 checks');
+    expect(code).toBe(1);
     const third = await run(database);
     expect(third.err).toBeNull();
     expect(third.lines[0]).toBe('schema CREATE window left open by an earlier run: closed');
     expect(await catalog(database)).toMatchObject({ createGrants: 0, defaultAcl: 0 });
+  }, 300_000);
+
+  it('R-DEPLOY-4 E479: the post-checks refuse a definer function owned by anyone else, a remaining CREATE grant and a definer role with LOGIN (deploy-2)', async () => {
+    const database = await createTrialDb(owner, 'postcheck');
+    expect((await run(database)).err).toBeNull();
+    // every bad state inside one superuser transaction that rolls back: app_definer is cluster-wide, and other test
+    // files run at the same time
+    const problems = await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('CREATE FUNCTION app.trial_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$');
+        await c.query('GRANT CREATE ON SCHEMA app TO app_definer');
+        await c.query('ALTER ROLE app_definer LOGIN');
+        const su = (await c.query<{ u: string }>('SELECT current_user::text AS u')).rows[0]!.u;
+        return { su, list: await postReleaseProblems(c) };
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    }, database);
+    expect(problems.list).toEqual(expect.arrayContaining([
+      `SECURITY DEFINER function app.trial_definer is owned by ${problems.su}, not app_definer or app_retention`,
+      'the definer roles still hold CREATE on schema app (the schema CREATE window is not closed)',
+      'app_definer must be NOLOGIN NOSUPERUSER BYPASSRLS',
+    ]));
+    // and the release step refuses with E479 when such a state is committed (a definer function the trial owner owns,
+    // inside its own trial database only)
+    await withClient(owner.url(database), (c) => c.query('CREATE FUNCTION app.trial_owned_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$'));
+    const r = await run(database);
+    expect(r.err).not.toBeNull();
+    expect((r.err as Error & { check?: string }).check).toBe('E479');
+    expect(r.err!.message).toMatch(/^post-checks failed: SECURITY DEFINER function app\.trial_owned_definer is owned by /);
+    expect(await admin((c) => c.query(`SELECT rolcanlogin FROM pg_roles WHERE rolname = 'app_definer'`).then((x) => x.rows[0].rolcanlogin))).toBe(false);
   }, 300_000);
 
   it('R-DEPLOY-4 E479: when the last migration fails the release exits with the error and the CREATE window is closed', async () => {
