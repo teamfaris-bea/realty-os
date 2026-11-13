@@ -246,4 +246,5 @@ export const CMA_ERROR_MESSAGES: Record<string, string> = {
   CMA_REPORT_TOO_LONG: 'The report is too long for one email. Shorten the notes or disclosure items. Nothing was sent.',
   CMA_RECIPIENT_BLOCKED: 'The send-time check would block this email now, so nothing was sent.',
   CMA_NO_RECIPIENT: 'To share, prepare it from the seller’s page. Nothing was sent.',
+  CMA_SHARE_KEY_TAKEN: 'Another message already holds this CMA’s email, so this CMA can’t be shared. Prepare a new CMA from the seller’s page. Nothing was sent.',
 };

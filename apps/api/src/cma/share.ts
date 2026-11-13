@@ -457,6 +457,10 @@ export async function shareCma(run: AdminTx, deps: CommsDeps, actor: UserActor, 
     if (reportSha256(report) !== b.reportSha256) throw new AppError('CMA_STALE', { reason: 'REPORT_CHANGED' });
     const m = await createHumanEmailInTx(tx, deps, actor, { contactId: b.recipientContactId, toPointId: b.toPointId, subject: report.subject, body: text, idempotencyKey: shareKey(row.id) }, now as never);
     if (!m.ok) throw new AppError('CMA_RECIPIENT_BLOCKED', { reasons: [m.code] });
+    // The CMA freezes only with the email this share created (R-CMA-8). A completed share was replayed above, and a
+    // rolled-back one left no message, so an earlier message under the share's key is one the share never made (compose
+    // admits the same `h:{user}:` key; audit cma-v2a F8): refused, nothing frozen, nothing sent (E600).
+    if (!m.created) throw new AppError('CMA_SHARE_KEY_TAKEN', { messageId: m.messageId });
     const u = await sql`UPDATE cma_reports SET status = 'shared', shared_by_user_id = app.user_id(), shared_message_id = ${m.messageId}::uuid
        WHERE tenant_id = app.tenant_id() AND id = ${row.id}::uuid AND status = 'draft'`.execute(tx);
     if (Number(u.numAffectedRows ?? 0) !== 1) throw new AppError('NOT_FOUND');

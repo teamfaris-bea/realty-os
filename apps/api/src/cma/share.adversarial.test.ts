@@ -92,6 +92,28 @@ describe('adversarial', () => {
     expect(sentTo(d.email) + sentTo(co.email)).toBe(1);
   });
 
+  // Audit cma-v2a F8: compose's client key regex admits the share's own key ('cma-share:{id}') and both store it as
+  // `h:{user}:{key}`, so the creator could pre-create any email under it. The share must never freeze the CMA with a
+  // message it did not create: that would break "the CMA freezes with its message" (R-CMA-8) and ISA-3's "a CMA shared".
+  it('E600 R-CMA-8: a message the share did not create under its key (pre-made through POST /contacts/:id/messages) is refused CMA_SHARE_KEY_TAKEN; the CMA stays a draft and nothing more is created or sent', async () => {
+    const d = await draft();
+    const crafted = await call<{ message: { id: string } }>(agent(), 'POST', `/contacts/${d.c}/messages`, { channel: 'email', subject: 'Something else', body: 'Not the report.', idempotencyKey: `cma-share:${d.id}` });
+    expect(crafted.status).toBe(200);
+    const before = (await h.su.query('SELECT count(*)::int AS n FROM messages WHERE contact_id = $1', [d.c])).rows[0].n;
+    const sentBefore = sentTo(d.email);
+    await withPlatformCmaCleared(h, async () => {
+      const pv = (await sharePreview(agent(), d.id)).body.preview;
+      expect(pv.canShare).toBe(true);
+      const r = await shareFrom(agent(), pv);
+      const e = (r.body as { error?: { code: string; details?: unknown } }).error;
+      expect([r.status, e?.code, e?.details]).toEqual([409, 'CMA_SHARE_KEY_TAKEN', { messageId: crafted.body.message.id }]);
+    });
+    expect((await h.su.query('SELECT status, shared_message_id FROM cma_reports WHERE id = $1', [d.id])).rows[0]).toEqual({ status: 'draft', shared_message_id: null });
+    expect((await h.su.query('SELECT count(*)::int AS n FROM messages WHERE contact_id = $1', [d.c])).rows[0].n).toBe(before);
+    expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE action = 'cma.shared' AND entity_id = $1", [d.id])).rows[0].n).toBe(0);
+    expect(sentTo(d.email)).toBe(sentBefore);
+  });
+
   it('R-CMA-8: a superseded draft is never shared (CMA_NOT_DRAFT); a body cannot set the email\'s text or subject (strict)', async () => {
     const d = await draft();
     const pv = await withPlatformCmaCleared(h, async () => (await sharePreview(agent(), d.id)).body.preview);

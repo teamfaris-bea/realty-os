@@ -439,6 +439,7 @@ export const ERROR_STATUS = {
   CMA_REPORT_TOO_LONG: 422, // the report's email text is over its cap (details.parts: roles and lengths; E614)
   CMA_RECIPIENT_BLOCKED: 409, // the send-time check would block the email now, or there is no sender or address (details.reasons; D1, E603)
   CMA_NO_RECIPIENT: 422, // a research CMA, or one whose subject is a listing, is not shared (details.reason; E609)
+  CMA_SHARE_KEY_TAKEN: 409, // a message the share did not create already holds its key `cma-share:{id}`: nothing frozen or sent; prepare a new CMA (details.messageId; E600, audit cma-v2a F8)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
