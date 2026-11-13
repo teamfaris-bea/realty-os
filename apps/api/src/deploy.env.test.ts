@@ -51,6 +51,12 @@ describe('deploy/env.staging.example', () => {
     expect(c.fub.provider).toBe('fake');
     expect(c.mls).toMatchObject({ provider: 'fake', liveCalls: false });
     expect(c.telephonyLiveRequests).toBe(false);
+    // b12 review deploy-2: every live switch is in the staging file at its off value, as in the other templates
+    for (const [k, v] of [['MLS_LIVE_CALLS', 'false'], ['TELEPHONY_LIVE_REQUESTS', 'false'], ['AI_ISA_LIVE_SENDS', 'false'], ['PUBLIC_RECORDS_LIVE_CALLS', 'false'], ['PUBLIC_RECORDS_PROVIDER', 'fake']]) {
+      expect(vars.get(k!), k).toBe(v);
+    }
+    expect(c.aiIsaLiveSends).toBe(false);
+    expect(c.publicRecords).toMatchObject({ provider: 'fake', liveCalls: false });
     expect(c.kekRef).toBe('staging-kek:v1');
     expect(c.cookieSecure).toBe(true);
     // R-DEPLOY-5: the compose database is on the same VM's network: staging only, allowed by ALLOW_FAKE_PROVIDERS
