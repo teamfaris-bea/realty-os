@@ -17,6 +17,7 @@ import {
 } from './coreSeam.js';
 import { writeHandoffInTx } from './handoff.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
+import { onEscalationInTx, renderSellerFactsInTx, writeSellerFactsInTx } from './seller/index.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
 
@@ -141,6 +142,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         break;
       case 'escalate':
         if (act.type !== 'terminal') await escalationCardInTx(env, act.class, act.type, act.priority);
+        await onEscalationInTx(tx, ctx.a, act.class); // ISA-3 H6: a pricing hold suspends comps (E502)
         break;
       case 'pause':
         await sql`UPDATE ai_isa_assignments SET paused_at = ${new Date(now)}, paused_by_kind = 'system', pause_reason = ${act.reason}
@@ -271,17 +273,20 @@ async function escalationCardInTx(env: ApplyEnv, cls: string, type: string, prio
  */
 export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: IsaState): Promise<string | null> {
   const { tx, deps, ctx, now } = env;
-  const channel = ctx.channels.includes(q.channel) ? q.channel : ctx.channels[0];
+  // ISA-3 H2: a seller facts message is server-built and re-checked here (TX-B); comps need the bound email, no fallback
+  const sf = await renderSellerFactsInTx(tx, env.actor, ctx.a, now, q);
+  if (sf !== null && !sf.ok) return null;
+  const channel = sf !== null ? sf.channel : ctx.channels.includes(q.channel) ? q.channel : ctx.channels[0];
   if (channel === undefined) return null;
   const point = ctx.a.boundPoints[channel];
   if (!point) return null;
-  const parts: string[] = q.lines.map((l) => fillLine(l, ctx.who));
+  const parts: string[] = sf !== null ? [sf.body] : q.lines.map((l) => fillLine(l, ctx.who));
   const offer = s.offer;
   if (q.messageKind === 'offer' && offer !== null) parts.push(renderOffer({ slots: offer.slots, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
   if (q.messageKind === 'confirmation' && offer !== null && q.slotIndex !== null && offer.slots[q.slotIndex - 1]) {
     parts.unshift(renderConfirmation({ slot: offer.slots[q.slotIndex - 1]!, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
   }
-  if (q.text !== null && q.text.trim() !== '') parts.push(q.text.trim());
+  if (sf === null && q.text !== null && q.text.trim() !== '') parts.push(q.text.trim());
   const bodyCore = parts.join(channel === 'email' ? '\n\n' : ' ').trim();
   if (bodyCore === '') return null;
   const prior = await sql<{ n: number; last: Date | null }>`SELECT count(*)::int AS n, max(dispatched_at) AS last FROM messages WHERE tenant_id = app.tenant_id()
@@ -328,6 +333,7 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
       body_sha256 = ${sha256(body)}, icu_tz_version = ${process.versions.tz ?? null}, pg_tzdata_version = current_setting('server_version'),
       status = 'sending', state_after = ${s.ended !== null ? 'ended' : s.phase}
     WHERE tenant_id = app.tenant_id() AND id = ${turn} AND message_id IS NULL`.execute(tx);
+  if (sf !== null) await writeSellerFactsInTx(tx, deps.ids, ctx.a, turn, res.messageId, sf.pendingFacts); // ISA-3 H2: the pending facts
   return res.messageId;
 }
 

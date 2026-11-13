@@ -21,6 +21,7 @@ import {
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
+import { factPlaceholdersInTx, sellerBundleInTx } from './seller/index.js';
 
 export type TurnDeps = IsaDeps & { envelope: EnvelopeService };
 
@@ -153,22 +154,26 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
          OR (m.direction = 'outbound' AND m.status IN ('sent','delivered')
              AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = m.tenant_id AND p.id = ANY (${bound}::uuid[]) AND p.address = m.to_address)))
      ORDER BY m.created_at DESC LIMIT 20`.execute(tx);
+  // ISA-3 H8 (R-ISA-20): a sent facts message enters the prompt as a fixed placeholder, never its body
+  const placeholders = await factPlaceholdersInTx(tx, msgs.rows.map((m) => m.id));
+  // ISA-3 H1: the seller bundle (handles, unavailable codes, flags); empty for a buyer
+  const sb = await sellerBundleInTx(tx, actor((await sql<{ t: string }>`SELECT app.tenant_id()::text AS t`.execute(tx)).rows[0]!.t), a, now);
   const caps = capabilitiesInEffect(ctx.content, (await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx)).rows[0]?.c ?? ['converse']);
   const first = (await sql<{ n: string | null }>`SELECT split_part(COALESCE(display_name, ''), ' ', 1) AS n FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${a.contactId}`.execute(tx)).rows[0]?.n ?? null;
-  const messages = msgs.rows.reverse().map((m) => ({ messageId: m.id, direction: m.direction, channel: m.channel, text: m.direction === 'inbound' ? clientOwnText(m.body, m.channel).text : m.body, at: instantFromDate(m.created_at) }));
+  const messages = msgs.rows.reverse().map((m) => ({ messageId: m.id, direction: m.direction, channel: m.channel, text: m.direction === 'inbound' ? clientOwnText(m.body, m.channel).text : (placeholders.get(m.id) ?? m.body), at: instantFromDate(m.created_at) }));
   const replyChannel = (a.machine.lastInboundChannel && ctx.channels.includes(a.machine.lastInboundChannel) ? a.machine.lastInboundChannel : ctx.channels[0]) ?? 'sms';
   const prompt = buildIsaPrompt({
     side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end', ...[...caps].filter((c) => c === 'book_appointments').map(() => 'offer_slots')],
     replyAllowedNow: ctx.facts.windowOpenNow, replyChannel, windowLabel: `${ctx.content.window.startSec / 3600}:00–${ctx.content.window.endSec / 3600}:00 local`,
-    heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: [], unavailable: ['listings: BUNDLE_NOT_BUILT', 'sold_comps_unavailable: PLATFORM_NOT_CLEARED'],
+    heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: sb.handles, unavailable: ['listings: BUNDLE_NOT_BUILT', ...(a.side === 'buyer' ? ['sold_comps_unavailable: PLATFORM_NOT_CLEARED'] : sb.unavailable)],
     offer: null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
   });
   const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.channel === 'sms' || m.direction === 'inbound' }));
   const decideBase: Prepared['decideBase'] = {
-    side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(), competitionHandles: new Set(), compsAvailable: false,
+    side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(), competitionHandles: new Set(sb.competitionHandles), compsAvailable: sb.compsAvailable,
     heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive: false, offer: null, meetRequested: a.machine.intents.length > 0,
     confirmationInTime: () => false, savedSearchAllowed: false, intents: a.machine.intents, priorClaims: a.machine.claims, appointmentBooked: a.machine.appointment,
-    mlsListedElsewhere: false, subjectConfirmed: false, zone: ctx.facts.zone,
+    mlsListedElsewhere: sb.mlsListedElsewhere, subjectConfirmed: sb.subjectConfirmed, zone: ctx.facts.zone,
     identity: { brokerageLegalName: ctx.who.brokerageName, teamName: ctx.who.teamName, agentFirstName: ctx.who.agentFirstName, scope: 'agent', allowedLinkHosts: [] } as never,
     promptSources: prompt.sources, claimId: (i: number) => `${turnId.slice(0, 24)}${String(i).padStart(12, '0')}`.slice(0, 36),
   };
