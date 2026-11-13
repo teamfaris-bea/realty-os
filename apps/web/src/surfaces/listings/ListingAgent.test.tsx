@@ -81,4 +81,18 @@ describe('Listing agent control (b11 review api-ui/F8)', () => {
     await user().click(within(s).getByRole('button', { name: 'Change listing agent' }));
     expect(await within(s).findByText("That person can't be a listing agent now (not active, or a TC). Choose someone else.")).toBeInTheDocument();
   });
+
+  it('R-OWN-22 R-SELL-1 (web; b11 review api-ui/F8, API side): a 500 from the change says the agent was not changed and nothing was saved, never that it changed; the page still names the agent the listing has', async () => {
+    const fake = app('owner', listing(), (f) => f.on(`PATCH /listings/${LISTING}/agent`, err(500, 'INTERNAL_ERROR')));
+    const s = await agentSection();
+    await within(s).findByText('Sam Seller');
+    await user().selectOptions(within(s).getByLabelText('New listing agent'), RIO);
+    await user().click(within(s).getByRole('button', { name: 'Change listing agent' }));
+    expect(await within(s).findByText('The listing agent was not changed, and nothing was saved. If it happens again, this listing’s record needs a fix on our side.')).toBeInTheDocument();
+    expect(within(s).queryByText(/Listing agent changed/)).toBeNull();
+    expect(within(s).queryByText(/Try again in a moment/)).toBeNull();
+    expect(within(s).getByText('Sam Seller')).toBeInTheDocument();
+    // one request: a 500 is not retried behind the person's back
+    expect(fake.callsTo(`PATCH /listings/${LISTING}/agent`).map((c) => c.body)).toEqual([{ listingAgentUserId: RIO }]);
+  });
 });
