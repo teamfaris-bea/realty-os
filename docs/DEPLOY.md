@@ -24,7 +24,7 @@ docker build --target api -t realty-api:<version> .
 docker build --target web -t realty-web:<version> .
 ```
 
-`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. It takes **two** env files (§3): copy `deploy/env.production.example` to `.env.production` (the app's environment, which the api, worker and release containers read) and `deploy/env.owner.example` to `.env.owner` (the database owner's user, password and URL, which only the postgres service and the release step receive, by interpolation), and fill both in. Then `docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build`; the `--env-file .env.owner` flag is needed on **every** compose command, because the compose file itself reads the owner's credentials from it (and `WEB_PORT` from the shell). Never put an owner credential in `.env.production`: the API and the worker refuse to start in production with one in their environment (§2). A stack that still keeps one env file (before batch 5) moves `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, `POSTGRES_DB` and `MIGRATION_DATABASE_URL` from `.env.production` into `.env.owner` and switches its `--env-file` to `.env.owner`; until then the new API and worker refuse to start and name the variables to move. For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`. A fake-provider staging stack starts from `deploy/env.staging.example` instead (`docs/STAGING.md`). `docker-compose.prod.yml` is the single-VM **staging and rehearsal** stack: its Postgres runs in the stack without TLS. Real teams run `docker-compose.app-vm.yml` on an app VM, with the database on its own host over verified TLS: §12 is that runbook.
+`docker-compose.prod.yml` is the single-VM **staging and rehearsal** stack (its Postgres runs in the stack without TLS): Postgres, then release, then API and worker, then web. It takes **two** env files (§3): copy `deploy/env.staging.example` to `.env.production` (the app's environment, which the api, worker and release containers read; `deploy/env.production.example` is the variable reference of a real deployment and no longer pairs with this stack, b12 review deploy-1) and `deploy/env.owner.example` to `.env.owner` (the database owner's user, password and URL, which only the postgres service and the release step receive, by interpolation), and fill both in. Then `docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build`; the `--env-file .env.owner` flag is needed on **every** compose command, because the compose file itself reads the owner's credentials from it (and `WEB_PORT` from the shell). Never put an owner credential in `.env.production`: the API and the worker refuse to start in production with one in their environment (§2). A stack that still keeps one env file (before batch 5) moves `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, `POSTGRES_DB` and `MIGRATION_DATABASE_URL` from `.env.production` into `.env.owner` and switches its `--env-file` to `.env.owner`; until then the new API and worker refuse to start and name the variables to move. See `docs/STAGING.md`. Real teams run `docker-compose.app-vm.yml` on an app VM, with the database on its own host over verified TLS, and a TLS-terminating load balancer in front of `web`: §12 is that runbook.
 
 - **Storage volume.** With `STORAGE_PROVIDER=local`, set `STORAGE_DIR=/var/lib/realty/storage`: the compose file mounts the named volume `storage` there on the API and the worker, and the `api` image creates that directory owned by `node`. Any other path is not writable in the image, and `/api/ready` then reports `degraded` with `storage: failed`.
 - **Re-resolving the API.** nginx resolves `API_UPSTREAM` through `NGINX_RESOLVER` (default `127.0.0.11`, Docker's DNS) at most every 10 s, so a recreated `api` container is found again. If you run the `web` image outside Docker networking, set `NGINX_RESOLVER` to a resolver that knows the API's name.
@@ -615,6 +615,12 @@ pnpm --filter @realty/db counsel-review -- --revoke --keys platform:<name>@<vers
 **Owner decision D11 (2026-11-12).** The owner reported that counsel cleared nine items. Seven have a pack, all at version `2026.11.0`, and are recorded with one command (dry run, read it, then the same command with `--apply`). The pins keep this command from clearing any later version of these packs:
 
 ```sh
+# the app VM (§12, real teams): render /run/realty/owner.env for this window, run it through the release profile, then remove owner.env
+REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release \
+  node packages/db/dist/scripts/counsel-review.js \
+  --keys platform:fair_housing@2026.11.0,platform:coaching@2026.11.0,platform:gmail@2026.11.0,platform:voice@2026.11.0,platform:avm@2026.11.0,platform:review_requests@2026.11.0,platform:portal@2026.11.0 \
+  --reviewed-on 2026-11-12 --reference "counsel review reported by the owner, 2026-11-12 (owner decision D11)"
+# the single-VM staging and rehearsal stack only (docker-compose.prod.yml, .env.owner)
 docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
   node packages/db/dist/scripts/counsel-review.js \
   --keys platform:fair_housing@2026.11.0,platform:coaching@2026.11.0,platform:gmail@2026.11.0,platform:voice@2026.11.0,platform:avm@2026.11.0,platform:review_requests@2026.11.0,platform:portal@2026.11.0 \
@@ -636,6 +642,12 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 The D10 outreach clearance is recorded on its own command, never in the seven-key D11 command, and only after the owner confirms that counsel's review covered the brief's verify_items 9 (SC Code 30-2-50: internal display on existing contacts, absentee prospecting, vendor data, texts, LLC and out-of-state owners) and 10 (Beaufort County's GIS distribution policy inside a multi-tenant CRM) (owner question 1; batch 11 reconciliation homeowner-8). The owner's D11 attestation (PHASE2_3_PLAN D11) names this item; if counsel's review covered both questions, its date and reference are the ones to record, otherwise wait for the review that does. Fill in the placeholders from that review (dry run first, then `--apply`):
 
 ```sh
+# the app VM (§12, real teams): render /run/realty/owner.env for this window, run it through the release profile, then remove owner.env
+REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release \
+  node packages/db/dist/scripts/counsel-review.js \
+  --keys platform:public_records_outreach@2026.11.0 \
+  --reviewed-on <review date, YYYY-MM-DD> --reference "<counsel reference: the review that covered verify_items 9 and 10>"
+# the single-VM staging and rehearsal stack only (docker-compose.prod.yml, .env.owner)
 docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
   node packages/db/dist/scripts/counsel-review.js \
   --keys platform:public_records_outreach@2026.11.0 \
@@ -648,13 +660,18 @@ Recording it builds nothing: the pack gates no outreach path, and the homeowner 
 
 `platform:gbp` (Google Business Profile, module 53) is **not** covered by D11: never add it to the command above. Record it only after its own counsel review (PHASE2_3_PLAN §7 C15), pinned to the version counsel reviewed, with the same dry run and `--apply`.
 
-Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); the compose form above has not been run against a compose stack.
+Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); neither the app-VM form nor the compose form above has been run against a stack.
 
 **D9: `platform:cma` and the licence pack's valuation section (batch 10).** Owner decision D9 adds a CMA built in-house from the team's own MLS sold data (an estimate, never an appraisal; never a third-party AVM). Two separate records hold it back, and neither is turned on by this release:
 
 - **`platform:cma@2026.11.0`** ships unreviewed (`0061_cma_schema.sql`). It is not a D11 pack, so the D11 command above never includes it. Record it with this same command, and only on the owner's attestation that counsel cleared the in-house CMA wording (C6 extended: client CMA wording, the "not an appraisal" placement, the state statements V4, USPAP SoP 11-1 V5/V7). Dry run first:
 
   ```sh
+  # the app VM (§12, real teams): render /run/realty/owner.env for this window, run it through the release profile, then remove owner.env
+  REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release \
+    node packages/db/dist/scripts/counsel-review.js --keys platform:cma@2026.11.0 \
+    --reviewed-on YYYY-MM-DD --reference "<the owner's attestation of counsel's clearance of the in-house CMA wording, and where it is recorded>"
+  # the single-VM staging and rehearsal stack only (docker-compose.prod.yml, .env.owner)
   docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
     node packages/db/dist/scripts/counsel-review.js --keys platform:cma@2026.11.0 \
     --reviewed-on YYYY-MM-DD --reference "<the owner's attestation of counsel's clearance of the in-house CMA wording, and where it is recorded>"
