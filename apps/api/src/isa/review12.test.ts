@@ -1090,7 +1090,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
   });
 
   it('R-ISA-30 (b12 recheck R19): the panel\'s handoff and the "Got it" result say why a handoff is closed: null while open, then deadline_met, lead_closed, acknowledged or care_restarted', async () => {
-    type PanelHandoff = { id: string; reason: string; slaClass: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; closedReason: string | null };
+    type PanelHandoff = { id: string; reason: string; slaClass: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; confirmationNotSent: string | null; closedReason: string | null }; // b13 review B13S-3
     const panelOf = async (as: TestClient, contactId: string) => {
       const p = await call<{ handoff: PanelHandoff | null }>(as, 'GET', `/contacts/${contactId}/ai-isa`);
       expect(p.status).toBe(200);
@@ -1099,12 +1099,12 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     const closedReasonOf = async (handoffId: string) => (await h.su.query<{ r: string | null }>(`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE id = $1`, [handoffId])).rows[0]!.r;
     // open, acknowledged with a deadline: nothing closed it; then a touch and the sweep: deadline_met
     const met = await handedToA1();
-    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: null, overdue: false, confirmationStatus: expect.any(String), closedReason: null });
+    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: null, overdue: false, confirmationStatus: expect.any(String), confirmationNotSent: null, closedReason: null });
     const ack = await call<Record<string, unknown>>(met.a1, 'POST', `/ai-isa/handoffs/${met.ho.id}/ack`, {});
     expect([ack.status, ack.body]).toEqual([200, { handoffId: met.ho.id, acknowledgedAt: expect.any(String), slaMet: false, confirmationStatus: expect.any(String), closedReason: null }]);
     await touch(met.l.id);
     await ageAndSweep(met.ho.id);
-    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: expect.any(String), overdue: false, confirmationStatus: expect.any(String), closedReason: 'deadline_met' });
+    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: expect.any(String), overdue: false, confirmationStatus: expect.any(String), confirmationNotSent: null, closedReason: 'deadline_met' });
     // a lead closed while its deadline runs: lead_closed, which the panel tells apart from a handoff the sweep never reached
     const shut = await handedToA1();
     expect((await command(shut.a1, shut.l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
