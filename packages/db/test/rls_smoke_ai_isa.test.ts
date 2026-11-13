@@ -18,7 +18,7 @@ import { recordConsentEvent } from '../src/consent.js';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, drainFollowups, type Harness, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
 import {
-  closedZone, dispatchCode, hmacHex, inbound, type IsaWorld, type Lead, leadUnderCare, markSent, queueAi, setupIsaWorld, sha, startCare,
+  closedZone, dispatchCode, hmacHex, inbound, type IsaWorld, type Lead, leadUnderCare, markSent, openWeekdayZone, queueAi, setupIsaWorld, sha, startCare,
 } from './rls_smoke_ai_isa.fixture.js';
 
 const NEW_TABLES = ['ai_isa_agent_optins', 'ai_isa_assignments', 'ai_isa_controls', 'ai_isa_stop_signals', 'ai_isa_person_blocks', 'ai_isa_turns',
@@ -347,6 +347,44 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
     await h.su.query(`UPDATE contacts SET timezone_source = 'area_code' WHERE id = $1`, [l2.contactId]);
     await inbound(x, l2);
     expect(await dispatchCode(x, (await queueAi(x, l2)).messageId)).toBe('ISA_ZONE_UNRESOLVED');
+  });
+
+  it('R-ISA-10 (b12 recheck R4, B12X-6): an initiated AI message inside the window on a federal-holiday weekday is refused ISA_QUIET_HOURS; the same message goes on the next business day', async () => {
+    // There is no fake clock: the guard reads now(). The zone is pinned so the local time is inside the window on a
+    // weekday, and app.ai_isa_us_federal_holiday (proved equal to core usFederalHolidays above) is swapped, in this
+    // test's own database, for a calendar whose holiday is that local day; then for one whose holiday was the day
+    // before (today is the next business day). The original is restored after.
+    const zone = openWeekdayZone();
+    const [today] = await suRows<{ d: string; dow: number }>(h.su, `SELECT to_char((now() AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS d,
+      extract(isodow FROM now() AT TIME ZONE $1)::int AS dow`, [zone]);
+    expect(today!.dow).toBeLessThanOrEqual(6);
+    const [orig] = await suRows<{ def: string }>(h.su, `SELECT pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def`);
+    const holidayOn = (day: string) => h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE
+      SET search_path = pg_catalog AS $$ SELECT d = DATE '${day}' $$`);
+    const why = async (messageId: string) => {
+      try {
+        await withTenantTx(w.system('worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx), { db: h.app });
+        return 'ok';
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
+    const l = await leadUnderCare(x, { zone });
+    await grantFromOwnDisclosure(l, { scopeStated: true });
+    await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+      VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
+    const m = await queueAi(x, l, { kind: 'initiated', zones: [zone] });
+    try {
+      await holidayOn(today!.d);
+      expect(await why(m.messageId)).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait past a federal holiday in /);
+      const [prev] = await suRows<{ d: string }>(h.su, `SELECT to_char($1::date - 1, 'YYYY-MM-DD') AS d`, [today!.d]);
+      await holidayOn(prev!.d);
+      expect(await why(m.messageId)).toBe('ok');
+    } finally {
+      await h.su.query(orig!.def);
+    }
+    const [back] = await suRows<{ def: string }>(h.su, `SELECT pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def`);
+    expect(back!.def).toBe(orig!.def);
   });
 
   it('R-ISA-11 E515: a 4th AI message in 24 h refuses ISA_CAP_REACHED; the 120 s gap ISA_MIN_GAP; bulk and automated sends count toward the total', async () => {

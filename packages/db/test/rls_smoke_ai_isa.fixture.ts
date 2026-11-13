@@ -24,6 +24,10 @@ export function openZone(): string {
   if (!z) throw new Error('no open zone now');
   return z;
 }
+/** A zone where it is now 10:00–17:59 on a weekday (Monday–Friday) when there is one, else openZone(). */
+export function openWeekdayZone(): string {
+  return ETC.find((x) => { const l = localOf(x); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 5; }) ?? openZone();
+}
 /** A zone where it is now 01:00–04:59 (outside every window). */
 export function closedZone(): string {
   const z = ETC.find((x) => { const l = localOf(x); return l.hour >= 1 && l.hour < 5; });
