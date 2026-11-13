@@ -10,7 +10,7 @@ import { AppError } from '../errors.js';
 import { installNetworkTripwire } from '../providers/integrations/spark.testing.js';
 import { setCap } from './caps.js';
 import { runReconcile } from './mirror.js';
-import { capAttestation, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK } from './settings.js';
+import { capAttestation, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK, OVERSPEND_NOTE_NOT_CONNECTED } from './settings.js';
 import { adsWorld, connectAds, depsOf, resetAdsPack, setCapVia, withAdsCleared } from './testing.js';
 
 const tripwire = installNetworkTripwire();
@@ -98,13 +98,15 @@ describe('GET /ads (R-ADS-5, R-AST-13)', () => {
       ov = await get();
       expect(ov.state).toBe('no_connection');
       expect(ov.stateSentence).toBe('No Google Ads account is connected, so there are no campaigns or spend to show.');
-      expect(ov.overspendNote).toBe(OVERSPEND_NOTE);
+      // b11 api-ui/F4: with no live connection nothing is read or paused, cleared or not
+      expect(ov.overspendNote).toBe(OVERSPEND_NOTE_NOT_CONNECTED);
       await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-1', dailyBudgetCents: 2000 }] });
       await runReconcile(depsOf(h, w), w.tenantId);
       expect((await get()).state).toBe('no_cap');
       await setCapVia(h, w.owner, 300_000, 10_000);
       ov = await get();
       expect(ov.state).toBe('ready');
+      expect(ov.overspendNote).toBe(OVERSPEND_NOTE);
       expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day; Realty OS pauses every campaign once month-to-date spend reaches your monthly cap.');
       expect(ov.dailyTotal.sentence).toBe('Daily budgets total $0.00 against your $100.00 daily ceiling.');
       expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in \d{4}-\d{2}\.$/);

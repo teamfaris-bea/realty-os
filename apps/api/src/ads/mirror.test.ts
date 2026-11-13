@@ -16,7 +16,8 @@ import { campaignName, mapTargeting, runReconcile } from './mirror.js';
 import { buildOverview } from './overview.js';
 import { ADS_NOT_SET_UP, FakeAds, UnconfiguredAds } from './provider.js';
 import { GOOGLE_ADS_SCOPES } from '../integrations/catalog.js';
-import { type AdsWorld, adsWorld, campaignOf, connectAds, depsOf, midMonth, passTime, resetAdsPack, setAdsPack } from './testing.js';
+import { OVERSPEND_NOTE_MANAGED_ONLY, OVERSPEND_NOTE_NOT_CONNECTED } from './settings.js';
+import { type AdsWorld, adsWorld, campaignOf, connectAds, depsOf, midMonth, passTime, resetAdsPack, setAdsPack, setCapVia, withAdsCleared } from './testing.js';
 
 const tripwire = installNetworkTripwire();
 let h: ApiHarness;
@@ -313,6 +314,41 @@ describe('connection states (R-INT-2; E453, E454)', () => {
     expect((await h.su.query('SELECT count(*)::int AS n FROM ad_campaigns WHERE tenant_id = $1', [w.tenantId])).rows[0].n).toBe(2);
   });
 
+  it('E454 R-ADS-5 R-ADS-13 (b11 api-ui/F4): cleared, then the grant is revoked at Google and the account disconnected: the page says Realty OS reads nothing and cannot pause at the cap, and after 2 hours says spend is not checked, as the alert does', async () => {
+    await withAdsCleared(h, async () => {
+      const w = await adsWorld(h, { clockMs: midMonth() });
+      const { connectionId, accountId } = await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-rv' }] });
+      await runReconcile(depsOf(h, w), w.tenantId);
+      await setCapVia(h, w.owner, 300_000, 10_000);
+      w.fake.revoke(accountId);
+      w.clock.advance(HOUR_MS);
+      await runReconcile(depsOf(h, w), w.tenantId);
+      expect((await conn(connectionId)).status).toBe('revoked');
+      let ov = await overviewAt(w);
+      expect(ov.state).toBe('connection_not_live');
+      expect(ov.stateSentence).toBe('The Google Ads account is no longer connected, so its campaigns and spend are not read and no budget moves.');
+      expect(ov.overspendNote).toBe(OVERSPEND_NOTE_NOT_CONNECTED);
+      expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day. No Google Ads account is connected and read here, so Realty OS cannot pause campaigns at your monthly cap: pause them in Google Ads.');
+      expect(ov.overspendNote).not.toMatch(/Realty OS pauses/);
+      expect(ov.campaigns).toHaveLength(1);
+      expect(ov.uncheckedSentence).toBeNull(); // checked an hour ago
+      w.clock.advance(2 * HOUR_MS);
+      await runReconcile(depsOf(h, w), w.tenantId);
+      const alert = (await notes(w.tenantId)).find((n) => n.dedupe_key.startsWith(`ad_unchecked:${connectionId}:`));
+      expect(alert).toBeDefined();
+      ov = await overviewAt(w);
+      expect(ov.uncheckedSentence).toBe(`${alert!.title}.`);
+      // disconnected, its campaign still listed: the same state, note and "not checked" sentence (never "no campaigns to show")
+      await freshReauth(h, w.owner);
+      expect((await call(w.owner, 'POST', `/admin/integrations/connections/${connectionId}/disconnect`)).status).toBe(200);
+      ov = await overviewAt(w);
+      expect(ov.state).toBe('connection_not_live');
+      expect(ov.overspendNote).toBe(OVERSPEND_NOTE_NOT_CONNECTED);
+      expect(ov.uncheckedSentence).toBe(`${alert!.title}.`);
+      expect(ov.campaigns).toHaveLength(1);
+    });
+  });
+
   it('R-ADS-13 (b11 api-ui/F2): no lead source: nothing is mirrored or costed and the page says so without pointing at a control the web app does not have', async () => {
     const w = await adsWorld(h);
     await connectAds(h, w, undefined, { leadSource: false, campaigns: [{ externalCampaignId: 'fake-c-ns' }] });
@@ -328,6 +364,51 @@ describe('connection states (R-INT-2; E453, E454)', () => {
     } finally {
       await resetAdsPack(h);
     }
+  });
+});
+
+describe('the owner-question answers on GET /ads (Q-ADS-1, Q-ADS-3; b11 ads-7)', () => {
+  it('Q-ADS-1 R-ADS-7 (b11 ads-7): with READS_WHILE_DARK off, campaigns and spend read while cleared stay listed after the pack is withdrawn, and the page says when they were read and that they are not updated', async () => {
+    const w = await adsWorld(h, { clockMs: midMonth() });
+    const { accountId } = await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-q1' }] });
+    w.fake.addSpend(accountId, 'fake-c-q1', w.clock.now() - HOUR_MS, 900);
+    const readAt = new Date(w.clock.now()).toISOString();
+    try {
+      await setAdsPack(h, { reviewed: true, vendor: true });
+      expect((await runReconcile(depsOf(h, w), w.tenantId, { readsWhileDark: false })).readsSkipped).toBe(false);
+    } finally {
+      await resetAdsPack(h);
+    }
+    w.clock.advance(HOUR_MS);
+    expect((await runReconcile(depsOf(h, w), w.tenantId, { readsWhileDark: false })).readsSkipped).toBe(true);
+    const ov = await overviewAt(w, { readsWhileDark: false });
+    expect(ov.campaigns).toHaveLength(1);
+    expect(ov.monthToDate.spentCents).toBe(900);
+    expect(ov.stateSentence).toBe(`Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Until then Google Ads is not read, so the campaigns and spend shown are as Google Ads reported them at ${readAt.slice(0, 16).replace('T', ' ')} UTC and are not updated.`);
+    expect(ov.stateSentence).not.toMatch(/no campaigns or spend are shown/);
+    // with nothing stored, the sentence says nothing is shown
+    const empty = await adsWorld(h, { clockMs: midMonth() });
+    expect((await overviewAt(empty, { readsWhileDark: false })).stateSentence).toBe('Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Until then Google Ads is not read, so no campaigns or spend are shown.');
+  });
+
+  it('Q-ADS-3 R-ADS-5 (b11 ads-7): with CAP_COUNTS_EVERY_CAMPAIGN off, the over-delivery note says only the campaigns linked here are counted and only those managed here paused, and the month-to-date sentence says what the cap counts', async () => {
+    await withAdsCleared(h, async () => {
+      const w = await adsWorld(h, { clockMs: midMonth() });
+      await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-q3' }] });
+      await runReconcile(depsOf(h, w), w.tenantId, { capCountsEveryCampaign: false });
+      await setCapVia(h, w.owner, 300_000, 10_000);
+      const ov = await overviewAt(w, { capCountsEveryCampaign: false });
+      expect(ov.state).toBe('ready');
+      expect(ov.campaigns.map((c) => [c.status, c.managed])).toEqual([['draft', false]]);
+      expect(ov.overspendNote).toBe(OVERSPEND_NOTE_MANAGED_ONLY);
+      expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day. Realty OS counts only the campaigns linked to a listing here toward your monthly cap and pauses those it manages once their month-to-date spend reaches it: pause the others in Google Ads.');
+      expect(ov.overspendNote).not.toMatch(/pauses every campaign/);
+      expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 spent in \d{4}-\d{2} on the campaigns recorded here; your \$3,000\.00 monthly cap counts only the campaigns linked to a listing here\.$/);
+      // the default answer keeps its sentences
+      const def = await overviewAt(w);
+      expect(def.overspendNote).toMatch(/pauses every campaign/);
+      expect(def.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in \d{4}-\d{2}\.$/);
+    });
   });
 });
 
