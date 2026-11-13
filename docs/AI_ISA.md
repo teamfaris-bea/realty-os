@@ -1139,7 +1139,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 - Compose, dial and approvals: the warning before Send/Call, the owner's "Resume AI care" toast after a send, the inbox filter, "Let the AI assistant continue" on the viewer's handback.
 - Bulk: "People under AI care, live or paused, are skipped." CompliancePage: the AI ISA notice from `GET /admin/ai-isa`. Playbooks: kind `ai_isa` is never listed there (batch 12 review ui-3, kept at the batch 13 merge); its detail page shows batch 12's "not a playbook" notice and the pointer to the team page.
 
-**The read route** (Q1 taken by default): `GET /ai-isa/handoffs/:id` in apps/api/src/isaWeb/routes.ts (module `ai-isa-web`), `ai_isa.view` with the handoff's contact facts, the handoff's RLS (0080's `isa_select`, with 0081's root-survivor branch); read-only, no audit. Instants as ISO; the conversation as seq/status/messageId; any confidence, score, probability or tenant key dropped at any depth; `canAcknowledge` mirrors 0080's `isa_update` for the recipient and Owner/Admin (V8; 0081 also lets the root survivor's current owner acknowledge, which it does not show yet); `pendingMessage.kind` from the message category. `isaWeb/webContract.json` is generated from the route schemas (drift test `isaWeb/webContract.test.ts`).
+**The read route** (Q1 taken by default): `GET /ai-isa/handoffs/:id` in apps/api/src/isaWeb/routes.ts (module `ai-isa-web`), `ai_isa.view` with the handoff's contact facts, the handoff's RLS (0080's `isa_select`, with 0081's root-survivor branch); read-only, no audit. Instants as ISO; the conversation as seq/status/messageId; any confidence, score, probability or tenant key dropped at any depth; `canAcknowledge` mirrors 0080's `isa_update` for the recipient and Owner/Admin and, since batch 13, the ack route's own `can('ai_isa.handoff')` on the merge root's facts (V8, F14; 0081 also lets the root survivor's current owner acknowledge, which it does not show yet); `pendingMessage.kind` from the message category. `isaWeb/webContract.json` is generated from the route schemas (drift test `isaWeb/webContract.test.ts`).
 
 **Copy rules** (proposed web clauses, sent to ISA-2b for DATA_MODEL):
 - **R-ISA-22 web:** say only what the API states; "Not available yet" for unbuilt features; no "you/your" to a reader the sentence is not about (the owner is named instead); times in the viewer's zone with its short name, "their time" only for an explicit zone; one hold source, the shared live query, read by every surface; no raw code (aiCare/words.ts; an unknown code is "Another check").
@@ -1167,6 +1167,42 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 - The handoff card omits the sections the package does not carry (V13: open questions, consent basis, caps, zones, summary, the trigger quote); deadlines say "by {time}" (V15, Q-ISA-20 VERIFY); a pending message's own status is read, not `confirmation_status` (V17).
 - The paused strip says when a forgotten pause ends (72 h, handlers.ts:38); re-attest results name the continued leads and say each "not continued" code in words; continued assignments end as `reinquiry_period`, worded neutrally (V20).
 - The panel never shows the API's fixed "12:00–20:00 Eastern" zone sentence, its rolling-24 h "today" (said as "in the last 24 hours") or its UTC times (V6).
+
+**Batch 13 audit fixes (isa-4, after the merge):**
+- ISA-2b's booking cards (`AI_ISA_BOOKED_AFTER_END`, `AI_ISA_BOOKED_NOT_HANDED_BACK`) say what was booked and when (the time read from the card's own sentence, with its zone label), that the confirmation was not sent, where to confirm or cancel it (Tasks) and, from the panel, the state care is in now; never "AI care is paused" after an end. Any other unknown escalation code is "Another check." with no claim (F1).
+- Every AI feed card and the live strip carry the hold banner (the shared query's sentence; an escalation card adds the replies clause when a panel link holds); under a hold the activity card reads "Nothing the AI assistant writes reaches {first} from this deployment" instead of "takes this turn" (F2).
+- The handoff's recipient is read as ISA-2b routes it (Q1): the reader, the assignment's owner, the lead's new owner (named from the contact), "the person who took over" or "someone else on the team"; a null recipient keeps "the team leads and Owner/Admin". "Got it" absent reads "Only {holder} or Owner/Admin can mark this seen." A taker is never named: the API carries no display name for them (F4).
+- `approve_saved_search` routes like `review_saved_search`; only `prepare_cma` and `confirm_subject` say "not available yet"; any other unknown step is "Another check" (F5).
+- The handoff card renders ISA-2b's package fields: the appointment's kind, time (and their time when explicit), organizer and their words; the saved search's status at the end with its review link; who got the handoff; who ended care; the pond date at the end. The API's second-person `calendarSentence` and its UTC instant never show (F6).
+- An Admin sees no "Turn on" on the team page (off only), and a cap raise refused for an Admin reads "Only the account owner can raise the limit." (F13).
+- The Undo toast carries its owner (the list says "until you resume it" to the owner); a restored toast says the seconds it had; the panel's offered times add their time when explicit; `canAcknowledge` follows the ack route's own `can()` (F14).
+- The panel reports an earlier handoff a restart left open (`earlierHandoff`), shown as "An earlier handoff is still open" with its deadline (b12 recheck R16 follow-up). An `ai_isa_handoff` card's generic tap opens the thread with no draft, and the compose box never takes a handoff as a draft (b12 recheck R11 follow-up). "Got it" is on the handoff card (POST `/ai-isa/handoffs/:id/ack`), and its sheet and the card say `closedReason` (merged at batch 13).
+- SellerFacts shows the panel's `seller_sold_comps` sentence verbatim after "Seller facts: not available yet. …" (E534, brief item 13).
+
+**VERIFY list (V1–V20), each with its status after batch 13:**
+
+| V | What | Status |
+|---|---|---|
+| V1 | The inbox shows AI ISA actions | Deviation: `useInbox` drops `ai_isa_message` and `ai_isa_handoff` for every consumer; the compose box never takes a handoff as a draft (batch 13). Request to ISA-2b: exclude and refuse them in the API. VERIFY |
+| V2 | Strict bodies refuse useCommand's commandId | Resolved by reading; `useIsaAction` sends no command id (api.contract.test). |
+| V3 | Two sources for live sending | Deviation: the shared query's `holdSentence` wins; a panel link hold adds the replies clause. Request to ISA-2b: one source on the panel. VERIFY |
+| V4 | Start refusal order (opt-in before ownership) | Deviation: apart from the team-wide refusals (off, not cleared, no approved policy), a non-owner reads "Only {Owner first} can start AI care for this lead." whatever the code. |
+| V5 | Second-person API sentences reach other viewers | Deviation: the web rewrites links 5 and 6, chips and capability lines per reader (words.ts). Request to ISA-2b: reader-neutral sentences. VERIFY |
+| V6 | Panel sentences that mislead (converse only, fixed consent text, fixed zone window, rolling 24 h, UTC, block restart) | Deviation: none of them is shown as sent; the web words each from the fields. |
+| V7 | List gaps (team = all, no Held, empty lastAction and caps, latest assignment's chip) | Deviation: "Mine / Everyone you can see", no Held filter, one row per person; empty fields omitted. |
+| V8 | A non-recipient team lead's ack matches no row | Resolved: `canAcknowledge` (and since batch 13 the ack route's own `can()`). |
+| V9 | AI feed cards are never closed by module 75 | Partly resolved by batch 12 (R13: the system closes a done handoff's card); the card says Done or why it is closed and stays until then (Q10). |
+| V10 | No deadline on escalations and held topics | Deviation: no deadline is shown for either; held topics say "Since {time}". VERIFY |
+| V11 | `narrows_previous` is never written | Deviation: the policy diff makes no pause claim. |
+| V12 | The timeline has no initiator | Deviation: AI labels come from the turns route (LIMIT 100); older messages keep "Sent automatically". |
+| V13 | Package gaps (open questions, consent basis, caps, zones, summary, trigger quote) | Deviation: those sections are omitted; ISA-2b's added keys render since batch 13 (F6). |
+| V14 | The stack's jobs and the isaWorld swap | Resolved by reading; the specs use `runIsa`. |
+| V15 | Deadlines are wall-clock | Deviation: "by {time}", never business minutes (Q-ISA-20). VERIFY |
+| V16 | Non-admins never see the cap hold (sentToday under counts_select) | Request to ISA-2b, not a web change: link 3 is 'ok' for non-admins, so their banner omits the cap; Owner/Admin see it on the team page. VERIFY |
+| V17 | `confirmation_status` never advances | Deviation: the card reads the pending message's own status. ISA-2b now writes `scheduled` when the message waits. |
+| V18 | Some blocks never lift, yet the API promises a restart | Deviation: each block reason has its own words; the non-liftable ones say AI care can't restart and get no Lift. |
+| V19 | Any opt-in save ends live care | Deviation: the opt-in form warns before a save while care is on (Q13). VERIFY in a1. |
+| V20 | Re-attest ends each continued assignment as `reinquiry_period` | Worded neutrally; batch 13's isa-2b fix derives Continue's end reason from the pause. Request to ISA-2b: its own reason for re-attest. VERIFY |
 
 ---
 
