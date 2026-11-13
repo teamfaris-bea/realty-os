@@ -36,15 +36,15 @@ const resolvesInto = (file: string, spec: string, dir: string) => spec.startsWit
 
 describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
   it('the scans are not vacuous: the prediction module and the rest of apps/api are read', () => {
-    expect(PREDICT_RUNTIME.map(rel).sort()).toEqual(['predict/decide.ts', 'predict/handlers.ts', 'predict/models.ts', 'predict/pass.ts', 'predict/provider.ts', 'predict/settings.ts']);
+    expect(PREDICT_RUNTIME.map(rel).sort()).toEqual(['predict/decide.ts', 'predict/handlers.ts', 'predict/models.ts', 'predict/pass.ts', 'predict/provider.ts', 'predict/routes.ts', 'predict/settings.ts']);
     expect(RUNTIME.length).toBeGreaterThan(200);
   });
 
-  it('R-PRED-4: only worker/handlers/index.ts and providers/index.ts import predict/** (outside the module and its tests); predict/provider.ts alone is also imported by providers/publicRecords/** and homeowner/** (D10)', () => {
+  it('R-PRED-4: only worker/handlers/index.ts, providers/index.ts and routes.ts (the read-only GET /likely, module 55) import predict/** (outside the module and its tests); predict/provider.ts alone is also imported by providers/publicRecords/** and homeowner/** (D10)', () => {
     const PROVIDER = join(PREDICT, 'provider.ts');
     const LANE = /^(providers\/publicRecords|homeowner)\//;
     const importers = RUNTIME.filter((f) => !rel(f).startsWith('predict/') && !LANE.test(rel(f)) && importsOf(f).some((s) => resolvesInto(f, s, PREDICT))).map(rel);
-    expect(importers.sort()).toEqual(['providers/index.ts', 'worker/handlers/index.ts']);
+    expect(importers.sort()).toEqual(['providers/index.ts', 'routes.ts', 'worker/handlers/index.ts']);
     // the homeowner lane imports predict/provider.ts (the shared interface) and no other predict file
     const isProvider = (f: string, s: string) => resolve(dirname(f), s).replace(/\.js$/, '.ts') === PROVIDER;
     for (const f of RUNTIME.filter((x) => LANE.test(rel(x)))) {
