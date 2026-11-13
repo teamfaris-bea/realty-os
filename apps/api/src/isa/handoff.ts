@@ -2,9 +2,9 @@
 // and verified client quotes only; the hash is computed by Postgres over the stored jsonb so the CHECK holds), a
 // pinned card and a notification, and a response deadline in business minutes that only a human touch clears.
 import { pointBlocks } from '@realty/core/compliance';
-import type { IdGenerator, Instant } from '@realty/core/foundation';
+import type { IdGenerator, Instant, UserId } from '@realty/core/foundation';
 import { phoneCallbackAllowed } from '@realty/core/voice';
-import type { Tx } from '@realty/db';
+import { type Tx, loadPeople, unownedHandbackTarget } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { adminUserIds, contactLabel, notifyUser, upsertFeedItem } from '../comms/repos/notify.js';
@@ -167,13 +167,18 @@ function nextStepsFor(h: Handoff, callbackAllowed: boolean): string[] {
  * card holder is known): their Team Lead, then Owner/Admin. An unowned lead's card already sits with the previous
  * owner's Team Lead or an Owner/Admin (handoffTarget, rehomeHandbacks, the merge): that holder is level 1 (every
  * Owner/Admin when the holder is one, or is no longer active), then the holder and Owner/Admin (b12 recheck R8).
+ * A card that was decided (dismissed, or closed by a generic tap) is routed to nobody and nothing moves it, so its
+ * action's owner may be the agent who then released the lead: the holder is then the one rehomeHandbacks would have
+ * given the card, the Team Lead of the lead's last owner (else an Owner/Admin), and only with no last owner on record
+ * the frozen recipient (b12 recheck R10).
  */
-async function overdueTargets(tx: Tx, r: { owner: string | null; holder: string | null; frozen: string }, level: number): Promise<string[]> {
-  if (r.owner === null && r.holder !== null) {
-    const active = (await handoffRecipients(tx, r.holder)).primary !== null;
+async function overdueTargets(tx: Tx, r: { owner: string | null; holder: string | null; previous: string | null; frozen: string }, level: number): Promise<string[]> {
+  const holder = r.owner !== null ? null : (r.holder ?? (r.previous !== null ? unownedHandbackTarget(await loadPeople(tx), r.previous as UserId) : null));
+  if (r.owner === null && holder !== null) {
+    const active = (await handoffRecipients(tx, holder)).primary !== null;
     const admins = await adminUserIds(tx);
-    if (level === 1 && active && !admins.includes(r.holder)) return [r.holder];
-    return [...new Set([...(active ? [r.holder] : []), ...admins])];
+    if (level === 1 && active && !admins.includes(holder)) return [holder];
+    return [...new Set([...(active ? [holder] : []), ...admins])];
   }
   const anchor = r.owner ?? r.frozen;
   const rec = await handoffRecipients(tx, anchor);
@@ -191,11 +196,15 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
   // b12 review B12X-3: the touch is read on the record the person lives on now (a merged-away record takes none).
   // b12 recheck R2: the escalation follows that record's current owner, as the pending card does (rehomeHandbacks, the
   // merge). b12 recheck R8: an unowned record follows whoever holds the card now (the handoff action's owner, which
-  // rehomeHandbacks and the merge keep current); only with no action owner does it fall back to the frozen recipient,
-  // then the assignment's owner
-  const rows = await sql<{ id: string; contact_id: string; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; frozen_user_id: string; touched: Date | null }>`
+  // rehomeHandbacks and the merge keep current while it is proposed). b12 recheck R10: a decided card has no holder;
+  // the record's last owner on the ownership ledger stands in, and only with none does it fall back to the frozen
+  // recipient, then the assignment's owner
+  const rows = await sql<{ id: string; contact_id: string; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null }>`
     SELECT h.id, c.id AS contact_id, h.created_at, h.sla_due_at, h.sla_escalation_level,
-           CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id, x.owner_user_id AS holder_user_id,
+           CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
+           CASE WHEN x.status = 'proposed' THEN x.owner_user_id END AS holder_user_id,
+           CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
+                  WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.owner_user_id IS NOT NULL ORDER BY e.seq DESC LIMIT 1) END AS previous_user_id,
            COALESCE(h.recipient_user_id, a.owner_user_id) AS frozen_user_id, c.last_human_touch_at AS touched
       FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
       JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
@@ -212,7 +221,7 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
     const span = r.sla_due_at.getTime() - r.created_at.getTime();
     if (r.sla_escalation_level === 1 && now < r.sla_due_at.getTime() + span) continue;
     const level = r.sla_escalation_level + 1;
-    const targets = await overdueTargets(tx, { owner: r.owner_user_id, holder: r.holder_user_id, frozen: r.frozen_user_id }, level);
+    const targets = await overdueTargets(tx, { owner: r.owner_user_id, holder: r.holder_user_id, previous: r.previous_user_id, frozen: r.frozen_user_id }, level);
     const label = (await contactLabel(tx, r.contact_id)) ?? 'A lead';
     for (const userId of targets) {
       await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_overdue', priority: 'critical', title: `AI handoff not picked up: ${label}`.slice(0, 120), body: null,

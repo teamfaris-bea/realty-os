@@ -56,11 +56,11 @@ export {
   defaultIds,
   derivedCommandId,
 } from './ownership/apply.js';
-export { FOLLOWUP_JOB_KIND, type FollowupPayload, followupDedupeKey } from './ownership/effects.js';
+export { FOLLOWUP_JOB_KIND, type FollowupPayload, followupDedupeKey, unownedHandbackTarget } from './ownership/effects.js';
 export { type FollowupResult, FollowupPayloadError, applyOwnershipFollowupInTx, runOwnershipFollowup } from './ownership/followup.js';
 export type { MergeStep } from './ownership/merge.js';
 export { type NewContactFields, projectionOf, eventOf, selectLedger } from './ownership/rows.js';
-export { TenantNotReadyError, importOwnersPending, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, type TenantFacts } from './ownership/context.js';
+export { TenantNotReadyError, importOwnersPending, loadPeople, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, type TenantFacts } from './ownership/context.js';
 export { type AuditRowSpec, insertAuditRow } from './repos/audit.js';
 export { json } from './json.js';
 export { APP_ROLE_CHECK_SQL, type AppRoleProblem, type AppRoleRow, NOT_RLS_BOUND, appRoleProblems, tlsFailureMessage } from './rolePreflight.js';

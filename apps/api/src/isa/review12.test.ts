@@ -399,4 +399,40 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
       expect(to).toEqual([w.teamLead!.userId]);
     });
   });
+
+  it('R-ISA-30 E521 (b12 recheck R10): a handoff to a1 that a1 dismisses and whose lead a1 then releases to the pond escalates to a1\'s Team Lead, never to a1 alone', async () => {
+    await twoTeams(async (tl2) => {
+      const { runOwnershipCommand } = await import('../leads/ownership.js');
+      const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+      const l = await isaLead(h, a0);
+      expect((await startCare(a0, l.id)).status).toBe(200);
+      await runIsa(h, w.tenantId);
+      const ids = depsFromPlatform(h.app.platform).ids;
+      expect((await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a1.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids })).ok).toBe(true);
+      await runIsa(h, w.tenantId);
+      const [ho] = await handoffs([l.id]);
+      expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
+      expect(ho!.sla_class).not.toBe('none');
+      // a1 dismisses the card: its action is decided and no longer routed
+      const actionId = (await h.su.query<{ id: string }>(`SELECT assistant_action_id AS id FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.id;
+      expect((await call(a1, 'POST', `/assistant/actions/${actionId}/reject`)).status).toBe(200);
+      // a1 releases the lead: rehomeHandbacks moves proposed cards only, so the decided action stays a1's
+      expect((await command(a1, l.id, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+      await runIsa(h, w.tenantId, 1);
+      expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).not.toBe('owned');
+      expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: a1.userId, status: 'rejected' })]);
+      // (the sweep is tenant-wide: an earlier case's handoff may reach its second level in the same sweep)
+      expect((await ageAndSweep(ho!.id)).escalated).toBeGreaterThanOrEqual(1);
+      expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+      const to = await overdueTo(l.id);
+      expect(to, 'never the agent who released it').not.toContain(a1.userId);
+      expect(to).toEqual([tl2.userId]);
+      // level 2: that Team Lead and Owner/Admin, still never the releasing agent
+      expect((await ageAndSweep(ho!.id)).escalated).toBeGreaterThanOrEqual(1);
+      expect((await handoffs([l.id]))[0]).toMatchObject({ sla_escalation_level: 2 });
+      const to2 = await overdueTo(l.id);
+      expect(to2).not.toContain(a1.userId);
+      expect(to2).toEqual(expect.arrayContaining([tl2.userId, w.owner.userId]));
+    });
+  });
 });
