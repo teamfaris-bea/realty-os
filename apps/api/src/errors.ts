@@ -408,6 +408,7 @@ export const ERROR_STATUS = {
   AI_ISA_HANDOFF_USE_ACK: 409, // an AI handoff card is never decided by the generic approve or reject: it is acknowledged on POST /ai-isa/handoffs/:id/ack and its deadline met by a human touch (details.handoffId)
   SUBJECT_UNCONFIRMED: 409, // seller facts need an agent-confirmed subject (ISA-3)
   CAPABILITY_NOT_AVAILABLE: 422, // a reserved or unavailable capability
+  // ---- module 48 api/voice (batch 12; its own header since batch 13, so the AI ISA web contract's module-75 slice ends above) ----
   VOICE_PLAYBOOK_NOT_APPROVED: 409, // module 48: AI answering needs an approved voice_answering version (R-VOICE-1)
   VOICE_ANSWERING_OFF: 409, // module 48: the Owner has not turned AI answering on (R-VOICE-9)
   VOICE_NOT_CLEARED: 409, // module 48: platform:voice is not cleared (counsel review and the vendor latency spike, R-INT-6)

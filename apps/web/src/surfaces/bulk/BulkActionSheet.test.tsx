@@ -56,6 +56,8 @@ describe('R-PAR-33 R-PAR-38 R-PAR-41 the bulk confirm sheet', () => {
     await u.click(await screen.findByRole('button', { name: /New listings/ }));
     taps += 1;
     const sheet = await screen.findByRole('dialog', { name: 'Email 398 of 412?' });
+    // module 76 (Q4): people under AI care are always skipped, and the sheet says so
+    expect(within(sheet).getByText('People under AI care, live or paused, are skipped.')).toBeInTheDocument();
     const left = within(sheet).getByRole('region', { name: 'Left out (14)' });
     expect(within(left).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['9 opted out', '4 have no address for this', '1 share an address with someone already included (one message per address)']);
     expect(within(sheet).getByText('2 people share an address, so they get one email between them.')).toBeInTheDocument();

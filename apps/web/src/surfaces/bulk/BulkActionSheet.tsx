@@ -170,6 +170,8 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
       }
     >
       {error ? <Notice tone="error">{error}</Notice> : null}
+      {/* module 76 (Q4): the run always skips people under AI care (bulk/run.ts:170-175) */}
+      {send ? <p className="text-[14px] text-ink">People under AI care, live or paused, are skipped.</p> : null}
       {!draft && needsChoice && send ? (
         <section aria-label="Templates" className="flex flex-col gap-1">
           <p className="text-[15px] text-ink-muted">Pick the {kind === 'email' ? 'email' : 'text'}. Each person gets it with their own name in it.</p>

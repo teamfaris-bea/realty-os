@@ -37,6 +37,7 @@ import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.j
 import { useMutate } from './lib/hooks.js';
 import { dealDateStaleWords } from './lib/messages.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
+import { AiCareActionNote } from '../aiCare/Compose.js'; // module 76 (flagged edit)
 
 export const ACTION_ICON: Partial<Record<OneTapAction['kind'], IconName>> = {
   accept_offer: 'check',
@@ -74,6 +75,16 @@ const FEED_KEYS = [['feed'], ['inbox']];
 const NO_ADDRESS: Readonly<Record<'sms' | 'email', string>> = { sms: "There's no phone number on file to text", email: "There's no email address on file" };
 
 export function ActionButton(p: ActionButtonProps) {
+  // module 76: Call, Text, Email and Send on a contact under live AI care say, before the tap, that they pause it
+  return (
+    <>
+      <ActionButtonInner {...p} />
+      <AiCareActionNote action={p.action} contact={p.card?.contact ?? null} />
+    </>
+  );
+}
+
+function ActionButtonInner(p: ActionButtonProps) {
   switch (p.action.kind) {
     case 'accept_offer':
     case 'decline_offer':

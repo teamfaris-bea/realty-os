@@ -31,6 +31,8 @@ import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
 import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
+import { AiCareStrip } from '../aiCare/Person.js';
+import { AiLabelsProvider } from '../aiCare/Thread.js';
 import { renderMentions } from '@realty/core/parity/people';
 
 export default function ContactPage() {
@@ -174,6 +176,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
             <ChannelAction label="Email" icon="message" missing={contact.emails.length === 0} state={email} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)} />
           </div>
         )}
+        <AiCareStrip contact={contact} />
         <ul className="flex flex-col gap-1 text-[15px] text-ink">
           {contact.phones.map((p) => (
             <li key={p.id}>
@@ -216,7 +219,9 @@ function FullView({ contact }: { contact: ContactFullView }) {
       ) : null}
 
       <Section title="Conversation" action={<ButtonLink to={`/contacts/${contact.id}/thread`} variant="quiet">Open</ButtonLink>}>
-        <RecentTimeline contactId={contact.id} contact={{ id: contact.id, name: contact.displayName }} />
+        <AiLabelsProvider contact={contact}>
+          <RecentTimeline contactId={contact.id} contact={{ id: contact.id, name: contact.displayName }} />
+        </AiLabelsProvider>
       </Section>
 
       <Section title="Tasks">

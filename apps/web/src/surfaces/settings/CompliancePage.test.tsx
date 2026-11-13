@@ -42,8 +42,23 @@ describe('Compliance policy', () => {
     expect(screen.getByText(/STOP, STOPALL, UNSUBSCRIBE/)).toBeInTheDocument();
     expect(await screen.findByText('Harbor Realty LLC')).toBeInTheDocument();
     expect(screen.getByText(/the postal address is missing, so marketing email is on hold/)).toBeInTheDocument();
-    expect(screen.getByText('Not checked: consent level, Do Not Call registry, quiet hours, frequency limits')).toBeInTheDocument();
+    expect(screen.getByText("Not checked for your team's own messages: consent level, Do Not Call registry, quiet hours, frequency limits")).toBeInTheDocument();
+    expect(screen.getByText(/so your team's own messages, playbooks and alerts are not held back/)).toBeInTheDocument();
     expect(screen.getByText(/Have your counsel check this before you rely on it/)).toBeInTheDocument();
+  });
+
+  it('module 76: the AI ISA notice from GET /admin/ai-isa shows under it, and is omitted when that read fails', async () => {
+    const notice = 'The AI assistant (ISA) uses engineering defaults for consent evidence, quiet hours and frequency limits on its own messages. These are not legal advice and have not been reviewed by counsel.';
+    const ai = { enabled: false, aiEnabled: true, dailyCap: 100, sentToday: 0, packCleared: false, liveSends: false, holdSentence: null, enabledByUserId: null, enabledAt: null, overdueHandoffs: 0, underCare: 0, noticeSentence: notice };
+    const fake = new FakeFetch().on('GET /compliance-policies', { status: 200, body: policies() }).on('GET /settings', { status: 200, body: { settings: SETTINGS } }).on('GET /admin/ai-isa', { status: 200, body: ai });
+    const v = leadAdminApp(fake, '/settings/compliance', 'owner');
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    v.view.unmount();
+    const bad = new FakeFetch().on('GET /compliance-policies', { status: 200, body: policies() }).on('GET /settings', { status: 200, body: { settings: SETTINGS } });
+    leadAdminApp(bad, '/settings/compliance', 'owner');
+    expect(await screen.findByText('What every send is checked for')).toBeInTheDocument();
+    await waitFor(() => expect(bad.callsTo('GET /admin/ai-isa').length).toBeGreaterThan(0));
+    expect(screen.queryByText(notice)).toBeNull();
   });
 
   it('has no contact-hours, quiet-hours or frequency-cap settings any more', async () => {

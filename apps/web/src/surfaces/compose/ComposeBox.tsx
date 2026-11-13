@@ -48,6 +48,7 @@ import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '
 import { MediaAddButton, MediaTray } from './MediaTray.js';
 import { SegmentCounter, plainQuotes, useCounterView } from './SegmentCounter.js';
 import { mediaHold, mediaRefusal, useComposeMedia } from './useComposeMedia.js';
+import { AiCareComposeNote, aiCareSent } from '../aiCare/Compose.js'; // module 76 (flagged edit)
 
 export type Channel = 'sms' | 'email';
 
@@ -314,6 +315,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       setLater(null);
       sheets.announce(sendOutcomeText(r, contact.name).title);
       onSent?.();
+      aiCareSent(contact.id);
     }
   };
 
@@ -541,6 +543,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       ) : null}
       {settled && outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
       {nothingSends ? <TypedInChatNote contact={contact} doNotContact={personDnc} /> : null}
+      <AiCareComposeNote contact={contact} />
       {finalText !== null ? (
         <figure aria-label={`What ${firstName(contact.name)} will get`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
           <figcaption className="font-medium text-ink-muted">What {firstName(contact.name)} will get</figcaption>

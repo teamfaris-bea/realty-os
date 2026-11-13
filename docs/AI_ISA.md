@@ -1106,6 +1106,47 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
    - The CompliancePage notice per §2.3.
 8. **Accessibility.** Targets of 44 px or more, `aria-live` state changes, nothing conveyed by colour alone, and the Undo toast reachable by keyboard and screen reader for its 10 seconds.
 
+### 10.1 As built (ISA-4)
+
+**Pages** (apps/web/src/surfaces/aiCare/**; D12 stays PROPOSED):
+- "Under AI care" (`/ai-care`; Owner, Admin, Team Lead, Agent, ISA; More and the sidebar, "AI care"): one row per person (the newest assignment: the API's chips are the contact's latest), the chip in words for the reader, the next follow-up in the viewer's zone, the release date, the owner, "Handoff overdue"; Pause and Take over in one tap, End behind More, Resume on paused rows for their owner. Filters "Mine" and "Everyone you can see"; Live, Paused, Ended, All; "Overdue handoffs" for Owner/Admin with "Showing k of n" when the API's 200-row limit cuts rows.
+- "My AI assistant" (`/settings/ai-assistant`; Owner, Admin, Team Lead, Agent): the opt-in form (every capability unchecked but the required converse; unbuilt ones disabled; booking needs a calendar), the server's attestation verbatim with a tick, the password on REAUTH_REQUIRED; re-attest; "Pause all my leads"; "Turn off for all my leads".
+- "AI assistant (ISA)" (`/settings/ai-assistant/team`; Owner and Admin): one line for each condition that holds sending back; the switch (the Owner turns it on with a confirmation and the password; an Admin turns it off only); the daily cap (raising it is the Owner's, with its own confirmation); the overdue link; the team policy read-only in words, each value marked VERIFY WITH COUNSEL, with the fields changed since the previous version.
+- The person page: a strip under the channel actions (and a sticky phone bar while care is live) and the panel section (contact/sections.ts, order 1); Start in 2 taps; refusals with one fix; the Lift sheet for liftable blocks (their message since the block, a typed confirmation of at least 20 characters).
+- The thread: the banner (state, controls, hold) hosting the Undo toast; AI labels from the turns route; the pending post-handoff message and what stops it.
+- The feed: AiCareFeedCard for `ai_isa_*` items (activity, escalation, the handoff card with the full package), and the strip "AI care is on" on other cards of a live contact.
+- Compose, dial and approvals: the warning before Send/Call, the owner's "Resume AI care" toast after a send, the inbox filter, "Let the AI assistant continue" on the viewer's handback.
+- Bulk: "People under AI care, live or paused, are skipped." CompliancePage: the AI ISA notice from `GET /admin/ai-isa`. Playbooks: kind `ai_isa` is never listed there (batch 12 review ui-3, kept at the batch 13 merge); its detail page shows batch 12's "not a playbook" notice and the pointer to the team page.
+
+**The read route** (Q1 taken by default): `GET /ai-isa/handoffs/:id` in apps/api/src/isaWeb/routes.ts (module `ai-isa-web`), `ai_isa.view` with the handoff's contact facts, the handoff's RLS (0080's `isa_select`, with 0081's root-survivor branch); read-only, no audit. Instants as ISO; the conversation as seq/status/messageId; any confidence, score, probability or tenant key dropped at any depth; `canAcknowledge` mirrors 0080's `isa_update` for the recipient and Owner/Admin (V8; 0081 also lets the root survivor's current owner acknowledge, which it does not show yet); `pendingMessage.kind` from the message category. `isaWeb/webContract.json` is generated from the route schemas (drift test `isaWeb/webContract.test.ts`).
+
+**Copy rules** (proposed web clauses, sent to ISA-2b for DATA_MODEL):
+- **R-ISA-22 web:** say only what the API states; "Not available yet" for unbuilt features; no "you/your" to a reader the sentence is not about (the owner is named instead); times in the viewer's zone with its short name, "their time" only for an explicit zone; one hold source, the shared live query, read by every surface; no raw code (aiCare/words.ts; an unknown code is "Another check").
+- **R-ISA-15 web:** Pause and Take over in one tap and End in two wherever a lead under care is shown; a focusable, announced Undo that says it keeps care paused; Resume for the owner only.
+- **R-ISA-7 web:** AI messages are labelled from the turns route's message ids, with the verb their own status supports ("Sent by", "Scheduled by … for", "Queued by", "Written by" when it did not go) and "{Owner first}'s AI assistant" only for turns of the latest assignment whose owner is the contact's owner; the assistant is never shown as a person; anything outside the 100 turns keeps "Sent automatically".
+- R-ISA-23: no sentence lets the AI near price, value, money, lending, contracts or legal questions; "I've handled it; the AI may continue" continues the conversation, never the topic.
+
+**The shared hold query:** `['ai-isa','list',{scope:'all',state:'live'}]` (30 s stale, refetched on focus and after every control; never for a TC). Its `holdSentence` wins over a panel chain link (V3: link 1 is 'ok' on fakes while AI_ISA_LIVE_SENDS is false); a panel link with effect `hold` adds "Their replies come to you as usual." (to the owner; others read "go to {Owner first}").
+
+**Deviations, each with its V or Q:**
+- No Cancel for a scheduled confirmation on the ack sheet (Q3; there is no route): the sheet says what stops it (the send check of 0080, as replaced by 0081 and 0083). §10.3 above described a Cancel.
+- No bulk checkbox: bulk always skips people under AI care with a fixed notice (Q4). §10.5 above described a checked box.
+- No policy editor, approval or revoke in the app (Q5): a read-only view, the changed fields (no pause claim, V11) and "Editing and approving the team policy is not built yet."
+- Labels come from the turns route, not the timeline (V12: the timeline has no initiator).
+- The inbox drops `ai_isa_message` and `ai_isa_handoff` for every consumer (V1).
+- "Mine / Everyone you can see" instead of Mine, Team, All (V7: the API's team scope returns the same rows as all); no Held filter (V7).
+- No per-lead re-auth on Start (Q12): the sheet names the opt-in it relies on, and the side tap is the explicit act (2 taps).
+- The opt-in form warns before any save while care is on (V19, Q13): any save ends live care today.
+- Q2: the Owner's on and cap confirmations are web constants (TeamAssistantPage.tsx `ON_ATTESTATION`, `capAttestation`), sent verbatim as the attestation, until the server serves them.
+- Q6: one `BUILT` constant (aiCare/built.ts) holds converse only: the panel still reports every other capability "Not available yet" after ISA-2b. `EMAIL_SENDER_CHECKS` is true since ISA-2b wired DKIM verdicts (cb7932c), so the opt-in form no longer says email replies always come back.
+- Q8: switching on is allowed before counsel clears `platform:ai_isa`, with the counsel line on the team page and Start refused NOT_CLEARED.
+- Q9: ending a "they have an agent" check records no block (there is no route); the card says so.
+- Q10, V9: cards module 75 never closes say their done or resolved state honestly and stay.
+- Q11: Take over, End and Undo for Owner, Admin, Team Lead and the owning agent; collaborators and the human ISA role get Pause only (authz.ts:685-688).
+- The handoff card omits the sections the package does not carry (V13: open questions, consent basis, caps, zones, summary, the trigger quote); deadlines say "by {time}" (V15, Q-ISA-20 VERIFY); a pending message's own status is read, not `confirmation_status` (V17).
+- The paused strip says when a forgotten pause ends (72 h, handlers.ts:38); re-attest results name the continued leads and say each "not continued" code in words; continued assignments end as `reinquiry_period`, worded neutrally (V20).
+- The panel never shows the API's fixed "12:00–20:00 Eastern" zone sentence, its rolling-24 h "today" (said as "in the last 24 hours") or its UTC times (V6).
+
 ---
 
 ## 11. Coordination with the lanes in flight
@@ -1292,6 +1333,7 @@ The lane briefs are in <lane_briefs>.
 - **J5 quiet hours:** an inbound at 22:30 recipient time → the reply at 09:00 on the fake clock, with "Reply scheduled" shown.
 - **J6 kill switch and AI_ISA_LIVE_SENDS:** the hold banner, then resumed with no clicks.
 - **J7 tenant off:** all ended, cancels, notices.
+- **Web specs (ISA-4, apps/web/e2e/ai-care, phone and desktop, taps counted, axe on each screen):** a1-setup (R-ISA-32: the switch, the Admin's cap refusal, the opt-in, the first-touch refusal and a 2-tap Start; V19); a2-controls (J3 web part: Pause in 1 tap from the list, the team lead without Resume, the owner's Resume, Take over with Undo, the finalize job and the handoff card, End in 2 taps with Undo, the hand-typed text's warning and Resume toast); a3-stop (J4 without the removed phone: covered by ISA-2's API tests); a4-quiet (J5 web part: the planned time in the viewer's zone with their time); a5-hold (J6); a6-tenant-off (J7 web part); a7-handoff (J1 partial: start from the person page, the AI label, AGENT, the handoff card, Got it, the owner's text and the sweep; the handback path is covered by component tests, the world has no first-response playbook). J2 (seller) is not built (ISA-3).
 
 ### 13.5 Runs
 Before each lane's final push:

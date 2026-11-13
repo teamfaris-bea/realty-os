@@ -24,6 +24,7 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from '../admin/lib/ui.js';
 import { LEAD_STAGE_LABEL } from '../people/api.js';
+import { AiPolicyNotice, isAiIsaPlaybook } from '../aiCare/Policy.js'; // module 76 (flagged edit)
 import { ALERTS_HEADING, type AutoEnrollSetting, type DelayUnit, ISA_POLICY_ELSEWHERE, KIND_LABEL, READ_ONLY_ALERTS, isElsewherePlaybook, isReadOnlyPlaybook, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
 
 const PLAYBOOKS_KEY = ['assistant', 'playbooks'] as const;
@@ -122,7 +123,13 @@ export function PlaybookPage() {
       <StatusLine text={status} />
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
-      {p && isElsewherePlaybook(p) ? <Notice tone="info">{ISA_POLICY_ELSEWHERE}</Notice> : null}
+      {p && isElsewherePlaybook(p) ? (
+        <>
+          <Notice tone="info">{ISA_POLICY_ELSEWHERE}</Notice>
+          {/* module 76 (ISA-4 Q5): where the assistant's ISA team policy is shown */}
+          {isAiIsaPlaybook(p) ? <AiPolicyNotice /> : null}
+        </>
+      ) : null}
       {p && !isElsewherePlaybook(p) ? (
         <>
           <div>

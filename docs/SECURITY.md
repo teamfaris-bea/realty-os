@@ -1085,3 +1085,7 @@ A data-class note for `cma_reports`. **What it holds:** the subject's address an
 - The model never sees listing facts: bundles reach the prompt as structured labels only, and a facts message already sent is replaced by a placeholder in later prompts. Prices, addresses and brokerages are rendered by the server from clientView only.
 - Booking never runs on in-app data alone: the book job's live read is on the offer's own calendar link under the organizer's booking lock (lock 5), and refuses CALENDAR_UNAVAILABLE / SLOT_SOURCE_CHANGED otherwise.
 - The guard's weekday and holiday checks run for a message the turn planned as initiated as well as one the guard derives as initiated (0083), and only `app_definer` executes the holiday function and the send check (app_user's EXECUTE on the holiday function, granted by 0081, is revoked).
+
+## 19. AI ISA web: the handoff card's read route (lane ISA-4, module 76; no migration; ARCHITECTURE §21.47)
+
+- `GET /ai-isa/handoffs/:id` (apps/api/src/isaWeb/routes.ts) is read-only: `ai_isa.view` with the handoff's contact facts, the handoff's own RLS (0080's `isa_select` on `ai_isa_handoffs`, which 0081 widened to the root survivor's detail audience), 404 for an invisible, forged or other-tenant id and for a role without the grant (tc); no write, no audit, no new grant or definer; confidence, score and tenant keys are dropped from the package at any depth (handoffView.test.ts). A handoff with no deadline (0081's `sla_class` 'none') is never reported overdue.

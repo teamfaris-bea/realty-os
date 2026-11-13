@@ -1,0 +1,2979 @@
+{
+  "$comment": "GENERATED from the API Zod schemas by apps/api/src/isaWeb/webContract.ts (--write). Do not edit: apps/api/src/isaWeb/webContract.test.ts fails when this file drifts.",
+  "routes": {
+    "GET /admin/ai-isa": {
+      "inputKeys": [],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "aiEnabled": {
+            "type": "boolean"
+          },
+          "dailyCap": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "sentToday": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "packCleared": {
+            "type": "boolean"
+          },
+          "liveSends": {
+            "type": "boolean"
+          },
+          "holdSentence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabledByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabledAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overdueHandoffs": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "underCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "noticeSentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "aiEnabled",
+          "dailyCap",
+          "sentToday",
+          "packCleared",
+          "liveSends",
+          "holdSentence",
+          "enabledByUserId",
+          "enabledAt",
+          "overdueHandoffs",
+          "underCare",
+          "noticeSentence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "PUT /admin/ai-isa": {
+      "inputKeys": [
+        "attestation",
+        "dailyCap",
+        "enabled"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "dailyCap": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "attestation": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "enabled",
+          "dailyCap"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "aiEnabled": {
+            "type": "boolean"
+          },
+          "dailyCap": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "sentToday": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "packCleared": {
+            "type": "boolean"
+          },
+          "liveSends": {
+            "type": "boolean"
+          },
+          "holdSentence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabledByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabledAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overdueHandoffs": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "underCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "noticeSentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "aiEnabled",
+          "dailyCap",
+          "sentToday",
+          "packCleared",
+          "liveSends",
+          "holdSentence",
+          "enabledByUserId",
+          "enabledAt",
+          "overdueHandoffs",
+          "underCare",
+          "noticeSentence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "GET /me/ai-isa": {
+      "inputKeys": [],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "optIn": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "versionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "channels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "timezone": {
+                    "type": "string"
+                  },
+                  "availability": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "weekday": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 7
+                        },
+                        "start": {
+                          "type": "string",
+                          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                        },
+                        "end": {
+                          "type": "string",
+                          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                        }
+                      },
+                      "required": [
+                        "weekday",
+                        "start",
+                        "end"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "bookingKinds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "versionId",
+                  "capabilities",
+                  "channels",
+                  "timezone",
+                  "availability",
+                  "bookingKinds",
+                  "createdAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "versionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "versionSha": {
+                    "type": "string"
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "channels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "versionId",
+                  "versionSha",
+                  "capabilities",
+                  "channels"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attestationText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "needsReattest": {
+            "type": "boolean"
+          },
+          "calendarLive": {
+            "type": "boolean"
+          },
+          "underCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "optIn",
+          "policy",
+          "attestationText",
+          "needsReattest",
+          "calendarLive",
+          "underCare",
+          "sentence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "PUT /me/ai-isa/opt-in": {
+      "inputKeys": [
+        "availability",
+        "availability.end",
+        "availability.start",
+        "availability.weekday",
+        "bookingKinds",
+        "capabilities",
+        "channels",
+        "timezone",
+        "versionId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "versionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "capabilities": {
+            "minItems": 1,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "channels": {
+            "minItems": 1,
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 64
+          },
+          "availability": {
+            "maxItems": 28,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema2"
+            }
+          },
+          "bookingKinds": {
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            }
+          }
+        },
+        "required": [
+          "versionId",
+          "capabilities",
+          "channels",
+          "timezone",
+          "availability",
+          "bookingKinds"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "enum": [
+              "converse",
+              "share_listings",
+              "propose_saved_search",
+              "seller_competition",
+              "seller_sold_comps",
+              "book_appointments"
+            ]
+          },
+          "__schema1": {
+            "type": "string",
+            "enum": [
+              "sms",
+              "email"
+            ]
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "weekday": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7
+              },
+              "start": {
+                "type": "string",
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+              },
+              "end": {
+                "type": "string",
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+              }
+            },
+            "required": [
+              "weekday",
+              "start",
+              "end"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string",
+            "enum": [
+              "buyer_consult",
+              "listing_appointment",
+              "consult"
+            ]
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "optInId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "created",
+              "narrowed",
+              "superseded"
+            ]
+          }
+        },
+        "required": [
+          "optInId",
+          "change"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /me/ai-isa/opt-in/revoke": {
+      "inputKeys": [],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ended": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ended"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /me/ai-isa/pause-all": {
+      "inputKeys": [],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /me/ai-isa/re-attest": {
+      "inputKeys": [
+        "versionId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "versionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "versionId"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "continued": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "assignmentId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "contactId",
+                "assignmentId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "notContinued": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "contactId",
+                "code",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "continued",
+          "notContinued"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "GET /ai-isa/assignments": {
+      "inputKeys": [
+        "scope",
+        "state"
+      ],
+      "body": null,
+      "query": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "default": "mine",
+            "type": "string",
+            "enum": [
+              "mine",
+              "team",
+              "all"
+            ]
+          },
+          "state": {
+            "default": "live",
+            "type": "string",
+            "enum": [
+              "live",
+              "paused",
+              "ended",
+              "held",
+              "any"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "assignmentId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "side": {
+                  "type": "string",
+                  "enum": [
+                    "buyer",
+                    "seller",
+                    "both"
+                  ]
+                },
+                "chip": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "waiting_reply",
+                        "reply_scheduled",
+                        "scheduling",
+                        "waiting_on_agent",
+                        "paused",
+                        "held",
+                        "ended"
+                      ]
+                    },
+                    "sentence": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sentence"
+                  ],
+                  "additionalProperties": false
+                },
+                "lastAction": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "sentence": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "at",
+                        "sentence"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "nextTouchAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "capsSentence": {
+                  "type": "string"
+                },
+                "inactivityReleaseAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ownerUserId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "ownerName": {
+                  "type": "string"
+                },
+                "handoffOverdue": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "assignmentId",
+                "contactId",
+                "name",
+                "side",
+                "chip",
+                "lastAction",
+                "nextTouchAt",
+                "capsSentence",
+                "inactivityReleaseAt",
+                "ownerUserId",
+                "ownerName",
+                "handoffOverdue"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "holdSentence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "holdSentence"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "GET /contacts/:id/ai-isa": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "assignment": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "side": {
+                    "type": "string",
+                    "enum": [
+                      "buyer",
+                      "seller",
+                      "both"
+                    ]
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "starting",
+                      "awaiting_reply",
+                      "engaged",
+                      "nurture",
+                      "scheduling",
+                      "booking",
+                      "awaiting_agent",
+                      "paused",
+                      "ended"
+                    ]
+                  },
+                  "chip": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "active",
+                          "waiting_reply",
+                          "reply_scheduled",
+                          "scheduling",
+                          "waiting_on_agent",
+                          "paused",
+                          "held",
+                          "ended"
+                        ]
+                      },
+                      "sentence": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sentence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "epoch": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "startedAt": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "pausedAt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "pauseReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "pausedSentence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "endedAt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "endReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "undoUntil": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "ownerUserId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "id",
+                  "side",
+                  "state",
+                  "chip",
+                  "epoch",
+                  "startedAt",
+                  "pausedAt",
+                  "pauseReason",
+                  "pausedSentence",
+                  "endedAt",
+                  "endReason",
+                  "undoUntil",
+                  "ownerUserId"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "canStart": {
+            "type": "boolean"
+          },
+          "startRefusal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "canResume": {
+            "type": "boolean"
+          },
+          "chain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "link": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9
+                },
+                "name": {
+                  "type": "string"
+                },
+                "effect": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "hold",
+                    "pause",
+                    "end"
+                  ]
+                },
+                "code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "link",
+                "name",
+                "effect",
+                "code",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "capability": {
+                  "type": "string"
+                },
+                "allowed": {
+                  "type": "boolean"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "capability",
+                "allowed",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "consent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "channel": {
+                  "type": "string",
+                  "enum": [
+                    "sms",
+                    "email"
+                  ]
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "channel",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "zones": {
+            "type": "object",
+            "properties": {
+              "zones": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "explicit",
+                  "union"
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "zones",
+              "source",
+              "sentence"
+            ],
+            "additionalProperties": false
+          },
+          "nextAllowedSendAt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capsSentence": {
+            "type": "string"
+          },
+          "lastDecision": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "at": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "codes",
+                  "at",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "factsSent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "factKind": {
+                  "type": "string"
+                },
+                "listingId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sentAt": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "asOf": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "factKind",
+                "listingId",
+                "sentAt",
+                "source",
+                "asOf"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "openOffer": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "slots": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "startsAt": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "endsAt": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      },
+                      "required": [
+                        "startsAt",
+                        "endsAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                },
+                "required": [
+                  "id",
+                  "status",
+                  "slots",
+                  "expiresAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "heldTopics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "class": {
+                  "type": "string"
+                },
+                "since": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "class",
+                "since",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "handoff": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "slaClass": {
+                    "type": "string",
+                    "enum": [
+                      "critical",
+                      "high",
+                      "normal",
+                      "low",
+                      "none"
+                    ]
+                  },
+                  "slaDueAt": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "slaMetAt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "overdue": {
+                    "type": "boolean"
+                  },
+                  "confirmationStatus": {
+                    "type": "string"
+                  },
+                  "closedReason": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "deadline_met",
+                          "acknowledged",
+                          "lead_closed",
+                          "care_restarted",
+                          "care_continued"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "reason",
+                  "slaClass",
+                  "slaDueAt",
+                  "slaMetAt",
+                  "overdue",
+                  "confirmationStatus",
+                  "closedReason"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inactivityReleaseAt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inactivitySentence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "block": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "since": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason",
+                  "since",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "contactId",
+          "assignment",
+          "canStart",
+          "startRefusal",
+          "canResume",
+          "chain",
+          "capabilities",
+          "consent",
+          "zones",
+          "nextAllowedSendAt",
+          "capsSentence",
+          "lastDecision",
+          "factsSent",
+          "openOffer",
+          "heldTopics",
+          "handoff",
+          "inactivityReleaseAt",
+          "inactivitySentence",
+          "block"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "GET /contacts/:id/ai-isa/turns": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "turns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "seq": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "epoch": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "triggerKind": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "stateBefore": {
+                  "type": "string"
+                },
+                "stateAfter": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "channel": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "sms",
+                        "email"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "messageKind": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "reply",
+                        "initiated"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "messageId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notBefore": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "zones": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "decision": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "denied": {
+                  "type": "array",
+                  "items": {}
+                },
+                "versions": {
+                  "type": "object",
+                  "properties": {
+                    "rules": {
+                      "type": "string"
+                    },
+                    "policy": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "rules",
+                    "policy",
+                    "prompt"
+                  ],
+                  "additionalProperties": false
+                },
+                "createdAt": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "id",
+                "seq",
+                "epoch",
+                "attempt",
+                "triggerKind",
+                "status",
+                "stateBefore",
+                "stateAfter",
+                "channel",
+                "messageKind",
+                "messageId",
+                "notBefore",
+                "zones",
+                "decision",
+                "denied",
+                "versions",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "turns"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/start": {
+      "inputKeys": [
+        "channels",
+        "fromHandbackId",
+        "id",
+        "side"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "buyer",
+              "seller",
+              "both"
+            ]
+          },
+          "channels": {
+            "minItems": 1,
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "fromHandbackId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "side"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "enum": [
+              "sms",
+              "email"
+            ]
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "stoppedEnrollment": {
+            "type": "boolean"
+          },
+          "supersededProposals": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence",
+          "stoppedEnrollment",
+          "supersededProposals"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/pause": {
+      "inputKeys": [
+        "id",
+        "reason"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "user"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/resume": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/take-over": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/end": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/undo": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/continue": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "awaiting_reply",
+              "engaged",
+              "nurture",
+              "scheduling",
+              "booking",
+              "awaiting_agent",
+              "paused",
+              "ended"
+            ]
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "inFlight": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "messageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "at": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "messageId",
+                "at",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canceled": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "undoUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "stoppedEnrollment": {
+            "type": "boolean"
+          },
+          "supersededProposals": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "assignmentId",
+          "state",
+          "epoch",
+          "inFlight",
+          "canceled",
+          "undoUntil",
+          "sentence",
+          "stoppedEnrollment",
+          "supersededProposals"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/lift-block": {
+      "inputKeys": [
+        "attestation",
+        "id",
+        "inboundMessageId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "inboundMessageId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "attestation": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "inboundMessageId",
+          "attestation"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "lifted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lifted"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /ai-isa/handoffs/:id/ack": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "handoffId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "acknowledgedAt": {
+            "type": "string"
+          },
+          "slaMet": {
+            "type": "boolean"
+          },
+          "confirmationStatus": {
+            "type": "string"
+          },
+          "closedReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deadline_met",
+                  "acknowledged",
+                  "lead_closed",
+                  "care_restarted",
+                  "care_continued"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "handoffId",
+          "acknowledgedAt",
+          "slaMet",
+          "confirmationStatus",
+          "closedReason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /ai-isa/escalations/:id/resolve": {
+      "inputKeys": [
+        "class",
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "string",
+            "pattern": "^[a-z_]{2,40}$"
+          }
+        },
+        "required": [
+          "class"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "cleared": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "cleared"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "GET /ai-isa/handoffs/:id": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "slaClass": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "normal",
+              "low",
+              "none"
+            ]
+          },
+          "slaDueAt": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "slaMetAt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "overdue": {
+            "type": "boolean"
+          },
+          "closedReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deadline_met",
+                  "acknowledged",
+                  "lead_closed",
+                  "care_restarted",
+                  "care_continued"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "acknowledgedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acknowledgedByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recipientUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "canAcknowledge": {
+            "type": "boolean"
+          },
+          "confirmationStatus": {
+            "type": "string"
+          },
+          "pendingMessage": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "confirmation",
+                      "holding_line"
+                    ]
+                  },
+                  "channel": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "scheduledFor": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "channel",
+                  "status",
+                  "scheduledFor"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "package": {
+            "type": "object",
+            "properties": {
+              "v": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "reason": {
+                "type": "string"
+              },
+              "escalation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "priority": {
+                "type": "string"
+              },
+              "basis": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "rule": {
+                        "type": "string"
+                      },
+                      "ruleVersion": {
+                        "type": "string"
+                      },
+                      "claimIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "rule",
+                      "ruleVersion",
+                      "claimIds"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "appointment": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "appointmentId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "confirmationQueued": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "appointmentId",
+                      "kind",
+                      "confirmationQueued"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "openOffer": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "offerId": {
+                        "type": "string"
+                      },
+                      "slots": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "startsAt": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "endsAt": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "startsAt",
+                            "endsAt"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "deliveredAt": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "offerId",
+                      "slots",
+                      "deliveredAt",
+                      "expiresAt"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "commitments": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "claims": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "claimId": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "type": "string"
+                    },
+                    "value": {},
+                    "quote": {
+                      "type": "string"
+                    },
+                    "messageId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "claimId",
+                    "field",
+                    "value",
+                    "quote",
+                    "messageId"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "conversation": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "status",
+                    "messageId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "factsSent": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "factKind": {
+                      "type": "string"
+                    },
+                    "listingId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "factKind",
+                    "listingId",
+                    "messageId"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "unansweredInbound": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "nextSteps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "notes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "startedAt": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "assignmentId",
+          "contactId",
+          "reason",
+          "slaClass",
+          "slaDueAt",
+          "slaMetAt",
+          "overdue",
+          "closedReason",
+          "createdAt",
+          "acknowledgedAt",
+          "acknowledgedByUserId",
+          "recipientUserId",
+          "canAcknowledge",
+          "confirmationStatus",
+          "pendingMessage",
+          "package"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "errors": {
+    "NOT_FOUND": 404,
+    "VALIDATION_FAILED": 422,
+    "REAUTH_REQUIRED": 401,
+    "OWNER_REQUIRED": 403,
+    "ATTESTATION_REQUIRED": 403,
+    "AI_ISA_OFF": 409,
+    "AI_ISA_NOT_CLEARED": 409,
+    "AI_ISA_POLICY_NOT_APPROVED": 409,
+    "AI_ISA_NO_OPTIN": 409,
+    "AI_ISA_NOT_OWNER": 404,
+    "AI_ISA_ALREADY_ACTIVE": 409,
+    "AI_ISA_NO_CHANNEL": 409,
+    "AI_ISA_SHARED_ADDRESS": 409,
+    "AI_ISA_ACTIVE_CLIENT": 409,
+    "AI_ISA_LISTED_ELSEWHERE": 409,
+    "AI_ISA_NOT_ROOT": 409,
+    "AI_ISA_CALENDAR_REQUIRED": 409,
+    "AI_ISA_FIRST_TOUCH_PENDING": 409,
+    "AI_ISA_PERSON_DECLINED": 409,
+    "AI_ISA_HANDBACK_STALE": 409,
+    "AI_ISA_UNDO_EXPIRED": 409,
+    "AI_ISA_BOOKING_IN_PROGRESS": 409,
+    "AI_ISA_NOT_LIVE": 409,
+    "AI_ISA_NOT_PAUSED": 409,
+    "AI_ISA_DO_NOT_CONTACT": 409,
+    "AI_ISA_ATTESTATION_REQUIRED": 422,
+    "AI_ISA_ROLE_NOT_ELIGIBLE": 403,
+    "AI_ISA_BLOCK_NOT_LIFTABLE": 409,
+    "AI_ISA_HANDOFF_USE_ACK": 409,
+    "SUBJECT_UNCONFIRMED": 409,
+    "CAPABILITY_NOT_AVAILABLE": 422
+  }
+}

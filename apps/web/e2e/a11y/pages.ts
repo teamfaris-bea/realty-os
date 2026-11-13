@@ -105,6 +105,10 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   // module 39 (TC board) and module 41 (milestone templates)
   { path: '/transactions', roles: ALL, url: at('/transactions') },
   { path: '/admin/milestone-templates', roles: ADMINS, url: at('/admin/milestone-templates') },
+  // module 76 (AI ISA web): Under AI care, My AI assistant (never TC or the human ISA role) and the team switch
+  { path: '/ai-care', roles: NOT_TC, url: at('/ai-care') },
+  { path: '/settings/ai-assistant', roles: ['owner', 'admin', 'team_lead', 'agent'], url: at('/settings/ai-assistant') },
+  { path: '/settings/ai-assistant/team', roles: ADMINS, url: at('/settings/ai-assistant/team') },
 ];
 
 /** Screens outside the app frame (signed out). */

@@ -50,6 +50,7 @@ import { sellerRoutes } from './isa/seller/routes.js';
 import { voiceRoutes } from './voice/routes.js';
 import { gbpRoutes } from './gbp/routes.js';
 import { coachingTrendsRoutes } from './coaching/trends/routes.js';
+import { isaWebRoutes } from './isaWeb/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -98,5 +99,6 @@ export const routeModules: RouteModule[] = [
   gbpRoutes,
   coachingTrendsRoutes,
   sellerRoutes,
+  isaWebRoutes,
   // registry: add new entries above this line
 ];

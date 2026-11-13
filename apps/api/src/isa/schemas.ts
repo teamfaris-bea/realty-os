@@ -18,6 +18,8 @@ export const HANDOFF_CLOSE_REASONS = ['deadline_met', 'acknowledged', 'lead_clos
 const Iso = z.string();
 /** Why the system closed a handoff (isa/handoff.ts closeHandoffInTx; ai_isa_handoffs.closed_reason, 0081), or null. */
 const HandoffClosedReason = z.enum(HANDOFF_CLOSE_REASONS).nullable();
+/** A handoff's deadline class (0080), with 0081's 'none': no human touch can clear it, so it has no deadline (B12X-2). */
+export const SLA_CLASSES = ['critical', 'high', 'normal', 'low', 'none'] as const;
 
 // ---- tenant (settings.ai_isa) -------------------------------------------------------------------------------
 export const AdminView = z.object({
@@ -148,7 +150,7 @@ export const PanelResponse = z.object({
   heldTopics: z.array(z.object({ class: z.string(), since: Iso, sentence: z.string() })),
   // b12 recheck R19: closedReason says why the system closed it (null while open), so a lead-closed handoff is told
   // apart from one a sweep has not reached
-  handoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), closedReason: HandoffClosedReason }).nullable(),
+  handoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), closedReason: HandoffClosedReason }).nullable(),
   inactivityReleaseAt: Iso.nullable(),
   inactivitySentence: z.string().nullable(),
   block: z.object({ reason: z.string(), since: Iso, sentence: z.string() }).nullable(),

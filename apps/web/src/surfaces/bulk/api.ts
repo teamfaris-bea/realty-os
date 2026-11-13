@@ -77,6 +77,7 @@ export const REASON_WORDS: Record<string, string> = {
   CREATOR_INACTIVE: 'were stopped (the sender is no longer active)',
   SEND_BLOCKED: 'were blocked when sending',
   TARGET_NOT_ELIGIBLE: "can't be assigned to that person",
+  UNDER_AI_CARE: 'are under AI care', // module 76 (Q4: always skipped, live or paused)
 };
 
 export function reasonWords(code: string): string {
