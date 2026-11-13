@@ -13,7 +13,8 @@ import { useKeptProposals } from '../ads/ProposalCard.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import { AdShiftApproval } from './AdShiftApproval.js';
 import { ExtractionPointers, useOpenExtractions } from './ExtractionPointers.js';
-import { type ReviewView, ReviewReplyApproval, useReviewsToReply } from './ReviewReplyApproval.js';
+import type { ReviewView } from '../gbp/types.js';
+import { ReviewReplyApproval, useReviewsToReply } from './ReviewReplyApproval.js';
 
 export function Phase3Approvals({ whenEmpty = null }: { whenEmpty?: ReactNode }) {
   const { session } = useSession();

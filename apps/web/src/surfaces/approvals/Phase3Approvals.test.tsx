@@ -10,7 +10,8 @@ import { IDS, agentApp, draftAction } from '../feed/lib/testing.js';
 import type { ActionView } from '../feed/lib/types.js';
 import type { PieceView } from '../marketing/types.js';
 import type { OpenExtraction } from './ExtractionPointers.js';
-import type { ReviewView } from './ReviewReplyApproval.js';
+import type { ReviewView } from '../gbp/types.js';
+import { GUARD_WORDS, refusalWords } from '../gbp/words.js';
 
 type Role = 'owner' | 'admin' | 'team_lead' | 'agent' | 'isa' | 'tc';
 const user = () => userEvent.setup();
@@ -186,28 +187,37 @@ describe('review reply card', () => {
     expect(fake.calls.filter((x) => x.method !== 'GET' && x.path.startsWith('/assistant'))).toEqual([]);
   });
 
-  it('E663 R-STAFF-2: a draft the guard flagged shows its words and no Post reply', async () => {
-    open(world({ reviews: [review({ draft: { ...review().draft!, guard: ['REVIEWER_NAME', 'DATE'] } })] }));
+  it('E663 R-STAFF-2: a draft the guard flagged shows its words (the same words as /gbp) and no Post reply', async () => {
+    open(world({ reviews: [review({ draft: { ...review().draft!, guard: ['REVIEWER_NAME', 'DATE', 'FAIR_HOUSING'] } })] }));
     const c = await screen.findByRole('article', { name: 'Review from Robin Q.' });
-    expect(within(c).getByText("Can't post yet: it names the reviewer; it mentions a date. Edit the reply first.")).toBeInTheDocument();
+    // one wording for the privacy guard: surfaces/gbp/words.ts (batch 14 audit R6)
+    for (const code of ['REVIEWER_NAME', 'DATE', 'FAIR_HOUSING'] as const) expect(within(c).getByText(GUARD_WORDS[code])).toBeInTheDocument();
     expect(within(c).queryByRole('button', { name: 'Post reply' })).toBeNull();
     expect(within(c).getByRole('button', { name: 'Discard' })).toBeInTheDocument();
     expect(c.textContent).not.toMatch(RAW);
   });
 
-  const refusals: [string, Record<string, unknown> | undefined, string][] = [
-    ['REPLY_PRIVACY', { codes: ['MONEY'], spans: [] }, "Can't post yet: it mentions a price or an amount. Edit the reply first."],
-    ['REPLY_STALE', undefined, 'The review changed at Google after this reply was drafted. Draft the reply again.'],
-    ['PLATFORM_NOT_CLEARED', { pack: 'platform:fair_housing' }, 'Posting waits for counsel review of publishing marketing (fair-housing rules). Nothing was posted.'],
-    ['CHANNEL_NOT_CONNECTED', undefined, 'This Business Profile location is not connected. Nothing was posted.'],
+  // one wording for the refusals too: what /gbp says for the same answer (surfaces/gbp/words.ts refusalWords; audit R6)
+  const draftText = review().draft!.text;
+  const refusals: [string, Record<string, unknown> | undefined][] = [
+    ['REPLY_PRIVACY', { codes: ['MONEY', 'FAIR_HOUSING'], spans: [{ code: 'MONEY', start: 0, end: 9 }] }],
+    ['REPLY_STALE', undefined],
+    ['REPLY_IN_PROGRESS', undefined],
+    ['PLATFORM_NOT_CLEARED', { pack: 'platform:fair_housing' }],
+    ['GBP_NOT_CONFIGURED', undefined],
+    ['CHANNEL_NOT_CONNECTED', undefined],
+    ['NOT_FOUND', undefined],
   ];
-  for (const [code, details, words] of refusals) {
-    it(`E663: ${code} is said in words, Post stays off until the reply is edited or drafted again, nothing re-sent`, async () => {
+  for (const [code, details] of refusals) {
+    it(`E663: ${code} is said in the /gbp page's words, Post stays off until the reply is edited or drafted again, nothing re-sent`, async () => {
       const fake = world({ reviews: [review()] }).on(`POST /gbp/reviews/${REVIEW}/reply`, staffError(code, details));
       open(fake);
       const c = await screen.findByRole('article', { name: 'Review from Robin Q.' });
       await user().click(within(c).getByRole('button', { name: 'Post reply' }));
-      expect(await within(c).findByText(words)).toBeInTheDocument();
+      // refusalWords reads the code and the details only
+      const words = refusalWords({ code, status: 400, details: details ?? null }, draftText);
+      expect(await within(c).findByText(words.sentence)).toBeInTheDocument();
+      for (const item of words.items) expect(within(c).getByText(item)).toBeInTheDocument();
       expect(within(c).queryByRole('button', { name: 'Post reply' })).toBeNull();
       expect(within(c).getByRole('link', { name: 'Edit' })).toBeInTheDocument();
       await settle();

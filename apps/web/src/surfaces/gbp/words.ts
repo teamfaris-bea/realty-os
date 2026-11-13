@@ -36,6 +36,9 @@ export const GUARD_WORDS: Record<GuardCode, string> = {
   LENGTH: "It's empty or longer than Google allows.",
 };
 
+/** The title above a stored draft's guard words, here and on the approvals card. */
+export const GUARD_NOTICE_TITLE = 'Edit this before you post it';
+
 export function guardWords(code: string): string {
   return Object.hasOwn(GUARD_WORDS, code) ? GUARD_WORDS[code as GuardCode] : 'It does not pass the privacy checks.';
 }

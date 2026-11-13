@@ -9,7 +9,7 @@ import { Button, Notice } from '../../design/index.js';
 import { useAction } from '../admin/lib/hooks.js';
 import type { ReplyResult, ReviewView } from './types.js';
 import { GBP_REVIEWS_KEY } from './keys.js';
-import { REPLY_UNKNOWN, gbpPlain, guardWords, refusalWords, reviewDate, starsWords } from './words.js';
+import { GUARD_NOTICE_TITLE, REPLY_UNKNOWN, gbpPlain, guardWords, refusalWords, reviewDate, starsWords } from './words.js';
 
 const INVALIDATE = [[...GBP_REVIEWS_KEY]];
 const MAX_TEXT = 5000;
@@ -114,7 +114,7 @@ export function ReviewCard({ review, canReply, locationName, onSaid }: { review:
           </label>
           <textarea id={textId} value={text} rows={5} maxLength={MAX_TEXT} onChange={(e) => setEdit({ actionId: draft.actionId, text: e.target.value })} className="w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink" />
           {draft.guard.length > 0 ? (
-            <Notice tone="warn" title="Edit this before you post it">
+            <Notice tone="warn" title={GUARD_NOTICE_TITLE}>
               <ul className="list-disc pl-5">
                 {draft.guard.map((c) => (
                   <li key={c}>{guardWords(c)}</li>
