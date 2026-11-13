@@ -94,10 +94,11 @@ describe('R-CMA-1: sale and property facts from the feed', () => {
   });
 
   it('R-CMA-1: a mapping can point a field elsewhere and extend the vocabularies', () => {
-    const m: FieldMapping = { ...MAPPING, fields: { sqft: 'BuildingAreaTotal', stories: 'StoriesTotal' }, saleConditionMap: { 'HUD Owned': 'reo' }, leasePropertyTypes: ['Rental'], subdivisionPlaceholders: ['No HOA'] };
-    const f = facts({ ...RESO_FULL, LivingArea: undefined, BuildingAreaTotal: 2100, StoriesTotal: 1.5, SpecialListingConditions: 'HUD Owned', PropertyType: 'Rental', SubdivisionName: 'NO HOA' }, m);
+    // the size field may be pointed at another field (an MLS-confirmed choice), never at a field of SIZE_FIELDS_NEVER_USED (R-MLS-7, size.test.ts)
+    const m: FieldMapping = { ...MAPPING, fields: { sqft: 'AboveGradeFinishedArea', stories: 'StoriesTotal' }, saleConditionMap: { 'HUD Owned': 'reo' }, leasePropertyTypes: ['Rental'], subdivisionPlaceholders: ['No HOA'] };
+    const f = facts({ ...RESO_FULL, LivingArea: undefined, AboveGradeFinishedArea: 2100, StoriesTotal: 1.5, SpecialListingConditions: 'HUD Owned', PropertyType: 'Rental', SubdivisionName: 'NO HOA' }, m);
     expect(f.sqft).toBe(2100);
-    expect(f.valuation).toMatchObject({ sizeSource: 'BuildingAreaTotal', storiesX10: 15, saleConditions: ['reo'], isLease: true, subdivisionName: null });
+    expect(f.valuation).toMatchObject({ sizeSource: 'AboveGradeFinishedArea', storiesX10: 15, saleConditions: ['reo'], isLease: true, subdivisionName: null });
     expect(facts({ ...RESO_FULL, LivingArea: null }).valuation.sizeSource).toBeNull();
   });
 });

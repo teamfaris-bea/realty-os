@@ -24,6 +24,11 @@
 //   Commercial Lease (or a mapping's `leasePropertyTypes`) sets isLease: a lease is never a sale (VERIFY WITH MLS:
 //   the Lookup values). InternetAutomatedValuationDisplayYN is true only for an explicit yes; PoolPrivateYN is
 //   tri-state.
+// - Size (R-MLS-7): sqft is finished living area, read from exactly one field, the mapping's size field (RESO default
+//   LivingArea). A mapping with `sqft: null` (an MLS whose finished-living-area field is not confirmed: Spark) reads no
+//   size, and a field of SIZE_FIELDS_NEVER_USED (BuildingAreaTotal: total building area; unfinished or below-grade area
+//   alone) is never read, whatever the mapping says. Fields are never added together and never stand in for each other.
+//   PostalCode is stored as sent: a ZIP+4 is not folded and not inferred (VERIFY WITH MLS).
 import { type Instant, instantFromIso } from '../foundation/index.js';
 import { PROPERTY_TYPES } from '../assistant/index.js';
 import { SALE_CONDITIONS, type FactField, type FieldMapping, type Issue, type ListingFacts, type ListingStatus, type PropertyType, type ResoLike, type SaleCondition, type ValuationFacts } from './types.js';
@@ -77,6 +82,32 @@ export const RESO_DEFAULT_FIELDS: Readonly<Record<FactField, string>> = Object.f
   stories: 'Stories',
   avmDisplay: 'InternetAutomatedValuationDisplayYN',
 });
+
+/**
+ * RESO area fields that are never finished living area (R-MLS-7), so never a size: BuildingAreaTotal is the total
+ * building area (finished and unfinished), and unfinished or below-grade area alone is not living area either. A
+ * mapping that names one reads no size; the database refuses them as listings.size_source (the 0078 size migration).
+ * Compared in any letter case. This list is the only place code may name BuildingAreaTotal (an architecture test).
+ */
+export const SIZE_FIELDS_NEVER_USED: readonly string[] = Object.freeze(['BuildingAreaTotal', 'AboveGradeUnfinishedArea', 'BelowGradeFinishedArea', 'BelowGradeUnfinishedArea']);
+
+/**
+ * The RESO field the size (finished living area) is read from under a mapping, or null when none is: the mapping says
+ * `sqft: null` (no confirmed field) or names a field of SIZE_FIELDS_NEVER_USED (R-MLS-7). Default: LivingArea.
+ */
+export function sizeFieldOf(mapping: Pick<FieldMapping, 'fields'>): string | null {
+  const mapped = mapping.fields?.sqft;
+  if (mapped === null) return null;
+  const field = mapped ?? RESO_DEFAULT_FIELDS.sqft;
+  const key = field.toLowerCase();
+  return SIZE_FIELDS_NEVER_USED.some((f) => f.toLowerCase() === key) ? null : field;
+}
+
+/** The RESO field name of each of our fields under a mapping (sqft: the size field, or the default when none is read). */
+function fieldNames(mapping: Pick<FieldMapping, 'fields'>): Record<FactField, string> {
+  const { sqft, ...rest } = mapping.fields ?? {};
+  return { ...RESO_DEFAULT_FIELDS, ...rest, sqft: sizeFieldOf(mapping) ?? sqft ?? RESO_DEFAULT_FIELDS.sqft };
+}
 
 /** RESO SpecialListingConditions → ours (vocabulary keys). Unknown ⇒ 'other'. VERIFY WITH MLS: the Lookup values. */
 export const RESO_SALE_CONDITION_MAP: Readonly<Record<string, SaleCondition>> = Object.freeze({
@@ -287,7 +318,7 @@ const placeholderKey = (s: string): string => s.normalize('NFKC').toLowerCase().
 export function resoAddressParts(raw: ResoLike, mapping: Pick<FieldMapping, 'fields'>): {
   streetNumber: string | null; streetDirPrefix: string | null; streetName: string | null; streetSuffix: string | null; streetDirSuffix: string | null; unitNumber: string | null; postalCode: string | null;
 } {
-  const names: Record<FactField, string> = { ...RESO_DEFAULT_FIELDS, ...mapping.fields };
+  const names = fieldNames(mapping);
   const t = (f: FactField): string | null => {
     const v = textOf(raw[names[f]]);
     return typeof v === 'string' ? v : null;
@@ -456,7 +487,8 @@ export function normalizeMlsListing(raw: ResoLike, mapping: FieldMapping): Listi
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return [{ code: 'MLS_RECORD_INVALID', field: '*', detail: 'The feed record is not an object.' }];
   }
-  const names: Record<FactField, string> = { ...RESO_DEFAULT_FIELDS, ...mapping.fields };
+  const names = fieldNames(mapping);
+  const sizeField = sizeFieldOf(mapping);
   const read = (f: FactField): unknown => raw[names[f]];
   const issues: Issue[] = [];
   const missing = (f: FactField, what: string): void => {
@@ -518,7 +550,8 @@ export function normalizeMlsListing(raw: ResoLike, mapping: FieldMapping): Listi
   const beds = bounded('beds', 'The bedroom count', count('beds', 'The bedroom count', true), SMALLINT_MAX);
   const bathsRaw = count('baths', 'The bathroom count', false);
   const baths = bathsRaw === null ? null : bounded('baths', 'The bathroom count', Math.round(bathsRaw * 10), SMALLINT_MAX);
-  const areaRaw = count('sqft', 'The living area', false);
+  // R-MLS-7: only the confirmed finished-living-area field is read; with none, the size is unknown (never another field)
+  const areaRaw = sizeField === null ? null : count('sqft', 'The living area', false);
   const area = areaRaw === null ? null : bounded('sqft', 'The living area', Math.round(areaRaw), INTEGER_MAX);
   const photosCount = count('photosCount', 'The photo count', true);
 
