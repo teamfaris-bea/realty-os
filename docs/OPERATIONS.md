@@ -260,6 +260,12 @@ timers and provider health, and can retry or cancel a job (audited).
 - **Then check:** worker and API logs for a crash or restart at the call's time, and whether the vendor transport closed early (vendor items are **VERIFY**, N12).
 - **Escalate:** to the module 48 owner for a code fix; to the vendor for transport faults.
 
+### 4.17 AI_ISA_HANDOFF_SWEEP_FAILING (P2 `WORKER_ERROR`, module 75 AI ISA, D12 PROPOSED)
+- **Means:** the AI handoff deadline sweep (`ai_isa.sla`, every minute per tenant) has failed on the same handoff in 3 passes (`details.handoffId`, `details.failures`, `details.error`: the SQLSTATE). Each row runs in its own savepoint, so every other handoff of the tenant is still met, escalated and closed on time; only this one is stuck: its card stays open and its deadline is neither met nor escalated until the cause is fixed. `details.failures` null means even the count could not be written (the alert then repeats each pass). Each failure also logs `AI_ISA_HANDOFF_SWEEP_FAILED`. It can fire only with the AI ISA switched on for a tenant (D12 PROPOSED, `AI_ISA_LIVE_SENDS=false`).
+- **Check:** the worker log for that handoff id; the SQLSTATE names the class (`23514` a CHECK, `P0001` a guard's `RAISE`). Read `ai_isa_handoffs` and its `assistant_actions` row as the system for that id: the stored state the close or escalation tried to change.
+- **Fix:** a data fix or a code fix through review; never delete the handoff or edit its frozen package. Tell the lead's owner (or the Team Lead) to pick the person up by hand meanwhile: the deadline cannot alert for this handoff while it fails.
+- **Escalate:** to the module 75 owner.
+
 ---
 
 ## 5. Error reporting

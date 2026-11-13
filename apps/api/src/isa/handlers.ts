@@ -11,7 +11,7 @@ import { commsRuntime } from '../comms/runtime.js';
 import type { CommsDeps } from '../comms/types.js';
 import type { Providers } from '../providers/index.js';
 import { jobPayload, zId } from '../worker/payload.js';
-import type { JobHandler, StandaloneJobHandler, TxJobHandler } from '../worker/types.js';
+import type { JobContext, JobHandler, StandaloneJobHandler, TxJobHandler } from '../worker/types.js';
 import { refusalClass, step, type IsaFacts } from './coreSeam.js';
 import { finalizeInTx, systemEndInTx } from './controls.js';
 import { applyActionsInTx, cancelForAssignmentInTx, contextFor, type IsaDeps, pauseCardInTx } from './effects.js';
@@ -165,8 +165,8 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
       if (r.kind === 'retry') return { retryAt: r.retryAt };
     },
   };
-  const tx = <P>(kind: `${string}.${string}`, schema: TxJobHandler<P>['schema'], fn: (t: Tx, deps: IsaDeps, actor: SystemActor, p: P, now: Instant) => Promise<unknown>, queue: 'realtime' | 'default' = 'realtime'): TxJobHandler<P> => ({
-    kind, queue, via: 'assistant', schema, async run(ctx, p) { await fn(ctx.tx, isaDeps(depsFor, ctx.providers), ctx.actor, p, ctx.now); },
+  const tx = <P>(kind: `${string}.${string}`, schema: TxJobHandler<P>['schema'], fn: (t: Tx, deps: IsaDeps, actor: SystemActor, p: P, now: Instant, ctx: JobContext) => Promise<unknown>, queue: 'realtime' | 'default' = 'realtime'): TxJobHandler<P> => ({
+    kind, queue, via: 'assistant', schema, async run(ctx, p) { await fn(ctx.tx, isaDeps(depsFor, ctx.providers), ctx.actor, p, ctx.now, ctx); },
   });
   return [
     turn as JobHandler<unknown>,
@@ -201,7 +201,8 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
       await applyActionsInTx({ tx: t, deps: d, actor: a, ctx, now, turnId: null, pinnedSeq: asg.lastInboundSeq }, r);
     }),
     tx('ai_isa.saved_search', AssignmentPayload, async () => undefined, 'default'),
-    { ...tx('ai_isa.sla', Empty, (t, d, a, _p, now) => slaSweepInTx(t, d.ids, now, a), 'default'), every: { ms: AI_ISA_SLA_EVERY_MS, offsetMs: 20_000 }, periodicPayload: {} } as JobHandler<unknown>,
+    // b12 recheck R24: a row the sweep keeps failing on is logged and, after AI_ISA_SWEEP_ALERT_AFTER passes, alerted
+    { ...tx('ai_isa.sla', Empty, (t, d, a, _p, now, ctx) => slaSweepInTx(t, d.ids, now, a, { alerts: ctx.alerts, log: ctx.log }), 'default'), every: { ms: AI_ISA_SLA_EVERY_MS, offsetMs: 20_000 }, periodicPayload: {} } as JobHandler<unknown>,
     { ...tx('ai_isa.sweep', Empty, (t, d, a, _p, now) => sweepInTx(t, d, a, now), 'default'), every: { ms: AI_ISA_SWEEP_EVERY_MS, offsetMs: 40_000 }, periodicPayload: {} } as JobHandler<unknown>,
   ] as JobHandler<unknown>[];
 }

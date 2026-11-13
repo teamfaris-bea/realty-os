@@ -138,11 +138,18 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     const ungated = await checkWith('app.ai_isa_person_blocked(uuid, uuid)', (d) => d.replace(/AND \(app\.is_tenant_wide\(\)[\s\S]*?app\.user_id\(\)\)\)\)/, ''));
     expect(ungated).toMatch(/0081 self-check failed: app\.ai_isa_person_blocked answers a caller who cannot see the record/);
     // b12 recheck R19: the handoff guard without closed_* among the system's columns, or without the final close
-    const userCloses = await checkWith('app.ai_isa_handoffs_guard()', (d) => d.replace('NEW.sla_escalation_level, NEW.closed_at, NEW.closed_reason)', 'NEW.sla_escalation_level)')
-      .replace('OLD.sla_escalation_level, OLD.closed_at, OLD.closed_reason)', 'OLD.sla_escalation_level)'));
-    expect(userCloses).toMatch(/0081 self-check failed: a user can close an AI handoff, or a close is not final/);
+    const guardRefused = /0081 self-check failed: a user can close an AI handoff or count its sweep failures, or a close is not final/;
+    const mutated = (from: string, to: string) => (d: string) => {
+      expect(d).toContain(`NEW.${from}`);
+      return d.replace(`NEW.${from}`, `NEW.${to}`).replace(`OLD.${from}`, `OLD.${to}`);
+    };
+    const userCloses = await checkWith('app.ai_isa_handoffs_guard()', mutated('sweep_failures, NEW.closed_at, NEW.closed_reason)', 'sweep_failures)'));
+    expect(userCloses).toMatch(guardRefused);
     const reopens = await checkWith('app.ai_isa_handoffs_guard()', (d) => d.replace(/\n[ \t]*IF OLD\.closed_at IS NOT NULL[^\n]*\n[^\n]*\n[ \t]*END IF;/, ''));
-    expect(reopens).toMatch(/0081 self-check failed: a user can close an AI handoff, or a close is not final/);
+    expect(reopens).toMatch(guardRefused);
+    // b12 recheck R24: the handoff guard without sweep_failures among the system's columns
+    const userCounts = await checkWith('app.ai_isa_handoffs_guard()', mutated('sla_escalation_level, NEW.sweep_failures, NEW.closed_at', 'sla_escalation_level, NEW.closed_at'));
+    expect(userCounts).toMatch(guardRefused);
   });
 
   it('R-ISA-5: a turn decision holds codes and handles only (a free-text value is refused by the CHECK)', async () => {
@@ -707,6 +714,18 @@ describe('post-handoff messages and the handoff record (R-ISA-14)', () => {
     expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET closed_at = NULL, closed_reason = NULL WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_CLOSE_FINAL');
     // the recipient still acknowledges a closed handoff
     expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET acknowledged_at = COALESCE(acknowledged_at, now()), acknowledged_by_user_id = COALESCE(acknowledged_by_user_id, ${x.agent.id}) WHERE id = ${hd!.id}`))).toBe('ok');
+  });
+
+  it('R-ISA-30 (b12 recheck R24): only the system counts the deadline sweep\'s failed passes on a handoff, never below zero', async () => {
+    // a handoff on the agent's own lead (the agent sees it and may acknowledge it)
+    const [hd] = await suRows<{ id: string }>(h.su, `SELECT hd.id FROM ai_isa_handoffs hd JOIN contacts c ON c.tenant_id = hd.tenant_id AND c.id = hd.contact_id
+      WHERE hd.tenant_id = $1 AND c.owner_user_id = $2 LIMIT 1`, [w.tenantId, x.agent.id]);
+    expect(hd).toBeTruthy();
+    expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
+    expect(await errOf(q(w.owner.actor, sql`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET sweep_failures = -1 WHERE id = ${hd!.id}`))).toMatch(/ai_isa_handoffs_sweep_failures_check/);
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE id = ${hd!.id}`))).toBe('ok');
+    expect((await suRows<{ n: number }>(h.su, `SELECT sweep_failures AS n FROM ai_isa_handoffs WHERE id = $1`, [hd!.id]))[0]!.n).toBe(1);
   });
 });
 

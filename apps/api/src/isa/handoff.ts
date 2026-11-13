@@ -12,6 +12,7 @@ import { audit } from '../audit.js';
 import { adminUserIds, contactLabel, notifyUser, upsertFeedItem } from '../comms/repos/notify.js';
 import { teamLeadOf } from '../leads/repos/members.js';
 import { optOutFactsOf } from '../voice/facts.js';
+import type { AlertSink, Logger } from '../worker/observability.js';
 import { ISA_SLA_MINUTES, type Handoff } from './coreSeam.js';
 import type { AssignmentRow } from './repo.js';
 import type { HANDOFF_CLOSE_REASONS } from './schemas.js';
@@ -226,10 +227,11 @@ async function overdueTargets(tx: Tx, r: { owner: string | null; holder: string 
  * since (no touch can meet it any more), without recording the deadline as met; a handoff already done (its stored
  * close, b12 recheck R19, R21) is not read again.
  */
-export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor: SystemActor): Promise<{ met: number; escalated: number; closed: number }> {
+export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor: SystemActor, o: { alerts?: AlertSink; log?: Logger } = {}): Promise<{ met: number; escalated: number; closed: number; failed: number }> {
   let met = 0;
   let escalated = 0;
   let closed = 0;
+  let failed = 0;
   // b12 review B12X-3: the touch is read on the record the person lives on now (a merged-away record takes none).
   // b12 recheck R2: the escalation follows that record's current owner, as the pending card does (rehomeHandbacks, the
   // merge). b12 recheck R8: an unowned record follows whoever holds the card now (the handoff action's owner, which
@@ -244,9 +246,11 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
   const at = new Date(now);
   // b12 recheck R20: also an acknowledged handoff with no deadline that is still open (the ack route's own close after
   // the acknowledgement failed): it is closed here, so that close is retried until it holds
-  const rows = await sql<{ id: string; action_id: string; contact_id: string; lead_closed: boolean; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null; ack_close: boolean; touch_met: boolean; escalate: boolean }>`
+  // b12 recheck R24: a row whose work failed on an earlier pass sorts after every other (sweep_failures), so failing
+  // rows never fill the 200 ahead of a healthy one
+  const rows = await sql<SweepRow>`
     SELECT s.* FROM (
-      SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level,
+      SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level, h.sweep_failures,
              CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
              CASE WHEN x.status = 'proposed' THEN x.owner_user_id END AS holder_user_id,
              CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
@@ -261,36 +265,101 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
         LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
        WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.closed_at IS NULL AND (h.sla_class <> 'none' OR h.acknowledged_at IS NOT NULL)) s
      WHERE s.ack_close OR s.touch_met OR s.lead_closed OR s.escalate
-     ORDER BY s.sla_due_at, s.id LIMIT 200`.execute(tx);
+     ORDER BY s.sweep_failures > 0, s.sla_due_at, s.id LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
-    if (r.ack_close) {
-      if (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'acknowledged', now)) closed += 1;
+    // b12 recheck R24: each row's work runs in its own savepoint. A row whose work fails (a close a guard keeps
+    // refusing, say) is rolled back alone, counted and reported, and the pass goes on: before, one such row aborted the
+    // tenant's whole sweep on every pass, and R20's retry re-read exactly that row each time
+    await sql`SAVEPOINT ai_isa_sla_row`.execute(tx);
+    let done: 'met' | 'closed' | 'escalated' | null;
+    try {
+      done = await sweepRowInTx(tx, ids, now, actor, r);
+    } catch (err) {
+      await sql`ROLLBACK TO SAVEPOINT ai_isa_sla_row`.execute(tx);
+      await sql`RELEASE SAVEPOINT ai_isa_sla_row`.execute(tx);
+      failed += 1;
+      await sweepFailedInTx(tx, actor, r.id, err, o);
       continue;
     }
-    if (r.touch_met) {
-      await sql`UPDATE ai_isa_handoffs SET sla_met_at = ${r.touched} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
-      await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'deadline_met', now);
-      met += 1;
-      continue;
-    }
-    // b12 recheck R13: a touch is recorded only on an owned lead, so a closed lead's deadline can never be met: the
-    // handoff is done (its card closes, its action is executed), and nothing alerts; the deadline is not recorded as met.
-    // b12 recheck R21: a handoff whose card was decided is marked done here too (once), so it is not read again
-    if (r.lead_closed) {
-      if (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'lead_closed', now)) closed += 1;
-      continue;
-    }
-    // level 1 at the deadline; level 2 one more deadline-length later (the read set's `escalate`)
-    if (!r.escalate) continue;
-    const level = r.sla_escalation_level + 1;
-    const targets = await overdueTargets(tx, { owner: r.owner_user_id, holder: r.holder_user_id, previous: r.previous_user_id, frozen: r.frozen_user_id }, level);
-    const label = (await contactLabel(tx, r.contact_id)) ?? 'A lead';
-    for (const userId of targets) {
-      await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_overdue', priority: 'critical', title: `AI handoff not picked up: ${label}`.slice(0, 120), body: null,
-        subjectType: 'contact', subjectId: r.contact_id, dedupeKey: `ai_isa_overdue:${r.id}:${level}` }, now);
-    }
-    await sql`UPDATE ai_isa_handoffs SET sla_escalated_at = ${new Date(now)}, sla_escalation_level = ${level} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
-    escalated += 1;
+    await sql`RELEASE SAVEPOINT ai_isa_sla_row`.execute(tx);
+    if (done === 'met') met += 1;
+    else if (done === 'closed') closed += 1;
+    else if (done === 'escalated') escalated += 1;
   }
-  return { met, escalated, closed };
+  return { met, escalated, closed, failed };
+}
+
+interface SweepRow {
+  id: string;
+  action_id: string;
+  contact_id: string;
+  lead_closed: boolean;
+  created_at: Date;
+  sla_due_at: Date;
+  sla_escalation_level: number;
+  sweep_failures: number;
+  owner_user_id: string | null;
+  holder_user_id: string | null;
+  previous_user_id: string | null;
+  frozen_user_id: string;
+  touched: Date | null;
+  ack_close: boolean;
+  touch_met: boolean;
+  escalate: boolean;
+}
+
+/** One row of the deadline sweep (slaSweepInTx runs it in a savepoint): what it did, or null. */
+async function sweepRowInTx(tx: Tx, ids: IdGenerator, now: Instant, actor: SystemActor, r: SweepRow): Promise<'met' | 'closed' | 'escalated' | null> {
+  if (r.ack_close) return (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'acknowledged', now)) ? 'closed' : null;
+  if (r.touch_met) {
+    await sql`UPDATE ai_isa_handoffs SET sla_met_at = ${r.touched} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
+    await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'deadline_met', now);
+    return 'met';
+  }
+  // b12 recheck R13: a touch is recorded only on an owned lead, so a closed lead's deadline can never be met: the
+  // handoff is done (its card closes, its action is executed), and nothing alerts; the deadline is not recorded as met.
+  // b12 recheck R21: a handoff whose card was decided is marked done here too (once), so it is not read again
+  if (r.lead_closed) return (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'lead_closed', now)) ? 'closed' : null;
+  // level 1 at the deadline; level 2 one more deadline-length later (the read set's `escalate`)
+  if (!r.escalate) return null;
+  const level = r.sla_escalation_level + 1;
+  const targets = await overdueTargets(tx, { owner: r.owner_user_id, holder: r.holder_user_id, previous: r.previous_user_id, frozen: r.frozen_user_id }, level);
+  const label = (await contactLabel(tx, r.contact_id)) ?? 'A lead';
+  for (const userId of targets) {
+    await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_overdue', priority: 'critical', title: `AI handoff not picked up: ${label}`.slice(0, 120), body: null,
+      subjectType: 'contact', subjectId: r.contact_id, dedupeKey: `ai_isa_overdue:${r.id}:${level}` }, now);
+  }
+  await sql`UPDATE ai_isa_handoffs SET sla_escalated_at = ${new Date(now)}, sla_escalation_level = ${level} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
+  return 'escalated';
+}
+
+/** b12 recheck R24: after this many failed passes on one handoff the sweep raises a P2 alert naming it (once). */
+export const AI_ISA_SWEEP_ALERT_AFTER = 3;
+
+/**
+ * b12 recheck R24: a row the deadline sweep failed on. Its failed passes are counted on the handoff
+ * (ai_isa_handoffs.sweep_failures, system-only, 0081) in a savepoint of their own; each failure is logged
+ * (AI_ISA_HANDOFF_SWEEP_FAILED, the handoff id and the SQLSTATE only), and the pass that reaches
+ * AI_ISA_SWEEP_ALERT_AFTER raises one P2 `WORKER_ERROR` (reason AI_ISA_HANDOFF_SWEEP_FAILING; OPERATIONS §4.17), so a
+ * poisoned row is surfaced rather than retried silently forever. When even the count cannot be written, every pass
+ * raises it.
+ */
+async function sweepFailedInTx(tx: Tx, actor: SystemActor, handoffId: string, err: unknown, o: { alerts?: AlertSink; log?: Logger }): Promise<void> {
+  const code = (err as { code?: unknown } | null)?.code;
+  const error = typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code) ? code : 'ERROR';
+  let failures: number | null = null;
+  await sql`SAVEPOINT ai_isa_sla_count`.execute(tx);
+  try {
+    const u = await sql<{ n: number }>`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE tenant_id = app.tenant_id() AND id = ${handoffId}
+      RETURNING sweep_failures AS n`.execute(tx);
+    failures = u.rows[0]?.n ?? null;
+    await sql`RELEASE SAVEPOINT ai_isa_sla_count`.execute(tx);
+  } catch {
+    await sql`ROLLBACK TO SAVEPOINT ai_isa_sla_count`.execute(tx);
+    await sql`RELEASE SAVEPOINT ai_isa_sla_count`.execute(tx);
+  }
+  o.log?.warn('AI handoff deadline sweep failed on one handoff; the pass went on', { errorCode: 'AI_ISA_HANDOFF_SWEEP_FAILED', details: { handoffId, failures, error } });
+  if (failures === null || failures === AI_ISA_SWEEP_ALERT_AFTER) {
+    o.alerts?.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: actor.tenantId, details: { reason: 'AI_ISA_HANDOFF_SWEEP_FAILING', handoffId, failures, error } });
+  }
 }

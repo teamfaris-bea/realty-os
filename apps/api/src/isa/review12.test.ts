@@ -657,6 +657,57 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(panel.body.handoff?.closedReason).toBe('acknowledged');
   });
 
+  it('R-ISA-30 E521 (b12 recheck R24): a handoff whose close keeps failing never aborts the deadline sweep: a healthy due handoff is escalated in the same pass, the failed row is rolled back alone and counted, and a P2 alert names it once it has failed 3 passes', async () => {
+    const { memoryAlerts, silentLogger } = await import('../worker/observability.js');
+    // the poisoned row: a touch meets its deadline, but its close is refused on every pass (a test-only trigger)
+    const poisoned = await handedToA1();
+    await touch(poisoned.l.id);
+    // the healthy row: past its deadline, nobody touched it
+    const healthy = await handedToA1();
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '1 minute', created_at = now() - interval '2 minutes' WHERE id = $1`, [healthy.ho.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const state = async (id: string) => (await h.su.query<{ level: number; met: boolean; closed: string | null; failures: number }>(
+      `SELECT sla_escalation_level AS level, sla_met_at IS NOT NULL AS met, closed_reason AS closed, sweep_failures AS failures FROM ai_isa_handoffs WHERE id = $1`, [id])).rows[0]!;
+    const deps = depsFromPlatform(h.app.platform);
+    const actor = systemActor(w.tenantId, 'assistant');
+    const alerts = memoryAlerts();
+    const sweep = () => withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor, { alerts, log: silentLogger }), { db: h.database });
+    await h.su.query(`CREATE FUNCTION public.r24_refuse_close() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.id = '${poisoned.ho.id}'::uuid AND OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL THEN RAISE EXCEPTION 'R24_INJECTED_FAILURE'; END IF;
+        RETURN NEW; END $$`);
+    await h.su.query(`CREATE TRIGGER r24_refuse_close BEFORE UPDATE ON ai_isa_handoffs FOR EACH ROW EXECUTE FUNCTION public.r24_refuse_close()`);
+    try {
+      const first = await sweep();
+      expect(first.failed).toBe(1);
+      // the healthy row: escalated in the same pass (level 1, its overdue alert sent)
+      expect(await state(healthy.ho.id)).toMatchObject({ level: 1, met: false, closed: null });
+      expect(await overdueOf(healthy.l.id)).toBeGreaterThanOrEqual(1);
+      // the poisoned row: its work rolled back alone (no deadline met, no close, no audit), one failure counted
+      expect(await state(poisoned.ho.id)).toEqual({ level: 0, met: false, closed: null, failures: 1 });
+      expect(await closedAudit(poisoned.ho.id)).toEqual([]);
+      expect(alerts.alerts).toEqual([]);
+      await sweep();
+      await sweep();
+      expect((await state(poisoned.ho.id)).failures).toBe(3);
+      expect(alerts.alerts).toEqual([{ severity: 'P2', code: 'WORKER_ERROR', tenantId: w.tenantId,
+        details: { reason: 'AI_ISA_HANDOFF_SWEEP_FAILING', handoffId: poisoned.ho.id, failures: 3, error: 'P0001' } }]);
+      // a fourth failure is counted, not raised again
+      await sweep();
+      expect([(await state(poisoned.ho.id)).failures, alerts.alerts.length]).toEqual([4, 1]);
+    } finally {
+      await h.su.query(`DROP TRIGGER r24_refuse_close ON ai_isa_handoffs`);
+      await h.su.query(`DROP FUNCTION public.r24_refuse_close()`);
+    }
+    // once the close can hold, the next pass meets the deadline and closes it
+    expect((await sweep()).failed).toBe(0);
+    expect(await state(poisoned.ho.id)).toMatchObject({ met: true, closed: 'deadline_met' });
+    expect(await closedAudit(poisoned.ho.id)).toEqual([{ reason: 'deadline_met', actor_kind: 'system' }]);
+  });
+
   it('R-ISA-30 E521: a lead closed while its handoff has a deadline: the sweep closes the card and executes the action, never sends an overdue alert, and the deadline is not recorded as met', async () => {
     const { l, ho, a1 } = await handedToA1();
     expect((await command(a1, l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
