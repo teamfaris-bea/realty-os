@@ -6,6 +6,12 @@
 // SMS dropping WHOLE listing lines from the end until it fits (never a cut line; attribution and disclaimer kept; at
 // least one line); else nothing (FACTS_DO_NOT_FIT). Never the "I can email you" pointer. contentGuard runs over the
 // full body (TEMPLATE_GUARD:<issue>). At TX1 every pending fact is checked again (factChangedAtSendInTx).
+//
+// VERIFY WITH COUNSEL (C-ISA-5): the AI identity on a facts message (the platform intro and sign-off say "AI
+// assistant"; the same holds for offers and confirmations). VERIFY WITH COUNSEL (C-ISA-7): whether an unlicensed
+// assistant may state asking prices (and schedule consults); the price is the MLS's asking price, server-rendered,
+// never the model's. VERIFY WITH COUNSEL (C-ISA-1/4): the initiated tier for listing shares and the DNC freshness it
+// relies on (initiatedTierPassesInTx). (batch 13 audit ISA2B-12)
 import { contentGuard } from '@realty/core/assistant';
 import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';

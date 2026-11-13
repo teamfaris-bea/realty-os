@@ -376,7 +376,8 @@ export async function busy(deps: CalendarDeps, actor: UserActor, range: { from: 
  * Module 48 (flagged one-place export, O10; the voice lane's signature) plus `linkId` (ISA-2b, D8a): the busy times
  * bookSlot reads for `userId` (live free/busy plus the person's in-app appointments), as the system actor inside the
  * caller's transaction, and the live link they came from. Read now, kept nowhere (R-CAL-3). `calendar: 'unavailable'`
- * means the calendar did not answer: offer nothing (bookSlot would refuse too).
+ * means the calendar did not answer: offer nothing (bookSlot would refuse too). VERIFY vendor (ISA-2b; batch 13 audit
+ * ISA2B-12): how Google and Microsoft free/busy report tentative and private events (counted busy here as they come).
  */
 export async function busyForBooking(deps: Pick<CalendarDeps, 'envelope' | 'adapters' | 'now'>, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<{ calendar: BusyView['calendar']; busy: Busy[]; linkId: string | null }> {
   const p = await providerBusy(deps as CalendarDeps, tx, tenantId, userId, range);

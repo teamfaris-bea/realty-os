@@ -9,6 +9,11 @@
 //             fresh, active, not a lease and normalized: "listed as Active in the MLS as of" is then true. An
 //             off-MLS, office-exclusive or coming-soon team listing is never shared (TEAM_NOT_ON_MLS).
 //   both      renderBuyerListing succeeds (status and price not omitted, brokerage and attribution present).
+//
+// VERIFY WITH MLS (batch 13 audit ISA2B-12): whether a one-to-one share of a team listing not yet in the MLS is allowed
+// at all (Clear Cooperation); until the MLS answers, the live-mirror rule shares none. VERIFY WITH MLS: the lease
+// PropertyType Lookup values behind is_lease (batch 10's normalize). The size: a Spark size is unknown until the MLS
+// confirms its field (fix/mls-size, 0082); a line states only a size the row has.
 import type { Instant } from '@realty/core/foundation';
 import { feedStale, NORMALIZE_VERSION } from '@realty/core/listings';
 import type { Tx } from '@realty/db';

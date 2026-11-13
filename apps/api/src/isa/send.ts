@@ -135,7 +135,8 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
   // zones: the turn's set widened by the zones resolved now (written before the dispatching UPDATE, §5.4)
   const zones = [...new Set([...(r.zones ?? []), ...ctx.zones])].sort();
   if (r.turn_id) await sql`UPDATE ai_isa_turns SET zones = ${zones}::text[] WHERE tenant_id = app.tenant_id() AND id = ${r.turn_id}`.execute(tx);
-  // the offset agreement check (E514): core's ICU offset at now against Postgres's tzdata
+  // the offset agreement check (E514): core's ICU offset at now against Postgres's tzdata. VERIFY (engineering; batch 13
+  // audit ISA2B-12): the ICU and Postgres tzdata versions on CI and in production are recorded and kept in step
   const pg = await sql<{ z: string; off: number }>`SELECT z, (EXTRACT(EPOCH FROM ((now() AT TIME ZONE z) - (now() AT TIME ZONE 'UTC'))) / 60)::int AS off FROM unnest(${zones}::text[]) z`.execute(tx);
   const extra = pg.rows.some((x) => icuOffsetMinutes(x.z as IanaZone, now) !== x.off) ? ['ISA_OFFSET_MISMATCH'] : [];
   // item 11 (R-ISA-17): every pending listing fact re-checked; a status or price change (or any failed rule) replans
