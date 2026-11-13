@@ -19,7 +19,7 @@ import { writeHandoffInTx } from './handoff.js';
 import { emitIsaSendResultsInTx } from './sendResult.js';
 import { markAcceptingInTx, reconcileOfferRowsInTx } from './booking/rows.js';
 import type { BuyerBundle } from './buyer/bundle.js';
-import { pauseAiSearchesAtHandoffInTx } from './buyer/savedSearch.js';
+import { pauseAiSearchesAtHandoffInTx } from './buyer/handoffSearches.js';
 import { insertPendingFactsInTx, type PlannedFacts, planFactsMessageInTx } from './buyer/facts.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
 import { onEscalationInTx, renderSellerFactsInTx, writeSellerFactsInTx } from './seller/index.js';

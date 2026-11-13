@@ -2,11 +2,18 @@
 // PROPOSES: the search is stored `proposed` with origin ai_isa and stays so until a human approves it (0001's
 // SAVED_SEARCH_APPROVAL_REQUIRES_HUMAN); nothing goes to the client. While care is live an ai_isa search never
 // alerts (searches.ts due query); at the handoff it is paused for review and the homes the AI already sent are marked
-// alerted, so a later alert never repeats them.
+// alerted, so a later alert never repeats them (handoffSearches.ts).
+//
+// R-GMAIL-14 (batch 13 audit ISA2B-03): this file imports assistant/** and is reached only from isa/turn.ts and
+// isa/handlers.ts, which no path from mailSync/** reaches. What the handoff needs (effects.ts, which mailSync reaches
+// through comms/inbound → isa/ingest) lives in handoffSearches.ts with no assistant import. No dynamic import(): the
+// architecture test's scan sees those too.
 import type { AssistantClaimId, Instant } from '@realty/core/foundation';
 import type { Claim } from '@realty/core/assistant';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { contactCore } from '../../assistant/repos/context.js';
+import { proposeSavedSearchInTx } from '../../assistant/searches.js';
 import type { IsaContext, IsaDeps } from '../effects.js';
 import { initiatedTierPassesInTx } from '../send.js';
 import { criteriaFromClaims } from './criteria.js';
@@ -34,9 +41,6 @@ export async function proposeAiSavedSearchInTx(tx: Tx, deps: IsaDeps, ctx: IsaCo
   if (a.endedAt !== null || a.pausedAt !== null) return 'CARE_NOT_LIVE';
   if (!(await savedSearchAllowedInTx(tx, ctx, { capability: true }))) return 'SAVED_SEARCH_NOT_ALLOWED';
   const c = criteriaFromClaims(a.machine.claims)!;
-  // loaded on use: module 75's static graph never reaches assistant/** (R-GMAIL-14: mailSync → comms/inbound → isa)
-  const { contactCore } = await import('../../assistant/repos/context.js');
-  const { proposeSavedSearchInTx } = await import('../../assistant/searches.js');
   const contact = await contactCore(tx, a.contactId);
   if (contact === null) return 'NO_CONTACT';
   // one qualification Claim per usable claim, in parseCriterion's input form, with its verified own-text quote
@@ -57,22 +61,4 @@ export async function proposeAiSavedSearchInTx(tx: Tx, deps: IsaDeps, ctx: IsaCo
 
 async function tenantOf(tx: Tx): Promise<string> {
   return (await sql<{ t: string }>`SELECT app.tenant_id()::text AS t`.execute(tx)).rows[0]!.t;
-}
-
-/**
- * At the handoff (cut 3 kept): the person's active AI-origin searches pause for review, and their matches of homes
- * the AI already sent are marked alerted with that message, so the alerts that follow re-approval never repeat them.
- */
-export async function pauseAiSearchesAtHandoffInTx(tx: Tx, contactId: string): Promise<{ id: string; status: string } | null> {
-  await sql`UPDATE saved_search_matches sm SET alerted_message_id = f.message_id FROM saved_searches s, ai_isa_shared_facts f
-    WHERE sm.tenant_id = app.tenant_id() AND s.tenant_id = sm.tenant_id AND s.id = sm.search_id AND s.origin = 'ai_isa' AND sm.alerted_message_id IS NULL
-      AND s.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid))
-      AND f.tenant_id = sm.tenant_id AND f.listing_id = sm.listing_id AND f.status = 'sent'
-      AND f.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid))`.execute(tx);
-  await sql`UPDATE saved_searches SET status = 'paused' WHERE tenant_id = app.tenant_id() AND origin = 'ai_isa' AND status = 'active'
-    AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid))`.execute(tx);
-  const r = await sql<{ id: string; status: string }>`SELECT id, status FROM saved_searches WHERE tenant_id = app.tenant_id() AND origin = 'ai_isa'
-    AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid)) AND status IN ('proposed','approved','paused','active')
-    ORDER BY created_at DESC LIMIT 1`.execute(tx);
-  return r.rows[0] ?? null;
 }

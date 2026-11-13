@@ -29,16 +29,22 @@ function functionBody(text: string, name: string): string {
   return text.slice(start, next < 0 ? undefined : start + 1 + next);
 }
 
-/** Value imports (not `import type`) of a file, resolved to apps/api/src-relative paths. */
-function valueImports(rel: string): string[] {
-  const text = byRel.get(rel) ?? '';
+/**
+ * Value imports (not `import type`) of a file's text, resolved to apps/api/src-relative paths: static imports and
+ * re-exports, side-effect imports, and dynamic `import('./x.js')` (a runtime value import the static form would miss;
+ * batch 13 audit ISA2B-03). A `typeof import('./x.js')` is a type and does not count.
+ */
+function importTargets(rel: string, text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/^\s*(import|export)\s+(?!type\b)[^;]*?from\s+'(\.[^']+)'/gm)) {
-    const target = normalize(join(dirname(rel), m[2]!)).replaceAll('\\', '/').replace(/\.js$/, '.ts');
-    out.push(target);
-  }
+  const specs = [
+    ...[...text.matchAll(/^\s*(?:import|export)\s+(?!type\b)[^;]*?from\s+'(\.[^']+)'/gm)].map((m) => m[1]!),
+    ...[...text.matchAll(/^\s*import\s+'(\.[^']+)'/gm)].map((m) => m[1]!),
+    ...[...text.matchAll(/(?<!\btypeof\s*)\bimport\s*\(\s*'(\.[^']+)'\s*\)/g)].map((m) => m[1]!),
+  ];
+  for (const s of specs) out.push(normalize(join(dirname(rel), s)).replaceAll('\\', '/').replace(/\.js$/, '.ts'));
   return out;
 }
+const valueImports = (rel: string): string[] => importTargets(rel, byRel.get(rel) ?? '');
 
 describe('module 68 architecture (R-GMAIL-14)', () => {
   it('R-GMAIL-14: no SQL names mail_messages or user_mail_links outside apps/api/src/mailSync/**, except module 68’s flagged ingestSyncedMailInTx in comms/inbound.ts', () => {
@@ -80,6 +86,17 @@ describe('module 68 architecture (R-GMAIL-14)', () => {
     };
     expect(bad.map(chain)).toEqual([]);
     for (const f of SOURCES.filter((x) => x.rel.startsWith('mailSync/'))) expect(f.text, f.rel).not.toMatch(/@anthropic-ai\//);
+    // the scan sees every runtime import form, so a path cannot hide behind a dynamic import() (ISA2B-03); types do not count
+    const probe = [
+      "import { a } from '../assistant/repos/actions.js';",
+      "export * from '../voice/facts.js';",
+      "import '../providers/anthropic.js';",
+      "  const { runModel } = await import('../assistant/runs.js');",
+      "const m = import(\n  '../providers/fake/ai.js'\n);",
+      "import type { T } from '../assistant/repos/context.js';",
+      "type U = typeof import('../assistant/steps.js');",
+    ].join('\n');
+    expect(importTargets('isa/probe.ts', probe)).toEqual(['assistant/repos/actions.ts', 'voice/facts.ts', 'providers/anthropic.ts', 'assistant/runs.ts', 'providers/fake/ai.ts']);
   });
 
   it('R-GMAIL-3 R-GMAIL-14: mailSync never sends: no dispatchOutbound / dialOutbound, no provider send, and the Gmail adapter has no send, modify, label, trash or delete method', () => {

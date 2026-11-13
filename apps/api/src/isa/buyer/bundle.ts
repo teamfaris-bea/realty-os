@@ -5,6 +5,9 @@
 // (HANDLE_UNKNOWN otherwise) and the facts message re-runs every rule (buyer/facts.ts).
 import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
+// R-GMAIL-14 (batch 13 audit ISA2B-03): a static import. This file is reached from isa/turn.ts only, which no path from
+// mailSync/** reaches (the architecture test scans static and dynamic imports alike)
+import { matchClientListingsInTx } from '../../assistant/searches.js';
 import { mlsEligibility } from '../../mls/eligibility.js';
 import { ISA_GROUNDING_DEFAULTS } from '../coreSeam.js';
 import type { IsaContext } from '../effects.js';
@@ -50,8 +53,6 @@ export async function buildBuyerBundleInTx(tx: Tx, ctx: IsaContext, i: { shareAl
   if (!tier) return none('CONSENT_TIER_MISSING');
   const e = await mlsEligibility(tx, i.now);
   if (e.clientIds.length === 0) return none('MLS_NOT_ELIGIBLE');
-  // loaded on use: module 75's static graph never reaches assistant/** (R-GMAIL-14)
-  const { matchClientListingsInTx } = await import('../../assistant/searches.js');
   const rows = await matchClientListingsInTx(tx, c.criteria, BUNDLE_CANDIDATES, e);
   const recent = await recentlySharedListingIds(tx, a.contactId, ISA_GROUNDING_DEFAULTS.repeatListingDays);
   const handles: HandleLabelOut[] = [];
