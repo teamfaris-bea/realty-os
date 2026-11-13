@@ -150,9 +150,9 @@ describe('R-GATE-5 R-ISA-8 a reason code appears at most once in an AI ISA decis
     // the assistant with a failed link: check 12a alone reports it
     expect(canContact(aiIsaInput({}, { chainFailures: ['platform:ai_isa'] })).reasons).toEqual(['ISA_NOT_AUTHORIZED']);
   });
-  it('every decision carries core-compliance/3.1.0, the first rules version with checks 0, 8 and 12 for the AI ISA categories', () => {
-    expect(canContact(aiIsaInput()).rulesVersion).toBe('core-compliance/3.1.0');
-    expect(canContact(gateInput()).rulesVersion).toBe('core-compliance/3.1.0');
+  it('every decision carries the current rules version (3.1.0 was the first with checks 0, 8 and 12 for the AI ISA categories; 3.2.0 adds module 45\'s portal link clause)', () => {
+    expect(canContact(aiIsaInput()).rulesVersion).toBe('core-compliance/3.2.0');
+    expect(canContact(gateInput()).rulesVersion).toBe('core-compliance/3.2.0');
   });
 });
 

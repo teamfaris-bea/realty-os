@@ -314,12 +314,13 @@ export async function cancelQueuedAssistant(tx: Tx, contactIds: readonly string[
   return r.rows.map((x) => x.id);
 }
 
-/** Last outbound messages of a contact (handback "what was sent" evidence). */
+/** Last outbound messages of a contact (handback "what was sent" evidence). Never a portal sign-in link (module 45,
+ *  b14 audit F1: flagged edit, defence in depth behind its sealed URL): its body is never copied into a claim. */
 export async function lastOutbound(tx: Tx, contactId: string, limit: number): Promise<{ id: string; body: string; initiator: string; status: string; dispatchedAt: Instant | null }[]> {
   const r = await sql<{ id: string; body: string; initiator: string; status: string; dispatched_at: Date | null }>`
     SELECT id, body, initiator, status, dispatched_at FROM messages
      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND direction = 'outbound' AND NOT imported
-       AND status IN ('dispatching','sent','delivered','dispatch_unknown')
+       AND status IN ('dispatching','sent','delivered','dispatch_unknown') AND action_category <> 'portal_login_link'
      ORDER BY dispatched_at DESC NULLS LAST, id DESC LIMIT ${limit}`.execute(tx);
   return r.rows.map((x) => ({ id: x.id, body: x.body, initiator: x.initiator, status: x.status, dispatchedAt: x.dispatched_at ? instantFromDate(x.dispatched_at) : null }));
 }

@@ -173,6 +173,8 @@ VALUES (:tA, :lC, 'team', 'active', '40 Elm St', 'Town', 'SC', '29401', :agA2, 5
 INSERT INTO listing_contacts (tenant_id, listing_id, contact_id, role) VALUES (:tA, :lC, :c2, 'seller');
 INSERT INTO deals (tenant_id, id, name, side, stage_entered_at, primary_contact_id, owner_user_id, listing_id, created_by_user_id)
 VALUES (:tA, :dA2, 'Carol sale', 'sell', now(), :c2, :agA2, :lC, :agA2);
+-- 0087 (module 45, R-PORTAL-19): through the deal's listing only a deal seller or co-seller sees showings and feedback
+INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role) VALUES (:tA, :dA2, :c2, 'seller');
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000f103', :c1, 'email', 'alice@example.test', digest('alice@example.test', 'sha256')),

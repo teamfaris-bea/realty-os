@@ -635,7 +635,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | AI voice answering | `platform:voice` | not cleared: still waits for a real vendor's latency check (`vendor_ready_at`) |
 | Home-value notes to past clients | `platform:avm` | cleared; in-house notes (production's source, R-CMA-10) also wait for `platform:cma`, which D11 does not cover, so none is requested until it is recorded below |
 | Review requests | `platform:review_requests` | cleared |
-| The client portal | `platform:portal` | cleared |
+| The client portal | `platform:portal` | cleared (module 45: sign-in by email also needs `EMAIL_PROVIDER=smtp`, by text `TELEPHONY_PROVIDER=twilio` and `TELEPHONY_LIVE_REQUESTS=true`; otherwise that channel answers 503 `PORTAL_NOT_AVAILABLE {channel}`, and a fake provider never carries a link outside tests. No new environment variable. The web image's nginx redacts `/api/portal/files/<token>` and `/api/portal/documents/<item id>` in its access log) |
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
 | Using public-record personal information for outreach (South Carolina privacy law) | `platform:public_records_outreach` | not recorded by the seven-key command: recorded only by its own command below (owner question 1). It gates nothing in this build (no outreach path exists); the homeowner panel shows whether it is recorded |
 

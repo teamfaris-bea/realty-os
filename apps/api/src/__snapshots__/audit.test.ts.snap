@@ -99,6 +99,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "description",
     "detail",
     "disabled_reason",
+    "display",
     "display_name",
     "dkim_pass_domains",
     "dmarc_policy",
@@ -395,6 +396,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "snippet_enc",
     "token",
     "token_hash",
+    "url_enc",
     "wrapped_key",
   ],
 }

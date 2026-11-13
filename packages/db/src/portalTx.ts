@@ -238,6 +238,32 @@ export async function redeemPortalDocumentStream(tx: Tx, token: string, meta: { 
     : null;
 }
 
+export interface PortalDocumentDownload extends PortalDocumentObject {
+  /** the tenant `object` key of the object's key_version, still wrapped under the platform KEK (module 45, F1) */
+  objectKeyWrapped: Buffer;
+  objectKeyVersion: number;
+}
+
+/**
+ * Inside withPortalTx (module 45): redeems a stream token once through portal.document_download, which re-checks the
+ * whole chain and also returns the object's own wrapped tenant `object` key (a client cannot read the tenant key
+ * material). Audited; null when refused, including when that key version is destroyed.
+ */
+export async function redeemPortalDocumentDownload(tx: Tx, token: string, meta: { ip?: string | null; userAgent?: string | null } = {}): Promise<PortalDocumentDownload | null> {
+  if (typeof token !== 'string' || token.length < 16 || token.length > 128) return null;
+  const r = await sql<{
+    document_id: string; display_name: string; object_id: string; storage_key: string; content_type: string; byte_size: string; sha256: Buffer; dek_wrapped: Buffer; key_version: number;
+    object_key_wrapped: Buffer; object_key_version: number;
+  }>`SELECT * FROM portal.document_download(${sha256(token)}, ${meta.ip ?? null}::inet, ${meta.userAgent ?? null})`.execute(tx);
+  const row = r.rows[0];
+  return row
+    ? {
+        documentId: row.document_id, displayName: row.display_name, objectId: row.object_id, storageKey: row.storage_key, contentType: row.content_type, byteSize: Number(row.byte_size),
+        sha256: row.sha256, dekWrapped: row.dek_wrapped, keyVersion: row.key_version, objectKeyWrapped: row.object_key_wrapped, objectKeyVersion: row.object_key_version,
+      }
+    : null;
+}
+
 export type PortalAuditEntity = 'portal_account' | 'portal_grant' | 'portal_item' | 'document';
 
 /** Inside withPortalTx: records what the signed-in client did (the portal audit definer). */

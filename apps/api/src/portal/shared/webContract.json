@@ -1,0 +1,2774 @@
+{
+  "$comment": "GENERATED from the API Zod schemas by apps/api/src/portal/shared/webContract.ts (--write). Do not edit: apps/api/src/portal/shared/webContract.test.ts fails when this file drifts.",
+  "routes": {
+    "POST /portal/login": {
+      "side": "signin",
+      "status": 202,
+      "inputKeys": [
+        "address",
+        "team"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,62}$"
+          },
+          "address": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320
+          }
+        },
+        "required": [
+          "team",
+          "address"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "sent_if_matched"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /portal/session": {
+      "side": "signin",
+      "status": 200,
+      "inputKeys": [
+        "token"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "csrfToken": {
+            "type": "string"
+          },
+          "idleExpiresAt": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "absoluteExpiresAt": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "csrfToken",
+          "idleExpiresAt",
+          "absoluteExpiresAt"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        }
+      }
+    },
+    "GET /portal/me": {
+      "side": "client",
+      "status": 200,
+      "inputKeys": [],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "active"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "csrfToken": {
+            "type": "string"
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "idleHours": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "absoluteDays": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "idleHours",
+              "absoluteDays"
+            ],
+            "additionalProperties": false
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "purchase",
+                        "sale",
+                        "listing"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "contact": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "agentName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "textTo": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "emailTo": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "agentName",
+                        "textTo",
+                        "emailTo"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "expiresOn": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "scope",
+                "title",
+                "contact",
+                "expiresOn"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "account",
+          "csrfToken",
+          "session",
+          "grants"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /portal/logout": {
+      "side": "client",
+      "status": 204,
+      "inputKeys": [],
+      "body": null,
+      "query": null,
+      "response": null
+    },
+    "GET /portal/timeline": {
+      "side": "client",
+      "status": 200,
+      "inputKeys": [
+        "grantId"
+      ],
+      "body": null,
+      "query": {
+        "type": "object",
+        "properties": {
+          "grantId": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "grantId"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "grantId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "nextSteps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            }
+          }
+        },
+        "required": [
+          "grantId",
+          "items",
+          "nextSteps"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "object",
+            "properties": {
+              "itemId": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "milestone",
+                  "showing",
+                  "feedback",
+                  "seller_update",
+                  "next_step"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "occursOn": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "publishedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              }
+            },
+            "required": [
+              "itemId",
+              "kind",
+              "title",
+              "body",
+              "occursOn",
+              "publishedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "GET /portal/documents": {
+      "side": "client",
+      "status": 200,
+      "inputKeys": [
+        "grantId"
+      ],
+      "body": null,
+      "query": {
+        "type": "object",
+        "properties": {
+          "grantId": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "grantId"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "grantId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "itemId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "publishedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "required": [
+                "itemId",
+                "title",
+                "body",
+                "publishedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "grantId",
+          "documents"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      }
+    },
+    "POST /portal/documents/:itemId/stream-token": {
+      "side": "client",
+      "status": 200,
+      "inputKeys": [
+        "itemId"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "url",
+          "expiresAt",
+          "fileName",
+          "contentType",
+          "byteSize"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "GET /portal/files/:token": {
+      "side": "client",
+      "status": 200,
+      "inputKeys": [
+        "token"
+      ],
+      "body": null,
+      "query": null,
+      "response": null
+    },
+    "POST /deals/:id/portal/invite": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "contactId",
+        "id",
+        "idempotencyKey",
+        "loginPointId",
+        "resend",
+        "title"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "loginPointId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "^[^\\p{Cc}]*$"
+          },
+          "resend": {
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          }
+        },
+        "required": [
+          "contactId",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "contactId": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "invited",
+                  "active",
+                  "disabled"
+                ]
+              },
+              "statusText": {
+                "type": "string"
+              },
+              "loginPoint": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "email",
+                          "phone"
+                        ]
+                      },
+                      "hint": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "usable": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "hint",
+                      "status",
+                      "usable"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "signInImpossible": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "disabledReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "contactId",
+              "status",
+              "statusText",
+              "loginPoint",
+              "signInImpossible",
+              "disabledReason"
+            ],
+            "additionalProperties": false
+          },
+          "grant": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "accountId": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "revoked",
+                  "lapsed",
+                  "not_a_party",
+                  "account_disabled"
+                ]
+              },
+              "stateText": {
+                "type": "string"
+              },
+              "grantedAt": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "expiresAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "view": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "purchase",
+                          "sale",
+                          "listing"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "contact": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "agentName": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "textTo": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "emailTo": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "agentName",
+                          "textTo",
+                          "emailTo"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "expiresOn": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope",
+                  "title",
+                  "contact",
+                  "expiresOn"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "accountId",
+              "state",
+              "stateText",
+              "grantedAt",
+              "expiresAt",
+              "revokedAt",
+              "revokedBy",
+              "view"
+            ],
+            "additionalProperties": false
+          },
+          "created": {
+            "type": "object",
+            "properties": {
+              "account": {
+                "type": "boolean"
+              },
+              "grant": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "account",
+              "grant"
+            ],
+            "additionalProperties": false
+          },
+          "notice": {
+            "type": "object",
+            "properties": {
+              "sent": {
+                "type": "boolean"
+              },
+              "text": {
+                "type": "string"
+              },
+              "channel": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "sms",
+                      "email"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "outcome": {
+                        "type": "string"
+                      },
+                      "reasons": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "explanation": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "outcome",
+                      "reasons",
+                      "explanation"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sent",
+              "text",
+              "channel",
+              "decision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "account",
+          "grant",
+          "created",
+          "notice"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        }
+      }
+    },
+    "POST /listings/:id/portal/invite": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "contactId",
+        "id",
+        "idempotencyKey",
+        "loginPointId",
+        "resend",
+        "title"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "loginPointId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "^[^\\p{Cc}]*$"
+          },
+          "resend": {
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          }
+        },
+        "required": [
+          "contactId",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "contactId": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "invited",
+                  "active",
+                  "disabled"
+                ]
+              },
+              "statusText": {
+                "type": "string"
+              },
+              "loginPoint": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "email",
+                          "phone"
+                        ]
+                      },
+                      "hint": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "usable": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "hint",
+                      "status",
+                      "usable"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "signInImpossible": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "disabledReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "contactId",
+              "status",
+              "statusText",
+              "loginPoint",
+              "signInImpossible",
+              "disabledReason"
+            ],
+            "additionalProperties": false
+          },
+          "grant": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "accountId": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "revoked",
+                  "lapsed",
+                  "not_a_party",
+                  "account_disabled"
+                ]
+              },
+              "stateText": {
+                "type": "string"
+              },
+              "grantedAt": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "expiresAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "view": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "purchase",
+                          "sale",
+                          "listing"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "contact": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "agentName": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "textTo": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "emailTo": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "agentName",
+                          "textTo",
+                          "emailTo"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "expiresOn": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope",
+                  "title",
+                  "contact",
+                  "expiresOn"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "accountId",
+              "state",
+              "stateText",
+              "grantedAt",
+              "expiresAt",
+              "revokedAt",
+              "revokedBy",
+              "view"
+            ],
+            "additionalProperties": false
+          },
+          "created": {
+            "type": "object",
+            "properties": {
+              "account": {
+                "type": "boolean"
+              },
+              "grant": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "account",
+              "grant"
+            ],
+            "additionalProperties": false
+          },
+          "notice": {
+            "type": "object",
+            "properties": {
+              "sent": {
+                "type": "boolean"
+              },
+              "text": {
+                "type": "string"
+              },
+              "channel": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "sms",
+                      "email"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "outcome": {
+                        "type": "string"
+                      },
+                      "reasons": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "explanation": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "outcome",
+                      "reasons",
+                      "explanation"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sent",
+              "text",
+              "channel",
+              "decision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "account",
+          "grant",
+          "created",
+          "notice"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        }
+      }
+    },
+    "GET /deals/:id/portal": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "portalCleared": {
+            "type": "boolean"
+          },
+          "portalText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channels": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "test",
+                  "off"
+                ]
+              },
+              "sms": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "test",
+                  "off"
+                ]
+              },
+              "text": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "email",
+              "sms",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "contactId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "invited",
+                    "active",
+                    "disabled"
+                  ]
+                },
+                "statusText": {
+                  "type": "string"
+                },
+                "loginPoint": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "email",
+                            "phone"
+                          ]
+                        },
+                        "hint": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "usable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "hint",
+                        "status",
+                        "usable"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signInImpossible": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "disabledReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "contactId",
+                "status",
+                "statusText",
+                "loginPoint",
+                "signInImpossible",
+                "disabledReason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "accountId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "live",
+                    "revoked",
+                    "lapsed",
+                    "not_a_party",
+                    "account_disabled"
+                  ]
+                },
+                "stateText": {
+                  "type": "string"
+                },
+                "grantedAt": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "expiresAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revokedAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revokedBy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "view": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "scope": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "purchase",
+                            "sale",
+                            "listing"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "contact": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "agentName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "textTo": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "emailTo": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agentName",
+                            "textTo",
+                            "emailTo"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expiresOn": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/__schema2"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scope",
+                    "title",
+                    "contact",
+                    "expiresOn"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "accountId",
+                "state",
+                "stateText",
+                "grantedAt",
+                "expiresAt",
+                "revokedAt",
+                "revokedBy",
+                "view"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "grantId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "milestone",
+                    "document",
+                    "showing",
+                    "feedback",
+                    "seller_update",
+                    "next_step"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "occursOn": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "publishedAt": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "publishedBy": {
+                  "type": "string"
+                },
+                "retractedAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retractedBy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "grantId",
+                "kind",
+                "title",
+                "occursOn",
+                "publishedAt",
+                "publishedBy",
+                "retractedAt",
+                "retractedBy",
+                "note"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "portalCleared",
+          "portalText",
+          "channels",
+          "accounts",
+          "grants",
+          "items"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "__schema2": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          }
+        }
+      }
+    },
+    "GET /listings/:id/portal": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "portalCleared": {
+            "type": "boolean"
+          },
+          "portalText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channels": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "test",
+                  "off"
+                ]
+              },
+              "sms": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "test",
+                  "off"
+                ]
+              },
+              "text": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "email",
+              "sms",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "contactId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "invited",
+                    "active",
+                    "disabled"
+                  ]
+                },
+                "statusText": {
+                  "type": "string"
+                },
+                "loginPoint": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "email",
+                            "phone"
+                          ]
+                        },
+                        "hint": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "usable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "hint",
+                        "status",
+                        "usable"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signInImpossible": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "disabledReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "contactId",
+                "status",
+                "statusText",
+                "loginPoint",
+                "signInImpossible",
+                "disabledReason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "accountId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "live",
+                    "revoked",
+                    "lapsed",
+                    "not_a_party",
+                    "account_disabled"
+                  ]
+                },
+                "stateText": {
+                  "type": "string"
+                },
+                "grantedAt": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "expiresAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revokedAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revokedBy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "view": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "scope": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "purchase",
+                            "sale",
+                            "listing"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "contact": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "agentName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "textTo": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "emailTo": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agentName",
+                            "textTo",
+                            "emailTo"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expiresOn": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/__schema2"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scope",
+                    "title",
+                    "contact",
+                    "expiresOn"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "accountId",
+                "state",
+                "stateText",
+                "grantedAt",
+                "expiresAt",
+                "revokedAt",
+                "revokedBy",
+                "view"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "grantId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "milestone",
+                    "document",
+                    "showing",
+                    "feedback",
+                    "seller_update",
+                    "next_step"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "occursOn": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "publishedAt": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "publishedBy": {
+                  "type": "string"
+                },
+                "retractedAt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retractedBy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "grantId",
+                "kind",
+                "title",
+                "occursOn",
+                "publishedAt",
+                "publishedBy",
+                "retractedAt",
+                "retractedBy",
+                "note"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "portalCleared",
+          "portalText",
+          "channels",
+          "accounts",
+          "grants",
+          "items"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "__schema2": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          }
+        }
+      }
+    },
+    "GET /portal-grants/:id/preview": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "visibleNow": {
+            "type": "boolean"
+          },
+          "why": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grant": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "purchase",
+                      "sale",
+                      "listing"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "contact": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "agentName": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "textTo": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "emailTo": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "agentName",
+                      "textTo",
+                      "emailTo"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expiresOn": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "scope",
+              "title",
+              "contact",
+              "expiresOn"
+            ],
+            "additionalProperties": false
+          },
+          "timeline": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "nextSteps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              }
+            },
+            "required": [
+              "items",
+              "nextSteps"
+            ],
+            "additionalProperties": false
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "itemId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "publishedAt": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              },
+              "required": [
+                "itemId",
+                "title",
+                "body",
+                "publishedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "visibleNow",
+          "why",
+          "grant",
+          "timeline",
+          "documents"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "itemId": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "milestone",
+                  "showing",
+                  "feedback",
+                  "seller_update",
+                  "next_step"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "occursOn": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "publishedAt": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "itemId",
+              "kind",
+              "title",
+              "body",
+              "occursOn",
+              "publishedAt"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        }
+      }
+    },
+    "POST /portal-items/preview": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "grantId",
+        "kind",
+        "sourceId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "grantId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "milestone",
+              "document",
+              "showing",
+              "feedback",
+              "seller_update",
+              "next_step"
+            ]
+          },
+          "sourceId": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "grantId",
+          "kind",
+          "sourceId"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "publishable": {
+            "type": "boolean"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "item": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "occursOn": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "title",
+                  "body",
+                  "occursOn"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "publishable",
+          "code",
+          "text",
+          "item"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /portal-items": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "grantIds",
+        "kind",
+        "sourceId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "milestone",
+              "document",
+              "showing",
+              "feedback",
+              "seller_update",
+              "next_step"
+            ]
+          },
+          "sourceId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "grantIds": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "sourceId",
+          "grantIds"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "grantId": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "result": {
+                  "type": "string"
+                },
+                "itemId": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "grantId",
+                "result",
+                "itemId",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      }
+    },
+    "POST /portal-items/:id/retract": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /portal-grants/:id/revoke": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /portal-accounts/:id/disable": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id",
+        "reason"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "CLIENT_ASKED",
+              "WRONG_PERSON",
+              "NO_LONGER_A_CLIENT"
+            ]
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /portal-accounts/:id/login-point": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id",
+        "pointId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "pointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "pointId"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "PATCH /portal-grants/:id/display": {
+      "side": "staff",
+      "status": 200,
+      "inputKeys": [
+        "id",
+        "title"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "^[^\\p{Cc}]*$"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "errors": {
+    "CONTACT_MERGED": {
+      "status": 409,
+      "sentence": "This contact was merged into another record. Open that record instead."
+    },
+    "CSRF_INVALID": {
+      "status": 403,
+      "sentence": "This page is out of date. Reload it and try again."
+    },
+    "EMAIL_INVALID": {
+      "status": 422,
+      "sentence": "That does not look like an email address."
+    },
+    "NOT_FOUND": {
+      "status": 404,
+      "sentence": "We could not find that."
+    },
+    "PAYLOAD_TOO_LARGE": {
+      "status": 413,
+      "sentence": "That request is too large."
+    },
+    "PHONE_INVALID": {
+      "status": 422,
+      "sentence": "That does not look like a phone number."
+    },
+    "PORTAL_ACCOUNT_DISABLED": {
+      "status": 409,
+      "sentence": "This account is already disabled. Invite the client again to give access back."
+    },
+    "PORTAL_GRANT_INACTIVE": {
+      "status": 409,
+      "sentence": "This client access was revoked or has ended, so nothing new can be shared to it."
+    },
+    "PORTAL_GRANT_REVOKED": {
+      "status": 409,
+      "sentence": "This access was already revoked."
+    },
+    "PORTAL_ITEM_RETRACTED": {
+      "status": 409,
+      "sentence": "This was already removed from the portal."
+    },
+    "PORTAL_KIND_SOURCE_MISMATCH": {
+      "status": 422,
+      "sentence": "That kind of item does not match what was chosen."
+    },
+    "PORTAL_LINK_INVALID": {
+      "status": 401,
+      "sentence": "That sign-in link no longer works. Links work once, for 15 minutes; ask for a new one."
+    },
+    "PORTAL_LOGIN_POINT_MISSING": {
+      "status": 409,
+      "sentence": "This person has no working email or phone to sign in with. Add one first."
+    },
+    "PORTAL_NOT_AVAILABLE": {
+      "status": 503,
+      "sentence": "Client sign-in is not available right now. Ask your agent."
+    },
+    "PORTAL_NOT_A_PARTY": {
+      "status": 409,
+      "sentence": "This person is not a buyer, seller or co-party on this deal or listing. Add them first."
+    },
+    "PORTAL_NOT_SELLER_SIDE": {
+      "status": 409,
+      "sentence": "Only a seller or co-seller of the deal sees showings, feedback and seller updates. Add them as a seller first."
+    },
+    "PORTAL_SESSION_REQUIRED": {
+      "status": 401,
+      "sentence": "Please sign in again."
+    },
+    "PORTAL_SOURCE_INVALID": {
+      "status": 422,
+      "sentence": "That item could not be read. Reload and try again."
+    },
+    "PORTAL_SOURCE_NOT_IN_GRANT": {
+      "status": 409,
+      "sentence": "That cannot be shared to this client: it is not from their deal or listing, or it is not ready to share."
+    },
+    "PORTAL_TEXT_NOT_PLAIN": {
+      "status": 422,
+      "sentence": "That text has characters the portal cannot show; edit it before sharing."
+    },
+    "PORTAL_TEXT_TOO_LONG": {
+      "status": 422,
+      "sentence": "That text is over 4,000 characters; shorten it before sharing."
+    },
+    "RATE_LIMITED": {
+      "status": 429,
+      "sentence": "Too many tries. Wait a few minutes and try again."
+    },
+    "VALIDATION_FAILED": {
+      "status": 422,
+      "sentence": "Something in the request was not right. Check it and try again."
+    }
+  },
+  "signin": {
+    "page": "/portal.html",
+    "tokenInFragment": "#token=",
+    "teamInQuery": "?team=",
+    "acceptedMessage": "If that email or phone number is the one your agent set up, and it can get messages from us, we sent a sign-in link. It works once, for 15 minutes. Nothing after a few minutes? Ask your agent.",
+    "csrfHeader": "x-csrf-token",
+    "session": {
+      "idleHours": 24,
+      "absoluteDays": 14
+    }
+  }
+}

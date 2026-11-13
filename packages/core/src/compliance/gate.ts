@@ -51,6 +51,13 @@
 // These checks are core-compliance/3.1.0 (sends-gates/F4). A decision for any other category is the same as
 // under 3.0.0; only the label changed.
 //
+// Module 45 (api/portal, R-PORTAL-11; core-compliance/3.2.0): check 8 does not refuse the client's own portal
+// sign-in link for an automation pause, when and only when the send is category `portal_login_link`, initiator
+// `system`, purpose `informational`, channel `sms` or `email`, to a contact. Every other check runs unchanged, so
+// the STOP or wrong number behind an opt_out / wrong_number pause still blocks that channel (checks 2 and 5), and
+// suppressions, do-not-contact, payment and fair-housing checks apply. Any other use of the label is gated like
+// `none`. A decision for any other category is the same as under 3.1.0. VERIFY WITH COUNSEL (Q-PORTAL-1).
+//
 // A reason code appears at most once in a decision (R-GATE-5). Checks 0 and 12a can both find ISA_NOT_AUTHORIZED,
 // and `add` keeps only the first.
 //
@@ -86,8 +93,9 @@ import {
 /**
  * Stored in gate_decisions.core_rules_version. Bump on any change to a decision rule. 3.1.0 added the AI ISA
  * checks 0, 8 and 12 (D12 proposed, ISA-1). No AI ISA decision is ever stored under 3.0.0 (sends-gates/F4).
+ * 3.2.0 added check 8's portal sign-in link clause (module 45, R-PORTAL-11).
  */
-export const RULES_VERSION = 'core-compliance/3.1.0';
+export const RULES_VERSION = 'core-compliance/3.2.0';
 
 /**
  * Channels whose system STOP/HELP reply may reach the identity that sent the keyword (the DB guard's
@@ -202,6 +210,9 @@ export function canContact(input: GateInput): GateDecision {
     !toUser &&
     (input.keywordSenders ?? []).includes(recipient.addressHmac);
   const messaging = ch !== 'voice';
+  // Module 45 (R-PORTAL-11): the client's own sign-in link skips only the automation pause (check 8)
+  const portalLinkExempt =
+    category === 'portal_login_link' && input.initiator === 'system' && !marketing && (ch === 'sms' || ch === 'email') && !toUser;
 
   const isa = isAiIsaCategory(category);
   const isaFacts = isa ? input.aiIsa : undefined;
@@ -261,7 +272,7 @@ export function canContact(input: GateInput): GateDecision {
   // by the assignment's own freshness, except a pause for an opt-out or a wrong number, which still blocks.
   if (automated && !toUser && !optOutExempt) {
     if (isaFacts === undefined) {
-      if (input.automationPausedAt !== null) add('AUTOMATION_PAUSED');
+      if (input.automationPausedAt !== null && !portalLinkExempt) add('AUTOMATION_PAUSED');
     } else {
       const r = isaFacts.conversationPauseReason;
       if (input.automationPausedAt !== null && (r === 'opt_out' || r === 'wrong_number')) add('AUTOMATION_PAUSED');

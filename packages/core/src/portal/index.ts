@@ -25,7 +25,9 @@
 //       seller-side party (a seller or co_seller of the deal); any other client gets only the showings
 //       they attended and their feedback: PORTAL_NOT_SELLER_SIDE. The guard accepts these for any grant
 //       on a deal naming that listing, and deals may name a listing on the buy side (conflict note 1,
-//       a finding for module 45's lane; a DB fix is a reviewed migration there).
+//       a finding for module 45's lane; a DB fix is a reviewed migration there). Fixed by module 45's migration
+//       portal_api: app.portal_items_guard now refuses the same case with
+//       PORTAL_NOT_SELLER_SIDE (R-PORTAL-19), so core and the DB agree.
 //   (c) a revoked or lapsed grant, or a disabled account, takes no new item: PORTAL_GRANT_INACTIVE.
 //   (d) next_step is person-published only: R-PORTAL-3's "client-visible next steps" has no column on
 //       tasks, so a person sharing the task is the only signal (PORTAL_PERSON_ONLY).

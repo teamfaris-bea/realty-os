@@ -68,6 +68,7 @@ export { type DatabaseTls, DatabaseTlsError, assertDatabaseUrlShape, databaseTls
 export {
   type ClientActor,
   type PortalAuditEntity,
+  type PortalDocumentDownload,
   type PortalDocumentObject,
   type PortalLoginLink,
   PortalNotClearedError,
@@ -80,6 +81,7 @@ export {
   newPortalToken,
   portalAddressHash,
   recordPortalAudit,
+  redeemPortalDocumentDownload,
   redeemPortalDocumentStream,
   requestPortalLogin,
   resolvePortalSession,

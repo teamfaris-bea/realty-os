@@ -24,6 +24,9 @@ describe('the paths that carry a capability (capabilityPaths.json, read by the n
       'POST /api/auth/invites/:token/accept [token]',
       'GET,HEAD,POST /api/email/unsubscribe/:token [token]',
       'POST /api/intake/:sourceToken [sourceToken]',
+      // module 45 (R-PORTAL-8, R-PORTAL-17): the client portal's stream-token request and its 60 s download
+      'POST /api/portal/documents/:itemId/stream-token [itemId]',
+      'GET /api/portal/files/:token [token]',
       'POST /api/public/chat/session/:token/messages [token]',
       'GET,HEAD /api/public/chat/session/:token/poll [token]',
       // b7 db-public/F1: module 29's signed image link (handed to Meta; the token carries the tenant and object ids)

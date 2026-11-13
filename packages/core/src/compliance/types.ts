@@ -85,7 +85,9 @@ export type ActionCategory =
   // D12 (proposed; docs/AI_ISA.md §2.2, §8.1): sendable only by the assistant under autonomy `ai_isa_mandate`
   | 'ai_isa_message'
   | 'ai_isa_confirmation'
-  | 'ai_isa_holding_line';
+  | 'ai_isa_holding_line'
+  // module 45 (api/portal, R-PORTAL-11): the client's own sign-in link; system, informational, sms or email only
+  | 'portal_login_link';
 
 export const ACTION_CATEGORIES: readonly ActionCategory[] = [
   'none',
@@ -105,6 +107,7 @@ export const ACTION_CATEGORIES: readonly ActionCategory[] = [
   'ai_isa_message',
   'ai_isa_confirmation',
   'ai_isa_holding_line',
+  'portal_login_link',
 ];
 
 /** Never autonomous (R-AST-3, DB CHECK on compliance_policy_versions.autonomous_categories). */
@@ -131,6 +134,13 @@ export const AUTONOMOUS_ELIGIBLE: ReadonlySet<ActionCategory> = new Set<ActionCa
  * AI ISA facts (`GateInput.aiIsa`), and check 12 adds the AI-only send checks on top of D1.
  */
 export const AI_ISA_CATEGORIES: ReadonlySet<ActionCategory> = new Set<ActionCategory>(['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']);
+
+/**
+ * Module 45 (R-PORTAL-11): the client portal sign-in link. Neither autonomous-eligible nor always-human: only the
+ * system sends it (portal/signin/links.ts), and the gate's check 8 lets it through an automation pause (the client
+ * asked for it) when, and only when, `portalLinkExempt` holds. VERIFY WITH COUNSEL (Q-PORTAL-1).
+ */
+export const PORTAL_LOGIN_LINK: ActionCategory = 'portal_login_link';
 
 export function isAiIsaCategory(c: ActionCategory): boolean {
   return AI_ISA_CATEGORIES.has(c);
