@@ -1,6 +1,7 @@
 // The share's sweep cancel against real Postgres (R-CMA-7, R-CMA-9, R-MLS-3; E612; VERIFY 6, 7), through module 24's
 // mls.compliance_sweep (mls/sweep.ts) as the system actor. Fakes only: nothing is sent; no real MLS.
 import { systemActor } from '../worker/systemActor.js';
+import type * as RealtyDb from '@realty/db';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,12 @@ import { type CmaBody, type ShareWorld, call, cmaPack, emailSeller, feedLastSync
 vi.mock('./gates.js', async (orig) => {
   const m = await orig<typeof gates>();
   return { ...m, readinessConnections: vi.fn(m.readinessConnections) };
+});
+// b13 review B13-MRG-6: the contact locks the compliance sweep takes, in the order it takes them
+const lockCalls = vi.hoisted(() => ({ on: false, ids: [] as string[] }));
+vi.mock('@realty/db', async (orig) => {
+  const m = await orig<typeof RealtyDb>();
+  return { ...m, lockContact: vi.fn(async (...a: Parameters<typeof m.lockContact>) => { if (lockCalls.on) lockCalls.ids.push(String(a[1])); return m.lockContact(...a); }) };
 });
 
 let h: ApiHarness;
@@ -71,6 +78,25 @@ describe('R-CMA-7 E612: the sweep cancels a queued share whose readiness fails',
     expect(v.status).toBe('shared');
     expect(v.share!.message).toMatchObject({ status: 'canceled', sentence: 'The email was canceled before sending: the MLS feed went out of date. Prepare a new CMA to share again.' });
     expect((await h.su.query('SELECT status FROM cma_reports WHERE id = $1', [q.cmaId])).rows[0].status).toBe('shared');
+  });
+
+  it('E612 (b13 review B13-MRG-6): the CMA-share pass cancels under the message row alone, so the one transaction of mls.compliance_sweep never takes a second sorted run of contact locks after the alerts pass', async () => {
+    const q = await queuedShare();
+    lockCalls.ids = [];
+    lockCalls.on = true;
+    try {
+      expect((await sweep()).canceledCmaShares).toBe(1);
+    } finally {
+      lockCalls.on = false;
+    }
+    expect(await msg(q.messageId)).toMatchObject({ status: 'canceled', status_reason: 'CMA_PLATFORM_NOT_CLEARED' });
+    // no contact lock for the share's cancel; whatever the alerts pass locks stays in one ascending run
+    expect(lockCalls.ids).toEqual([...lockCalls.ids].sort());
+    const contact = (await h.su.query<{ c: string }>('SELECT contact_id AS c FROM messages WHERE id = $1', [q.messageId])).rows[0]!.c;
+    expect(lockCalls.ids).not.toContain(contact);
+    // the home-value pass, the third in the same transaction (cma/avm.ts cancelIneligibleHomeValueNotesInTx), takes none either
+    const { readFileSync } = await import('node:fs');
+    for (const f of ['./sweep.ts', './avm.ts']) expect(readFileSync(new URL(f, import.meta.url), 'utf8'), f).not.toMatch(/\blockContact\s*\(/);
   });
 
   it('E612 (b): client_cma is withdrawn: canceled CMA_CLIENT_USE_NOT_ALLOWED', async () => {

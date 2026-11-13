@@ -14,9 +14,8 @@
 // A stored ref never widens a gate: every later check (queue, draft approval, sweep) re-reads packs and connections.
 // Logs carry codes and counts only, never an address or a value.
 import { type IanaZone, type Instant, localDateOf } from '@realty/core/foundation';
-import { type ContactId } from '@realty/core/foundation';
 import { type AvmEstimate as CoreEstimate, SKIP_REASON_TEXT, homeValueText } from '@realty/core/nurture';
-import { type Tx, lockContact, withTenantTx } from '@realty/db';
+import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { literal } from '../nurture/decide.js';
 import { ProviderError } from '../providers/types.js';
@@ -304,7 +303,7 @@ export function homeValueSweepCandidates(limit: number) {
  * E623 (R-CMA-7): cancels queued in-house home-value notes once something fails for every note at once: platform:cma
  * or platform:avm, or a connection the note's ref names (V1-A's valuationEligible for automated_notes, fresh feed and
  * reviewed display pack included). Address checks (listed, withheld, near matches) are not read here: they run where
- * the note is built, queued and approved. Per failing note, under the contact's lock: the message canceled only while
+ * the note is built, queued and approved. Per failing note (under the message row's lock, b13 review B13-MRG-6): the message canceled only while
  * still queued (dispatched: untouched), its scheduled runs skipped ESTIMATE_NOT_DISPLAYABLE, its autonomous action
  * blocked. Idempotent. Returns the canceled message ids.
  */
@@ -325,7 +324,9 @@ export async function cancelIneligibleHomeValueNotesInTx(tx: Tx, now: Instant, o
   for (const x of r.rows) if (!failing.has(x.message_id) && !holds(parseInHouseRef(x.provider_ref), x.region)) failing.set(x.message_id, { contactId: x.contact_id, actionId: x.action_id });
   const canceled: string[] = [];
   for (const [messageId, f] of failing) {
-    await lockContact(tx, f.contactId as ContactId);
+    // b13 review B13-MRG-6: no contact lock (as cma/sweep.ts): this pass runs in complianceSweepInTx's transaction
+    // after the alerts pass's sorted contact locks; the message row (dispatch's FOR UPDATE) and the conditional UPDATEs
+    // decide. A dispatched note is never touched.
     const u = await sql<{ id: string }>`
       UPDATE messages SET status = 'canceled', status_reason = ${HOME_VALUE_NOT_DISPLAYABLE}
        WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND status IN ('queued','scheduled') RETURNING id`.execute(tx);

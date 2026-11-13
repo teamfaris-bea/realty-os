@@ -8,8 +8,8 @@
 // gate had the last word). The CMA stays shared (R-CMA-8: the guard freezes it; the view says the email was canceled
 // and to prepare a new one). The connections are read once per pass (agent verdicts), then readiness per row.
 // Idempotent: a second pass finds nothing queued. Codes and ids only; nothing is sent.
-import type { ContactId, Instant } from '@realty/core/foundation';
-import { type Tx, lockContact } from '@realty/db';
+import type { Instant } from '@realty/core/foundation';
+import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { readinessConnections } from './gates.js';
 import { getCma } from './repos.js';
@@ -53,8 +53,8 @@ export async function cancelIneligibleCmaSharesInTx(tx: Tx, now: Instant, o: { l
   const ids = [...cmaOf.keys()].sort();
   const rows: { id: string; contact_id: string }[] = [];
   for (let i = 0; i < ids.length; i += page) rows.push(...(await sql<{ id: string; contact_id: string }>`${QUEUED_READ(ids.slice(i, i + page), page)}`.execute(tx)).rows);
-  // in contact order, as the lock order of every multi-contact pass (sorted here: an ORDER BY in SQL would steer the plan
-  // onto messages_contact_idx and filter every message of the tenant)
+  // in contact order (sorted here: an ORDER BY in SQL would steer the plan onto messages_contact_idx and filter every
+  // message of the tenant)
   const queued = rows
     .map((m) => ({ message_id: m.id, contact_id: m.contact_id, cma_id: cmaOf.get(m.id)! }))
     .sort((a, b) => (a.contact_id < b.contact_id ? -1 : a.contact_id > b.contact_id ? 1 : a.message_id < b.message_id ? -1 : 1));
@@ -67,7 +67,10 @@ export async function cancelIneligibleCmaSharesInTx(tx: Tx, now: Instant, o: { l
     const { share } = await readinessOf(tx, now, row, conns);
     const first = share.blockers[0];
     if (first === undefined) continue;
-    await lockContact(tx, q.contact_id as ContactId);
+    // b13 review B13-MRG-6: no contact lock here. complianceSweepInTx (mls/sweep.ts) runs this pass in the same
+    // transaction after the alerts pass, which locks its own contacts in order; a second sorted pass of contact locks
+    // would break the global ascending order. The cancel is decided by the message row: dispatch holds it FOR UPDATE
+    // and this UPDATE is conditional on queued/scheduled, so a dispatched message is never touched.
     const u = await sql<{ id: string }>`
       UPDATE messages SET status = 'canceled', status_reason = ${cancelReason(first.code)}
        WHERE tenant_id = app.tenant_id() AND id = ${q.message_id}::uuid AND status IN ('queued','scheduled') RETURNING id`.execute(tx);
