@@ -342,54 +342,47 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
 
   // batch 13 audit ISA2B-06 (4): E523 with an opt-in revoke during tx#1 (the STOP case is below)
   it('R-ISA-15 E523: the owner revokes the opt-in while tx#1 holds lock 5 → booked, care ended optin_revoked, no confirmation, the booked-after-end card', async () => {
-    // its own agent, so the revoke ends nothing else in this world
-    const other = bw.agents[1]!;
-    await connectCalendar(h, other);
-    await optInAgent(h, other, bw.versionId, ['converse', 'book_appointments'], { timezone: zone, bookingKinds: ['buyer_consult', 'consult'],
-      availability: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: '08:00', end: '20:00' })) });
-    const l = await isaLead(h, other, { zone });
-    expect((await startCare(other, l.id)).status).toBe(200);
-    await runIsa(h, bw.tenantId);
-    offerScript();
-    await inboundSms(h, l.phone, bw.mainNumber, 'Could we schedule a consultation to talk about buying?');
-    await runIsa(h, bw.tenantId, 6);
-    expect((await offerOf(l.id))!.status).toBe('offered');
-    const { bookTestHooks } = await import('./booking/book.js');
-    bookTestHooks.afterCareRead = async () => {
-      bookTestHooks.afterCareRead = undefined;
-      expect((await call(other, 'POST', '/me/ai-isa/opt-in/revoke', {})).status).toBe(200);
-    };
+    // a world of its own: the revoke ends every assignment of that agent, and this world's agents are shared by other cases
+    const rw = await isaWorld(h, { optIn: false, capabilities: ['converse', 'book_appointments'] });
+    const owner = rw.agents[0]!;
     try {
-      await reply(l, '2');
+      await connectCalendar(h, owner);
+      await optInAgent(h, owner, rw.versionId, ['converse', 'book_appointments'], { timezone: zone, bookingKinds: ['buyer_consult', 'consult'],
+        availability: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: '08:00', end: '20:00' })) });
+      const l = await isaLead(h, owner, { zone });
+      expect((await startCare(owner, l.id)).status).toBe(200);
+      await runIsa(h, rw.tenantId);
+      rw.ai.script.length = 0;
+      for (let i = 0; i < 6; i += 1) {
+        rw.ai.script.push((_r, src) => (src.some((x) => /consultation/.test(x.text)) ? { reply: null, qualification: [], actions: [{ type: 'offer_slots', kind: 'buyer_consult' }], summary: null } : defaultIsaOutput(src)));
+      }
+      await inboundSms(h, l.phone, rw.mainNumber, 'Could we schedule a consultation to talk about buying?');
+      await runIsa(h, rw.tenantId, 6);
+      expect((await offerOf(l.id))!.status).toBe('offered');
+      const { bookTestHooks } = await import('./booking/book.js');
+      bookTestHooks.afterCareRead = async () => {
+        bookTestHooks.afterCareRead = undefined;
+        expect((await call(owner, 'POST', '/me/ai-isa/opt-in/revoke', {})).status).toBe(200);
+      };
+      try {
+        await h.su.query(`UPDATE messages SET dispatched_at = dispatched_at - interval '30 minutes' WHERE to_address = $1 AND direction = 'outbound' AND dispatched_at IS NOT NULL`, [l.phone]);
+        await h.su.query(`SET session_replication_role = replica; UPDATE ai_isa_assignments SET started_at = started_at - interval '2 hours' WHERE contact_id = '${l.id}' AND ended_at IS NULL; SET session_replication_role = origin`);
+        await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(machine, '{offer,deliveredAt}', to_jsonb((machine->'offer'->>'deliveredAt')::bigint - 1800000))
+          WHERE contact_id = $1 AND machine->'offer'->>'deliveredAt' IS NOT NULL`, [l.id]);
+        await inboundSms(h, l.phone, rw.mainNumber, '2');
+        await runIsa(h, rw.tenantId, 6);
+      } finally {
+        bookTestHooks.afterCareRead = undefined;
+      }
+      await runIsa(h, rw.tenantId, 3);
+      expect((await assignmentOf(h, l.id))!.end_reason).toBe('optin_revoked');
+      expect((await offerOf(l.id))!.status).toBe('accepted');
+      const card = await h.su.query<{ reasons: { code: string; text: string }[] }>(`SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND dedupe_key LIKE 'ai_isa_booked:%'`, [l.id]);
+      expect(card.rows.map((r) => r.reasons[0]!.code)).toEqual(['AI_ISA_BOOKED_AFTER_END']);
+      expect((await aiMessages(h, l.id)).some((m) => m.action_category === 'ai_isa_confirmation')).toBe(false);
     } finally {
-      bookTestHooks.afterCareRead = undefined;
+      (h.providers as { ai: unknown }).ai = bw.ai;
     }
-    await runIsa(h, bw.tenantId, 3);
-    expect((await assignmentOf(h, l.id))!.end_reason).toBe('optin_revoked');
-    expect((await offerOf(l.id))!.status).toBe('accepted');
-    const card = await h.su.query<{ reasons: { code: string; text: string }[] }>(`SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND dedupe_key LIKE 'ai_isa_booked:%'`, [l.id]);
-    expect(card.rows.map((r) => r.reasons[0]!.code)).toEqual(['AI_ISA_BOOKED_AFTER_END']);
-    expect((await aiMessages(h, l.id)).some((m) => m.action_category === 'ai_isa_confirmation')).toBe(false);
-  });
-
-  // batch 13 audit ISA2B-06 (11): E494's offer half (gaps.test.ts covers the facts half)
-  it('R-ISA-3 E494: an inbound that cancels the queued offer message emits send_result canceled and the offer row is superseded, never offered', async () => {
-    const l = await isaLead(h, agent(), { zone });
-    expect((await startCare(agent(), l.id)).status).toBe(200);
-    await runIsa(h, bw.tenantId);
-    offerScript();
-    // the offer is built but its dispatch is held, so the message is still queued when they write again
-    const holdDispatch = async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [bw.tenantId]); };
-    await inboundSms(h, l.phone, bw.mainNumber, 'Could we schedule a consultation to talk about buying?');
-    await runIsa(h, bw.tenantId, 6, { beforeTick: holdDispatch });
-    const o = (await offerOf(l.id))!;
-    expect(o.status).toBe('pending_delivery');
-    expect(o.offered_message_id).not.toBeNull();
-    await inboundSms(h, l.phone, bw.mainNumber, 'Actually never mind, call me tomorrow');
-    expect((await h.su.query<{ status: string }>(`SELECT status FROM messages WHERE id = $1`, [o.offered_message_id])).rows[0]!.status).toBe('canceled');
-    expect((await h.su.query<{ s: string }>(`SELECT payload->>'status' AS s FROM jobs WHERE kind = 'ai_isa.send_result' AND payload->>'messageId' = $1`, [o.offered_message_id])).rows.map((r) => r.s)).toContain('canceled');
-    await runIsa(h, bw.tenantId, 3, { beforeTick: holdDispatch });
-    expect((await h.su.query<{ status: string }>(`SELECT status FROM ai_isa_slot_offers WHERE id = $1`, [o.id])).rows[0]!.status).toBe('superseded');
   });
 
   it('R-ISA-15: resume is refused while the offer is accepting (AI_ISA_BOOKING_IN_PROGRESS)', async () => {

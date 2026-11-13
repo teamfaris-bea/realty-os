@@ -834,11 +834,16 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(await overdueOf(fresh.l.id)).toBeGreaterThanOrEqual(1);
     expect(await levels(seeded)).toEqual([{ level: 2, met: false, n: 201 }]);
     expect(await overdueOf(old.l.id)).toBe(0);
-    // a touch on their lead still reaches every one of them, at most 200 a pass, and closes each
+    // a touch on their lead still reaches every one of them, at most AI_ISA_SWEEP_ROWS_PER_PASS a pass (batch 13: 60, under
+    // Postgres's 64 cached subtransactions), and closes each
     await touch(old.l.id);
     const deps = depsFromPlatform(h.app.platform);
     const actor = systemActor(w.tenantId, 'assistant');
-    for (let pass = 0; pass < 3; pass += 1) await withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor), { db: h.database });
+    const { AI_ISA_SWEEP_ROWS_PER_PASS } = await import('./handoff.js');
+    for (let pass = 0; pass < Math.ceil(201 / AI_ISA_SWEEP_ROWS_PER_PASS) + 1; pass += 1) {
+      const r = await withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor), { db: h.database });
+      expect(r.met + r.escalated + r.closed + r.failed).toBeLessThanOrEqual(AI_ISA_SWEEP_ROWS_PER_PASS);
+    }
     expect(await levels(seeded)).toEqual([{ level: 2, met: true, n: 201 }]);
     expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_isa_handoffs WHERE id = ANY($1::uuid[]) AND closed_reason = 'deadline_met'`, [seeded])).rows[0]!.n).toBe(201);
   });
