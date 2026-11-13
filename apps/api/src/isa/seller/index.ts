@@ -13,6 +13,7 @@ import { type Actor, type IdGenerator, type Instant, type SystemActor, can } fro
 import type { Tx } from '@realty/db';
 import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
+import { audit } from '../../audit.js';
 import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
 import { type CompsBuild, DEFAULT_SELLER_DEPS, type SellerDeps, buildCompsInTx } from './comps.js';
 import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, smsFits, sourceOf } from './competition.js';
@@ -97,8 +98,11 @@ export async function sellerBundleInTx(tx: Tx, actor: SystemActor, a: Assignment
   // hold started after the last resume (ISA-3 audit F10: a secondary hold class has no escalate action of its own)
   const pricing = a.machine.held.filter((h) => h.class === 'pricing_negotiation').map((h) => h.since);
   if (pricing.length > 0) {
-    await sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
-      AND (comps_suspended_at IS NULL OR (comps_resumed_at IS NOT NULL AND comps_resumed_at >= comps_suspended_at AND comps_resumed_at < ${new Date(Math.max(...pricing))}))`.execute(tx);
+    const r = await sql<{ assignment_id: string }>`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
+      AND (comps_suspended_at IS NULL OR (comps_resumed_at IS NOT NULL AND comps_resumed_at >= comps_suspended_at AND comps_resumed_at < ${new Date(Math.max(...pricing))}))
+      RETURNING assignment_id`.execute(tx);
+    // b13 review B13-MRG-4 (R-ISA-21)
+    if (r.rows.length > 0) await audit(tx, actor, { action: 'ai_isa.comps_suspended', entity: { type: 'ai_isa_assignment', id: a.id }, reason: 'pricing_held' });
   }
   const link = await assignmentSubjectLinkInTx(tx, a);
   const comp = await sellerGatesInTx(tx, actor, a, now, 'competition');
@@ -350,13 +354,17 @@ export async function sellerSubjectLinkInTx(tx: Tx, a: AssignmentRow): Promise<L
  * sales are refusal only: a nearby question reaches the agent as data_unavailable and no nearby_sale row is written.
  * VERIFY WITH COUNSEL: whether a merely nearby sale may be described to a seller at all (owner question 11).
  */
-export async function onEscalationInTx(tx: Tx, a: Pick<AssignmentRow, 'id' | 'side'>, cls: string): Promise<void> {
+export async function onEscalationInTx(tx: Tx, a: Pick<AssignmentRow, 'id' | 'side'>, cls: string, actor: Actor): Promise<void> {
   if (!seller(a)) return;
+  // b13 review B13-MRG-4 (R-ISA-21): each system action is audited, codes and ids only
   if (cls === 'pricing_negotiation') {
-    await sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
+    const r = await sql<{ assignment_id: string }>`UPDATE ai_isa_seller_watch SET comps_suspended_at = now() WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} RETURNING assignment_id`.execute(tx);
+    if (r.rows.length > 0) await audit(tx, actor, { action: 'ai_isa.comps_suspended', entity: { type: 'ai_isa_assignment', id: a.id }, reason: 'pricing_negotiation' });
   } else if (cls === 'data_unavailable') {
-    await sql`UPDATE ai_isa_seller_watch w SET subject_disputed_at = now() WHERE w.tenant_id = app.tenant_id() AND w.assignment_id = ${a.id} AND w.subject_disputed_at IS NULL
-      AND EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = w.tenant_id AND f.assignment_id = w.assignment_id AND f.fact_kind = 'sold_comp_set' AND f.status = 'sent')`.execute(tx);
+    const r = await sql<{ assignment_id: string }>`UPDATE ai_isa_seller_watch w SET subject_disputed_at = now() WHERE w.tenant_id = app.tenant_id() AND w.assignment_id = ${a.id} AND w.subject_disputed_at IS NULL
+      AND EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = w.tenant_id AND f.assignment_id = w.assignment_id AND f.fact_kind = 'sold_comp_set' AND f.status = 'sent')
+      RETURNING w.assignment_id`.execute(tx);
+    if (r.rows.length > 0) await audit(tx, actor, { action: 'ai_isa.subject_disputed', entity: { type: 'ai_isa_assignment', id: a.id }, reason: 'data_unavailable' });
   }
 }
 

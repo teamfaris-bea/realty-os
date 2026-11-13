@@ -10,6 +10,7 @@
 import { type Instant, type Role, type SystemActor, type UserActor, can, canAsRole, isRole } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { audit } from '../../audit.js';
 import { type ListingRow, LISTING_COLS, addressKey, connectionClientEligible, defaultAddress, liveNearMatches, mlsEligibility, mlsRowsAtAddress, nearMatches, streetOfKey } from './cmaSeam.js';
 import { type AssignmentRow, capabilitySet, contextFor } from './isa2Seam.js';
 import { type SellerSubject, type WatchRow, confirmationCodes, currentSubjectInTx, watchOf } from './subject.js';
@@ -71,8 +72,9 @@ export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserAct
     const carried = await continuedSuspensionInTx(tx, a.id);
     if (carried !== null) {
       if (actor.kind === 'system' && w !== null) {
-        await sql`UPDATE ai_isa_seller_watch SET comps_suspended_at = ${carried} WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
-          AND comps_suspended_at IS NULL AND comps_resumed_at IS NULL`.execute(tx);
+        const c = await sql<{ assignment_id: string }>`UPDATE ai_isa_seller_watch SET comps_suspended_at = ${carried} WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
+          AND comps_suspended_at IS NULL AND comps_resumed_at IS NULL RETURNING assignment_id`.execute(tx);
+        if (c.rows.length > 0) await audit(tx, actor, { action: 'ai_isa.comps_suspended', entity: { type: 'ai_isa_assignment', id: a.id }, reason: 'continued' });
       }
       w = { ...(w ?? ({} as WatchRow)), comps_suspended_at: carried, comps_resumed_at: null };
     }
@@ -90,6 +92,8 @@ export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserAct
   if (actor.kind === 'system') {
     await sql`UPDATE ai_isa_seller_watch SET comps_resumed_at = now(), comps_resumed_reason = ${reason}, comps_resumed_by_user_id = ${a.ownerUserId}
       WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
+    // b13 review B13-MRG-4 (R-ISA-21): the system's lift re-opens recent sales; audited with its reason code
+    await audit(tx, actor, { action: 'ai_isa.comps_resumed', entity: { type: 'ai_isa_assignment', id: a.id }, reason });
   }
   return false;
 }

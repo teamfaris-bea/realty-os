@@ -384,7 +384,7 @@ describe('E502: a pricing hold suspends comps', () => {
   it('E502: a pricing_negotiation escalation suspends comps; a generic resolve keeps it; resume-comps clears it', async () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
-    await asSystem(h, w, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    await asSystem(h, w, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
     const p = await panel(w.agents[0]!, l.id);
     expect((p.body as unknown as { suspension: { suspended: boolean; sentence: string } }).suspension).toEqual({ suspended: true, sentence: 'Recent sales paused: they asked about price. Prepare or re-run a CMA, share one, or let the assistant keep sharing.' });
     expect(((await withSellerPacksCleared(h, () => build(l))) as { codes: string[] }).codes).toContain('COMPS_SUSPENDED');
@@ -396,7 +396,7 @@ describe('E502: a pricing hold suspends comps', () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
     expect((await call(w.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBeLessThan(300);
-    await asSystem(h, w, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    await asSystem(h, w, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
     // an unchanged re-tap stores nothing
     expect((await call(w.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(200);
     expect(((await withSellerPacksCleared(h, () => build(l))) as { codes: string[] }).codes).toContain('COMPS_SUSPENDED');
@@ -412,7 +412,7 @@ describe('E502: a pricing hold suspends comps', () => {
     const l = await sellerLead(h, w2);
     await confirm(w2, l);
     expect((await call(w2.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
-    await asSystem(h, w2, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    await asSystem(h, w2, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
     const suspended = async () => ((await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)))) as { codes?: string[] }).codes ?? [];
     const drafts = async () => (await h.su.query<{ id: string; status: string; moved: boolean }>(`SELECT c.id, c.status, c.updated_at > w.comps_suspended_at AS moved FROM cma_reports c
       JOIN ai_isa_seller_watch w ON w.contact_id = c.contact_id WHERE c.contact_id = $1 ORDER BY c.created_at`, [l.id])).rows;
@@ -436,7 +436,7 @@ describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts
     await confirm(w3, l);
     // a CMA prepared before the hold (so the "prepared after it" branch never lifts it), then the hold
     expect((await call(w3.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
-    await asSystem(h, w3, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    await asSystem(h, w3, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
     const { ownedContact, sendText } = await import('../../comms/testing.js');
     const toLead = (await sendText(w3.agents[0]!, l.id, 'A note from your agent.')).body.message!.id;
     const coSeller = await ownedContact(w3.agents[0]!);
@@ -467,7 +467,7 @@ describe('E502 (b13 review B13-MRG-5): a continuation keeps an unresolved pricin
     const w5 = await sellerWorld(h);
     const l = await sellerLead(h, w5);
     await confirm(w5, l);
-    await asSystem(h, w5, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    await asSystem(h, w5, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
     // the continuation as continueCare writes it (controls.ts): the old assignment ends, a new one continues from it
     const a2 = randomUUID();
     await h.su.query(`SET session_replication_role = replica`);
@@ -486,8 +486,42 @@ describe('E502 (b13 review B13-MRG-5): a continuation keeps an unresolved pricin
     expect(await suspendedNow()).toBe(true);
     // carried onto the new watch (a system column), so every later read sees it
     expect((await h.su.query(`SELECT comps_suspended_at IS NOT NULL AS s FROM ai_isa_seller_watch WHERE assignment_id = $1`, [a2])).rows[0]).toEqual({ s: true });
+    // b13 review B13-MRG-4: the carry is a system action, audited
+    expect((await h.su.query(`SELECT reason, actor_kind FROM audit_log WHERE entity_id = $1 AND action = 'ai_isa.comps_suspended'`, [a2])).rows).toEqual([{ reason: 'continued', actor_kind: 'system' }]);
     expect((await call(w5.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/seller/resume-comps`, {})).status).toBe(200);
     expect(await suspendedNow()).toBe(false);
+  });
+});
+
+describe('R-ISA-21 (b13 review B13-MRG-4): the seller watch\'s system actions and clears are audited', () => {
+  const auditsOf = async (assignmentId: string) => (await h.su.query<{ action: string; reason: string | null; actor_kind: string; actor_user_id: string | null }>(
+    `SELECT action, reason, actor_kind, actor_user_id FROM audit_log WHERE entity_type = 'ai_isa_assignment' AND entity_id = $1 AND action LIKE 'ai_isa.%' ORDER BY seq`, [assignmentId])).rows;
+
+  it('R-ISA-21 E502: the system\'s pricing suspension, its lift after the owner\'s CMA, its dispute, and a collaborator\'s address edit that clears the confirmed home each leave one audit row (codes only)', async () => {
+    const w6 = await sellerWorld(h);
+    const l = await sellerLead(h, w6);
+    await confirm(w6, l);
+    await asSystem(h, w6, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    expect(await auditsOf(l.assignmentId)).toEqual(expect.arrayContaining([{ action: 'ai_isa.comps_suspended', reason: 'pricing_negotiation', actor_kind: 'system', actor_user_id: null }]));
+    // the owner's CMA after the hold: the system's read lifts it, audited with its reason
+    expect((await call(w6.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBeLessThan(300);
+    expect(await asSystem(h, w6, l, async (tx, a, actor) => compsSuspendedNowInTx(tx, actor, a, await watchOf(tx, a.id)))).toBe(false);
+    expect((await auditsOf(l.assignmentId)).filter((x) => x.action === 'ai_isa.comps_resumed')).toEqual([{ action: 'ai_isa.comps_resumed', reason: 'cma_prepared', actor_kind: 'system', actor_user_id: null }]);
+    // the system's dispute after a sent comps email (owner question 9)
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`INSERT INTO ai_isa_shared_facts (tenant_id, id, assignment_id, contact_id, status, fact_kind, price_kind, line_sha256)
+        VALUES ($1, gen_random_uuid(), $2, $3, 'sent', 'sold_comp_set', 'sold', $4)`, [w6.tenantId, l.assignmentId, l.id, 'a'.repeat(64)]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    await asSystem(h, w6, l, (tx, a, actor) => onEscalationInTx(tx, a, 'data_unavailable', actor));
+    expect((await auditsOf(l.assignmentId)).filter((x) => x.action === 'ai_isa.subject_disputed')).toEqual([{ action: 'ai_isa.subject_disputed', reason: 'data_unavailable', actor_kind: 'system', actor_user_id: null }]);
+    // a collaborator's address edit clears the confirmed home in the database (0084's trigger): audited as the editor
+    await h.su.query(`UPDATE ai_isa_seller_watch SET subject_disputed_at = NULL WHERE assignment_id = $1`, [l.assignmentId]);
+    expect((await confirm(w6, l)).status).toBe(200);
+    expect((await call(w6.teamLead!, 'PATCH', `/contacts/${l.id}/addresses/${l.addressId}`, { kind: 'property', line1: l.line1.replace('Ct', 'Court'), line2: null, city: 'Oakland', region: 'CA', postalCode: '94110' })).status).toBe(200);
+    expect((await auditsOf(l.assignmentId)).filter((x) => x.action === 'ai_isa.subject_cleared')).toEqual([{ action: 'ai_isa.subject_cleared', reason: 'address_changed', actor_kind: 'user', actor_user_id: w6.teamLead!.userId }]);
   });
 });
 

@@ -24,6 +24,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
+import { auditSubjectClearsInTx, confirmedWatchesAtAddressInTx } from '../isa/seller/clearAudit.js';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
@@ -66,16 +67,20 @@ export async function registerLinkRoutes(app: FastifyInstance): Promise<void> {
   });
   r.patch('/contacts/:id/addresses/:addressId', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.AddressParams, body: S.AddressBody, response: { 200: S.AddressResponse } } }, async (req) =>
     peopleTx(req, async (tx, _now, actor) => {
+      const confirmed = await confirmedWatchesAtAddressInTx(tx, req.params.addressId); // b13 review B13-MRG-4
       if (!(await repo.updateAddress(tx, req.params.id, req.params.addressId, addressInput(req.body)))) throw new AppError('NOT_FOUND');
       await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactSnapshot({ address_action: 'edit' }, { entity: 'contact_address' }) });
+      await auditSubjectClearsInTx(tx, actor, confirmed);
       return { address: addressView((await repo.addresses(tx, req.params.id)).find((a) => a.id === req.params.addressId)!) };
     }),
   );
   r.delete('/contacts/:id/addresses/:addressId', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.AddressParams, response: { 200: S.AddressDeleteResponse } } }, async (req) =>
     peopleTx(req, async (tx, now, actor) => {
       // an address of another person, or one RLS does not let this caller delete, is simply not found (R-PERM-5)
+      const confirmed = await confirmedWatchesAtAddressInTx(tx, req.params.addressId); // b13 review B13-MRG-4
       const gone = await repo.deleteAddress(tx, req.params.id, req.params.addressId);
       if (!gone) throw new AppError('NOT_FOUND');
+      await auditSubjectClearsInTx(tx, actor, confirmed);
       // the diff reads as a removal: the address id and kind go to null (ids and codes only, never the address text)
       await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactDiff({ address_id: gone.id, kind: gone.kind }, { address_action: 'delete', address_id: null, kind: null }, { entity: 'contact_address' }) });
       return { ok: true as const, restoreToken: await sealAddressRestore(platformOf(req).envelope, tx, actor, req.params.id, gone, now) };

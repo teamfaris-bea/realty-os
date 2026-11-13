@@ -153,7 +153,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         break;
       case 'escalate':
         if (act.type !== 'terminal') await escalationCardInTx(env, act.class, act.type, act.priority);
-        await onEscalationInTx(tx, ctx.a, act.class); // ISA-3 H6: a pricing hold suspends comps (E502)
+        await onEscalationInTx(tx, ctx.a, act.class, env.actor); // ISA-3 H6: a pricing hold suspends comps (E502), audited (b13 review B13-MRG-4)
         break;
       case 'pause':
         await sql`UPDATE ai_isa_assignments SET paused_at = ${new Date(now)}, paused_by_kind = 'system', pause_reason = ${act.reason}
