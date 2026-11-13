@@ -1075,35 +1075,65 @@ describe('ISA-2b: the guard\'s holiday check (R-ISA-10) and one open AI message 
     expect(await errOf(withTenantTx(w.owner.actor, (tx) => sql`SELECT app.ai_isa_us_federal_holiday(now()::date)`.execute(tx), { db: h.app }))).toMatch(/permission denied/);
   });
 
-  it('R-ISA-10: on a holiday (Thanksgiving, today made one for the test) an initiated message (turn kind or derived tier) is refused ISA_QUIET_HOURS in any zone; a reply passes', async () => {
-    // the database clock cannot move: the test swaps the pure function for one that calls today a holiday, then restores it
+  // batch 13 audit ISA2B-05: the exact holiday refusal (every weekday permitted, so the weekday rule cannot answer for
+  // it), the derived tier through has_facts (a reply-kind message with a pending fact, after their own inbound, so the
+  // reply window is open), and two zones (each named in its own refusal; their local dates differ when the clock allows)
+  it('R-ISA-10: on a holiday (today made one for the test) an initiated message (turn kind, or a reply-kind message carrying a fact) is refused exactly "wait past a federal holiday" in each zone; a reply passes', async () => {
+    // the database clock cannot move: the test swaps the pure function for one that calls today a holiday, permits every
+    // weekday in the pack (so only the holiday rule can refuse), then restores both
     const [def] = await suRows<{ d: string }>(h.su, `SELECT pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS d`);
+    const [pack] = await suRows<{ rules: Record<string, unknown> }>(h.su, `SELECT rules FROM jurisdiction_packs WHERE key = 'platform:ai_isa'`);
+    // two fixed-offset zones open now (10:00-17:59), on different local dates when such a pair exists at this hour
+    const ETC = Array.from({ length: 25 }, (_, i) => i - 12).map((n) => (n === 0 ? 'UTC' : n > 0 ? `Etc/GMT-${n}` : `Etc/GMT+${-n}`));
+    const local = (z: string) => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', hourCycle: 'h23' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+      return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) }; };
+    const open = ETC.filter((z) => { const t = local(z); return t.hour >= 10 && t.hour < 18; });
+    const zoneA = open[0]!;
+    const zoneB = open.find((z) => local(z).day !== local(zoneA).day) ?? open.at(-1)!;
+    expect(zoneB).not.toBe(zoneA);
     await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$ SELECT d BETWEEN current_date - 1 AND current_date + 1 $$`);
+    await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('initiated_days', '[1,2,3,4,5,6,7]'::jsonb) WHERE key = 'platform:ai_isa'`);
     try {
-      const l = await leadUnderCare(x);
-      await grantFromOwnDisclosure(l, { scopeStated: true });
-      await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
-        VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
       const msgOf = async (id: string) => {
         try {
           await withTenantTx(x.w.system('worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx), { db: h.app });
           return 'ok';
         } catch (e) { return (e as Error).message; }
       };
-      const m1 = await queueAi(x, l, { kind: 'initiated' });
-      expect(await msgOf(m1.messageId)).toMatch(/ISA_QUIET_HOURS: initiated AI messages wait (past a federal holiday|for a permitted day)/);
-      await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m1.actionId]);
-      // the derived tier: a turn marked reply, but no own inbound in the window, is initiated by the guard
-      const m2 = await queueAi(x, l, { kind: 'reply' });
-      expect(await dispatchCode(x, m2.messageId)).not.toBe('ok');
-      await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m2.actionId]);
-      await inbound(x, l);
-      expect(await dispatchCode(x, (await queueAi(x, l, { kind: 'reply' })).messageId)).toBe('ok');
+      const holidayIn = (z: string) => new RegExp(`^ISA_QUIET_HOURS: initiated AI messages wait past a federal holiday in ${z.replace(/[+]/g, '\\+')}$`);
+      for (const zone of [zoneA, zoneB]) {
+        const l = await leadUnderCare(x, { zone });
+        await grantFromOwnDisclosure(l, { scopeStated: true });
+        await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+          VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
+        // the turn kind: initiated
+        const m1 = await queueAi(x, l, { kind: 'initiated', zones: [zone] });
+        expect(await msgOf(m1.messageId)).toMatch(holidayIn(zone));
+        await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m1.actionId]);
+        // the derived tier: their own inbound opens the reply window, but the reply-kind message carries a listing fact
+        await inbound(x, l);
+        const m2 = await queueAi(x, l, { kind: 'reply', zones: [zone] });
+        await q(w.system('assistant'), sql`INSERT INTO ai_isa_shared_facts (tenant_id, id, assignment_id, contact_id, turn_id, message_id, status, fact_kind, line_sha256)
+          VALUES (app.tenant_id(), ${uuid()}, ${l.assignmentId}, ${l.contactId}, ${m2.turnId}, ${m2.messageId}, 'pending', 'listing_active', ${sha('holiday line')})`);
+        expect(await msgOf(m2.messageId)).toMatch(holidayIn(zone));
+        await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m2.actionId]);
+        // a plain reply in the same window goes on the holiday
+        expect(await dispatchCode(x, (await queueAi(x, l, { kind: 'reply', zones: [zone] })).messageId)).toBe('ok');
+      }
+      // one message to both zones is refused for a holiday in one of them
+      const l = await leadUnderCare(x, { zone: zoneA });
+      await grantFromOwnDisclosure(l, { scopeStated: true });
+      await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+        VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
+      const both = await queueAi(x, l, { kind: 'initiated', zones: [zoneA, zoneB] });
+      expect(await msgOf(both.messageId)).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait past a federal holiday in /);
     } finally {
       await h.su.query(def!.d);
+      await h.su.query(`UPDATE jurisdiction_packs SET rules = $1::jsonb WHERE key = 'platform:ai_isa'`, [JSON.stringify(pack!.rules)]);
     }
-    const [back] = await suRows<{ t: boolean }>(h.su, `SELECT app.ai_isa_us_federal_holiday('2026-11-26') AND NOT app.ai_isa_us_federal_holiday('2026-11-27') AS t`);
-    expect(back!.t).toBe(true);
+    const [back] = await suRows<{ t: boolean; rules: Record<string, unknown> }>(h.su, `SELECT app.ai_isa_us_federal_holiday('2026-11-26') AND NOT app.ai_isa_us_federal_holiday('2026-11-27') AS t,
+      (SELECT rules FROM jurisdiction_packs WHERE key = 'platform:ai_isa') AS rules`);
+    expect(back).toEqual({ t: true, rules: pack!.rules });
   });
 
   it('R-ISA-10 (0083, b13): a message the turn planned as initiated is held to the weekday and holiday rules even inside the reply window (derived tier reply), which 0081 alone let through; a planned reply is not', async () => {
