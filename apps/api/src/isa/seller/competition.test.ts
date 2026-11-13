@@ -1,10 +1,16 @@
 // Competing listings for a seller: each feed's own attribution and disclaimer, and the channel (ISA-3 scope 7; R-ISA-17,
 // R-ISA-18, R-MLS-2; E536, E537; batch 13 audit F4, F5). Real Postgres through the API harness; fakes only; nothing is
 // sent (AI_ISA_LIVE_SENDS, TELEPHONY_LIVE_REQUESTS and MLS_LIVE_CALLS stay false).
+import type { Actor, TenantId } from '@realty/core/foundation';
+import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
 import { cmaPack, feedLastSyncedAt, localSales, mlsSale, saleReso, syncSales } from '../../cma/testing.js';
+import { depsFromPlatform } from '../../comms/runtime.js';
 import { TEST_ATTRIBUTION, TEST_DISCLAIMER } from '../../mls/testing.js';
+import { systemActor } from '../../worker/systemActor.js';
+import { aiIsaGateFacts } from '../send.js';
+import type { IsaDeps } from './isa2Seam.js';
 import { buildCompsInTx } from './comps.js';
 import { smsFits } from './competition.js';
 import { sellerFactsCurrentInTx, sellerRerenderInTx } from './index.js';
@@ -157,5 +163,21 @@ describe('E537 (ISA-3 audit F6): the model-free re-render after a fact changed b
     await h.su.query(`UPDATE assistant_actions SET payload = payload || jsonb_build_object('rerenderOf', $2::text) WHERE id = (SELECT assistant_action_id FROM messages WHERE id = $1)`, [id, id]);
     expect((await asSystem(h, w, l, (tx, _a, actor) => sellerFactsCurrentInTx(tx, actor, id, nowInstant()))).codes).toEqual(['DATA_UNAVAILABLE', 'FACT_CHANGED']);
     expect(await rerenderJobs(w.tenantId)).toEqual([]);
+  });
+});
+
+describe('E537 R-ISA-18 (ISA-3 audit F11): H3 runs as dispatch\'s own actor', () => {
+  it('E537: dispatch TX1 checks a seller fact as the actor dispatching it: via assistant it passes, via worker it refuses (SELLER_FACTS_NOT_ALLOWED)', async () => {
+    const w = await sellerWorld(h);
+    const l = await sellerLead(h, w);
+    await mlsSale({ h, tenantId: w.tenantId, mls: w.mls }, { status: 'active', line1: '380 Rival St', beds: 3, sqft: 1500 });
+    expect((await confirm(w, l)).status).toBe(200);
+    const id = (await queueFactsAs(h, w, l, ['C1'], 'email'))!;
+    const m = (await h.su.query<{ conversation_id: string; assistant_action_id: string; channel: 'sms' | 'email' }>('SELECT conversation_id, assistant_action_id, channel FROM messages WHERE id = $1', [id])).rows[0]!;
+    const ref = { id, contactId: l.id, conversationId: m.conversation_id, channel: m.channel, assistantActionId: m.assistant_action_id };
+    const deps = depsFromPlatform(h.app.platform) as unknown as IsaDeps;
+    const tx1 = (actor: Actor) => withTenantTx(actor, async (tx) => (await aiIsaGateFacts(tx, deps, ref, '', nowInstant(), actor)).facts.chainFailures, { db: h.database });
+    expect(await tx1(systemActor(w.tenantId as TenantId, 'assistant'))).not.toContain('SELLER_FACTS_NOT_ALLOWED');
+    expect(await tx1(systemActor(w.tenantId as TenantId, 'worker'))).toContain('SELLER_FACTS_NOT_ALLOWED');
   });
 });

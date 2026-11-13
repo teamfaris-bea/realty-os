@@ -9,7 +9,7 @@
 //                                                        sent comps email marks the subject disputed
 //   H8 factPlaceholdersInTx   turn.ts prepare            a sent facts message enters the prompt as a fixed placeholder
 // H7 (sendResultInTx) is not needed: ISA-2 already flips the facts to sent or canceled, and nothing here follows it.
-import { type IdGenerator, type Instant, type SystemActor, can } from '@realty/core/foundation';
+import { type Actor, type IdGenerator, type Instant, type SystemActor, can } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
@@ -270,13 +270,14 @@ export async function writeSellerFactsInTx(tx: Tx, ids: IdGenerator, a: Pick<Ass
  * A change enqueues one model-free re-render per turn (ai_isa.seller_rerender). A sync that moves only last_synced_at
  * changes nothing here (E537).
  */
-export async function sellerFactsCurrentInTx(tx: Tx, actor: SystemActor, messageId: string, now: Instant): Promise<{ codes: string[]; licenceOk: boolean }> {
+export async function sellerFactsCurrentInTx(tx: Tx, actor: Actor, messageId: string, now: Instant): Promise<{ codes: string[]; licenceOk: boolean }> {
   const facts = (await sql<{ fact_kind: string; listing_id: string | null; mls_connection_id: string | null; price_kind: string | null; price_cents: string | null; status_at_build: string | null;
       display_rules_version: string | null; comp_set_hash: string | null; assignment_id: string; turn_id: string | null }>`SELECT fact_kind, listing_id, mls_connection_id, price_kind, price_cents,
       status_at_build, display_rules_version, comp_set_hash, assignment_id, turn_id FROM ai_isa_shared_facts WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND status = 'pending'`.execute(tx)).rows;
   const seller = facts.filter((f) => f.fact_kind === 'sold_comp_set' || f.fact_kind === 'competitor');
   if (seller.length === 0) return { codes: [], licenceOk: true };
-  if (!can(actor, 'ai_isa.seller_facts', { tenantId: actor.tenantId }).ok) return { codes: ['SELLER_FACTS_NOT_ALLOWED'], licenceOk: false };
+  // dispatch's own actor (ISA-3 audit F11): only the system via 'assistant' holds ai_isa.seller_facts
+  if (actor.kind !== 'system' || !can(actor, 'ai_isa.seller_facts', { tenantId: actor.tenantId }).ok) return { codes: ['SELLER_FACTS_NOT_ALLOWED'], licenceOk: false };
   const e = await mlsEligibility(tx, now);
   const codes = new Set<string>();
   const rows = new Map((await listingRows(tx, seller.flatMap((f) => (f.listing_id ? [f.listing_id] : [])))).map((r) => [r.id, r]));

@@ -233,7 +233,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   }
   const isaMsg = m.initiator === 'assistant' && isAiIsaMessage(m.actionCategory);
   const isaRef = { id: m.id, contactId: m.contactId, conversationId: m.conversationId, channel, assistantActionId: m.assistantActionId };
-  const isaTx1 = isaMsg ? await aiIsaGateFacts(tx, { db: c.deps.db, ids: c.deps.ids, providers: c.deps.providers, aiIsaLiveOff: c.deps.aiIsaLiveOff }, isaRef, addressHmac, now) : null;
+  const isaTx1 = isaMsg ? await aiIsaGateFacts(tx, { db: c.deps.db, ids: c.deps.ids, providers: c.deps.providers, aiIsaLiveOff: c.deps.aiIsaLiveOff }, isaRef, addressHmac, now, c.actor) : null;
   if (isaTx1) extra.push(...(isaTx1.extra as DispatchDenyReason[]));
 
   const intent: OutboundIntent = {

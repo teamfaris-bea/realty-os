@@ -347,7 +347,7 @@ describe('R-ISA-10: an initiated facts message on Thanksgiving or an observed Ch
     const run = () => withTenantTx(actor, async (tx) => {
       const out: { label: string; initiated: boolean; holiday: boolean; zones: readonly string[]; deferral: number | null; core: number | null }[] = [];
       for (const k of cases) {
-        const tx1 = await aiIsaGateFacts(tx, deps as never, ref, '', k.now as never);
+        const tx1 = await aiIsaGateFacts(tx, deps as never, ref, '', k.now as never, actor as never);
         out.push({ label: k.label, initiated: tx1.facts.initiated, holiday: tx1.facts.holidays.includes(k.day), zones: tx1.facts.zones,
           deferral: await deferralFor(tx, ref, ['ISA_QUIET_HOURS'], k.now as never), core: coreNext(k.now) });
       }
