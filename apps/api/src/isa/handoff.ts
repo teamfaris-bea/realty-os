@@ -163,17 +163,21 @@ export type HandoffCloseReason = (typeof HANDOFF_CLOSE_REASONS)[number];
  * what an internal action takes once handled). Done means: a human touch met the deadline (the sweep, in its
  * transaction), "Got it" on a handoff no touch can ever meet (sla_class 'none'), the lead was closed by a person (the
  * sweep: a closed lead takes no touch), or AI care restarted on the person after a human touch since the handoff
- * (startCare; a restart alone never ends it, b12 recheck R16). An executed action marks the handoff done for the sweep,
- * the panel, the list and the Admin count, so its deadline never alerts afterwards. Idempotent: a second call changes
+ * (startCare; a restart alone never ends it, b12 recheck R16). The handoff's stored close (closed_at, closed_reason;
+ * 0081, b12 recheck R19) marks it done for the sweep, the panel, the list and the Admin count, so its deadline never
+ * alerts afterwards. b12 recheck R21: the close keys on that marker, not on the action: a handoff whose card a person
+ * already decided (rejected or invalidated, as the generic taps did before R11) is marked done too, its action left as
+ * the person decided it, so a closed lead's decided handoff stops being read, once. Idempotent: a second call changes
  * nothing and writes no second audit row.
  */
 export async function closeHandoffInTx(tx: Tx, actor: SystemActor, h: { id: string; actionId: string }, reason: HandoffCloseReason, now: Instant): Promise<boolean> {
-  const x = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'executed', updated_at = now()
-    WHERE tenant_id = app.tenant_id() AND id = ${h.actionId} AND kind = 'ai_isa_handoff' AND status = 'proposed' RETURNING id`.execute(tx);
-  await resolveFeedFor(tx, h.actionId, now);
-  if (x.rows.length === 0) return false;
   // b12 recheck R19: the handoff records that it is closed and why (system-only, final: 0081's guard)
-  await sql`UPDATE ai_isa_handoffs SET closed_at = ${new Date(now)}, closed_reason = ${reason} WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND closed_at IS NULL`.execute(tx);
+  const c = await sql<{ id: string }>`UPDATE ai_isa_handoffs SET closed_at = ${new Date(now)}, closed_reason = ${reason}
+    WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND closed_at IS NULL RETURNING id`.execute(tx);
+  if (c.rows.length === 0) return false;
+  await sql`UPDATE assistant_actions SET status = 'executed', updated_at = now()
+    WHERE tenant_id = app.tenant_id() AND id = ${h.actionId} AND kind = 'ai_isa_handoff' AND status = 'proposed'`.execute(tx);
+  await resolveFeedFor(tx, h.actionId, now);
   await audit(tx, actor, { action: 'ai_isa.handoff_closed', entity: { type: 'ai_isa_handoff', id: h.id }, reason });
   return true;
 }
@@ -218,8 +222,8 @@ async function overdueTargets(tx: Tx, r: { owner: string | null; holder: string 
  * The deadline job (R-ISA-30): a human touch since the handoff (R-OWN-14's touch, contacts.last_human_touch_at)
  * clears it; "Got it" never does. A breach notifies the team lead (level 1), then Owner/Admin (level 2). b12 recheck
  * R13: a met deadline closes the handoff's card and executes its action in this transaction; so does a lead closed
- * since (no touch can meet it any more), without recording the deadline as met; a handoff already done (its action
- * executed) is not read again.
+ * since (no touch can meet it any more), without recording the deadline as met; a handoff already done (its stored
+ * close, b12 recheck R19, R21) is not read again.
  */
 export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor: SystemActor): Promise<{ met: number; escalated: number; closed: number }> {
   let met = 0;
@@ -241,7 +245,7 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
       FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
       JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
       LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
-     WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' AND x.status IS DISTINCT FROM 'executed'
+     WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' AND h.closed_at IS NULL
      ORDER BY h.sla_due_at LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
     if (r.touched !== null && r.touched.getTime() >= r.created_at.getTime()) {
@@ -251,7 +255,8 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
       continue;
     }
     // b12 recheck R13: a touch is recorded only on an owned lead, so a closed lead's deadline can never be met: the
-    // handoff is done (its card closes, its action is executed), and nothing alerts; the deadline is not recorded as met
+    // handoff is done (its card closes, its action is executed), and nothing alerts; the deadline is not recorded as met.
+    // b12 recheck R21: a handoff whose card was decided is marked done here too (once), so it is not read again
     if (r.lead_closed) {
       if (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'lead_closed', now)) closed += 1;
       continue;

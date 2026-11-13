@@ -635,6 +635,32 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(panel.body.handoff).toMatchObject({ id: ho.id, overdue: false });
   });
 
+  it('R-ISA-30 E521 (b12 recheck R21): a handoff whose card was decided and whose lead is then closed is marked done once (lead_closed, one audit row): its decided action stays as it is, it never alerts and nothing calls it overdue', async () => {
+    const { l, ho, a1 } = await handedToA1();
+    // a1's card is decided as the pre-R11 generic Dismiss left it (seeded: the taps refuse it now)
+    const actionId = (await actionOf(ho.id)).id;
+    await h.su.query(`UPDATE assistant_actions SET status = 'rejected', decided_by_user_id = $2, decided_at = now() WHERE id = $1`, [actionId, a1.userId]);
+    await h.su.query(`UPDATE priority_feed_items SET state = 'done', resolved_at = now() WHERE assistant_action_id = $1`, [actionId]);
+    expect((await command(a1, l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
+    await runIsa(h, w.tenantId, 1);
+    expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).toBe('closed');
+    await ageAndSweep(ho.id);
+    expect((await h.su.query<{ r: string | null }>(`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE id = $1`, [ho.id])).rows[0]!.r).toBe('lead_closed');
+    expect(await closedAudit(ho.id)).toEqual([{ reason: 'lead_closed', actor_kind: 'system' }]);
+    // the system never re-decides a person's decision
+    expect(await actionOf(ho.id)).toEqual({ id: actionId, status: 'rejected', decided_by_user_id: a1.userId });
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 0 });
+    // later sweeps write nothing more and never alert; the panel and the list do not call it overdue
+    await ageAndSweep(ho.id);
+    expect(await closedAudit(ho.id)).toHaveLength(1);
+    expect(await overdueOf(l.id)).toBe(0);
+    const panel = await call<{ handoff: { id: string; overdue: boolean; closedReason: string | null } | null }>(w.owner, 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(panel.body.handoff).toMatchObject({ id: ho.id, overdue: false, closedReason: 'lead_closed' });
+    const list = await call<{ rows: { contactId: string; handoffOverdue: boolean }[] }>(w.owner, 'GET', '/ai-isa/assignments?scope=all&state=ended');
+    expect(list.status, JSON.stringify(list.body)).toBe(200);
+    expect(list.body.rows.filter((r) => r.contactId === l.id).map((r) => r.handoffOverdue)).toEqual([false]);
+  });
+
   /** Care on the agent's lead ends (the agent ends it): a handoff to the agent with a deadline, its card open. */
   async function endedByAgent() {
     const agent = w.agents[0]!;
