@@ -10,11 +10,13 @@
 import { AREA_CODE_STATES, areaCodeZones, STATE_ZONES, usFederalHolidays } from '@realty/core/isa';
 import { type IanaZone, type Instant, type LocalTime, localWindowContains } from '@realty/core/foundation';
 import type { Actor } from '@realty/core/foundation';
+import { readdirSync, readFileSync } from 'node:fs';
 import fc from 'fast-check';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
+import { MIGRATIONS_DIR } from '../src/dbConfig.js';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, drainFollowups, type Harness, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
 import {
@@ -99,6 +101,42 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     expect(r.rows.map((x) => x.d)).toEqual([...new Set(want)].sort());
     const [src] = await suRows<{ src: string }>(h.su, `SELECT prosrc AS src FROM pg_proc WHERE oid = 'app.ai_isa_send_check(public.messages)'::regprocedure`);
     expect(src!.src).toContain("tier = 'initiated' AND app.ai_isa_us_federal_holiday(lt::date)");
+  });
+
+  it('R-ISA-24 (b12 recheck R6, R5): the batch 12 review migration\'s self-check passes on this schema and fails when the guard loses its non-mandate AI-category refusal or the block helper loses its caller gate', async () => {
+    // the self-check block of the batch 12 review migration, found by its suffix (the orchestrator may renumber it)
+    const file = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('_b12_review_ai_isa.sql'));
+    expect(file).toHaveLength(1);
+    const text = readFileSync(`${MIGRATIONS_DIR}/${file[0]}`, 'utf8');
+    const selfCheck = text.slice(text.indexOf('DO $$', text.indexOf('-- 7. Self-check')));
+    expect(selfCheck).toMatch(/self-check failed: messages_dispatch_guard lost a D1 refusal/);
+    const defOf = async (fn: string) => (await suRows<{ def: string }>(h.su, `SELECT pg_get_functiondef($1::regprocedure) AS def`, [fn]))[0]!.def;
+    const checkWith = async (fn: string | null, mutate: (def: string) => string = (d) => d): Promise<string> => {
+      const before = fn === null ? null : await defOf(fn);
+      const after = before === null ? null : mutate(before);
+      if (fn !== null) expect(after, `the mutation of ${fn} changes its body`).not.toBe(before);
+      const c = await h.su.connect();
+      try {
+        await c.query('BEGIN');
+        if (after !== null) await c.query(after);
+        await c.query(selfCheck);
+        return 'passed';
+      } catch (e) {
+        return (e as Error).message;
+      } finally {
+        await c.query('ROLLBACK');
+        c.release();
+      }
+    };
+    expect(await checkWith(null)).toBe('passed');
+    // the human/system ELSIF branch removed: the assistant branch's "... mandate (assistant)" refusal stays
+    const noBranch = await checkWith('app.messages_dispatch_guard()', (d) => d.replace(
+      /\n[ \t]*ELSIF NEW\.action_category IN \('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line'\) THEN\n[^\n]*\n[^\n]*mandate' USING ERRCODE = 'check_violation';/, ''));
+    expect(noBranch).toMatch(/0081 self-check failed: messages_dispatch_guard lost a D1 refusal/);
+    expect(await defOf('app.messages_dispatch_guard()')).toContain('mandate (assistant)');
+    // the person-block helper without its caller gate (b12 recheck R5)
+    const ungated = await checkWith('app.ai_isa_person_blocked(uuid, uuid)', (d) => d.replace(/AND \(app\.is_tenant_wide\(\)[\s\S]*?app\.user_id\(\)\)\)\)/, ''));
+    expect(ungated).toMatch(/0081 self-check failed: app\.ai_isa_person_blocked answers a caller who cannot see the record/);
   });
 
   it('R-ISA-5: a turn decision holds codes and handles only (a free-text value is refused by the CHECK)', async () => {

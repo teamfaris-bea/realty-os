@@ -26,7 +26,9 @@
 --  6. B12X-4 (R-ISA-2): stage_automation_decisions.reason adds 'ai_isa_active', the skip stage automation records while
 --     the person is under live AI care (0080's enrollment guard rolled the whole decision back, so the scan retried it).
 --  7. db-guard-selfcheck-1: the self-check below also asserts D1's refusals and the non-mandate AI-category refusal are
---     still in app.messages_dispatch_guard (0080's DO block checked only the post-0021 markers).
+--     still in app.messages_dispatch_guard (0080's DO block checked only the post-0021 markers). b12 recheck R6: that
+--     refusal is matched as its own branch (the ELSIF on the AI ISA categories followed by its RAISE): its message text
+--     alone is a prefix of the assistant branch's "... mandate (assistant)" refusal, so it proved nothing.
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4; docs/ARCHITECTURE.md §21.43):
 --   * new function app.ai_isa_person_blocked(uuid, uuid) RETURNS boolean: SECURITY DEFINER (owner app_definer,
@@ -575,7 +577,9 @@ BEGIN
              OR position('RECIPIENT_SUPPRESSED' IN p.prosrc) = 0 OR position('PLATFORM_NOT_CLEARED' IN p.prosrc) = 0
              OR position('RECIPIENT_NOT_A_CONTACT_POINT' IN p.prosrc) = 0 OR position('ASSISTANT_ACTION_NOT_APPROVED' IN p.prosrc) = 0
              OR position('PLAYBOOK_NOT_APPROVED' IN p.prosrc) = 0 OR position('AUTOMATION_PAUSED' IN p.prosrc) = 0
-             OR position('ISA_NOT_AUTHORIZED: AI assistant categories are sent only under the AI assistant mandate' IN p.prosrc) = 0
+             -- b12 recheck R6: the non-mandate branch itself (its ELSIF and its RAISE), not a prefix that the assistant
+             -- branch's "... mandate (assistant)" refusal also contains
+             OR p.prosrc !~ 'ELSIF NEW\.action_category IN \(''ai_isa_message'',''ai_isa_confirmation'',''ai_isa_holding_line''\) THEN\s+(--[^\n]*\n\s*)?RAISE EXCEPTION ''ISA_NOT_AUTHORIZED: AI assistant categories are sent only under the AI assistant mandate'' USING'
              OR position('app.ai_isa_send_check(NEW)' IN p.prosrc) = 0
         FROM pg_proc p WHERE p.oid = 'app.messages_dispatch_guard()'::regprocedure) THEN
     RAISE EXCEPTION '0081 self-check failed: messages_dispatch_guard lost a D1 refusal';
