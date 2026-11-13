@@ -13,6 +13,7 @@ import type { UserActor } from '@realty/core/foundation';
 import { audit, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
 import type { DocumentRenderer, RenderedPdf } from '../providers/integrations/types.js';
+import { ProviderError } from '../providers/types.js';
 import { pdfFields, refusalFor } from './report.js';
 import { getCma } from './repos.js';
 import { readinessOf } from './service.js';
@@ -30,7 +31,11 @@ export async function reportPdf(run: AdminTx, renderer: DocumentRenderer, actor:
     if (report === null) throw new AppError('CMA_NOT_SHAREABLE', { blockers: ['NO_VALUE'] });
     const refusal = refusalFor(report, 'pdf');
     if (refusal !== null) throw new AppError('CMA_STATEMENT_NOT_RENDERABLE', { part: refusal.part, reason: refusal.reason, ...(refusal.codePoints ? { codePoints: refusal.codePoints } : {}) });
-    const pdf = await renderer.renderPdf({ templateKey: CMA_PDF_TEMPLATE, fields: pdfFields(report.blocks), imageCount: 0 });
+    const pdf = await renderer.renderPdf({ templateKey: CMA_PDF_TEMPLATE, fields: pdfFields(report.blocks), imageCount: 0 }).catch((e: unknown) => {
+      // no renderer on this deployment: said honestly, never a 500
+      if (e instanceof ProviderError && e.kind === 'not_configured') throw new AppError('INTEGRATION_NOT_CONFIGURED', { provider: 'renderer' });
+      throw e;
+    });
     await audit(tx, actor, { action: 'cma.report_downloaded', entity: { type: 'cma_report', id: row.id }, changes: redactSnapshot({ cma_id: row.id, pdf_sha256: pdf.sha256 }) });
     return pdf;
   });

@@ -116,6 +116,21 @@ describe('E616 R-CMA-9: the report PDF', () => {
   });
 });
 
+describe('the renderer not configured', () => {
+  it('R-INT-6: with no renderer on the deployment the download is INTEGRATION_NOT_CONFIGURED, never a 500, and nothing is audited', async () => {
+    const { reportPdf } = await import('./pdf.js');
+    const { withTenantTx } = await import('@realty/db');
+    const { ProviderError } = await import('../providers/types.js');
+    const c = await withPlatformCmaCleared(h, () => sharedCma());
+    const actor = agent().actor();
+    const unconfigured = { renderPdf: async () => { throw new ProviderError('not_configured', 'RENDERER_NOT_CONFIGURED'); } };
+    await withPlatformCmaCleared(h, async () => {
+      await expect(reportPdf((fn) => withTenantTx(actor, (tx, now) => fn(tx, now as number, actor), { db: h.app.platform.db }), unconfigured, actor, c.id)).rejects.toMatchObject({ code: 'INTEGRATION_NOT_CONFIGURED' });
+    });
+    expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE action = 'cma.report_downloaded' AND entity_id = $1", [c.id])).rows[0].n).toBe(0);
+  });
+});
+
 describe('VERIFY 3: pdf-lib (N16) on the report fields', () => {
   const input = (min: number) => ({
     subjectAddress: '100 Sample Avenue, Oakland',
