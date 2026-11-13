@@ -714,7 +714,7 @@ Roles: **owner** is the team's business owner; **operator** runs the deployment;
     - ~~whether a full background sync must use the replication endpoint~~ (answered: yes, §11.1);
     - which `Core.Permissions` value withholds a field, and which fields the licence lets clients see;
     - the largest `$top` with `$expand=Media`, and whether `$select` inside `$expand` is honoured;
-    - (to the MLS) which field is the finished living area, what it includes, its units and source, and the `PostalCode` format: the exact questions are in DATA_MODEL "VERIFY WITH MLS: size and postal code" (no size is read until they are answered; `BuildingAreaTotal` never is);
+    - (to the MLS) which field is the finished living area, what it includes, its units and source, whether it is withheld from this key, whether its meaning held over the sold history, whether a correction moves `ModificationTimestamp`, and the `PostalCode` format: the exact questions are in DATA_MODEL "VERIFY WITH MLS: size and postal code" (no size is read until they are answered; `BuildingAreaTotal` never is);
     - the rate limits for this key.
 
 ### 11.6 Feed sync and the licence pack (module 24)
