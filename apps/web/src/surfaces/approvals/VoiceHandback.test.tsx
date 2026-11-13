@@ -68,6 +68,8 @@ async function card(fake: StaffFake, role: 'agent' | 'owner' | 'team_lead' | 'is
 }
 
 const text = () => document.body.textContent ?? '';
+/** ActionCard's header line ("{label} · {time}"), the first line of the card */
+const headerOf = (c: HTMLElement) => c.querySelector('p')?.textContent ?? '';
 const noVoiceSettings = (fake: StaffFake) => expect(fake.calls.filter((c) => c.path.startsWith('/voice/'))).toEqual([]);
 
 describe('R-STAFF-9: the voice handback detector', () => {
@@ -90,7 +92,10 @@ describe('R-STAFF-9 E662: the card shows the stored call fields in words, never 
   it('message taken: the label, each field claim with "From the call record", the needs-review claim, Reply, Mark handled and Call back', async () => {
     const fake = inbox([voiceHandback('message_taken')]);
     const c = await card(fake);
-    expect(within(c).getByText(VOICE_HANDBACK_LABEL)).toBeInTheDocument();
+    // brief item 9: the card's header is the label, said once; never "Replied to the assistant" (the feed label is module 18a's)
+    expect(headerOf(c)).toMatch(new RegExp(`^${VOICE_HANDBACK_LABEL} · `));
+    expect(c.textContent!.split(VOICE_HANDBACK_LABEL)).toHaveLength(2);
+    expect(c.textContent).not.toContain('Replied to the assistant');
     expect(within(c).getByText('The assistant answered at Fri Nov 13, 2:11 PM.')).toBeInTheDocument();
     expect(within(c).getByText('The assistant took a message for you.')).toBeInTheDocument();
     expect(within(c).getAllByText(FROM_CALL_RECORD)).toHaveLength(2);
@@ -189,11 +194,12 @@ describe('R-STAFF-9 E666: what the assistant did, from the call record only', ()
 });
 
 describe('R-STAFF-6: other cards and roles', () => {
-  it('a handback that is not a voice one keeps the generic card (Reply as a button, no label, no Call back)', async () => {
+  it('a handback that is not a voice one keeps the generic card (its own header, Reply as a button, no label, no Call back)', async () => {
     const plain = voiceHandback('message_taken', { claims: [] });
     const fake = inbox([plain]);
     const c = await card(fake);
-    expect(within(c).queryByText(VOICE_HANDBACK_LABEL)).toBeNull();
+    expect(headerOf(c)).toMatch(/^Replied to the assistant · /);
+    expect(c.textContent).not.toContain(VOICE_HANDBACK_LABEL);
     expect(within(c).getByRole('button', { name: 'Reply' })).toBeInTheDocument();
     expect(within(c).queryByRole('link', { name: 'Call back' })).toBeNull();
   });
@@ -201,7 +207,7 @@ describe('R-STAFF-6: other cards and roles', () => {
   it('an ai_isa kind with a call claim keeps the generic card', async () => {
     const fake = inbox([voiceHandback('message_taken', { kind: 'ai_isa_handoff' })]);
     const c = await card(fake);
-    expect(within(c).queryByText(VOICE_HANDBACK_LABEL)).toBeNull();
+    expect(c.textContent).not.toContain(VOICE_HANDBACK_LABEL);
     expect(within(c).queryByRole('button', { name: 'What the assistant did' })).toBeNull();
     expect(within(c).getByRole('button', { name: 'Got it' })).toBeInTheDocument();
   });

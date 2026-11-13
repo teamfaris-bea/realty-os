@@ -234,7 +234,8 @@ test.describe('AI call answering', () => {
     await signIn(page, v.agent, v.password);
     const n = { taps: 0 };
     await openApprovals(page, n);
-    const card = page.getByRole('article').filter({ has: page.getByText('The assistant answered a call', { exact: true }) });
+    // the card's header line: "The assistant answered a call · {time}" (batch 14 audit R2)
+    const card = page.getByRole('article').filter({ has: page.getByText(/^The assistant answered a call · /) });
     await expect(card).toHaveCount(1, { timeout: 15_000 });
     await expect(card.getByText('From the call record').first()).toBeVisible();
     const words = (await card.innerText()) ?? '';

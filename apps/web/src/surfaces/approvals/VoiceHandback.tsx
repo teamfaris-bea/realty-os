@@ -1,6 +1,8 @@
 // The voice handback card (module 55 item 9; R-STAFF-9, R-VOICE-17; E662, E665, E666). ActionCard keeps its header,
-// draft, Send/Edit and Dismiss; for a voice handback it hands two places to this file: the claims (VoiceHandback) and,
-// when there is no draft to send, the buttons (VoiceHandbackButtons).
+// draft, Send/Edit and Dismiss; for a voice handback its header says VOICE_HANDBACK_LABEL instead of the handback kind's
+// "Replied to the assistant" (batch 14 audit R2; the feed's label stays module 18a's, owner question 12), and it hands
+// two places to this file: the claims (VoiceHandback) and, when there is no draft to send, the buttons
+// (VoiceHandbackButtons).
 //
 // - A voice handback is a handback (kind 'handback') with a claim whose evidence is the call (sourceType 'call') at
 //   the field voice_outcome; that evidence's snippet is the stored outcome and its sourceId the call id. Nothing else
@@ -51,7 +53,6 @@ export function VoiceHandback({ action, review }: { action: ActionView; review(c
   const v = voiceHandbackOf(action)!;
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[15px] font-semibold text-ink">{VOICE_HANDBACK_LABEL}</p>
       {action.claims.length > 0 ? (
         <ul className="flex flex-col gap-3" aria-label="What the assistant found">
           {action.claims.map((c) => (

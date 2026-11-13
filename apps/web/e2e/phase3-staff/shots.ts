@@ -105,7 +105,7 @@ for (const [name, vp] of Object.entries(VIEWPORTS)) {
     await stack.fixture('/voice/call', { script: 'booking' });
     await signIn(page, stack, v.agent, v.password);
     await go('/approvals');
-    const handback = page.getByRole('article').filter({ has: page.getByText('The assistant answered a call', { exact: true }) });
+    const handback = page.getByRole('article').filter({ has: page.getByText(/^The assistant answered a call · /) });
     await handback.getByRole('button', { name: 'What the assistant did' }).click();
     await handback.getByText(/Nothing the caller said is shown here/).waitFor();
     await shoot('voice-handback-card');

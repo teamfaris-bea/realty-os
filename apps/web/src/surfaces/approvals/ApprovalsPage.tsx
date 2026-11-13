@@ -27,7 +27,7 @@ import { MarketingApprovals, useMarketingApprovals } from './MarketingApprovals.
 import { ExtractionActionPointer, RefusalNotice } from './ExtractionPointers.js';
 import { Phase3Approvals } from './Phase3Approvals.js';
 import { SellerUpdateApproval } from './SellerUpdateApproval.js';
-import { VoiceHandback, VoiceHandbackButtons, isVoiceHandback } from './VoiceHandback.js';
+import { VOICE_HANDBACK_LABEL, VoiceHandback, VoiceHandbackButtons, isVoiceHandback } from './VoiceHandback.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -174,7 +174,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
     <Card as="article" aria-labelledby={titleId} className="flex flex-col gap-3">
       <div>
         <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
-          {kindLabel(action.kind)} · {relativeTime(Date.parse(action.createdAt), now)}
+          {isVoiceHandback(action) ? VOICE_HANDBACK_LABEL : kindLabel(action.kind)} · {relativeTime(Date.parse(action.createdAt), now)}
         </p>
         <H id={titleId} className="text-[19px] font-semibold text-ink">
           {showContact && action.contactId ? (
