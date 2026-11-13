@@ -39,6 +39,9 @@ const CAPABILITY_NAMES: Record<string, string> = {
   read_listings: 'Read listings',
   send_messages: 'Send messages',
   receive_messages: 'Receive messages',
+  // module 53 (b12 review ui-4)
+  read_reviews: 'Read reviews',
+  reply_reviews: 'Reply to reviews',
 };
 
 export function capabilityName(name: string): string {
@@ -47,10 +50,21 @@ export function capabilityName(name: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Unnamed capability';
 }
 
+/**
+ * The rules a capability waits on, named once and as written (b12 review ui-4: never "the google business profile
+ * rules" or "(fair-housing rules) rules"). The packs CAPABILITY_PACK names have their own phrase; any other pack is
+ * "the rules for" its name.
+ */
+const RULES_PHRASES: Record<string, string> = {
+  'platform:fair_housing': 'the fair-housing rules for publishing marketing',
+  'platform:gbp': 'the Google Business Profile rules',
+  'platform:ads': 'the Google Ads budget rules',
+};
+
 /** The server names a pack by key ("Waits for counsel review of platform:fair_housing."); say its name instead. */
 export function capabilityReason(c: Capability): string {
   if (c.available) return 'Works now.';
-  const r = (c.reason ?? '').replace(/platform:[a-z_]+/g, (k) => `the ${packName(k).toLowerCase()} rules`);
+  const r = (c.reason ?? '').replace(/platform:[a-z_]+/g, (k) => RULES_PHRASES[k] ?? `the rules for ${packName(k)}`);
   return r || 'Not available yet.';
 }
 

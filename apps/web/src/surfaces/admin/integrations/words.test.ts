@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { NEVER_CLEARED_PACKS } from './types.js';
-import { packName } from './words.js';
+import { capabilityName, capabilityReason, packName } from './words.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = readFileSync(resolve(here, '../../../../../api/src/integrations/catalog.ts'), 'utf8');
@@ -54,5 +54,17 @@ describe('pack names (R-INT-6)', () => {
 
   it('D9: platform:cma is named for what waits on it, and says it is not in this version (V1 shares nothing)', () => {
     expect(packName('platform:cma')).toBe('Client CMAs and seller value ranges (a later version)');
+  });
+});
+
+describe('capability lines (b12 review ui-4; R-INT-6)', () => {
+  it('b12 review ui-4: the Google Business Profile capabilities read in words, and a reason names each pack once, as written', () => {
+    expect(capabilityName('read_reviews')).toBe('Read reviews');
+    expect(capabilityName('reply_reviews')).toBe('Reply to reviews');
+    const why = (k: string) => capabilityReason({ name: 'reply_reviews', available: false, reason: `Waits for counsel review of ${k}.` } as never);
+    expect(why('platform:gbp')).toBe('Waits for counsel review of the Google Business Profile rules.');
+    expect(why('platform:fair_housing')).toBe('Waits for counsel review of the fair-housing rules for publishing marketing.');
+    expect(why('platform:ads')).toBe('Waits for counsel review of the Google Ads budget rules.');
+    for (const k of apiPackKeys()) expect(why(k), k).not.toMatch(/rules\) rules|rules rules|\bgoogle\b/);
   });
 });

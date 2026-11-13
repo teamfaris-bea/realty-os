@@ -86,7 +86,7 @@ describe('Integrations page', () => {
   it('a capability is "Works now" only when the server says it is available, and otherwise says why in words', async () => {
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), PAGE_PATH);
     const caps = await screen.findByRole('list', { name: 'What Harbor Facebook Page can do' });
-    expect(caps).toHaveTextContent('Publish posts: Waits for counsel review of the publishing marketing (fair-housing rules) rules.');
+    expect(caps).toHaveTextContent('Publish posts: Waits for counsel review of the fair-housing rules for publishing marketing.');
     expect(caps).not.toHaveTextContent('Works now');
   });
 
@@ -128,7 +128,7 @@ describe('Integrations page', () => {
     expect(ads.getByText('Harbor Ads')).toBeInTheDocument();
     expect(ads.getByText('Connected')).toBeInTheDocument();
     expect(ads.getByText(/Read spend:/).closest('li')).toHaveTextContent('Read spend: Works now.');
-    expect(ads.getByText(/Change budget:/).closest('li')).toHaveTextContent('Change budget: Waits for counsel review of the google ads budget changes rules.');
+    expect(ads.getByText(/Change budget:/).closest('li')).toHaveTextContent('Change budget: Waits for counsel review of the Google Ads budget rules.');
     expect(ads.queryByText(/nothing about your ads is read/)).toBeNull();
     expect(ads.queryByText(/not connected/)).toBeNull();
   });
