@@ -60,6 +60,7 @@ export const CLIENT_DB_EXPORTS = Object.freeze([
   'endPortalSession',
   'issuePortalDocumentStream',
   'redeemPortalDocumentStream',
+  'redeemPortalDocumentDownload',
   'recordPortalAudit',
   'newPortalToken',
   'portalAddressHash',

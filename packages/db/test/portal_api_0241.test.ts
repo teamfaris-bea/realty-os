@@ -306,3 +306,16 @@ describe('E129 the client still reads only the three portal tables', () => {
     }
   });
 });
+
+describe('R-PORTAL-17 redeemPortalDocumentDownload (the @realty/db wrapper)', () => {
+  it('R-PORTAL-17: returns the object with its wrapped key version once, null afterwards and for a malformed token', async () => {
+    const { redeemPortalDocumentDownload } = await import('../src/portalTx.js');
+    const s = await signIn(h, w, omar);
+    const t = await asClient(s.client, (tx) => issuePortalDocumentStream(tx, omar.itemId));
+    const first = await asClient(s.client, (tx) => redeemPortalDocumentDownload(tx, t!.token, { ip: '203.0.113.9', userAgent: 'vitest' }));
+    expect(first).toMatchObject({ documentId: omar.documentId, objectId: omar.objectId, keyVersion: 1, objectKeyVersion: 1 });
+    expect(Buffer.isBuffer(first!.objectKeyWrapped)).toBe(true);
+    expect(await asClient(s.client, (tx) => redeemPortalDocumentDownload(tx, t!.token))).toBeNull();
+    expect(await asClient(s.client, (tx) => redeemPortalDocumentDownload(tx, 'short'))).toBeNull();
+  });
+});
