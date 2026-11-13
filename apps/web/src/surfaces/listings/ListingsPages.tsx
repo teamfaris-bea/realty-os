@@ -22,7 +22,7 @@ import { SellerUpdateCard, type SellerUpdateView } from './SellerUpdateCard.js';
 const STATUS_LABEL: Record<string, string> = { coming_soon: 'Coming soon', active: 'Active', pending: 'Pending', sold: 'Sold', withdrawn: 'Withdrawn', expired: 'Expired' };
 
 export function factsLine(l: Pick<ListingView, 'beds' | 'bathsX10' | 'sqft'>): string {
-  return [l.beds !== null ? `${l.beds} bd` : null, l.bathsX10 !== null ? `${l.bathsX10 / 10} ba` : null, l.sqft !== null ? `${l.sqft.toLocaleString('en-US')} sq ft` : null].filter(Boolean).join(' · ');
+  return [l.beds !== null ? `${l.beds} bd` : null, l.bathsX10 !== null ? `${l.bathsX10 / 10} ba` : null, l.sqft !== null && l.sqft > 0 ? `${l.sqft.toLocaleString('en-US')} sq ft` : null].filter(Boolean).join(' · ');
 }
 
 export function ListingsPage() {

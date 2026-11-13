@@ -14,6 +14,7 @@ import {
   poolTierIndex,
   screen,
   searchTier,
+  unsizedSales,
 } from './select.js';
 import {
   compIncludedSentence,
@@ -29,7 +30,9 @@ import {
   tierSkippedSentence,
   unavailableSentence,
   valueSentence,
+  noSizeSentence,
   BACKTEST_TOO_FEW,
+  NO_SIZED_SALES,
 } from './text.js';
 import {
   type AreaView,
@@ -171,8 +174,11 @@ export function prepareCma(input: PrepareCmaInput): CmaResult {
   const include = new Set(input.include ?? []);
   const exclude = new Set(input.exclude ?? []);
 
-  const unavailable = (reason: CmaUnavailableReason, extra: Partial<Pick<CmaResult, 'comps' | 'notUsed' | 'notUsedTotal' | 'subjectSales' | 'area' | 'market' | 'backtest'>> = {}): CmaResult => {
+  const unavailable = (reason: CmaUnavailableReason, extra: Partial<Pick<CmaResult, 'comps' | 'notUsed' | 'notUsedTotal' | 'subjectSales' | 'area' | 'market' | 'backtest'>> = {}, unsized = { count: 0, sizedOfKind: true }): CmaResult => {
     const comps = extra.comps ?? [];
+    const noSize = unsized.count;
+    // R-MLS-7: sales left out for an unknown size are counted; "none with a size" only when no sale of this kind has one
+    const first = reason === 'NO_SALES' && noSize > 0 && !unsized.sizedOfKind ? NO_SIZED_SALES : unavailableSentence(reason, comps.length, rule);
     return {
       available: false,
       reason,
@@ -185,7 +191,7 @@ export function prepareCma(input: PrepareCmaInput): CmaResult {
       area: extra.area ?? areaView(null, subject, tierReads, rule),
       market: extra.market ?? emptyMarket(rule),
       backtest: extra.backtest ?? emptyBacktest(valuationDate, rule),
-      sentences: [unavailableSentence(reason, comps.length, rule)],
+      sentences: [first, ...(noSize > 0 ? [noSizeSentence(noSize)] : [])],
     };
   };
 
@@ -216,9 +222,12 @@ export function prepareCma(input: PrepareCmaInput): CmaResult {
     market,
     backtest,
   };
+  // R-MLS-7: closed sales of the subject's kind the unknown size alone kept out (each listed as not used: no_size)
+  const unsized = unsizedSales(screened, valuationDate, rule);
+  const noSize = unsized.count;
   const anyEligible = screened.some((s) => s.fail === null);
-  if (!anyEligible) return unavailable('NO_SALES', common);
-  if (est === null) return unavailable('INSUFFICIENT_COMPS', common);
+  if (!anyEligible) return unavailable('NO_SALES', common, unsized);
+  if (est === null) return unavailable('INSUFFICIENT_COMPS', common, unsized);
 
   const dates = choice.comps.map((c) => c.s.c.sale.closeDate as string).sort();
   const dists = choice.comps.map((c) => c.s.distanceM).filter((d): d is number => d !== null);
@@ -232,7 +241,7 @@ export function prepareCma(input: PrepareCmaInput): CmaResult {
     closeDateSpan: { earliest: dates[0] as string, latest: dates[dates.length - 1] as string },
     distanceSpanM: dists.length === choice.comps.length && dists.length > 0 ? { min: Math.min(...dists), max: Math.max(...dists) } : null,
     ...common,
-    sentences: [valueSentence(comps.length), ...area.sentences],
+    sentences: [valueSentence(comps.length), ...area.sentences, ...(noSize > 0 ? [noSizeSentence(noSize)] : [])],
   };
 }
 

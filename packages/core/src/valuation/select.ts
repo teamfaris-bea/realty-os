@@ -305,6 +305,45 @@ export function screen(subject: CmaSubject, canonical: readonly CmaCandidate[], 
   return out;
 }
 
+/** The reasons screen() gives before it reads a sale's size: a sale failing one is not a sale of the subject's kind. */
+const BEFORE_SIZE: ReadonlySet<NotUsedReason> = new Set<NotUsedReason>(['subject_listing', 'subject_address', 'not_sold', 'no_close_price', 'no_close_date', 'after_valuation_date', 'lease', 'other_property_type']);
+
+/**
+ * R-MLS-7: how many closed sales of the subject's kind the size alone kept out (no size from the MLS), for the
+ * result's count, and whether any sale of the subject's kind has a size, whatever else it fails (another size
+ * measure, a sale condition, its price, a duplicate, its age). An unsized sale closed on or before the extended
+ * look-back is too old whatever its size, so it is not counted (it is still listed as no_size, the first rule it
+ * fails). Each sale is counted once, as screen() counts (R-MLS-5): one identity, one team listing, one address key
+ * and close date; a sale that also reached the engine with a size is that copy's, never an unsized one.
+ */
+export function unsizedSales(screened: readonly Screened[], valuationDate: string, rule: CmaRule): { count: number; sizedOfKind: boolean } {
+  const oldest = addMonths(valuationDate, -rule.extendedLookbackMonths);
+  const ids = new Set<string>();
+  const teams = new Set<string>();
+  const sales = new Set<string>();
+  const keyOf = (s: Screened): string | null => (s.c.sale.addressKey === null || s.c.sale.closeDate === null ? null : `${s.c.sale.addressKey}\u0000${s.c.sale.closeDate}`);
+  const seen = (s: Screened): boolean => {
+    const k = keyOf(s);
+    return ids.has(s.c.ref.identity) || (s.c.ref.teamListingId !== null && teams.has(s.c.ref.teamListingId)) || (k !== null && sales.has(k));
+  };
+  const mark = (s: Screened): void => {
+    const k = keyOf(s);
+    ids.add(s.c.ref.identity);
+    if (s.c.ref.teamListingId !== null) teams.add(s.c.ref.teamListingId);
+    if (k !== null) sales.add(k);
+  };
+  const sized = screened.filter((s) => s.fail !== 'no_size' && (s.fail === null || !BEFORE_SIZE.has(s.fail)));
+  for (const s of sized) mark(s);
+  let count = 0;
+  for (const s of screened) {
+    // a no_size sale has a close date (screen checks that first)
+    if (s.fail !== 'no_size' || (s.c.sale.closeDate as string) <= oldest || seen(s)) continue;
+    mark(s);
+    count += 1;
+  }
+  return { count, sizedOfKind: sized.length > 0 };
+}
+
 // ---------------------------------------------------------------- tier search
 
 export interface TierSearch {

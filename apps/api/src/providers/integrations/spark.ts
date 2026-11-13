@@ -27,7 +27,9 @@
 //  4. Records carry many fields $metadata does not declare and `<Field>@Core.Permissions` annotations:
 //     unknown keys are ignored, every annotation key is dropped, and a field whose annotation does not
 //     grant Read is removed before anything reads it (sanitizeRecord).
-//  5. No LivingArea: the size is read from BuildingAreaTotal (SPARK_FIELD_MAPPING).
+//  5. No LivingArea in the sample; BuildingAreaTotal populated; AboveGradeFinishedArea present but empty. Total building
+//     area is not finished living area, so the size is UNKNOWN (null) for every Spark record until the MLS confirms
+//     which field carries finished living area (R-MLS-7; SPARK_FIELD_MAPPING sqft null, SPARK_SIZE_FIELD_CANDIDATE).
 //  6. StandardStatus is a string whose values come from the Lookup resource (not an OData enum).
 //  7. A transient 503 ("took too long") is BUSY: retried by the sync inside its budget; the single
 //     validation probe reports it as its own result.
@@ -39,8 +41,9 @@
 //  - the largest $top Spark accepts with $expand=Media, $orderby on ListingKey, and the composite $filter
 //    used for the cursor; whether $select inside $expand is honoured (off by default: expandSelect);
 //  - which value of Core.Permissions withholds a field (anything but an explicit Read withholds it here);
-//  - which field is the finished living area for each MLS (BuildingAreaTotal is mapped; AboveGradeFinishedArea
-//    was present but empty) and which RESO fields each MLS actually populates.
+//  - which field is the finished living area for this MLS (none is mapped; BuildingAreaTotal is never used;
+//    AboveGradeFinishedArea was present but empty) and which RESO fields each MLS actually populates; the questions
+//    are in docs/DATA_MODEL.md "VERIFY WITH MLS: size and postal code".
 import { priceToCents } from '@realty/core/listings';
 import { ProviderError } from '../types.js';
 import type { LicensePack, MediaRef, MlsFeed, MlsPage, ResoListing } from './types.js';
@@ -51,8 +54,22 @@ import type { LicensePack, MediaRef, MlsFeed, MlsPage, ResoListing } from './typ
  */
 export const SPARK_PATHS = ['/Reso/OData/$metadata', '/Reso/OData/Property'] as const;
 
-/** Per-MLS field overrides for core normalizeMlsListing (finding 5). VERIFY WITH MLS: the finished living area field. */
-export const SPARK_FIELD_MAPPING = Object.freeze({ sqft: 'BuildingAreaTotal' } as const);
+/**
+ * Per-MLS field overrides for core normalizeMlsListing (finding 5; R-MLS-7). `sqft: null`: no Spark field is confirmed
+ * as the finished living area, so every Spark size is unknown (null), LivingArea included. Never BuildingAreaTotal.
+ * Flipping this to a field is an owner-approved change made here, in one place, with its tests, after the MLS answers
+ * (docs/DATA_MODEL.md "VERIFY WITH MLS: size and postal code"), shipped with a migration that has the backfill re-read
+ * every Spark record: the mapping alone re-reads nothing already stored (docs/ARCHITECTURE §21.44, E653). No setting or
+ * environment variable can turn it on.
+ */
+export const SPARK_FIELD_MAPPING: Readonly<{ sqft: string | null }> = Object.freeze({ sqft: null });
+
+/**
+ * VERIFY WITH MLS: the field that may carry finished living area for this MLS, named so the choice is reviewable. No
+ * code reads it while `confirmed` is false (an architecture test): the size stays unknown until the MLS confirms the
+ * field and its semantics (what it includes, its units and source) and the owner approves the flip above.
+ */
+export const SPARK_SIZE_FIELD_CANDIDATE = Object.freeze({ field: 'LivingArea', confirmed: false } as const);
 
 export const SPARK_ERROR_CODES = [
   'LIVE_CALLS_DISABLED',
@@ -384,7 +401,9 @@ export function positionOf(raw: Record<string, unknown>): { ts: string; key: str
  * One RESO Property record (sanitized) as the existing ResoListing shape, or null when a required field is
  * missing (the sync skips it; core/listings normalizeMlsListing and applyDisplayRules still decide what any
  * audience may see). Required: ListingKey, ModificationTimestamp, StandardStatus, ListPrice, ListOfficeName
- * (R-MLS-1). The size is BuildingAreaTotal (finding 5; there is no LivingArea in this feed).
+ * (R-MLS-1). The size is read only from SPARK_FIELD_MAPPING's field, and there is none yet: livingAreaSqft is null
+ * (finding 5, R-MLS-7; BuildingAreaTotal is total building area, never finished living area). PostalCode is kept as
+ * sent (ZIP5 or ZIP+4; VERIFY WITH MLS).
  */
 export function toResoListing(raw0: Record<string, unknown>): ResoListing | null {
   const raw = sanitizeRecord(raw0);
@@ -398,7 +417,8 @@ export function toResoListing(raw0: Record<string, unknown>): ResoListing | null
   const unit = text(raw['UnitNumber']);
   const beds = nonNeg(raw['BedroomsTotal']);
   const baths = nonNeg(raw['BathroomsTotalInteger']);
-  const area = nonNeg(raw[SPARK_FIELD_MAPPING.sqft]);
+  const sizeField = SPARK_FIELD_MAPPING.sqft;
+  const area = sizeField === null ? null : nonNeg(raw[sizeField]);
   return {
     listingKey: pos.key,
     listingId: text(raw['ListingId']) ?? pos.key,

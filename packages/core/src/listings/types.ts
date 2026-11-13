@@ -141,12 +141,19 @@ export type FactField =
 export type SaleCondition = 'standard' | 'short_sale' | 'reo' | 'auction' | 'probate' | 'other';
 export const SALE_CONDITIONS = ['standard', 'short_sale', 'reo', 'auction', 'probate', 'other'] as const satisfies readonly SaleCondition[];
 
+/**
+ * RESO field name to read for each of our fields (defaults: RESO_DEFAULT_FIELDS). `sqft: null` says this MLS has no
+ * confirmed finished-living-area field, so no size is read at all (R-MLS-7); a field of SIZE_FIELDS_NEVER_USED named
+ * here is never read either.
+ */
+export type FieldOverrides = Readonly<Partial<Record<Exclude<FactField, 'sqft'>, string>> & { sqft?: string | null }>;
+
 /** Per-MLS overrides. Everything but the connection is optional and merges over the RESO defaults. */
 export interface FieldMapping {
   /** The `mls_feed` connection the record came from (R-MLS-1: an mls row needs its connection). */
   readonly connectionId: MlsConnectionId;
-  /** RESO field name to read for each of our fields (defaults: RESO_DEFAULT_FIELDS). */
-  readonly fields?: Readonly<Partial<Record<FactField, string>>>;
+  /** RESO field name to read for each of our fields (defaults: RESO_DEFAULT_FIELDS; sqft null: no size, R-MLS-7). */
+  readonly fields?: FieldOverrides;
   /** Feed status value → our status. Keys compare case- and space-insensitively; merged over the RESO StandardStatus defaults. */
   readonly statusMap?: Readonly<Record<string, ListingStatus>>;
   /** Feed PropertySubType / PropertyType value → our property type; merged over the defaults. Unknown ⇒ null. */
@@ -190,7 +197,7 @@ export interface ValuationFacts {
   readonly poolPrivate: boolean | null;
   /** tenths: 1.5 stories is 15 */
   readonly storiesX10: number | null;
-  /** the RESO field name sqft was read from (null when sqft is null) */
+  /** the RESO field name sqft was read from (null when sqft is null); never a field of SIZE_FIELDS_NEVER_USED (R-MLS-7) */
   readonly sizeSource: string | null;
   readonly isLease: boolean;
   /** InternetAutomatedValuationDisplayYN: true only for an explicit yes */

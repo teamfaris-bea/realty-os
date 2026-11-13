@@ -166,6 +166,27 @@ describe('Approvals inbox', () => {
     expect(zip).toBeChecked();
     expect(price).not.toBeChecked();
     expect(price.closest('[data-needs-review]')).not.toBeNull();
+    expect(within(box).queryByText(/size not available from the MLS/i)).toBeNull(); // E651: no note without one
+    await u.click(within(box).getByRole('button', { name: 'Approve search' }));
+    await waitFor(() => expect(fake.callsTo(`POST /saved-searches/${IDS.search}/approve`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /saved-searches/${IDS.search}/approve`)[0]!.body).toEqual({ checked: [] });
+  });
+
+  it('E651 R-MLS-7: a size criterion while the MLS gives no size: the review says it matches only team listings, and a held size criterion says why it needs a check', async () => {
+    const note = 'Size not available from the MLS: a size criterion matches only team listings, never an MLS listing.';
+    const search: SavedSearchView = { id: IDS.search, contactId: IDS.jane, name: 'S', status: 'proposed', criteria: { postalCodes: ['94110'] }, criterionEvidence: {}, unchecked: ['sqftMin'], prefill: { sqftMin: 1_500 }, alertChannel: 'email', alertFrequency: 'daily', matches: [], sizeNote: note };
+    const proposal = draftAction({ id: IDS.proposal, kind: 'saved_search_proposal', primaryAction: 'acknowledge', draft: null, claims: [] });
+    const fake = inbox([proposal])
+      .on(`GET /contacts/${IDS.jane}/saved-searches`, { status: 200, body: { searches: [search] } })
+      .on(`POST /saved-searches/${IDS.search}/approve`, { status: 200, body: { search: { ...search, status: 'approved' } } });
+    agentApp(fake, '/approvals');
+    const u = user();
+    await u.click(await screen.findByRole('button', { name: 'Review search' }));
+    const box = await screen.findByTestId('saved-search');
+    expect(within(box).getByText(note)).toBeInTheDocument();
+    const size = within(box).getByRole('checkbox', { name: /Smallest size: 1,500 sq ft \(check this: size not available from the MLS\)/ });
+    expect(size).not.toBeChecked();
+    expect(within(box).queryByText(/the assistant wasn't sure/)).toBeNull();
     await u.click(within(box).getByRole('button', { name: 'Approve search' }));
     await waitFor(() => expect(fake.callsTo(`POST /saved-searches/${IDS.search}/approve`)).toHaveLength(1));
     expect(fake.callsTo(`POST /saved-searches/${IDS.search}/approve`)[0]!.body).toEqual({ checked: [] });

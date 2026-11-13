@@ -42,7 +42,7 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type CmaConnections, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, readinessConnections } from './gates.js';
+import { type CmaConnections, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
 import {
   type CmaInspection,
   type CmaPurpose,
@@ -633,6 +633,9 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
   const zone = await zoneOf(tx);
   const listing = (identity: string): RefListing =>
     r.listings[identity] ?? { saleListingId: identity, teamListingId: null, sourceLabel: 'MLS', mlsNumber: null, listingBrokerageName: null, address: { line1: '', line2: null, city: '', region: '', postalCode: '' } };
+  // R-MLS-7: a CMA stored before 0082 with sizes from total building area (or another never-used field) stays as stored
+  // (R-CMA-8), but its view leads with why it does not hold, and readiness blocks it
+  const notLivingArea = notLivingAreaSize([s.resolved.sizeSource, ...r.comps.map((c) => c.sale.sizeSource)]);
   // readiness never needs the agent gate to pass: a feed disconnected or a valuation use withdrawn after the CMA was
   // prepared is its own blocker beside every other one that holds, and the stored CMA stays readable (gates/F5, api-ui/F1)
   const { share, nearMatches: matches } = await clientReadiness(tx, {
@@ -649,6 +652,7 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
     nearMatchDismissed: s.nearMatchDismissed,
     hasValue: row.value_cents !== null,
+    notLivingArea,
   });
   const facts = s.resolved.facts;
   const comp = (c: StoredResult['comps'][number]) => {
@@ -728,8 +732,8 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     result: {
       available: r.available,
       reason: r.available ? null : r.reason,
-      sentence: r.sentences[0] ?? '',
-      sentences: [...r.sentences],
+      sentence: notLivingArea ? SIZE_NOT_LIVING_AREA_SENTENCE : (r.sentences[0] ?? ''),
+      sentences: [...(notLivingArea ? [SIZE_NOT_LIVING_AREA_SENTENCE] : []), ...r.sentences],
       valueCents: r.available ? r.valueCents : null,
       lowCents: r.available ? r.lowCents : null,
       highCents: r.available ? r.highCents : null,

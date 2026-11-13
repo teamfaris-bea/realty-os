@@ -1074,7 +1074,7 @@ BEGIN
          || 'sale_conditions, days_on_market, latitude_e6, longitude_e6, year_built, lot_sqft, subdivision_name, garage_spaces_x10, '
          || 'stories_x10, pool_private, size_source, is_lease, avm_display_allowed, address_key, mls_normalize_version',
          $s$'T-1001', 41250000, current_date - 20, current_date - 50, 42500000, 1500000, ARRAY['standard','short_sale','reo','auction','probate','other'],
-         31, 32776500, -79931100, 1600, 8712, 'Marsh Point', 25, 15, true, 'BuildingAreaTotal', false, true, '8 tern pl|29900|sc', 2$s$));
+         31, 32776500, -79931100, 1600, 8712, 'Marsh Point', 25, 15, true, 'LivingArea', false, true, '8 tern pl|29900|sc', 2$s$));
   IF r <> 'OK' THEN f := f || ('a full closed sale: ' || r); END IF;
   IF NOT EXISTS (SELECT 1 FROM listings WHERE mls_number = 'T-1001' AND stories_x10 = 15 AND garage_spaces_x10 = 25
                     AND geo_cell = ((floor(32776500 / 14493.0) + 6300) * 25000 + (floor(-79931100 / 14493.0) + 12500))::integer) THEN

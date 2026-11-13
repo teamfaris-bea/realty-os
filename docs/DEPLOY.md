@@ -744,7 +744,7 @@ With no saved key it returns 409 `MLS_CREDENTIAL_MISSING`. With `MLS_PROVIDER=fa
 - `GET` only; any other method is refused inside the adapter.
 - Paths: `/Reso/OData/$metadata` and `/Reso/OData/Property` only (there is no Media entity set: photos come from `$expand=Media` on Property). https only, hosts from `SPARK_ALLOWED_HOSTS` only, default port only.
 - No response header is read but `Content-Length` and `Retry-After`; the `X-Api-Key` header Spark echoes is never logged, stored, audited or returned.
-- Field-level `<Field>@Core.Permissions` annotations that do not grant Read remove the field; unknown fields and annotation keys are ignored. The size is read from `BuildingAreaTotal` (there is no `LivingArea`).
+- Field-level `<Field>@Core.Permissions` annotations that do not grant Read remove the field; unknown fields and annotation keys are ignored. No size field is read: `BuildingAreaTotal` is total building area, never finished living area, and no Spark field is confirmed as finished living area yet, so every Spark listing's size is unknown (DATA_MODEL R-MLS-7; `SPARK_FIELD_MAPPING.sqft` is null, and no setting turns a size on). `PostalCode` is stored as sent.
 - Redirects are refused, never followed. Each request has a timeout and a response size cap.
 - Paging follows `@odata.nextLink`, and each next link is re-checked against the same host and path allowlist.
 - Incremental changes use a `ModificationTimestamp` cursor, with ties broken by `ListingKey`.
@@ -772,7 +772,7 @@ Roles: **owner** is the team's business owner; **operator** runs the deployment;
     - ~~whether a full background sync must use the replication endpoint~~ (answered: yes, §11.1);
     - which `Core.Permissions` value withholds a field, and which fields the licence lets clients see;
     - the largest `$top` with `$expand=Media`, and whether `$select` inside `$expand` is honoured;
-    - which field is the finished living area (`BuildingAreaTotal` is mapped);
+    - (to the MLS) which field is the finished living area, what it includes, its units and source, whether it is withheld from this key, whether its meaning held over the sold history, whether a correction moves `ModificationTimestamp`, and the `PostalCode` format: the exact questions are in DATA_MODEL "VERIFY WITH MLS: size and postal code" (no size is read until they are answered; `BuildingAreaTotal` never is);
     - the rate limits for this key.
 
 ### 11.6 Feed sync and the licence pack (module 24)

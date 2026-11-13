@@ -296,6 +296,45 @@ export function hasCriteria(c: SearchCriteria): boolean {
   return CRITERION_KEYS.some((k) => c[k] !== undefined);
 }
 
+// ---- size criteria while the MLS gives no size (R-MLS-7) ------------------------------------------------
+
+/** The size criteria: a listing without a size (null, or 0) never meets them (matchListing). */
+export const SIZE_CRITERION_KEYS: readonly CriterionKey[] = ['sqftMin', 'sqftMax'];
+
+/** Said on the review when the MLS listings a search could match carry no size (Spark until the MLS confirms its field). */
+export const MLS_SIZE_NONE_SENTENCE = 'Size not available from the MLS: a size criterion matches only team listings, never an MLS listing.';
+/** Said when some of them carry no size. */
+export const MLS_SIZE_SOME_SENTENCE = 'Size not available from the MLS for some listings: a size criterion never matches an MLS listing without one.';
+
+/**
+ * R-MLS-7: the proposal with its size criteria held for the agent's check (prefilled and unchecked, so used only if
+ * the agent checks them, R-AST-5), for an MLS that gives no size for some or all of its listings: such a criterion
+ * would silently keep every one of them out of the search. Evidence and the other criteria are untouched.
+ */
+export function holdSizeCriteria(p: SearchProposal): SearchProposal {
+  const keys = SIZE_CRITERION_KEYS.filter((k) => p.criteria[k] !== undefined);
+  if (keys.length === 0) return p;
+  const criteria: Record<string, unknown> = { ...p.criteria };
+  const prefill: Record<string, unknown> = { ...p.prefill };
+  for (const k of keys) {
+    prefill[k] = criteria[k];
+    delete criteria[k];
+  }
+  return { ...p, criteria: SearchCriteriaInner.parse(criteria), prefill: prefill as Partial<SearchCriteria>, unchecked: [...p.unchecked, ...keys.filter((k) => !p.unchecked.includes(k))] };
+}
+
+/**
+ * R-MLS-7: what the review says about a search's size criterion (checked or prefilled), given how many of the MLS
+ * listings it could match carry a size: 'none', 'some', 'all', or null when no MLS listing can match it at all. Null:
+ * nothing to say (no size criterion, or every MLS listing has a size).
+ */
+export function sizeCriterionNote(criteria: Partial<SearchCriteria>, prefill: Partial<SearchCriteria>, mlsSizes: 'none' | 'some' | 'all' | null): string | null {
+  if (!SIZE_CRITERION_KEYS.some((k) => criteria[k] !== undefined || prefill[k] !== undefined)) return null;
+  if (mlsSizes === 'none') return MLS_SIZE_NONE_SENTENCE;
+  if (mlsSizes === 'some') return MLS_SIZE_SOME_SENTENCE;
+  return null;
+}
+
 // ---- matching -------------------------------------------------------------------------------------
 
 export interface ListingFacts {
@@ -336,7 +375,9 @@ export function matchListing(c: SearchCriteria, l: ListingFacts): boolean {
   const atMost = (max: number | undefined, v: number | null): boolean => max === undefined || (v !== null && v <= max);
   if (!atLeast(c.priceMinCents, l.listPriceCents) || !atMost(c.priceMaxCents, l.listPriceCents)) return false;
   if (!atLeast(c.bedsMin, l.beds) || !atLeast(c.bathsMinX10, l.bathsX10)) return false;
-  if (!atLeast(c.sqftMin, l.sqft) || !atMost(c.sqftMax, l.sqft)) return false;
+  // R-MLS-7: an unknown size (null, or 0) never meets a size criterion
+  const size = l.sqft !== null && l.sqft > 0 ? l.sqft : null;
+  if (!atLeast(c.sqftMin, size) || !atMost(c.sqftMax, size)) return false;
   if (c.propertyTypes !== undefined && (l.propertyType === null || !c.propertyTypes.includes(l.propertyType))) return false;
   if (c.keywords !== undefined) {
     const hay = words(l.description ?? '');

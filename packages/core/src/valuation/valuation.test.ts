@@ -170,14 +170,14 @@ describe('R-CMA-2: what a comp is', () => {
       candidates: [
         ...local(),
         cand('condo', { propertyType: 'condo' }),
-        cand('total', { sizeSource: 'BuildingAreaTotal' }),
+        cand('above', { sizeSource: 'AboveGradeFinishedArea' }), // another measure (BuildingAreaTotal is never one: R-MLS-7)
         cand('nosize', { sqft: null }),
         cand('noprice', { closePriceCents: null }),
         cand('zero', { closePriceCents: 0 }),
       ],
     });
     expect(notUsed(r, 'condo')?.reason).toBe('other_property_type');
-    expect(notUsed(r, 'total')?.reason).toBe('other_size_source');
+    expect(notUsed(r, 'above')?.reason).toBe('other_size_source');
     expect(notUsed(r, 'nosize')?.reason).toBe('no_size');
     expect(notUsed(r, 'noprice')?.reason).toBe('no_close_price');
     expect(notUsed(r, 'zero')?.reason).toBe('no_close_price');

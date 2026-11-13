@@ -273,6 +273,7 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                       "SUBJECT_ADDRESS_UNKNOWN",
                       "SELLER_WITHHELD",
                       "POSSIBLE_LIVE_LISTING",
+                      "SIZE_NOT_LIVING_AREA",
                       "NO_VALUE",
                     ],
                     "type": "string",

@@ -36,6 +36,18 @@ async function run(connectionId: string, feed: { fields: object; records: (c: st
 type Row = Record<string, unknown>;
 const rowOf = async (mlsNumber: string): Promise<Row> =>
   (await h.su.query("SELECT *, close_date::text AS close_date, purchase_contract_date::text AS purchase_contract_date FROM listings WHERE tenant_id = $1 AND source = 'mls' AND mls_number = $2", [w.tenantId, mlsNumber])).rows[0];
+/**
+ * The re-read a flip of SPARK_FIELD_MAPPING ships with, as its migration (R-MLS-7, E653; docs/ARCHITECTURE "Turning a
+ * Spark size on"): every MLS row of a Spark connection goes back to version 1 and each Spark connection's backfill
+ * starts again, so the backfill re-reads every stored record under the new mapping and writes its size with its
+ * source (the incremental feed rewrites a row only for a newer modification). Runs as the table owner, as migrations do.
+ */
+const SIZE_FLIP_REREAD_SQL = [
+  `UPDATE listings l SET mls_normalize_version = 1
+    WHERE l.source = 'mls' AND EXISTS (SELECT 1 FROM integration_connections c
+                                         WHERE c.tenant_id = l.tenant_id AND c.id = l.mls_connection_id AND c.kind = 'mls_feed' AND c.external_account_id LIKE 'spark:%')`,
+  `UPDATE integration_connections SET mls_backfill_pending = true, mls_backfill_cursor = NULL WHERE kind = 'mls_feed' AND external_account_id LIKE 'spark:%'`,
+];
 const connOf = async (id: string) => (await h.su.query<{ sync_cursor: string | null; last_synced_at: Date | null; mls_backfill_pending: boolean; mls_backfill_cursor: string | null; next_sync_at: Date }>('SELECT sync_cursor, last_synced_at, mls_backfill_pending, mls_backfill_cursor, next_sync_at FROM integration_connections WHERE id = $1', [id])).rows[0]!;
 
 /** An active saved search on one postal code (agent 0's new contact). */
@@ -306,6 +318,45 @@ describe('E372: the backfill pass fills old rows without ever delaying new listi
     expect(r).toMatchObject({ outcome: 'synced', filled: SYNC_BATCH, inserted: 0, updated: 0 });
     expect(ms).toBeLessThan(60_000); // one sync run's budget: the reconcile tick is every 60 s
   }, 120_000);
+
+  it('E645 R-MLS-7 R-CMA-1: the backfill writes a size only with its source: under a mapping that reads no size (Spark) a version-1 row\'s stored size is cleared, never left without a source', async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);
+    // version-1 rows as stored before size_source existed: sqft 1400, no source (v1Row), read then from the mapping of the day
+    await v1Row(h, w.tenantId, conn, { mlsNumber: 'M6051', postalCode: '94605', modifiedAt: '2026-11-10T10:00:00Z' });
+    await v1Row(h, w.tenantId, conn, { mlsNumber: 'M6052', postalCode: '94605', modifiedAt: '2026-11-10T10:00:00Z' });
+    await startBackfill(h, conn);
+    const areas = { LivingArea: 1400, BuildingAreaTotal: 2100 };
+    const noSize = { ...splitFeed({ backfill: [{ records: [soldReso(6051, { PostalCode: '94605', ...areas })], more: false }] }), fields: { sqft: null } };
+    expect(await run(conn, noSize)).toMatchObject({ outcome: 'synced', filled: 1 });
+    expect(await rowOf('M6051')).toMatchObject({ mls_normalize_version: NORMALIZE_VERSION, sqft: null, size_source: null, year_built: 1962 });
+    // the RESO default mapping (LivingArea): the size is kept and its source recorded with it
+    await startBackfill(h, conn);
+    expect(await run(conn, splitFeed({ backfill: [{ records: [soldReso(6052, { PostalCode: '94605', ...areas })], more: false }] }))).toMatchObject({ outcome: 'synced', filled: 1 });
+    expect(await rowOf('M6052')).toMatchObject({ mls_normalize_version: NORMALIZE_VERSION, sqft: 1400, size_source: 'LivingArea' });
+  });
+
+  it('E653 R-MLS-7: flipping the Spark size field is code plus a migration: the mapping alone leaves stored rows without a size; the re-read statements make the backfill fill each one with its size and source', async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { spark: true });
+    const other = await mlsConnection(h, w.tenantId, w.owner.userId!);
+    const record = soldReso(6131, { PostalCode: '94613', LivingArea: 1850, BuildingAreaTotal: 2400, ModificationTimestamp: '2026-11-10T10:00:00Z' });
+    // stored under today's Spark mapping (no size field): version 2, no size; another feed's row with its LivingArea size
+    expect(await run(conn, { ...pagedFeed([[record]]), fields: { sqft: null } })).toMatchObject({ outcome: 'synced', inserted: 1 });
+    expect(await run(other, pagedFeed([[soldReso(6132, { PostalCode: '94613' })]]))).toMatchObject({ outcome: 'synced', inserted: 1 });
+    expect(await rowOf('M6131')).toMatchObject({ sqft: null, size_source: null, mls_normalize_version: NORMALIZE_VERSION });
+    const flipped = { sqft: 'LivingArea' }; // what an owner-approved flip of SPARK_FIELD_MAPPING would read
+    // the mapping alone: the unmodified record is an equal modification (skipped), and nothing re-reads stored rows
+    await h.su.query("UPDATE integration_connections SET sync_cursor = 'i0' WHERE id = $1", [conn]);
+    expect(await run(conn, { ...splitFeed({ incremental: [{ records: [record] }] }), fields: flipped })).toMatchObject({ outcome: 'synced', updated: 0, skippedStale: 1, filled: 0 });
+    expect(await rowOf('M6131')).toMatchObject({ sqft: null, size_source: null });
+    // the flip's migration: these statements, as the table owner (docs/ARCHITECTURE "Turning a Spark size on")
+    for (const q of SIZE_FLIP_REREAD_SQL) await h.su.query(q);
+    expect(await connOf(conn)).toMatchObject({ mls_backfill_pending: true, mls_backfill_cursor: null });
+    expect(await connOf(other)).toMatchObject({ mls_backfill_pending: false });
+    expect(await rowOf('M6132')).toMatchObject({ mls_normalize_version: NORMALIZE_VERSION, sqft: 1400, size_source: 'LivingArea' }); // another feed's row untouched
+    expect(await run(conn, { ...splitFeed({ incremental: [{ records: [] }], backfill: [{ records: [record], more: false }] }), fields: flipped })).toMatchObject({ outcome: 'synced', filled: 1 });
+    expect(await rowOf('M6131')).toMatchObject({ sqft: 1850, size_source: 'LivingArea', mls_normalize_version: NORMALIZE_VERSION });
+    expect(await connOf(conn)).toMatchObject({ mls_backfill_pending: false, mls_backfill_cursor: null });
+  });
 
   it('E372 R-TEN-1: the backfill state is the system\'s: an Owner cannot set it', async () => {
     const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);

@@ -64,7 +64,7 @@ describe('mls.sync over Spark (live shape)', () => {
       expect(c.url.searchParams.get('$expand')).toBe('Media');
     }
     const row = (await mlsRows(h, owner.tenantId!)).find((x) => x.mls_number === 'MLS1')!;
-    expect(row.sqft).toBe(1500); // finding 5: BuildingAreaTotal
+    expect(row.sqft).toBeNull(); // R-MLS-7 E598 (finding 5): BuildingAreaTotal is never read as size, and no Spark size field is confirmed
     expect(row.description).toBeNull(); // finding 4: PublicRemarks withheld by its permission annotation
     expect(row.display_allowed).toBe(true);
     expect((row.attributes['mls'] as { photo_urls: string[] }).photo_urls).toEqual(['https://photos.example.invalid/LK0001/1.jpg', 'https://photos.example.invalid/LK0001/2.jpg']); // finding 2/3
@@ -80,15 +80,15 @@ describe('mls.sync over Spark (live shape)', () => {
     expect(spark.calls[0]!.url.searchParams.get('$filter')).toMatch(/^ModificationTimestamp gt 2026-11-10T10:01:59.000Z/);
   });
 
-  it('R-CMA-1 (D9): mock closed sales with the new RESO fields flow through Spark records(); every field is a column; annotation keys never reach normalize', async () => {
+  it('R-CMA-1 R-MLS-7 E598 (D9): mock closed sales with the new RESO fields flow through Spark records(); every field is a column; the size is unknown (BuildingAreaTotal and LivingArea unread); annotation keys never reach normalize', async () => {
     records.push(
-      liveClosedProperty(130, { ModificationTimestamp: '2026-11-10T11:02:00Z' }),
+      liveClosedProperty(130, { ModificationTimestamp: '2026-11-10T11:02:00Z', LivingArea: 1850 }), // R-MLS-7: LivingArea is not read either (VERIFY WITH MLS)
       liveClosedProperty(131, { ModificationTimestamp: '2026-11-10T11:03:00Z', 'YearBuilt@Core.Permissions': 'None', Longitude: -79.9305678 }),
     );
     const [r] = await run();
     expect(r).toMatchObject({ outcome: 'synced', inserted: 2, skippedInvalid: 0 });
-    const rows = (await h.su.query("SELECT mls_number, status, close_price_cents, close_date::text AS close_date, purchase_contract_date::text AS contract_date, latitude_e6, longitude_e6, year_built, lot_sqft, subdivision_name, sale_conditions, concessions_cents, avm_display_allowed, stories_x10, size_source, address_key, mls_normalize_version, attributes::text AS attrs FROM listings WHERE tenant_id = $1 AND mls_number IN ('MLS130','MLS131') ORDER BY mls_number", [owner.tenantId])).rows;
-    expect(rows[0]).toMatchObject({ status: 'sold', close_price_cents: '40800000', close_date: '2026-09-15', contract_date: '2026-08-20', latitude_e6: 32_780_123, longitude_e6: -79_930_568, year_built: 2003, lot_sqft: '6534', subdivision_name: 'Example Commons', sale_conditions: ['standard'], concessions_cents: '500000', avm_display_allowed: true, stories_x10: 15, size_source: 'BuildingAreaTotal', address_key: '230 example st||exampleton|zz|00000', mls_normalize_version: 2 });
+    const rows = (await h.su.query("SELECT mls_number, status, sqft, close_price_cents, close_date::text AS close_date, purchase_contract_date::text AS contract_date, latitude_e6, longitude_e6, year_built, lot_sqft, subdivision_name, sale_conditions, concessions_cents, avm_display_allowed, stories_x10, size_source, address_key, mls_normalize_version, attributes::text AS attrs FROM listings WHERE tenant_id = $1 AND mls_number IN ('MLS130','MLS131') ORDER BY mls_number", [owner.tenantId])).rows;
+    expect(rows[0]).toMatchObject({ status: 'sold', close_price_cents: '40800000', close_date: '2026-09-15', contract_date: '2026-08-20', latitude_e6: 32_780_123, longitude_e6: -79_930_568, year_built: 2003, lot_sqft: '6534', subdivision_name: 'Example Commons', sale_conditions: ['standard'], concessions_cents: '500000', avm_display_allowed: true, stories_x10: 15, sqft: null, size_source: null, address_key: '230 example st||exampleton|zz|00000', mls_normalize_version: 2 });
     expect(rows[1]).toMatchObject({ year_built: null, longitude_e6: -79_930_568 }); // withheld by its permission annotation
     expect(JSON.stringify(rows)).not.toMatch(/@Core|Permissions|ZZ_Synthetic/);
   });

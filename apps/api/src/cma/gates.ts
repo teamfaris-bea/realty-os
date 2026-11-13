@@ -18,7 +18,7 @@
 // or a valuation use withdrawn after the CMA was prepared is a blocker of its own (FEED_DISCONNECTED,
 // VALUATION_USE_WITHDRAWN), beside every other one that holds. VERIFY WITH COUNSEL /
 // MLS: every sentence and every condition. V2's share re-checks the same function inside the transaction that queues it.
-import type { DisplayListing } from '@realty/core/listings';
+import { type DisplayListing, SIZE_FIELDS_NEVER_USED } from '@realty/core/listings';
 import { type IanaZone, type Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { AppError } from '../errors.js';
@@ -60,6 +60,7 @@ export const BLOCKER_CODES = [
   'SUBJECT_ADDRESS_UNKNOWN',
   'SELLER_WITHHELD',
   'POSSIBLE_LIVE_LISTING',
+  'SIZE_NOT_LIVING_AREA',
   'NO_VALUE',
 ] as const;
 export type BlockerCode = (typeof BLOCKER_CODES)[number];
@@ -89,6 +90,19 @@ export interface CmaConnections {
   e: MlsEligibility;
   /** live connections whose pack records valuation use (the CMA's data) */
   used: ConnectionUse[];
+}
+
+/**
+ * R-MLS-7: said, and a readiness blocker, for a stored CMA whose subject or comp sizes came from a field that is never
+ * finished living area (core SIZE_FIELDS_NEVER_USED): one prepared before migration 0082 from a Spark sync that read
+ * total building area. The stored record is not rewritten (R-CMA-8); the view says it does not hold.
+ */
+export const SIZE_NOT_LIVING_AREA_SENTENCE =
+  'This CMA was prepared from a size that is not finished living area (total, unfinished or below-grade area), so its sizes, size adjustments and price per sq ft do not hold. Prepare a new CMA.';
+const NEVER_SIZE = new Set(SIZE_FIELDS_NEVER_USED.map((f) => f.toLowerCase()));
+/** Whether any of these stored size sources is a field that is never finished living area (any letter case). */
+export function notLivingAreaSize(sources: readonly (string | null | undefined)[]): boolean {
+  return sources.some((f) => typeof f === 'string' && NEVER_SIZE.has(f.toLowerCase()));
 }
 
 /** The live statuses of an MLS record of the subject (SELLER_WITHHELD; the same three V1-A's liveNearMatches reads). */
@@ -167,6 +181,8 @@ export interface ReadinessInput {
   readConnectionIds: readonly string[];
   nearMatchDismissed: readonly string[];
   hasValue: boolean;
+  /** R-MLS-7: the stored subject or comp sizes came from a field that is never finished living area */
+  notLivingArea: boolean;
 }
 
 export interface NearMatch {
@@ -252,6 +268,7 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
     VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
     NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
     SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. To check them, prepare a new CMA with the home’s full address.',
+    SIZE_NOT_LIVING_AREA: SIZE_NOT_LIVING_AREA_SENTENCE,
     NO_VALUE: 'There is no value: not enough comparable sales.',
   };
   const add = (code: PlainBlocker) => {
@@ -328,6 +345,7 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
     });
   }
 
+  if (i.notLivingArea) add('SIZE_NOT_LIVING_AREA');
   if (!i.hasValue) add('NO_VALUE');
   return { share: { ready: blockers.length === 0, sharingAvailable: false, sentence: SHARING_SENTENCE, blockers, estimateSentence: ESTIMATE_SENTENCE }, nearMatches: matches };
 }

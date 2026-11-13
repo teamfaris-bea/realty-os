@@ -185,6 +185,8 @@ export const SearchSchema = z.object({
   alertChannel: z.string(),
   alertFrequency: z.string(),
   matches: z.array(ListingSchema),
+  /** R-MLS-7: why a size criterion matches no MLS listing (or some none); null: nothing to say */
+  sizeNote: z.string().nullable(),
 });
 export const SearchResponse = z.object({ search: SearchSchema });
 export const SearchesResponse = z.object({ searches: z.array(SearchSchema) });

@@ -76,6 +76,16 @@ describe('the homeowner panel (R-HOME-4, R-HOME-5, R-HOME-7)', () => {
     expect(document.body.textContent!.replace(T.FOOTER, '')).not.toMatch(/investor|score|confidence|%|estimat|equity|balance/i);
   });
 
+  it('R-MLS-7 E644: the panel never states a home size (no size row, no "sq ft", never 0 or a guess); the MLS sale history and the in-house value read "Not shown on this panel yet"', async () => {
+    mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }]));
+    await panel();
+    const text = document.body.textContent!;
+    expect(text).not.toMatch(/sq\.?\s*ft|square f|living area|building area|\bsize\b/i);
+    expect(Object.keys(T.FIELD_LABELS).filter((k) => /sqft|size|area/i.test(k))).toEqual([]);
+    expect(screen.getByText(T.FIELD_LABELS['in_house_value']!)).toBeTruthy();
+    expect(screen.getAllByText(T.D9_NOT_SHOWN)).toHaveLength(2);
+  });
+
   it('R-HOME-1: a seller inquiry reason shows the date of the latest one (owner question 16)', async () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { reasons: [{ reason: 'seller_inquiry', since: '2019-04-02' }, { reason: 'homeowner_tag', since: null }] }));
     await panel();

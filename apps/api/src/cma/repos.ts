@@ -248,8 +248,9 @@ export async function contactLive(tx: Tx, contactId: string): Promise<{ live: bo
 
 /**
  * The size field the connections' sold rows were read from most (the "connection's size field", V3): the RESO name
- * V1-A's sync stored in listings.size_source (normalize records the field it read sqft from, LivingArea by default,
- * BuildingAreaTotal under the Spark mapping). No column records a connection's field, so the newest sold rows are sampled.
+ * V1-A's sync stored in listings.size_source (normalize records the field it read sqft from, LivingArea by default;
+ * none under the Spark mapping, R-MLS-7, so a Spark connection has no size field and this is null). No column records a
+ * connection's field, so the newest sold rows are sampled.
  */
 export async function connectionSizeField(tx: Tx, connectionIds: readonly string[]): Promise<string | null> {
   if (connectionIds.length === 0) return null;

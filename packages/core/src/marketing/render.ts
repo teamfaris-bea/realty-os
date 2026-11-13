@@ -221,7 +221,8 @@ function slotContent(c: Ctx, role: BlockRole): { origin: BlockOrigin; text: stri
       const parts: string[] = [];
       if (c.bound.has('beds') && f.beds !== null) parts.push(`${f.beds} bd`);
       if (c.bound.has('baths') && f.bathsX10 !== null) parts.push(`${bathsText(f.bathsX10)} ba`);
-      if (c.bound.has('sqft') && f.sqft !== null) parts.push(`${groupThousands(f.sqft)} sq ft`);
+      // R-MLS-7: a size of 0 is no size, never "0 sq ft"
+      if (c.bound.has('sqft') && f.sqft !== null && f.sqft > 0) parts.push(`${groupThousands(f.sqft)} sq ft`);
       return bound(parts.length > 0 ? parts.join(' · ') : null);
     }
     case 'open_house':
