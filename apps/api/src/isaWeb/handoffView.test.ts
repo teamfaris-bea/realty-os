@@ -87,9 +87,50 @@ describe('GET /ai-isa/handoffs/:id (R-ISA-14)', () => {
     expect(v.body.recipientUserId).toBe(a0.userId);
     expect((await call(a0, 'POST', `/ai-isa/handoffs/${handoffId}/ack`, {})).status).toBe(404);
     expect(v.body.canAcknowledge).toBe(false);
-    // the new owner is not the recipient (0080 isa_update) and the Owner may
-    expect((await call<View>(a1, 'GET', `/ai-isa/handoffs/${handoffId}`)).body.canAcknowledge).toBe(false);
+    // the new owner is not the recipient, but is the current owner of the record (0081 isa_update; b13 review F3): the
+    // button shows and the ack succeeds; the Owner may too
     expect((await call<View>(w.owner, 'GET', `/ai-isa/handoffs/${handoffId}`)).body.canAcknowledge).toBe(true);
+    expect((await call<View>(a1, 'GET', `/ai-isa/handoffs/${handoffId}`)).body.canAcknowledge).toBe(true);
+    expect((await call(a1, 'POST', `/ai-isa/handoffs/${handoffId}/ack`, {})).status).toBe(200);
+  });
+
+  it('R-OWN-24 E526 (b13 review F2): after a merge, the survivor\'s agent reads a handoff written on the merged-away record (authorized on the root survivor, as the ack route and the panel); an outside agent still gets 404', async () => {
+    const agent = w.agents[0]!;
+    const { lead: loser, handoffId } = await humanRequestHandoff();
+    const survivor = await isaLead(h, agent);
+    const before = await call<View>(agent, 'GET', `/ai-isa/handoffs/${handoffId}`);
+    expect(before.status).toBe(200);
+    const { command } = await import('../leads/testing.js');
+    expect((await command(w.owner, survivor.id, 'merge', { loserId: loser.id, ownerChoice: agent.userId })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const after = await call<View>(agent, 'GET', `/ai-isa/handoffs/${handoffId}`);
+    expect(after.status).toBe(200);
+    expect(after.body.id).toBe(handoffId);
+    expect(after.body.canAcknowledge).toBe(true);
+    expect((await call(w.agents[1]!, 'GET', `/ai-isa/handoffs/${handoffId}`)).status).toBe(404);
+    expect((await call(agent, 'POST', `/ai-isa/handoffs/${handoffId}/ack`, {})).status).toBe(200);
+  });
+
+  it('E521 V8 (b13 review F3): after an owner change and back, the root\'s current owner (0081 isa_update) gets canAcknowledge true and the ack succeeds; the former recipient, no longer on the lead, gets 404', async () => {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const { optInAgent } = await import('../isa/testing.js');
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    await optInAgent(h, a1, w.versionId).catch(() => undefined);
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const ids = depsFromPlatform(h.app.platform).ids;
+    expect((await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a1.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids })).ok).toBe(true);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffOf(h, l.id);
+    expect(ho).toMatchObject({ reason: 'owner_change' });
+    expect((await h.su.query<{ r: string }>(`SELECT recipient_user_id AS r FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.r).toBe(a1.userId);
+    expect((await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a0.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids })).ok).toBe(true);
+    await runIsa(h, w.tenantId, 1);
+    const g0 = await call<View & { recipientUserId: string }>(a0, 'GET', `/ai-isa/handoffs/${ho!.id}`);
+    expect([g0.status, g0.body.canAcknowledge, g0.body.recipientUserId]).toEqual([200, true, a1.userId]);
+    expect((await call(a1, 'GET', `/ai-isa/handoffs/${ho!.id}`)).status).toBe(404);
+    expect((await call(a0, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {})).status).toBe(200);
   });
 
   it('E521 R-ISA-30 (batch 13 merge, 0081 B12X-2): a handoff with no deadline (sla_class none) reads as such and is never overdue', async () => {

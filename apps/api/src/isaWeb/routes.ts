@@ -1,15 +1,17 @@
 // GET /ai-isa/handoffs/:id: the full handoff package for the web's handoff card (module 76, ISA-4; R-ISA-14; Q1).
 // Read-only: no write, no audit, no new SQL privilege. It reads ai_isa_handoffs under its own RLS (0080's isa_select: tenant-wide
-// roles, or whoever may see the contact's details; 0081 adds the record's root survivor's detail audience) and is authorized as `ai_isa.view` with the facts of the handoff's
-// contact, exactly as the ack route finds them (isa/routes.ts:188-192). An invisible handoff, another tenant's, a forged
+// roles, or whoever may see the contact's details; 0081 adds the record's root survivor's detail audience) and is authorized as `ai_isa.view` with the facts of the
+// record the handoff's merge chain ends at, exactly as the ack route finds them (isa/routes.ts handoffFacts; b13 review F2). An invisible handoff, another tenant's, a forged
 // id or a role without the grant (tc) is 404 (R-PERM-5).
 //
 // The package is the frozen jsonb of handoff.ts:56-73, re-shaped for the web: instants become ISO strings; the
 // conversation keeps seq, status and messageId only (a turn's decision and denied codes stay on the turns route);
 // any confidence, score or probability key and any tenant key are dropped wherever they appear (R-AST-13, R-TEN-3).
 // Keys ISA-2b adds pass through (z.looseObject). canAcknowledge says whether the ack route would authorize this viewer
-// (core can('ai_isa.handoff') on the merge root's facts; batch 13 isa-4 F14) AND its UPDATE would match a row (0080's
-// isa_update: the recipient or a tenant-wide role; V8), so the web never offers a button that 404s.
+// (core can('ai_isa.handoff') on the merge root's facts; batch 13 isa-4 F14) AND its UPDATE would match a row (0081's
+// isa_update: the recipient, a tenant-wide role, or the current owner of the record its merge chain ends at; V8; b13
+// review F3), so the web never offers a button that 404s and never hides one that works. The route itself is authorized
+// on the merge root's facts too (b13 review F2), as the ack route and the panel are.
 // Batch 13 merge: 0081's sla_class 'none' (no human touch can clear it, so no deadline) is a class here too and is never
 // overdue, and a handoff the system closed (closed_reason, 0081) is done, never overdue, as on the panel (isa/routes.ts).
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -124,7 +126,9 @@ async function register(app: FastifyInstance): Promise<void> {
   const handoffFacts = async (req: FastifyRequest) => {
     const id = (req.params as { id: string }).id;
     const p = platformOf(req);
-    const c = await withTenantTx(actorOf(req), (tx) => sql<{ c: string }>`SELECT contact_id AS c FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx), { db: p.db });
+    // b13 review F2: the facts of the record the handoff's merge chain ends at, as the ack route (isa/routes.ts) and the
+    // panel read it: a handoff written on a merged-away record is the survivor's audience's (0081 isa_select)
+    const c = await withTenantTx(actorOf(req), (tx) => sql<{ c: string }>`SELECT app.contact_merge_root(tenant_id, contact_id) AS c FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx), { db: p.db });
     return c.rows[0] ? detailFacts(req, () => c.rows[0]!.c) : null;
   };
   r.get('/ai-isa/handoffs/:id', { config: { auth: 'ai_isa.view' }, preHandler: authorize('ai_isa.view', handoffFacts), schema: { params: IdParams, response: { 200: HandoffView } } }, async (req) => {
@@ -134,10 +138,13 @@ async function register(app: FastifyInstance): Promise<void> {
     const ackOk = await mayAcknowledge(req, req.params.id);
     return withTenantTx(actor, async (tx, now) => {
       const h = await sql<{ id: string; assignment_id: string; contact_id: string; reason: string; sla_class: (typeof SLA_CLASSES)[number]; sla_due_at: Date; sla_met_at: Date | null; closed_reason: (typeof HANDOFF_CLOSE_REASONS)[number] | null;
-        created_at: Date; acknowledged_at: Date | null; acknowledged_by_user_id: string | null; recipient_user_id: string | null; confirmation_status: string; package: unknown; pending_message_id: string | null }>`
+        created_at: Date; acknowledged_at: Date | null; acknowledged_by_user_id: string | null; recipient_user_id: string | null; confirmation_status: string; package: unknown; pending_message_id: string | null;
+        root_owner: boolean }>`
         SELECT id, assignment_id, contact_id, reason, sla_class, sla_due_at, sla_met_at, created_at, acknowledged_at, acknowledged_by_user_id, recipient_user_id,
-               confirmation_status, package, pending_message_id, closed_reason
-          FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${req.params.id}`.execute(tx);
+               confirmation_status, package, pending_message_id, closed_reason,
+               EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
+                         AND c.owner_user_id = app.user_id()) AS root_owner
+          FROM ai_isa_handoffs h WHERE tenant_id = app.tenant_id() AND id = ${req.params.id}`.execute(tx);
       const row = h.rows[0];
       if (!row) throw new AppError('NOT_FOUND');
       let pendingMessage = null;
@@ -154,7 +161,8 @@ async function register(app: FastifyInstance): Promise<void> {
         closedReason: row.closed_reason,
         createdAt: row.created_at.toISOString(), acknowledgedAt: row.acknowledged_at?.toISOString() ?? null, acknowledgedByUserId: row.acknowledged_by_user_id,
         recipientUserId: row.recipient_user_id,
-        canAcknowledge: ackOk && (tenantWide || (row.recipient_user_id !== null && row.recipient_user_id === actor.userId)),
+        // 0081's isa_update: the recipient, a tenant-wide role, or the current owner of the merge root (b13 review F3)
+        canAcknowledge: ackOk && (tenantWide || (row.recipient_user_id !== null && row.recipient_user_id === actor.userId) || row.root_owner),
         confirmationStatus: row.confirmation_status,
         pendingMessage,
         package: webPackage(row.package) as z.infer<typeof HandoffPackage>,
