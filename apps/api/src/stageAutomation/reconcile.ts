@@ -29,6 +29,7 @@ import { stageAudienceProtected } from '../bulk/audience.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type AutomationOutcome, decideStageEntry, outcomeOf } from './decide.js';
 import { stageEnrollmentId } from './ids.js';
+import { aiIsaLive } from '../isa/liveCare.js';
 import { reachableForVersion } from './reach.js';
 import * as R from './repos.js';
 
@@ -89,13 +90,16 @@ export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventI
   const candidates = await R.candidatePlaybooks(tx, e.id, contact.ownerUserId);
   if (candidates.length === 0) return { automation: null, decided: false, enrollmentId: null };
   const live = (await P.liveEnrollmentOf(tx, e.contactId)) !== null;
+  // R-ISA-2 (b12 review B12X-4): under live AI care the plan is skipped and the decision recorded, so the stage change
+  // says so and the scan stops retrying (0080's enrollment guard would roll the whole decision back)
+  const aiIsaActive = await aiIsaLive(tx, e.contactId);
   const sees = view.sees;
   // R-PAR-8 (batch 5 review F1): a change a bulk action made is judged on that action's audience as it is now
   const protectedAudience = e.bulkActionId !== null && view.protectedAudience;
   // reachability is read for the playbook decide would choose (the same choice, computed first)
-  const pre = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true });
+  const pre = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true, aiIsaActive });
   const reachable = pre.kind === 'start' ? await reachableForVersion(tx, e.contactId, pre.versionId, now) : true;
-  const d = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable });
+  const d = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable, aiIsaActive });
 
   if (d.kind === 'none') return { automation: null, decided: false, enrollmentId: null };
   if (d.kind === 'skip') {

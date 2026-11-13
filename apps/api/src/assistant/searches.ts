@@ -408,6 +408,9 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
        AND EXISTS (SELECT 1 FROM saved_search_matches m JOIN listings l ON l.tenant_id = m.tenant_id AND l.id = m.listing_id
                     WHERE m.tenant_id = s.tenant_id AND m.search_id = s.id AND m.alerted_message_id IS NULL AND ${mlsEligibleSql(e)})
        AND EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = s.tenant_id AND c.id = s.contact_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL)
+       -- R-ISA-2/R-ISA-17 (D12 proposed; b12 review B12X-4): an AI-proposed search sends no alert while its person is under live AI care
+       AND NOT (s.origin = 'ai_isa' AND EXISTS (SELECT 1 FROM ai_isa_assignments a WHERE a.tenant_id = s.tenant_id AND a.ended_at IS NULL
+                                                AND a.contact_id = ANY (app.contact_person_ids(s.tenant_id, s.contact_id))))
      ORDER BY s.contact_id, s.id LIMIT ${o.limit ?? 200}`.execute(tx);
   let sent = 0;
   for (const s0 of due.rows.map(row)) {

@@ -53,6 +53,7 @@ import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsElig
 import { addressText, estimateOfRow } from './avm.js';
 import { DIGEST_SUBJECT, type RunSkipReason, apiSkip, decideBatch, digestTemplate, draftExplanation, firingOfRow, literal } from './decide.js';
 import { localToday } from './detect.js';
+import { aiIsaLive } from '../isa/liveCare.js';
 import * as R from './repos.js';
 import type { NurtureDeps } from './types.js';
 import { KIND_TEXT } from '../transactions/types.js';
@@ -231,6 +232,12 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
   const lead = await R.runById(tx, stepRunId, true);
   if (!lead || lead.status !== 'scheduled' || lead.messageId !== null || lead.actionId !== null) return { kind: 'noop', reason: 'ALREADY_HANDLED' };
   if (lead.scheduledFor > now) return { kind: 'noop', reason: 'NOT_DUE' };
+  // R-ISA-2 (D12 proposed; b12 review B12X-4): while the person is under live AI care no trigger firing sends; it is
+  // skipped visibly (each firing's own job meets this too; the listing-event form of AI_ISA.md waits on ISA-3)
+  if (await aiIsaLive(tx, lead.contactId)) {
+    await R.skipRun(tx, lead.id, 'AI_ISA_ACTIVE');
+    return { kind: 'skipped', runIds: [lead.id], reasons: ['AI_ISA_ACTIVE'] };
+  }
   const leadFiring = firingOfRow(lead);
   if (leadFiring === null) {
     await R.skipRun(tx, lead.id, 'FACT_MISMATCH');

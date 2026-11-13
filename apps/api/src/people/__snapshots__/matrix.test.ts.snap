@@ -1555,6 +1555,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
                       "plan_not_approved",
                       "already_in_a_plan",
                       "cannot_be_reached",
+                      "ai_isa_active",
                     ],
                     "type": "string",
                   },

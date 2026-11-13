@@ -28,6 +28,7 @@ export const SKIP_REASONS = [
   'plan_not_approved', // the plan has no approved version
   'already_in_a_plan', // a live enrollment exists
   'cannot_be_reached', // opted out on every channel the plan uses (or do-not-contact)
+  'ai_isa_active', // R-ISA-2 (D12 proposed; b12 review B12X-4): the person is under live AI care, so no plan starts
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 
@@ -58,6 +59,8 @@ export interface StageEntryFacts {
   liveEnrollment: boolean;
   /** at least one channel the chosen playbook uses is not opted out (core canContact) */
   reachable: boolean;
+  /** R-ISA-2: the person (any record of them) has a live AI ISA assignment */
+  aiIsaActive?: boolean;
 }
 
 export type StageDecision =
@@ -82,6 +85,7 @@ export function decideStageEntry(f: StageEntryFacts): StageDecision {
   if (f.contact.stage !== f.toStage) return skip('stage_changed_again');
   if (!f.changerSeesDetail) return skip('not_visible');
   if (playbook.approvedVersionId === null) return skip('plan_not_approved');
+  if (f.aiIsaActive === true) return skip('ai_isa_active');
   if (f.liveEnrollment) return skip('already_in_a_plan');
   if (!f.reachable) return skip('cannot_be_reached');
   return { kind: 'start', playbook, versionId: playbook.approvedVersionId };

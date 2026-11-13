@@ -175,3 +175,52 @@ describe('b12 review B12X-2: an end D1 makes unreachable (R-ISA-30, R-ISA-31; E5
     expect(panel.body.handoff?.overdue).toBe(false);
   });
 });
+
+describe('b12 review B12X-4: nothing automated runs beside live AI care (R-ISA-2)', () => {
+  /** A scheduled module 26 trigger firing of the person (the row detect.ts writes; the superuser seeds it). */
+  async function scheduledFiring(contactId: string): Promise<string> {
+    const id = randomUUID();
+    await h.su.query(`INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for, contact_id, trigger_key, trigger_ref)
+      VALUES ($1, $2, NULL, $3, 'price_drop', 'scheduled', now() - interval '1 minute', $4, $5, '{"v":1,"trigger":"price_drop"}'::jsonb)`, [w.tenantId, id, w.versionId, contactId, `zz:${id}`]);
+    return id;
+  }
+  const runOf = async (id: string) => (await h.su.query<{ status: string; reason: string | null }>(`SELECT status, trigger_ref->'skip'->>'reason' AS reason FROM playbook_step_runs WHERE id = $1`, [id])).rows[0]!;
+
+  it('R-ISA-2: a stage change under live AI care records the skip ai_isa_active and says so; no enrollment starts and the scan has nothing left to retry', async () => {
+    const { changeStage, playbook, scanPending, setStage } = await import('../stageAutomation/testing.js');
+    const pb = await playbook(w.owner, { scope: 'team', name: 'Active plan' });
+    expect((await setStage(w.owner, pb.id, 'active')).status).toBe(200);
+    try {
+      const agent = w.agents[0]!;
+      const l = await isaLead(h, agent);
+      expect((await startCare(agent, l.id)).status).toBe(200);
+      await runIsa(h, w.tenantId);
+      const r = await changeStage(agent, l.id, 'active');
+      expect(r.status).toBe(200);
+      expect(r.body.automation).toEqual({ skipped: 'ai_isa_active', plan: 'Active plan' });
+      const d = await h.su.query(`SELECT outcome, reason FROM stage_automation_decisions WHERE contact_id = $1`, [l.id]);
+      expect(d.rows).toEqual([{ outcome: 'skipped', reason: 'ai_isa_active' }]);
+      expect((await h.su.query(`SELECT 1 FROM playbook_enrollments WHERE contact_id = $1 AND state = 'active'`, [l.id])).rows.length).toBe(0);
+      const events = (await h.su.query<{ id: string }>(`SELECT id FROM contact_stage_events WHERE contact_id = $1`, [l.id])).rows.map((x) => x.id);
+      expect(events.length).toBeGreaterThan(0);
+      const pending = await scanPending(h, w.tenantId);
+      expect(events.filter((e) => pending.includes(e))).toEqual([]);
+    } finally {
+      await setStage(w.owner, pb.id, null);
+    }
+  });
+
+  it('R-ISA-2: starting AI care skips the person\'s scheduled trigger firings, and a firing due while care is live is skipped AI_ISA_ACTIVE, never sent', async () => {
+    const { executeTriggerRunInTx } = await import('../nurture/execute.js');
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    const before = await scheduledFiring(l.id);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    expect(await runOf(before)).toEqual({ status: 'skipped_ineligible', reason: 'AI_ISA_ACTIVE' });
+    const during = await scheduledFiring(l.id);
+    const deps = depsFromPlatform(h.app.platform);
+    const out = await withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => executeTriggerRunInTx(tx, deps as never, w.tenantId, during, now), { db: h.database });
+    expect(out).toEqual({ kind: 'skipped', runIds: [during], reasons: ['AI_ISA_ACTIVE'] });
+    expect(await runOf(during)).toEqual({ status: 'skipped_ineligible', reason: 'AI_ISA_ACTIVE' });
+  });
+});

@@ -15,6 +15,7 @@ import { capabilitiesInEffect, type IsaEndReason, type IsaFacts, type IsaPauseRe
 
 /** human_control, stop_signal and authorization_lost read no facts (core onControl): an explicit empty set */
 const NOFACTS = {} as IsaFacts;
+import { skipText } from '../nurture/decide.js';
 import { backstopInTx } from './backstop.js';
 import { applyActionsInTx, cancelForAssignmentInTx, chainEnvOf, contextFor, control, type IsaDeps, pauseCardInTx } from './effects.js';
 import { type AssignmentRow, activeBlock, assignmentById, evaluateChain, exclusivity, inFlightIsaMessages, liveAssignmentOf, lockForTurn, personIds, tenantIsaFacts } from './repo.js';
@@ -140,11 +141,18 @@ export async function startCare(actor: UserActor, deps: IsaDeps, contactId: stri
     await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId, trigger: i.fromHandbackId ? 'inbound' : 'start', epoch: 1 }, dedupeKey: `ai_isa.turn:${assignmentId}:1:start` });
   }, { db: deps.db, retries: 2 });
   // the system part: stop the live playbook enrollment, supersede every proposed draft and handback of the contact
+  // (b12 review B12X-4, R-ISA-2: also the automated messages already built, which dispatch then refuses as
+  // ASSISTANT_ACTION_WITHDRAWN, and the module 26 trigger firings still scheduled, skipped visibly)
   const sys = await asSystem(deps, actor.tenantId, async (tx) => {
     const e = await sql<{ id: string }>`UPDATE playbook_enrollments SET state = 'stopped', stop_reason = 'ai_isa_started', ended_at = now(), pause_reason = NULL, paused_at = NULL
       WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state IN ('active','paused') RETURNING id`.execute(tx);
     const d = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
       AND kind IN ('message_draft','handback') AND status = 'proposed' RETURNING id`.execute(tx);
+    await sql`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
+      AND kind = 'autonomous_message' AND status = 'proposed'`.execute(tx);
+    await sql`UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+        trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'AI_ISA_ACTIVE', 'text', ${skipText('AI_ISA_ACTIVE')}::text))
+      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND enrollment_id IS NULL AND status = 'scheduled'`.execute(tx);
     return { stopped: e.rows.length > 0, superseded: d.rows.length };
   });
   return { assignmentId, state: 'starting', epoch: 1, inFlight: [], canceled: 0, undoUntil: null, stoppedEnrollment: sys.stopped, supersededProposals: sys.superseded,

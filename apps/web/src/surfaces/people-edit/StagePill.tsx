@@ -21,6 +21,8 @@ const SKIP_WORDS: Record<string, string> = {
   not_a_person_change: 'only a stage change made by a person starts it',
   // R-PAR-8: a bulk stage change of a list built on a protected tag never starts a plan
   protected_audience: 'they were picked by a protected tag, and a plan never starts for such a list',
+  // R-ISA-2 (b12 review B12X-4): the person is in the assistant's ISA care, which never runs beside a plan
+  ai_isa_active: "they're in the assistant's ISA care, and no plan starts while it lasts",
 };
 
 /** The sentence after "Stage: Active." on the toast; '' when no plan is set for that stage. */
