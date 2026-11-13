@@ -226,6 +226,35 @@ describe('Erase a contact', () => {
     expect(screen.getByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
   });
 
+  // b11 ownership-data/F4 (the part left open): two held documents read the same ("A document on legal hold"), so the
+  // Owner could not tell which one to release
+  it('R-DOC-4 R-DATA-4 (b11 ownership-data/F4): two held documents are told apart by name, kind, version, upload date and the record they are on, with the id a hold is lifted by', async () => {
+    const MERGED = '01900000-0000-7000-8000-0000000c0003';
+    const two = {
+      ...free,
+      erasable: false,
+      mergedRecords: 1,
+      retainedDocuments: [
+        { id: DOC_HELD, contactId: C, legalHold: true, retentionUntil: null, kind: 'disclosure', displayName: 'Seller disclosure', versionNo: 2, uploadedAt: '2026-10-02T15:00:00.000Z' },
+        { id: DOC_KEPT, contactId: MERGED, legalHold: true, retentionUntil: null, kind: 'inspection', displayName: 'Home inspection', versionNo: 1, uploadedAt: '2026-09-14T15:00:00.000Z' },
+      ],
+    };
+    leadAdminApp(erasureFake({ preview: two }), PATH, 'owner');
+    const list = await screen.findByRole('list', { name: 'Documents that keep Rosa Diaz' });
+    const [a, b] = within(list).getAllByRole('listitem');
+    expect(within(a!).getByText('Seller disclosure')).toBeInTheDocument();
+    expect(within(a!).getByText('Disclosure · version 2 · uploaded Oct 2, 2026 · on this record')).toBeInTheDocument();
+    expect(within(a!).getByText('On legal hold')).toBeInTheDocument();
+    expect(within(a!).getByText(`Document id ${DOC_HELD}`)).toBeInTheDocument();
+    expect(within(b!).getByText('Home inspection')).toBeInTheDocument();
+    expect(within(b!).getByText('Inspection report · version 1 · uploaded Sep 14, 2026 · on a duplicate record merged into Rosa Diaz')).toBeInTheDocument();
+    expect(within(b!).getByText(`Document id ${DOC_KEPT}`)).toBeInTheDocument();
+    expect(a!.textContent).not.toEqual(b!.textContent);
+    // where a hold is lifted on this deployment: no page for documents yet
+    expect(screen.getByText(/There is no documents page in Realty OS yet: a hold is lifted, or a retention date moved, through the documents API with the document id shown here\./)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Erase/ })).toBeNull();
+  });
+
   it('R-DATA-7: a seller\'s listing documents are said to stay after the erasure, by listing', async () => {
     leadAdminApp(erasureFake({ preview: { ...free, listingDocuments: [{ listingId: LISTING, address: '12 Harbor Rd', documents: 2 }] } }), PATH, 'admin');
     expect(await screen.findByText(/Rosa Diaz is a seller on a listing with documents, such as a listing agreement\. Those documents belong to the listing's records and stay after the erasure, readable by the people who work on that listing; they may name Rosa Diaz\./)).toBeInTheDocument();

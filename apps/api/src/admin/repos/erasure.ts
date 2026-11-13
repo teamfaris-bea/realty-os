@@ -76,6 +76,11 @@ export interface RetainedDocumentRow {
   legal_hold: boolean;
   /** only while it is still in the future (a past date no longer blocks) */
   retention_until: Date | null;
+  /** what tells two blocking documents apart on the page (b11 ownership-data/F4); the preview is Owner/Admin only */
+  kind: string;
+  display_name: string;
+  version_no: number;
+  created_at: Date;
 }
 
 /**
@@ -85,7 +90,8 @@ export interface RetainedDocumentRow {
  */
 export async function retainedDocuments(tx: Tx, ids: readonly string[]): Promise<RetainedDocumentRow[]> {
   const r = await sql<RetainedDocumentRow>`
-    SELECT id, contact_id, legal_hold, CASE WHEN retention_until > now() THEN retention_until END AS retention_until
+    SELECT id, contact_id, legal_hold, CASE WHEN retention_until > now() THEN retention_until END AS retention_until,
+           kind, display_name, version_no, created_at
       FROM documents
      WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...ids]}::uuid[]) AND (legal_hold OR retention_until > now())
      ORDER BY id`.execute(tx);

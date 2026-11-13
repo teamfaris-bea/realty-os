@@ -467,9 +467,14 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
     erasable: boolean;
     deals: unknown[];
     mergedRecords: number;
-    retainedDocuments: { id: string; contactId: string; legalHold: boolean; retentionUntil: string | null }[];
+    retainedDocuments: { id: string; contactId: string; legalHold: boolean; retentionUntil: string | null; kind: string; displayName: string; versionNo: number; uploadedAt: string }[];
     mergedInto: string | null;
     listingDocuments: { listingId: string; address: string; documents: number }[];
+  };
+  /** what the page tells two documents apart by (b11 ownership-data/F4), read back from the table */
+  const identity = async (id: string) => {
+    const r = (await rowsOf('SELECT kind, display_name, version_no, created_at FROM documents WHERE id = $1', [id]))[0]!;
+    return { kind: r.kind as string, displayName: r.display_name as string, versionNo: r.version_no as number, uploadedAt: (r.created_at as Date).toISOString() };
   };
   const preview = async (contactId: string) => {
     await freshReauth(h, w.owner);
@@ -478,7 +483,7 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
     return r.body;
   };
 
-  it('R-DOC-4 R-DATA-4: a held or retained document of any record of the person makes the preview not erasable and names it (ids and dates only); the erase refusal names the same documents; lifting the hold alone leaves the retained one blocking', async () => {
+  it('R-DOC-4 R-DATA-4: a held or retained document of any record of the person makes the preview not erasable and names it (ids, dates, kind, name, version); the erase refusal names the same documents (ids and dates only); lifting the hold alone leaves the retained one blocking', async () => {
     const { ownedContact } = await import('../comms/testing.js');
     const { command } = await import('../leads/testing.js');
     const a = w.agents[0]!;
@@ -498,8 +503,8 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
     expect(p.mergedRecords).toBe(1);
     expect(p.retainedDocuments).toEqual(
       [
-        { id: held, contactId: survivor.id, legalHold: true, retentionUntil: null },
-        { id: kept, contactId: loser.id, legalHold: false, retentionUntil: until },
+        { id: held, contactId: survivor.id, legalHold: true, retentionUntil: null, ...(await identity(held)) },
+        { id: kept, contactId: loser.id, legalHold: false, retentionUntil: until, ...(await identity(kept)) },
       ].sort((x, y) => (x.id < y.id ? -1 : 1)),
     );
     expect(p.retainedDocuments.some((d) => d.id === free)).toBe(false);
@@ -511,6 +516,33 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
     expect((await call(w.owner, 'POST', `/documents/${held}/hold`, { hold: false, reason: 'Released' })).status).toBe(200);
     expect((await preview(survivor.id))).toMatchObject({ erasable: false, retainedDocuments: [{ id: kept, legalHold: false, retentionUntil: until }] });
     expect(await rowsOf('SELECT 1 FROM contacts WHERE id = ANY($1::uuid[])', [[survivor.id, loser.id]])).toHaveLength(2);
+  });
+
+  // b11 ownership-data/F4 (the part left open): the page said only "A document on legal hold" for each, so an Owner
+  // with two held documents could not tell which one to release
+  it('R-DOC-4 R-DATA-4 (b11 ownership-data/F4): two held documents are told apart: each names its kind, its name, its version, when it was uploaded and the record it is on', async () => {
+    const { ownedContact } = await import('../comms/testing.js');
+    const { command } = await import('../leads/testing.js');
+    const a = w.agents[0]!;
+    const survivor = await ownedContact(a, { consent: false, firstName: 'Ada' });
+    const loser = await ownedContact(a, { consent: false, firstName: 'Ada' });
+    const first = await uploadClean(a, `/contacts/${survivor.id}/documents`, { kind: 'disclosure', displayName: 'Seller disclosure' });
+    const second = await uploadClean(a, `/documents/${first}/versions`, { displayName: 'Seller disclosure, signed' });
+    const other = await uploadClean(a, `/contacts/${loser.id}/documents`, { kind: 'inspection', displayName: 'Home inspection' });
+    expect((await command(a, survivor.id, 'merge', { loserId: loser.id })).status).toBe(200);
+    await freshReauth(h, w.owner);
+    for (const id of [second, other]) expect((await call(w.owner, 'POST', `/documents/${id}/hold`, { hold: true, reason: 'Hold' })).status).toBe(200);
+    const p = await preview(survivor.id);
+    expect(p.erasable).toBe(false);
+    const byId = new Map(p.retainedDocuments.map((d) => [d.id, d]));
+    expect(p.retainedDocuments).toHaveLength(2);
+    expect(byId.get(second)).toEqual({ id: second, contactId: survivor.id, legalHold: true, retentionUntil: null, kind: 'disclosure', displayName: 'Seller disclosure, signed', versionNo: 2, uploadedAt: (await identity(second)).uploadedAt });
+    expect(byId.get(other)).toEqual({ id: other, contactId: loser.id, legalHold: true, retentionUntil: null, kind: 'inspection', displayName: 'Home inspection', versionNo: 1, uploadedAt: (await identity(other)).uploadedAt });
+    // the refusal's details stay ids, holds and dates (no name in an error)
+    await freshReauth(h, w.owner);
+    const r = await call<{ error: { code: string; details: { documents: Record<string, unknown>[] } } }>(w.owner, 'POST', `/contacts/${survivor.id}/erase`, { reason: 'PRIVACY_REQUEST' });
+    expect(r.body.error.code).toBe('DOCUMENT_RETAINED');
+    expect(r.body.error.details.documents.map((d) => Object.keys(d).sort())).toEqual([['id', 'legalHold', 'retentionUntil'], ['id', 'legalHold', 'retentionUntil']]);
   });
 
   it('R-DATA-4 R-DATA-7: a merged-away record\'s preview names the record the person lives on now (erasing it alone stays possible); a seller\'s preview lists the listing documents that stay after the erasure', async () => {

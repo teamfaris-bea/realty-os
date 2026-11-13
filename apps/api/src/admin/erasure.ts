@@ -4,9 +4,9 @@
 //   GET  /contacts/:id/erasure                          what erasing would need: the deals the person is on,     contact.erase (Owner/Admin 🔒)
 //                                                      how many merged records go with them, the contact documents
 //                                                      on legal hold or inside retention that block it (module 42,
-//                                                      R-DOC-4; ids and dates only), the record a merged-away
-//                                                      record was merged into, and the documents of the listings
-//                                                      the person sells that stay (batch 11 review)
+//                                                      R-DOC-4; ids, dates, kind, name and version), the record a
+//                                                      merged-away record was merged into, and the documents of the
+//                                                      listings the person sells that stay (batch 11 review)
 //   POST /contacts/:id/erase          { reason }       app.erase_contact; refused CONTACT_ON_DEAL (409) while    contact.erase (Owner/Admin 🔒)
 //                                                      the person is on any deal, details = the deal ids/stages;
 //                                                      DOCUMENT_RETAINED (409) while a document blocks it,
@@ -47,13 +47,23 @@ import * as repo from './repos/erasure.js';
 const ReasonCode = z.enum(['PRIVACY_REQUEST', 'DUPLICATE_RECORD', 'ENTERED_IN_ERROR', 'OTHER']);
 
 const DealLink = z.object({ id: z.uuid(), name: z.string(), stage: z.string(), link: z.enum(['primary', 'party', 'primary_and_party']), closed: z.boolean() });
-const RetainedDocument = z.object({ id: z.uuid(), contactId: z.uuid(), legalHold: z.boolean(), retentionUntil: z.string().nullable() });
+const RetainedDocument = z.object({
+  id: z.uuid(),
+  contactId: z.uuid(),
+  legalHold: z.boolean(),
+  retentionUntil: z.string().nullable(),
+  kind: z.string(),
+  displayName: z.string(),
+  versionNo: z.number().int().min(1),
+  uploadedAt: z.string(),
+});
 const ListingDocuments = z.object({ listingId: z.uuid(), address: z.string(), documents: z.number().int().min(1) });
 /**
  * mergedRecords: the duplicate records merged into the person, erased with them (0 for most people).
  * retainedDocuments: contact documents of any of those records on legal hold or inside retention (R-DOC-4): the
  *   database refuses the erasure while one exists (DOCUMENT_RETAINED), so `erasable` is false (b11 db-public/F2,
- *   ownership-data/F4, api-ui/F3).
+ *   ownership-data/F4, api-ui/F3). Each carries its kind, name, version and upload time, so the Owner can tell two of
+ *   them apart and find the one to release (the preview is Owner/Admin only; the 409's details stay ids and dates).
  * mergedInto: this record was merged away; the person lives on that record now (its messages, notes, tasks and
  *   appointments moved there, its phones and emails were copied). Erasing this record alone stays possible
  *   (b11 ownership-data/F2).
@@ -69,7 +79,16 @@ const ErasurePreview = z.object({
   listingDocuments: z.array(ListingDocuments),
 });
 
-const retainedView = (r: repo.RetainedDocumentRow) => ({ id: r.id, contactId: r.contact_id, legalHold: r.legal_hold, retentionUntil: r.retention_until === null ? null : r.retention_until.toISOString() });
+const retainedView = (r: repo.RetainedDocumentRow) => ({
+  id: r.id,
+  contactId: r.contact_id,
+  legalHold: r.legal_hold,
+  retentionUntil: r.retention_until === null ? null : r.retention_until.toISOString(),
+  kind: r.kind,
+  displayName: r.display_name,
+  versionNo: r.version_no,
+  uploadedAt: r.created_at.toISOString(),
+});
 
 const CLOSED = new Set(['closed', 'lost']);
 
