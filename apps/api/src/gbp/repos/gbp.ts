@@ -1,6 +1,6 @@
 // SQL of api/gbp (module 53). Every query runs inside the caller's withTenantTx under FORCE RLS:
 //   - the sync, the replies' TX2 and the reconcile run as the tenant's system actor (gbp_reviews is written by the
-//     system only, 0018 gbp_reviews_write; the 0170 guard checks every write);
+//     system only, 0018 gbp_reviews_write; the 0079 guard checks every write);
 //   - the pages and TX1 run as the signed-in person (members read reviews; an action is read through its own RLS).
 // Nothing here names contacts or contact points: reviewers are never matched to contacts (R-GBP-5).
 import { type Instant, toIso } from '@realty/core/foundation';
@@ -123,7 +123,7 @@ export async function setReply(tx: Tx, id: string, status: ReviewRow['reply_stat
   await sql`UPDATE gbp_reviews SET reply_status = ${status}, reply_action_id = ${actionId} WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
 }
 
-/** "Removed at Google": no rating, text or reviewer (0170 guard); a waiting draft is no longer wanted. */
+/** "Removed at Google": no rating, text or reviewer (0079 guard); a waiting draft is no longer wanted. */
 export async function blankReview(tx: Tx, id: string): Promise<void> {
   await sql`UPDATE gbp_reviews SET rating = NULL, body = NULL, reviewer_display = NULL WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
 }

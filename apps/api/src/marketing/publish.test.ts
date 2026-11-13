@@ -810,7 +810,7 @@ describe('module 53: a GBP post publishes through publishPost to a GBP location 
     expect([r.status, r.code]).toEqual([409, 'PLATFORM_NOT_CLEARED']);
     expect(await rows(p.id)).toEqual([]);
     expect(gbp().calls.length).toBe(calls);
-    // the 0170 gate is the authority: a row the API would not write is refused by the database too
+    // the 0079 gate is the authority: a row the API would not write is refused by the database too
     await expect(
       withTenantTx({ kind: 'user', userId: w.agent.userId!, tenantId: w.agent.tenantId!, role: 'agent', sessionId: 's' }, (tx) => sql`INSERT INTO marketing_publications (tenant_id, id, piece_id, connection_id, requested_by_user_id) VALUES (app.tenant_id(), ${randomUUID()}, ${p.id}, ${loc.connectionId}, app.user_id())`.execute(tx), { db: h.database }),
     ).rejects.toThrow(/PLATFORM_NOT_CLEARED: publishing to a Google Business Profile location waits for counsel review of the platform:gbp pack/);

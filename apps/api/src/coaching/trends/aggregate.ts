@@ -12,7 +12,7 @@
 // Aggregates only: no call id, contact id, quote, score, grade, rank or percentage leaves this file.
 import { type CallScore, RUBRIC_V1, type Rubric, TREND_MIN_SCORED, type TrendDirection, trend } from '@realty/core/coaching';
 
-/** The definer's floor (0170: 5). The equivalence test proves it equals core's TREND_MIN_SCORED. */
+/** The definer's floor (0079: 5). The equivalence test proves it equals core's TREND_MIN_SCORED. */
 export const TREND_FLOOR = 5;
 void TREND_MIN_SCORED;
 

@@ -142,7 +142,7 @@ export const DISPATCH_DENY_SENTENCES = {
   // R-TWL-1 (b9 review ownership-data/F4): the kill switch, refused in TX1 so a refused text or call is never a touch;
   // telephonySafeguards.ts TELEPHONY_LIVE_OFF_SENTENCE
   TELEPHONY_LIVE_OFF: 'Live texting and calling are off on this deployment.',
-  // 0190 (D12 proposed): the AI ISA's own refusals (isa/send.ts ISA_GUARD_REASONS and the TX1 checks); codes only in the row
+  // 0080 (D12 proposed): the AI ISA's own refusals (isa/send.ts ISA_GUARD_REASONS and the TX1 checks); codes only in the row
   AI_ISA_LIVE_OFF: 'AI assistant sending is off on this deployment.',
   ISA_OFFSET_MISMATCH: 'The time-zone data disagreed, so the AI assistant waited.',
   ISA_NOT_AUTHORIZED: 'The AI assistant is not authorized for this person right now, so it did not send this.',

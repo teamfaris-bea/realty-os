@@ -417,7 +417,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   // (module 26's executeTriggerRun also re-checks the pause)
   const canceledTriggerRuns = await msgs.cancelScheduledTriggerRuns(tx, sharing);
 
-  // 0190 (D12 proposed, R-ISA-3/-28): the AI ISA branch, after step 6 (unchanged for everyone). A turn under live care
+  // 0080 (D12 proposed, R-ISA-3/-28): the AI ISA branch, after step 6 (unchanged for everyone). A turn under live care
   // skips steps 7 and 8 (one activity row, one debounced turn, the backstop); anything else under live care pauses it
   // and continues below exactly as today (R-AST-9, the E61 card included).
   const dkimOk = e.kind === 'email' ? dkimAligned(from, e.dkim ?? []) : null;
@@ -641,7 +641,7 @@ export async function ingestSyncedMailInTx(tx: Tx, contactId: string, mailMessag
   const sharing = [...new Set([contactId, ...(await msgs.hmacPoints(tx, hmac)).map((p) => p.contactId)])].sort();
   await lockContacts(tx, sharing as ContactId[]);
   const now = (await sql<{ now: Date }>`SELECT clock_timestamp() AS now`.execute(tx)).rows[0]!.now.getTime() as Instant;
-  // 0190 (D12, R-GMAIL-14, R-ISA-3): synced mail is never an AI ISA turn; it only pauses live care (synced_mail)
+  // 0080 (D12, R-GMAIL-14, R-ISA-3): synced mail is never an AI ISA turn; it only pauses live care (synced_mail)
   for (const c of sharing) await pauseForSyncedMailInTx(tx, ids, c, now);
 
   const reason = pauseReasonOf(classification);

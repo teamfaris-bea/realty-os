@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Google Business Profile gate and guards (module 53, M53) and the aggregate-only coaching trends definer
--- (module 54, M54). DATA_MODEL R-GBP-1..5, R-COACH-7, R-COACH-8, R-MKT-12, R-INT-6; E460-E474; ARCHITECTURE §21.39 and §21.40
+-- (module 54, M54). DATA_MODEL R-GBP-1..5, R-COACH-7, R-COACH-8, R-MKT-12, R-INT-6; E460-E474; ARCHITECTURE §21.40 and §21.41
 -- "GBP and coaching trends".
 -- The number is a placeholder: the orchestrator renumbers at merge, and nothing in code or tests names this file.
 -- No existing migration is edited; no table shape, CHECK or RLS policy changes (PHASE2_3_PLAN §4).
@@ -18,7 +18,7 @@
 --          rubric item, with a cell floor against small numbers and differencing (R-COACH-7, R-COACH-8).
 --       e) the self-check.
 --
--- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.39 and §21.40):
+-- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.40 and §21.41):
 --   * One new SECURITY DEFINER function, app.coaching_trends: owner app_definer (BYPASSRLS), search_path pinned to
 --     pg_catalog, public, every table schema-qualified and filtered by app.tenant_id(); EXECUTE revoked from PUBLIC and
 --     granted to app_user only. It reads call_scores past RLS: the aggregate exception R-COACH-7 grants ("a Team Lead

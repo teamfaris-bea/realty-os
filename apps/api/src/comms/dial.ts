@@ -106,7 +106,7 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
       direction: 'outbound',
       enabled: policy.recordingEnabled,
     });
-    await takeoverInTx(tx, deps.ids, actor, contactId, txNow); // 0190 (D12, R-ISA-3): a human dial pauses live AI care
+    await takeoverInTx(tx, deps.ids, actor, contactId, txNow); // 0080 (D12, R-ISA-3): a human dial pauses live AI care
     await sql`
       INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id, client_address, initiator, status,
         started_at, recording_mode, recording_decision)

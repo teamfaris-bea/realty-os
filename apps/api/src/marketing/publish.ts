@@ -115,7 +115,7 @@ export async function publishPost(deps: PublishDeps, actor: UserActor, pieceId: 
       if (!t.external_account_id || !t.credential_id) throw new AppError('CHANNEL_NOT_CONNECTED');
       if (!(await repo.platformCleared(tx, 'platform:fair_housing'))) throw new AppError('PLATFORM_NOT_CLEARED');
       if (t.kind === 'gbp_location') {
-        // module 53: GBP stays dark behind platform:gbp (the 0170 gate is the authority) and needs a configured adapter
+        // module 53: GBP stays dark behind platform:gbp (the 0079 gate is the authority) and needs a configured adapter
         if (!(await repo.platformCleared(tx, 'platform:gbp'))) throw new AppError('PLATFORM_NOT_CLEARED', { pack: 'platform:gbp' });
         if (!deps.gbp?.configured) throw new AppError('GBP_NOT_CONFIGURED');
       }

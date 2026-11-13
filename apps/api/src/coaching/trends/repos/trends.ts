@@ -1,4 +1,4 @@
-// SQL of api/coaching-trends (module 54). Trends read scored calls ONLY through app.coaching_trends (0170): the
+// SQL of api/coaching-trends (module 54). Trends read scored calls ONLY through app.coaching_trends (0079): the
 // aggregate-only definer decides the scope (self; Owner/Admin any member; a Team Lead their team only while the
 // Owner's tl_sees_call_scores is on) and the floor (R-COACH-7, R-COACH-8). Nothing here names the scores table, a
 // call, a contact or a quote (architecture test). The member list and the week bounds are plain reads.

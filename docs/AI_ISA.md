@@ -500,7 +500,7 @@ Readiness is computed by core only from **usable** claims: verified, not needs_r
    - Then TX-C (locks 2→3→4) records the result. When booked and care is still live, it writes the handoff (`appointment_booked`) and queues the confirmation as the handoff's pending message. When care is no longer live, the handoff says "booked; confirmation not sent". A GrantRevoked during the booking is written by `revokeLinkAsSystem` in the job's own transaction, so a later rollback cannot lose it.
 5. **No double booking.**
    - **The gap on main:** a human `createAppointment` inserts first and takes the person lock afterwards (apps/api/src/workspace/appointments.ts:87-98; apps/api/src/calendar/hooks.ts:13-17).
-   - **The fix in 0190:** a `BEFORE INSERT OR UPDATE OF starts_at, ends_at, status, user_id` trigger on `appointments` takes `pg_advisory_xact_lock(hashtextextended('calendar.book:'||tenant||':'||user_id, 0))` before the row is written (the same key as links.ts:174-176; re-entrant inside the booking job).
+   - **The fix in 0080:** a `BEFORE INSERT OR UPDATE OF starts_at, ends_at, status, user_id` trigger on `appointments` takes `pg_advisory_xact_lock(hashtextextended('calendar.book:'||tenant||':'||user_id, 0))` before the row is written (the same key as links.ts:174-176; re-entrant inside the booking job).
    - For `created_by_kind='assistant'` rows the trigger raises `APPOINTMENT_OVERLAP` on any overlapping scheduled or held appointment of the organizer.
    - A human may still overlap their own calendar, with the warning "Overlaps your 3:00 PM appointment".
    - Accepted offers are unique per `offer_id`, and `ai_isa_slot_offers.appointment_id` is unique.
@@ -585,7 +585,7 @@ Every AI ISA message has `purpose='marketing'`. `message_kind` (reply or initiat
   - America/Anchorage or Pacific/Honolulu when any evidence points there (907 or 808, AK or HI).
 - This deliberately stops using `resolveRecipientZones`' first-tier-wins rule (tz.ts:285-319: `contactTz ?? pointTz` regardless of source, :305). Core ships `aiIsaRecipientZones`, and a test pins the difference.
 - **Window.** `nextWindowStart(at, zones, start, end)` (tz.ts:268-279) gives the earliest instant inside the window in every zone. `null` means no send is possible, and care ends with a handoff `ZONE_WINDOWS_DO_NOT_OVERLAP`. Replies obey the window too. Initiated messages also obey `initiatedDays` and holidays.
-- **The guard recomputes the minimum zone set** from DB facts: reference tables `ai_isa_area_code_zones` and `ai_isa_state_zones`, seeded in 0190 and kept equal to the core data by a test. It requires `turn.zones ⊇` that set.
+- **The guard recomputes the minimum zone set** from DB facts: reference tables `ai_isa_area_code_zones` and `ai_isa_state_zones`, seeded in 0080 and kept equal to the core data by a test. It requires `turn.zones ⊇` that set.
 - **TX1 checks offsets.** For each zone, TX1 compares core's UTC offset at now with Postgres's. A mismatch defers the message and alerts. Node ICU and Postgres tzdata versions are recorded on the turn.
 - A zone the client states is recorded as a claim and never set automatically. The agent may set an explicit zone (person edit).
 
@@ -806,7 +806,7 @@ Applied to model text (`reply.text`, the summary) and, for the identity check, t
 
 ---
 
-## 8. Data model (placeholders: `0190_ai_isa.sql`, owned by ISA-2; `0191_ai_isa_seller.sql`, owned by ISA-3)
+## 8. Data model (`0080_ai_isa.sql`, lane number 0190, owned by ISA-2; placeholder `0191_ai_isa_seller.sql`, owned by ISA-3, which must apply after 0080)
 
 Every new tenant table has:
 - the composite `(tenant_id, id)` key and FORCE RLS;
@@ -904,9 +904,9 @@ Every CREATE OR REPLACE starts from the object's newest definition at merge time
 - Columns: tenant_id, local_day, n; PK (tenant_id, local_day). Written only by the guard.
 
 **`ai_isa_area_code_zones`, `ai_isa_state_zones`** (global reference data, like `jurisdiction_packs`)
-- Readable by app roles; seeded in 0190; no tenant column. A test checks equality with the core data.
+- Readable by app roles; seeded in 0080; no tenant column. A test checks equality with the core data.
 
-**`ai_isa_seller_watch`** (0191)
+**`ai_isa_seller_watch`** (placeholder 0191, which must apply after 0080)
 - Columns: tenant_id, assignment_id (PK), contact_address_id, subject_address_key, subject_connection_id, subject_confirmed_by_user_id, subject_confirmed_at, subject_facts, subject_record_date, last_snapshot, snapshot_versions, last_comp_set_hash, comps_suspended_until_agent boolean, last_run_at, last_shared_at, last_count_share_at.
 - The confirmation is cleared by a trigger on the contact address.
 
@@ -1091,11 +1091,11 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 
 | Lane | Interaction | Rule |
 |---|---|---|
-| telephony-safeguards (S1–S5; 0130–0132; E380–E389) | Its 0132 redefines the guard. Its daily cap and kill switch apply to AI SMS (a hold). `message_text_parts` (S5) is read by the guard (ISA_UNREAD_PART), and an MMS is never a turn. | ISA-2's 0190 starts from 0132's body. Never weaken S1–S5. Tests run with the switch off. |
+| telephony-safeguards (S1–S5; 0130–0132; E380–E389) | Its 0132 redefines the guard. Its daily cap and kill switch apply to AI SMS (a hold). `message_text_parts` (S5) is read by the guard (ISA_UNREAD_PART), and an MMS is never a turn. | ISA-2's 0080 (lane number 0190) starts from 0065's body (lane number 0132). Never weaken S1–S5. Tests run with the switch off. |
 | lead-intake (0110; E313–E354) | It edits inbound.ts, intake.ts and intakeConsent.ts. Its grants and disclosures are read by R-ISA-9. Call tracking is a call (pause). | ISA-2 edits inbound.ts after intake merges. The one intake edit is `scope_stated`, agreed with that lane's owner after merge. The AI ISA never writes grants. |
 | CMA V1-A, V1-B, V1-C (0068; E360–E377) | Seller reuse: `soldCandidates`, `mlsRowsAtAddress`, `liveNearMatches`, `clientReadiness`, `clientSoldView`, `prepareCma`, `competingSet`, V2-A's statement rules | ISA-3 starts after all three merge. Its flagged edits (`compsForSubjectInTx` with `onBehalfOf`, the `clientReadiness` `use`, the licence switch and `valuation.ai_isa_comps`, MATRIX `ai_isa.seller_facts`) are agreed with those lanes. An architecture test enforces that no ISA file reads `listings.close_price_cents` except through `compsForSubjectInTx`. |
-| Voice API (48; E420–E439; 0150) | Both book through `bookSlot`/`bookSlotInTx`. A call pauses AI care and links its package to the call's card. | Whichever lands first adds the appointments lock trigger, and the other rebases. Voice keeps D-VOICE. |
-| Next-wave 42 (documents; E400–E419; 0140, now 0069), 52 (ads; E440–E459; 0160, now 0070), 53/54 (GBP and coaching trends; E460–E474; 0170), deploy readiness (E475–E489; no migration) | none | — |
+| Voice API (48; E420–E439; 0150, now 0078) | Both book through `bookSlot`/`bookSlotInTx`. A call pauses AI care and links its package to the call's card. | Whichever lands first adds the appointments lock trigger, and the other rebases. Voice keeps D-VOICE. |
+| Next-wave 42 (documents; E400–E419; 0140, now 0069), 52 (ads; E440–E459; 0160, now 0070), 53/54 (GBP and coaching trends; E460–E474; 0170, now 0079), deploy readiness (E475–E489; no migration) | none | — |
 
 - **No running lane is cancelled or interrupted.**
   - ISA-1 may start when this design is approved, from staging. Its compliance edits are additive and covered by the non-interference property.
@@ -1104,8 +1104,8 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
   - ISA-4 starts after ISA-2 deliverable 1 is pushed.
 - **File ownership:**
   - ISA-1: `packages/core/src/isa/**`;
-  - ISA-2: `apps/api/src/isa/**` except `seller/**`, `packages/db/migrations/0190_*`, `packages/db/test/rls_smoke_ai_isa.*`, `apps/api/src/providers/fake/{isaAi,hostileIsaAi}.ts`;
-  - ISA-3: `apps/api/src/isa/seller/**`, `0191_*`;
+  - ISA-2: `apps/api/src/isa/**` except `seller/**`, `packages/db/migrations/0080_ai_isa.sql` (lane number 0190), `packages/db/test/rls_smoke_ai_isa.*`, `apps/api/src/providers/fake/{isaAi,hostileIsaAi}.ts`;
+  - ISA-3: `apps/api/src/isa/seller/**`, `0191_*` (placeholder; it must apply after 0080);
   - ISA-4: `apps/web/src/surfaces/aiCare/**`;
   - everything else is a §9.6 flagged edit.
 - **Merge order:** ISA-1 → ISA-2 → ISA-4 (buyer UI) → ISA-3, then ISA-4's seller pieces, which render "not available" until then.

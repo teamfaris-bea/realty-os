@@ -223,7 +223,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       if (a.status !== 'proposed') extra.push('ASSISTANT_ACTION_WITHDRAWN');
       else extra.push(...(await playbookReasons(tx, m, a, owner, channel, policy.autonomous, tenant, conv?.id ?? null)));
     } else if (a.autonomy === 'ai_isa_mandate') {
-      // 0190 (D12 proposed, R-ISA-8): the AI ISA mandate; the gate's checks 0/8/12 and the guard decide (isa/send.ts)
+      // 0080 (D12 proposed, R-ISA-8): the AI ISA mandate; the gate's checks 0/8/12 and the guard decide (isa/send.ts)
       gateInitiator = 'assistant';
       if (a.status !== 'proposed' || !isAiIsaMessage(m.actionCategory)) extra.push('ASSISTANT_ACTION_WITHDRAWN');
     } else extra.push('ASSISTANT_ACTION_NOT_APPROVED');

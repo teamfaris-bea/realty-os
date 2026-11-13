@@ -57,7 +57,7 @@ describe('GBP stays dark until platform:gbp is reviewed (R-GBP-3)', () => {
       const s = await status();
       expect(s.status).toBe(200);
       expect(s.body.status).toEqual({ state: 'not_cleared', sentence: 'Google Business Profile stays off until counsel reviews it (pack platform:gbp 2026.11.0). Nothing is read from or posted to Google.', locations: [] });
-      // the database refuses a forced row too (the 0170 guard)
+      // the database refuses a forced row too (the 0079 guard)
       await expect(withTenantTx(systemActor(w.tenantId, 'provider'), (tx) => sql`INSERT INTO gbp_reviews (tenant_id, id, connection_id, external_review_id, rating, reviewed_at) VALUES (app.tenant_id(), ${randomUUID()}, ${w.location.connectionId}, 'forced', 5, now())`.execute(tx), { db: h.database })).rejects.toThrow(/GBP_NOT_CLEARED/);
     } finally {
       await resetPacks(h);

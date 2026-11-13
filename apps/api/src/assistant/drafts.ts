@@ -180,7 +180,7 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
       await A.resolveFeedFor(tx, a.id, now);
       return { kind: 'done', result: { actionId, status: 'approved', result: 'acknowledged', messageId: null, decision: null } };
     }
-    // 0190 (D12, R-ISA-3): approving a draft or a handback reply is a takeover: live AI care pauses at once
+    // 0080 (D12, R-ISA-3): approving a draft or a handback reply is a takeover: live AI care pauses at once
     await takeoverInTx(tx, deps.ids, actor, a.contactId, now);
     let sendActionId = a.id;
     if (a.kind === 'handback') {

@@ -167,7 +167,7 @@ async function sendItem(deps: CommsDeps, tenantId: string, creator: UserActor, a
       await B.finishItem(tx, a.id, it.contactId, 'skipped', 'NO_ADDRESS'); // the frozen address was removed since
       return { kind: 'skip' };
     }
-    // 0190 (D12, Q-ISA-23): people under live AI care are skipped by default ("Skip people under AI care" is on unless
+    // 0080 (D12, Q-ISA-23): people under live AI care are skipped by default ("Skip people under AI care" is on unless
     // the creator turned it off); if sent, a bulk message counts toward their 24-hour budget and never pauses AI care
     if (a.params['includeAiCare'] !== true && (await liveAssignmentOf(tx, it.contactId)) !== null) {
       await B.finishItem(tx, a.id, it.contactId, 'skipped', 'UNDER_AI_CARE');

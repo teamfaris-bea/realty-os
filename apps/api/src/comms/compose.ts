@@ -263,7 +263,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       integrationConnectionId: d.chat?.connectionId ?? null,
       marketingPieceId: input.marketingPieceId ?? null,
     });
-    // 0190 (D12, R-ISA-3): a one-to-one human message created or scheduled pauses live AI care at once (bulk and
+    // 0080 (D12, R-ISA-3): a one-to-one human message created or scheduled pauses live AI care at once (bulk and
     // marketing sends never take over: they count toward the person's 24-hour budget instead)
     if (inserted && !input.bulkActionId && !input.marketingPieceId) await takeoverInTx(tx, deps.ids, actor, contactId, now);
     if (!inserted) {

@@ -304,7 +304,7 @@ export async function cancelQueuedSmsTo(tx: Tx, addresses: readonly string[], re
 /** Cancel queued assistant messages of these contacts (pause on reply, R-AST-9). Human-scheduled ones stay. */
 export async function cancelQueuedAssistant(tx: Tx, contactIds: readonly string[], reason: string, o: { keepPostHandoff?: boolean } = {}): Promise<string[]> {
   if (contactIds.length === 0) return [];
-  // 0190 (D12, §4.7, E533): an acknowledgement-only reply keeps the AI ISA post-handoff confirmation / holding line
+  // 0080 (D12, §4.7, E533): an acknowledgement-only reply keeps the AI ISA post-handoff confirmation / holding line
   const r = await sql<{ id: string }>`
     UPDATE messages SET status = 'canceled', status_reason = ${reason}
      WHERE tenant_id = app.tenant_id() AND direction = 'outbound' AND NOT imported AND initiator = 'assistant'

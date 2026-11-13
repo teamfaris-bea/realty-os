@@ -10,14 +10,14 @@
 --     playbook_versions.narrows_previous, assistant_actions kinds/categories/autonomy and the mandate CHECK,
 --     gate_decisions categories, messages.email_dkim_aligned, consent_disclosures.scope_stated, ai_runs purposes,
 --     notification kinds, feed item types.
---  2. §8.2 tables (ai_isa_seller_watch is ISA-3's 0191): optins, assignments, controls, stop signals, person blocks,
+--  2. §8.2 tables (ai_isa_seller_watch is ISA-3's placeholder 0191, which must apply after 0080): optins, assignments, controls, stop signals, person blocks,
 --     turns, slot offers, shared facts, handoffs, daily counts, and the global zone reference tables.
 --  3. Guards (all invoker): optins, assignments (insert and update), handoffs (ack columns only), the playbook
 --     enrollment AI_ISA_ACTIVE refusal, zone validation.
 --  4. Stop-signal triggers on consent_events, suppressions and contacts.do_not_contact_at (R-ISA-31).
 --  5. The appointments lock and assistant-overlap trigger (R-ISA-13, E532).
 --  6. app.ai_isa_send_check (invoker, EXECUTE only for app_definer) and the guard's ai_isa_mandate branch (§5.4).
--- SECURITY REVIEW ITEMS: docs/ARCHITECTURE.md §21.37 "Security notes: AI ISA".
+-- SECURITY REVIEW ITEMS: docs/ARCHITECTURE.md §21.38 "Security notes: AI ISA".
 
 -- =============================================================================
 -- 1. Changed objects
@@ -1329,7 +1329,7 @@ BEGIN
     IF NOT FOUND THEN
       RAISE EXCEPTION 'ASSISTANT_ACTION_MISSING' USING ERRCODE = 'check_violation';
     ELSIF NEW.action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND a.autonomy IS DISTINCT FROM 'ai_isa_mandate' THEN
-      -- 0190 (batch 12, isa-2-2): an AI ISA category goes out only under the mandate, whoever sends it
+      -- 0080 (batch 12, isa-2-2): an AI ISA category goes out only under the mandate, whoever sends it
       RAISE EXCEPTION 'ISA_NOT_AUTHORIZED: AI assistant categories are sent only under the AI assistant mandate (assistant)' USING ERRCODE = 'check_violation';
     ELSIF a.autonomy = 'within_playbook' THEN
       -- b7 sends/F2: an autonomous message goes out only while its action is still proposed (it turns executed only
@@ -1351,13 +1351,13 @@ BEGIN
         RAISE EXCEPTION 'ASSISTANT_ACTION_NOT_APPROVED' USING ERRCODE = 'check_violation';
       END IF;
     ELSIF a.autonomy = 'ai_isa_mandate' THEN
-      -- 0190 (D12, R-ISA-8): every AI ISA check of docs/AI_ISA.md §5.4, after D1's above
+      -- 0080 (D12, R-ISA-8): every AI ISA check of docs/AI_ISA.md §5.4, after D1's above
       PERFORM app.ai_isa_send_check(NEW);
     ELSE
       RAISE EXCEPTION 'ASSISTANT_ACTION_NOT_SENDABLE' USING ERRCODE = 'check_violation';
     END IF;
   ELSIF NEW.action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') THEN
-    -- 0190: an AI ISA category is never sent by a human or the system
+    -- 0080: an AI ISA category is never sent by a human or the system
     RAISE EXCEPTION 'ISA_NOT_AUTHORIZED: AI assistant categories are sent only under the AI assistant mandate' USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;

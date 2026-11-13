@@ -157,7 +157,7 @@ export const PACK_GATES: Record<string, string> = {
  * `change_budget` waits for `platform:ads`, which the module 52 gates read with `app.platform_cleared('platform:ads', true)`.
  * The publishing packs need counsel review only, as the 0025 publications guard's
  * `app.platform_cleared('platform:fair_housing')` and module 53's `app.platform_cleared('platform:gbp')` do (VERIFY: platform:gbp
- * counsel-only versus vendor-checked, ARCHITECTURE §21.39). Reading
+ * counsel-only versus vendor-checked, ARCHITECTURE §21.40). Reading
  * Google Ads spend waits for no pack (module 52, Q-ADS-1).
  */
 const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string | readonly string[]>>> = {

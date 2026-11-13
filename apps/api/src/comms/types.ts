@@ -40,7 +40,7 @@ export interface OutboundIntent {
   body: string | null;
   /** web chat (module 22): the sending widget's state for the gate (core check 10); absent/null on other channels */
   connection?: { status: 'connected' | 'degraded' | 'other' } | null;
-  /** 0190 (D12): the AI ISA facts for core checks 0/8/12 (AI ISA categories only; isa/send.ts aiIsaGateFacts) */
+  /** 0080 (D12): the AI ISA facts for core checks 0/8/12 (AI ISA categories only; isa/send.ts aiIsaGateFacts) */
   aiIsa?: AiIsaGateFacts;
 }
 
