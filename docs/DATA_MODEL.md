@@ -1743,7 +1743,7 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E649 | Stream token reused or over 60 s, or the document unshared, item retracted or grant revoked before download | 404, nothing streamed | R-PORTAL-7, R-PORTAL-17 |
 | E650 | Invite a non-party, or by an ISA, TC, support or another agent | 409 PORTAL_NOT_A_PARTY; 404 without the action | R-PORTAL-13 |
 | E651 | Invite a contact with no active email or phone; the point later removed or marked wrong | 409 PORTAL_LOGIN_POINT_MISSING; later the staff view says sign-in is impossible and offers another point | R-PORTAL-13 |
-| E652 | Invite twice, or two taps at once | Same account and grant; no second notice unless resend | R-PORTAL-13 |
+| E652 | Invite twice, or two taps at once | Same account and grant; no second notice unless resend; the answer never claims a note went when none did (b14 audit F7): a note sent ⇒ "already invited", one on its way ⇒ says so, none sent yet by this inviter (invited while the portal was off) ⇒ the note goes now, else ⇒ none reached them, Resend | R-PORTAL-13 |
 | E653 | Invite while uncleared | Account and grant created, nothing sent; response and preview say so | R-PORTAL-13, R-INT-6 |
 | E654 | Publish an unshared, pending, infected or contact-scoped document, or a proposed milestone | Core refuses before the DB; a forged insert is refused by the guard | R-PORTAL-3, R-PORTAL-14 |
 | E655 | Showing, feedback or seller update through the deal's listing to a buyer-side client, or a seller who is only the primary contact | 409 PORTAL_NOT_SELLER_SIDE in core and DB; the sentence says to add them as seller | R-PORTAL-19 |

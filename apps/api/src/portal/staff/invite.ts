@@ -7,7 +7,10 @@
 // After commit, the invite NOTICE: the inviter's own message through composeHumanMessage (dispatch-gated, D1 opt-outs
 // apply, a touch; with no open deal or recent inbound compose makes it marketing, and a marketing opt-out blocks it).
 // No token in it. Nothing is sent while platform:portal is not cleared, and the answer says so (E653). A blocked
-// notice returns its decision; the invite stands. VERIFY WITH COUNSEL (Q-PORTAL-7).
+// notice returns its decision; the invite stands. A repeat invite (no new account or grant, no resend) answers from
+// what became of the grant's earlier notes (b14 audit F7): sent ⇒ "already invited"; still on its way ⇒ says so; none
+// sent by this inviter yet (an invite while the portal was off) ⇒ the note goes now; else ⇒ none reached them, Resend.
+// VERIFY WITH COUNSEL (Q-PORTAL-7).
 import type { ContactId, UserActor } from '@realty/core/foundation';
 import { type Tx, lockContact } from '@realty/db';
 import type { FastifyRequest } from 'fastify';
@@ -16,11 +19,11 @@ import { audit } from '../../audit.js';
 import { composeHumanMessage } from '../../comms/compose.js';
 import { refuseMergedAway } from '../../comms/merged.js';
 import { detailVisibleContact } from '../../comms/repos/contacts.js';
-import { depsFromPlatform } from '../../comms/runtime.js';
+import { asSystem, depsFromPlatform } from '../../comms/runtime.js';
 import { AppError } from '../../errors.js';
 import { platformOf } from '../../workspace/common.js';
 import { enqueueTyped } from '../../worker/registry.js';
-import { INVITE_EMAIL_SUBJECT, inviteBlocked, inviteBody, inviteNoNotice, inviteNotSent, inviteSent, portalSignInUrl, sentenceFor } from '../shared/copy.js';
+import { INVITE_EMAIL_SUBJECT, inviteBlocked, inviteBody, inviteNoNotice, inviteNoteInFlight, inviteNoteNotReached, inviteNotSent, inviteSent, portalSignInUrl, sentenceFor } from '../shared/copy.js';
 import { PORTAL_SYNC_NOW } from '../sync/jobs.js';
 import { cardFor, type PartyRole, titleAndScope } from './display.js';
 import { portalClearedInTx, staffTx } from './common.js';
@@ -148,15 +151,39 @@ export interface InviteResult {
   notice: { sent: boolean; text: string; channel: 'sms' | 'email' | null; decision: { outcome: string; reasons: string[]; explanation: string } | null };
 }
 
+/**
+ * What became of the invite notes of a grant (b14 audit F7), read as the system (statuses only, any inviter's): a repeat
+ * invite says a note was sent only when one was; a note still on its way is said to be; a grant none of whose notes
+ * arrived gets its note now when this inviter's key is still unused, else is told so and offered Resend.
+ */
+async function priorNotices(tx: Tx, grantId: string, inviterId: string): Promise<{ sent: boolean; inFlight: boolean; mineUsed: boolean }> {
+  const r = await sql<{ status: string; mine: boolean }>`
+    SELECT status, idempotency_key = ${`h:${inviterId}:portal_invite:${grantId}`} AS mine FROM public.messages
+     WHERE tenant_id = app.tenant_id() AND direction = 'outbound'
+       AND idempotency_key ~ ${`^h:[0-9a-f-]{36}:portal_invite:${grantId}(:|$)`}`.execute(tx);
+  return {
+    sent: r.rows.some((m) => m.status === 'sent' || m.status === 'delivered'),
+    inFlight: r.rows.some((m) => ['queued', 'scheduled', 'dispatching', 'dispatch_unknown'].includes(m.status)),
+    mineUsed: r.rows.some((m) => m.mine),
+  };
+}
+
 export async function invite(req: FastifyRequest, scope: Scope, input: InviteInput): Promise<InviteResult> {
   const p = platformOf(req);
   const deps = depsFromPlatform(p);
   const r = await staffTx(req, (tx, actor) => inviteInTx(tx, actor, { linkSecret: deps.linkSecret, publicBaseUrl: deps.publicBaseUrl }, scope, input));
   const channel = r.pointKind === 'email' ? 'email' : 'sms';
-  let notice: InviteResult['notice'];
+  let notice: InviteResult['notice'] | null = null;
   if (!r.cleared) notice = { sent: false, text: inviteNotSent(r.first), channel: null, decision: null };
-  else if (!r.createdGrant && !r.createdAccount && input.resend !== true) notice = { sent: false, text: inviteNoNotice(r.first), channel: null, decision: null };
-  else {
+  else if (!r.createdGrant && !r.createdAccount && input.resend !== true) {
+    // b14 audit F7: never "no second note" when no first note went (an invite while the portal was off, a blocked note)
+    const prior = await asSystem(deps, req.actor!.tenantId, 'worker', (tx) => priorNotices(tx, r.grantId, req.actor!.userId));
+    if (prior.sent) notice = { sent: false, text: inviteNoNotice(r.first), channel: null, decision: null };
+    else if (prior.inFlight) notice = { sent: false, text: inviteNoteInFlight(r.first), channel: null, decision: null };
+    else if (prior.mineUsed) notice = { sent: false, text: inviteNoteNotReached(r.first), channel: null, decision: null };
+    // else: no note of this inviter for the grant yet, so its key is unused: the note goes now (below)
+  }
+  if (notice === null) {
     const actorName = (await staffTx(req, (tx, actor) => sql<{ n: string }>`SELECT display_name AS n FROM users WHERE id = ${actor.userId}`.execute(tx))).rows[0]?.n ?? 'Your agent';
     const body = inviteBody({ agent: actorName, scope: r.scope, url: portalSignInUrl(p.config.webOrigins[0]!, r.slug), kind: r.pointKind });
     try {
@@ -177,5 +204,5 @@ export async function invite(req: FastifyRequest, scope: Scope, input: InviteInp
     }
   }
   const views = await staffTx(req, async (tx) => ({ accounts: await accountViews(tx, [r.accountId]), grants: await grantStaffViews(tx, [r.grantId]) }));
-  return { account: views.accounts[0]!, grant: views.grants[0]!, created: { account: r.createdAccount, grant: r.createdGrant }, notice };
+  return { account: views.accounts[0]!, grant: views.grants[0]!, created: { account: r.createdAccount, grant: r.createdGrant }, notice: notice! };
 }

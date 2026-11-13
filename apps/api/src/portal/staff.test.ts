@@ -87,6 +87,45 @@ describe('R-PORTAL-13 invite (E650-E653)', () => {
     expect(counts.rows[0]).toEqual({ a: '1', g: '1' });
   });
 
+  it('E652 E653 (b14 F7): invited while the portal was off (no note), then again once it is on: the note goes now, and only a later invite says one was already sent', async () => {
+    const c = await client(agent(), { firstName: 'Dawn' });
+    const d = await deal(agent(), c.id);
+    const notes = () => h.providers.email.sent.filter((m) => m.to === c.email).length;
+    await setPortalCleared(h, false);
+    let first;
+    try {
+      first = await invite(agent(), d, c.id);
+    } finally {
+      await setPortalCleared(h, true);
+    }
+    expect(first.body.notice).toMatchObject({ sent: false, text: "Dawn can't sign in until the client portal is turned on, so nothing was sent to them." });
+    expect(notes()).toBe(0);
+    // cleared now: the same account and grant, and no note was ever sent, so this invite sends it (never "no second note")
+    const second = await invite(agent(), d, c.id);
+    expect(second.body.created).toEqual({ account: false, grant: false });
+    expect(second.body.notice.text).not.toMatch(/already invited|second note/);
+    expect(second.body.notice).toMatchObject({ sent: true, channel: 'email' });
+    expect(notes()).toBe(1);
+    // a note was sent: now, and only now, a repeat invite says so and sends nothing
+    const third = await invite(agent(), d, c.id);
+    expect(third.body.notice).toMatchObject({ sent: false, text: 'Dawn was already invited; no second note was sent.' });
+    expect(notes()).toBe(1);
+  });
+
+  it('E652 (b14 F7): when the first note was blocked, a repeat invite never claims a note was sent; it says none reached them and offers Resend', async () => {
+    const c = await client(agent(), { firstName: 'Bree' });
+    const d = await deal(agent(), c.id);
+    const point = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'email'`, [c.id])).rows[0]!.id;
+    expect((await call(agent(), 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: point, channel: 'email', purpose: 'all', evidence: { note: 'asked by email' } })).status).toBe(200);
+    const first = await invite(agent(), d, c.id);
+    expect(first.body.notice.sent).toBe(false);
+    expect(first.body.notice.decision?.reasons).toContain('CONSENT_REVOKED');
+    const again = await invite(agent(), d, c.id);
+    expect(again.body.notice.sent).toBe(false);
+    expect(again.body.notice.text).not.toMatch(/already invited; no second note/);
+    expect(again.body.notice.text).toBe('No note has reached Bree yet. Tap Resend to try again.');
+  });
+
   it('R-PORTAL-13: the notice is the inviter\'s own message (a human touch), carries no token, and its decision is returned when blocked', async () => {
     const c = await client(agent(), { firstName: 'Hope' });
     const d = await deal(agent(), c.id);
