@@ -409,6 +409,28 @@ describe('live free/busy (R-CAL-3)', () => {
 });
 
 describe('booking under the per-user advisory lock (E151)', () => {
+  it('E532 R-ISA-13 (b12 review B12X-1/F4): a person edits, moves and logs the outcome of an assistant-booked appointment their own appointment overlaps; the assistant still books no overlap', async () => {
+    const deps = calendarDeps(h.app.platform);
+    const r = await bookSlot(deps, agent.tenantId!, { userId: agent.userId!, kind: 'consult', startsAt: inHours(300), endsAt: inHours(301), createdByKind: 'assistant' });
+    expect(r.ok).toBe(true);
+    const aiId = (r as { appointmentId: string }).appointmentId;
+    // the agent books their own overlapping appointment by choice (a human overlap is allowed)
+    const mine = await newAppointment(agent, { startsAt: inHours(300.5), endsAt: inHours(301.5) });
+    const p = await call(agent, 'PATCH', `/appointments/${aiId}`, { location: 'Office' });
+    expect(p.status, JSON.stringify(p.body)).toBe(200);
+    const moved = await call(agent, 'PATCH', `/appointments/${aiId}`, { startsAt: inHours(300.25), endsAt: inHours(301.25) });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    // the assistant path still refuses to book into the person's time (the in-app re-read, then the trigger)
+    const again = await bookSlot(deps, agent.tenantId!, { userId: agent.userId!, kind: 'consult', startsAt: inHours(300.5), endsAt: inHours(301) , createdByKind: 'assistant' });
+    expect(again.ok).toBe(false);
+    // both move into the past; the outcome of the AI-booked one is logged ('held' is the outcome, not a hold)
+    await h.su.query(`UPDATE appointments SET starts_at = clock_timestamp() - interval '3 hours', ends_at = clock_timestamp() - interval '2 hours' WHERE id = $1`, [aiId]);
+    await h.su.query(`UPDATE appointments SET starts_at = clock_timestamp() - interval '150 minutes', ends_at = clock_timestamp() - interval '90 minutes' WHERE id = $1`, [mine]);
+    const o = await call(agent, 'POST', `/appointments/${aiId}/outcome`, { result: 'follow_up' });
+    expect(o.status, JSON.stringify(o.body)).toBe(200);
+    expect((await call(agent, 'POST', `/appointments/${mine}/outcome`, { result: 'follow_up' })).status).toBe(200);
+  });
+
   it('E151: two concurrent bookings of the same slot: exactly one wins, the other is offered the next free slot', async () => {
     const deps = calendarDeps(h.app.platform);
     const start = inHours(200);

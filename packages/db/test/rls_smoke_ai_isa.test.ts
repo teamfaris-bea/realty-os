@@ -7,7 +7,7 @@
 // passes); the first daily upsert; the stop-signal trigger per writer; the appointments lock in both orders and the
 // assistant-overlap refusal; the loosening guard; the zone reference data equal to core; Postgres AT TIME ZONE
 // agreeing with core localWindowContains.
-import { AREA_CODE_STATES, areaCodeZones, STATE_ZONES } from '@realty/core/isa';
+import { AREA_CODE_STATES, areaCodeZones, STATE_ZONES, usFederalHolidays } from '@realty/core/isa';
 import { type IanaZone, type Instant, type LocalTime, localWindowContains } from '@realty/core/foundation';
 import type { Actor } from '@realty/core/foundation';
 import fc from 'fast-check';
@@ -90,6 +90,15 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     const db = r.rows[0]!.inside;
     const mismatches = samples.filter((s, i) => localWindowContains(s[0] as Instant, s[1] as IanaZone, (8 * 3600) as LocalTime, (20 * 3600) as LocalTime) !== db[i]);
     expect(mismatches).toEqual([]);
+  });
+
+  it('R-ISA-10 (b12 review B12X-6): the guard\'s federal-holiday rule equals core usFederalHolidays on every day of 2020-2045, and the send check refuses an initiated message on one', async () => {
+    const r = await h.su.query<{ d: string }>(`SELECT to_char(d, 'YYYY-MM-DD') AS d FROM generate_series('2020-01-01'::date, '2045-12-31'::date, interval '1 day') d
+      WHERE app.ai_isa_us_federal_holiday(d::date) ORDER BY 1`);
+    const want = Array.from({ length: 26 }, (_, i) => usFederalHolidays(2020 + i)).flat().filter((d) => d >= '2020-01-01' && d <= '2045-12-31');
+    expect(r.rows.map((x) => x.d)).toEqual([...new Set(want)].sort());
+    const [src] = await suRows<{ src: string }>(h.su, `SELECT prosrc AS src FROM pg_proc WHERE oid = 'app.ai_isa_send_check(public.messages)'::regprocedure`);
+    expect(src!.src).toContain("tier = 'initiated' AND app.ai_isa_us_federal_holiday(lt::date)");
   });
 
   it('R-ISA-5: a turn decision holds codes and handles only (a free-text value is refused by the CHECK)', async () => {
@@ -402,6 +411,15 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
       'sms', 'outbound', ${x.numberId}, '+15555559200', ${l.phone}, 'Hi', 'dispatching', 'human', ${x.agent.id}, 'marketing', 'ai_isa_message', now(), now())`))).toBe('ISA_NOT_AUTHORIZED');
     expect(await errOf(q(w.system('assistant'), sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload)
       VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'message_draft', 'ai_isa_message', 'requires_approval', 'proposed', ${x.agent.id}, 'x', '{}'::jsonb)`))).toMatch(/ai_isa/);
+  });
+
+  it('R-ISA-24 (b12 review db-guard-selfcheck-1): an AI ISA category sent by the system (no assistant action) is refused ISA_NOT_AUTHORIZED', async () => {
+    const l = await leadUnderCare(x);
+    for (const category of ['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']) {
+      expect(await errOf(q(w.system('worker'), sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
+        body, status, initiator, purpose, action_category, dispatched_at, occurred_at) VALUES (app.tenant_id(), ${uuid()}, ${l.conversationId}, ${l.contactId},
+        'sms', 'outbound', ${x.numberId}, '+15555559200', ${l.phone}, 'Hi', 'dispatching', 'system', 'marketing', ${category}, now(), now())`)), category).toBe('ISA_NOT_AUTHORIZED');
+    }
   });
 
   it('R-ISA-24 (isa-2-2): an assistant message carrying an AI ISA category under a within_playbook or requires_approval action is refused ISA_NOT_AUTHORIZED', async () => {
@@ -752,5 +770,96 @@ describe('merge (R-ISA-16; E526)', () => {
     const [a] = await suRows<{ status: string }>(h.su, `SELECT status FROM assistant_actions WHERE id = $1`, [m.actionId]);
     expect(a!.status).toBe('invalidated');
     expect(await dispatchCode(x, m.messageId)).toMatch(/ASSISTANT_ACTION_WITHDRAWN|ISA_STOPPED|RECIPIENT/);
+  });
+});
+
+describe('a merged-away record under the survivor (b12 review db-isa-merge-1, db-isa-merge-2; R-ISA-16, R-ISA-22, R-ISA-31; E505, E526)', () => {
+  const pointsOf = async (contactId: string) => (await suRows<{ phone: string; email: string; pp: string; ep: string }>(h.su, `SELECT
+      (SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' AND removed_at IS NULL ORDER BY created_at LIMIT 1) AS phone,
+      (SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'email' AND removed_at IS NULL ORDER BY created_at LIMIT 1) AS email,
+      (SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone' AND removed_at IS NULL ORDER BY created_at LIMIT 1) AS pp,
+      (SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'email' AND removed_at IS NULL ORDER BY created_at LIMIT 1) AS ep`, [contactId]))[0]!;
+  const mergeInto = async (survivor: string, loser: string) => {
+    const r = await cmd(h.app, w.owner.actor, survivor as never, { kind: 'merge', survivorId: survivor as never, loserId: loser as never, ownerChoice: null });
+    expect(r.outcome.ok, JSON.stringify(r.outcome)).toBe(true);
+    await drainFollowups(h, w);
+  };
+
+  it('R-ISA-31 R-ISA-16 E505 E526: a person block on a merged-away record refuses a restart on the agent-owned survivor (AI_ISA_PERSON_DECLINED) and an AI message of an assignment that missed it (ISA_STOPPED); the survivor\'s owner lifts it', async () => {
+    const l = await leadUnderCare(x);
+    // the person declines AI care on record L: the system writes the block and ends care
+    await q(w.system('assistant'), sql`INSERT INTO ai_isa_person_blocks (tenant_id, id, contact_id, assignment_id, reason)
+      VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, ${l.assignmentId}, 'ai_declined')`);
+    await q(w.system('assistant'), sql`UPDATE ai_isa_assignments SET ended_at = now(), end_reason = 'escalated', ended_by_kind = 'system', state = 'ended' WHERE id = ${l.assignmentId}`);
+    // a second record of the same person, owned by the same agent, survives a merge (the loser is closed, unowned)
+    const s = await selfCreated(h.app, w, x.agent, 'Survivor Block Lead');
+    await mergeInto(s, l.contactId);
+    expect((await q(x.agent.actor, sql`SELECT id FROM contacts WHERE id = ${l.contactId}::uuid`)).length).toBe(0);
+    const pts = await pointsOf(s);
+    const p = { phonePointId: pts.pp, phone: pts.phone, emailPointId: pts.ep, email: pts.email };
+    // the start check sees the whole person, past the agent's RLS
+    expect(await errOf(startCare(x, s, uuid(), p))).toBe('AI_ISA_PERSON_DECLINED');
+    // the agent reads the block through the survivor (the root branch)
+    const seen = await q<{ id: string }>(x.agent.actor, sql`SELECT id FROM ai_isa_person_blocks WHERE contact_id = ${l.contactId}::uuid AND lifted_at IS NULL`);
+    expect(seen.length).toBe(1);
+    // an assignment the start check missed (written past the guard): its AI message is refused at dispatch
+    const asg = uuid();
+    const [seq] = await suRows<{ seq: string }>(h.su, 'SELECT ownership_period_seq AS seq FROM contacts WHERE id = $1', [s]);
+    const bound = { sms: { point_id: pts.pp, hmac: hmacHex(pts.phone) }, email: { point_id: pts.ep, hmac: hmacHex(pts.email) } };
+    const c = await h.su.connect();
+    try {
+      await c.query('SET session_replication_role = replica');
+      await c.query(`INSERT INTO ai_isa_assignments (tenant_id, id, contact_id, owner_user_id, optin_id, playbook_version_id, bound_ownership_seq, bound_points, side, started_by_user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'buyer', $4)`, [w.tenantId, asg, s, x.agent.id, x.optinId, x.versionId, seq!.seq, JSON.stringify(bound)]);
+    } finally {
+      await c.query('SET session_replication_role = origin');
+      c.release();
+    }
+    const [cv] = await suRows<{ id: string }>(h.su, 'SELECT id FROM conversations WHERE contact_id = $1 LIMIT 1', [s]);
+    await h.su.query(`UPDATE contacts SET timezone = $2, timezone_source = 'explicit' WHERE id = $1`, [s, l.zone]);
+    const sl: Lead = { contactId: s, conversationId: cv!.id, phone: pts.phone, email: pts.email, phonePointId: pts.pp, emailPointId: pts.ep, assignmentId: asg, zone: l.zone };
+    const inb = await inbound(x, sl);
+    const m = await queueAi(x, sl);
+    expect(await dispatchCode(x, m.messageId)).toBe('ISA_STOPPED');
+    await h.su.query(`UPDATE ai_isa_assignments SET ended_at = now(), end_reason = 'opted_out', ended_by_kind = 'system', state = 'ended' WHERE id = $1`, [asg]);
+    // the survivor's owner lifts the block, after a new message from the person (on the survivor), with an attestation
+    const lifted = await errOf(q(x.agent.actor, sql`UPDATE ai_isa_person_blocks SET lifted_at = now(), lifted_by_user_id = ${x.agent.id},
+      lift_inbound_message_id = ${inb}, lift_attestation = 'They wrote again and asked to keep chatting.' WHERE contact_id = ${l.contactId}::uuid AND lifted_at IS NULL`));
+    expect(lifted).toBe('ok');
+    expect(await errOf(startCare(x, s, uuid(), p))).toBe('ok');
+  });
+
+  it('R-ISA-22 R-ISA-16 E526: the AI ISA rows of a merged-away record are read by the survivor\'s agent and Team Lead, and its handoff is acknowledged by its recipient; another agent sees none', async () => {
+    const l = await leadUnderCare(x);
+    await inbound(x, l);
+    const m = await queueAi(x, l);
+    await q(w.system('assistant'), sql`INSERT INTO ai_isa_controls (tenant_id, id, assignment_id, contact_id, kind, by_kind, reason)
+      VALUES (app.tenant_id(), ${uuid()}, ${l.assignmentId}, ${l.contactId}, 'continue', 'system', 'start')`);
+    const s = await selfCreated(h.app, w, x.agent, 'Survivor Lead Visible');
+    await mergeInto(s, l.contactId);
+    // what the stop-signal job writes when it ends the loser's care (as the system), before b12 review F1 moved it
+    const actionId = uuid();
+    const handoffId = uuid();
+    const pkg = JSON.stringify({ v: 1, reason: 'merged' });
+    await q(w.system('assistant'), sql`UPDATE ai_isa_assignments SET ended_at = now(), end_reason = 'merged', ended_by_kind = 'system', state = 'ended' WHERE id = ${l.assignmentId}`);
+    await q(w.system('assistant'), sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, dedupe_key)
+      VALUES (app.tenant_id(), ${actionId}, ${l.contactId}, 'ai_isa_handoff', 'internal', 'internal', 'proposed', ${x.agent.id}, 'AI care handed back: merged', '{}'::jsonb, ${'ai_isa_handoff:' + l.assignmentId})`);
+    await q(w.system('assistant'), sql`INSERT INTO ai_isa_handoffs (tenant_id, id, assignment_id, contact_id, reason, assistant_action_id, package, package_sha256, sla_class, sla_due_at, recipient_user_id)
+      VALUES (app.tenant_id(), ${handoffId}, ${l.assignmentId}, ${l.contactId}, 'merged', ${actionId}, ${pkg}::jsonb, encode(sha256(convert_to(${pkg}::jsonb::text, 'UTF8')), 'hex'), 'normal', now() + interval '1 hour', ${x.agent.id})`);
+    const see = async (a: Actor, t: string, col = 'assignment_id') => (await q(a, sql`SELECT 1 FROM ${sql.table(t)} WHERE ${sql.ref(col)} = ${t === 'ai_isa_handoffs' ? handoffId : l.assignmentId}::uuid`)).length;
+    for (const a of [x.agent.actor, w.tl!.actor]) {
+      expect(await see(a, 'ai_isa_assignments', 'id')).toBe(1);
+      expect(await see(a, 'ai_isa_controls')).toBeGreaterThan(0);
+      expect(await see(a, 'ai_isa_turns')).toBeGreaterThan(0);
+      expect(await see(a, 'ai_isa_handoffs', 'id')).toBe(1);
+    }
+    expect((await q(x.agent.actor, sql`SELECT 1 FROM ai_isa_stop_signals WHERE contact_id = ${l.contactId}::uuid`)).length).toBeGreaterThan(0);
+    // another agent of the tenant sees none of it
+    const other = w.agents.find((a) => a.id !== x.agent.id)!;
+    expect(await see(other.actor, 'ai_isa_assignments', 'id')).toBe(0);
+    expect(await see(other.actor, 'ai_isa_handoffs', 'id')).toBe(0);
+    const ack = await q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET acknowledged_at = now(), acknowledged_by_user_id = app.user_id() WHERE id = ${handoffId}::uuid RETURNING id`);
+    expect(ack.length).toBe(1);
+    void m;
   });
 });
