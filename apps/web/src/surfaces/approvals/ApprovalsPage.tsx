@@ -23,7 +23,9 @@ import { AGENT_ERROR_MESSAGES, dealDateStaleWords } from '../feed/lib/messages.j
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
-import { MarketingApprovals } from './MarketingApprovals.js';
+import { MarketingApprovals, useMarketingApprovals } from './MarketingApprovals.js';
+import { ExtractionActionPointer, RefusalNotice } from './ExtractionPointers.js';
+import { Phase3Approvals } from './Phase3Approvals.js';
 import { SellerUpdateApproval } from './SellerUpdateApproval.js';
 import { VoiceHandback, VoiceHandbackButtons, isVoiceHandback } from './VoiceHandback.js';
 
@@ -70,6 +72,8 @@ export default function ApprovalsPage() {
 
 function Approvals() {
   const q = useInbox();
+  // module 55: "Nothing to approve" only when the marketing drafts and every Phase 3 source are empty too
+  const marketing = useMarketingApprovals();
   const { hash } = useLocation();
   // seller updates sent from this page stay on it with their outcome (they leave the pending inbox when sent)
   const [kept, setKept] = useState<ActionView[]>([]);
@@ -81,14 +85,16 @@ function Approvals() {
   if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
   const items = [...q.data.items, ...kept.filter((k) => !q.data.items.some((i) => i.id === k.id))];
   if (items.length === 0) {
+    const empty = (
+      <EmptyState icon="inbox" title="Nothing to approve">
+        Drafts and replies from the assistant that need you will show up here.
+      </EmptyState>
+    );
     return (
-      <MarketingApprovals
-        whenEmpty={
-          <EmptyState icon="inbox" title="Nothing to approve">
-            Drafts and replies from the assistant that need you will show up here.
-          </EmptyState>
-        }
-      />
+      <div className="flex flex-col gap-4">
+        <MarketingApprovals />
+        <Phase3Approvals whenEmpty={marketing.isError || marketing.data?.pieces.length === 0 ? empty : null} />
+      </div>
     );
   }
   // one reachability request for every card's contact (not one per card)
@@ -98,10 +104,11 @@ function Approvals() {
     <ReachabilityBatch contactIds={contactIds}>
       <div className="flex flex-col gap-4">
         <MarketingApprovals />
+        <Phase3Approvals />
         <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {items.map((a) => (
             <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
-              {a.kind === 'seller_update_draft' && a.contactId === null ? <SellerUpdateApproval actionId={a.id} onSent={() => setKept((k) => (k.some((x) => x.id === a.id) ? k : [...k, a]))} /> : <ActionCard action={a} />}
+              {a.kind === 'contract_extraction' ? <ExtractionActionPointer action={a} /> : a.kind === 'seller_update_draft' && a.contactId === null ? <SellerUpdateApproval actionId={a.id} onSent={() => setKept((k) => (k.some((x) => x.id === a.id) ? k : [...k, a]))} /> : <ActionCard action={a} />}
             </li>
           ))}
         </ul>
@@ -206,7 +213,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
         </Notice>
       ) : null}
       {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{approve.error.message}</Notice> : null}
-      {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
+      {reject.error ? <RefusalNotice error={reject.error} /> : null}
       {result && !['acknowledged', 'sent', 'queued'].includes(sentResult(result)) ? (
         <SendOutcome result={{ result: sentResult(result), decision: result.decision, message: null }} contactName={name} />
       ) : sendable && reach.blocked ? (
