@@ -109,6 +109,21 @@ Phase 1 stays in force and is never weakened: FORCE RLS with composite `(tenant_
 | Q-GMAIL-3 (D2) | Store mail only for contacts the mailbox owner owns, collaborates on or shares a deal with, or for every contact they may see (TLs, Owners)? | Related contacts only (R-GMAIL-5). |
 | Q-GMAIL-4 (D2) | Backfill window when an agent connects? | 30 days (Owner may set 0–90; **VERIFY WITH COUNSEL**) (R-GMAIL-8). |
 | Q-GMAIL-5 (D2) | Should synced Gmail be visible only to the mailbox owner and the contact's current owner instead of the whole timeline audience? | Timeline audience (R-GMAIL-6), and the connect disclosure says so; employee and third-party notice is counsel item C14. |
+| Q-V2B-1 (D9, lane V2-B) | Do in-house home-value notes need `platform:cma` as well as `platform:avm`, at every stage, an approved draft included? D11 reports `platform:avm` cleared without naming a source (C1). | Yes (R-CMA-10). |
+| Q-V2B-2 (D9, lane V2-B) | What source name do clients see on an in-house value? | "recent MLS sales", never a vendor; the attribution carries what the MLS requires (M4). |
+| Q-V2B-3 (D9, lane V2-B) | Should a past client whose house is listed now (any brokerage, or the team) still get a monthly value? | No: a visible skip (SUBJECT_LISTED) until the listing ends (C3). |
+| Q-V2B-4 (D9, lane V2-B) | Point estimate and range, or range only, in the seller update? | The R-AVM-1 sentence (estimate and range). The agent can remove the section through the API; the web toggle was cut (deliverable 6). |
+| Q-V2B-5 (D9, lane V2-B) | Seller value ranges by text message? | Email only: the text leaves the section out, and the seller card says so (E630). |
+| Q-V2B-6 (D9, lane V2-B) | Which unavailable reasons does the seller see? | Data reasons as "Value range unavailable: …"; counsel, licence and connection reasons (read first) to the agent only. |
+| Q-V2B-7 (D9, lane V2-B) | Keep `avm_max_range_bps` at 2,500 for in-house notes (a wider range becomes a draft)? | Keep. Measured on the 500k fixture: 18 of 20 in-house ranges are wider than 2,500 bps at batch 13 (the lane measured 20 of 20), and 10 of 20 move more than 1,000 bps in 30 days, so nearly every in-house note becomes a draft for the agent. |
+| Q-V2B-8 (D9, lane V2-B) | Should ISA and TC see in-house numbers in trigger runs? | Only numbers that were displayable to the client ("Estimate not shown to clients." otherwise). A TC sees no firing of an agent's personal playbook at all (playbooks RLS). |
+| Q-V2B-9 (D9, lane V2-B) | The in-house provider in the staging demo with fakes allowed? | No: the fake. |
+| Q-V2B-10 (D9, lane V2-B) | Agent-only monthly values while `platform:cma` is not cleared? | No; the one-tap CMA covers agents. |
+| Q-V2B-11 (D9, lane V2-B) | Store a note's comp ids (a new column)? | No: the ref identifies the run; a one-tap CMA shows the comps. |
+| Q-V2B-12 (D9, lane V2-B) | The seller update's valuation date? | The period's last local day, stable all week (E638). |
+| Q-V2B-13 (D9, lane V2-B) | A feed stale at the daily estimate stores a not-displayable row, which ends that address's month (E369). Should the provider wait instead (no row, retried next day)? | Keep E369; the months lost are reported. |
+| Q-V2B-14 (D9, lane V2-B) | Seller ranges while M1 is open: require both `client_cma` and `automated_notes`? | Yes, the stricter reading. |
+| Q-V2B-D9 (D9, lane V2-B) | Amend the D9 row above to say that in-house notes need `platform:cma` as well as `platform:avm` (R-CMA-10)? The row is the owner's; batch 13 left it as written. | Not edited; R-CMA-10 and DEPLOY §10.1 already require both packs. |
 
 ### 2.3 Round 2 review changes (two critics; verdicts in ARCHITECTURE §20)
 
