@@ -52,6 +52,7 @@ import { gbpRoutes } from './gbp/routes.js';
 import { coachingTrendsRoutes } from './coaching/trends/routes.js';
 import { isaWebRoutes } from './isaWeb/routes.js';
 import { portalRoutes } from './portal/plugin.js';
+import { likelyRoutes } from './predict/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -102,5 +103,6 @@ export const routeModules: RouteModule[] = [
   sellerRoutes,
   isaWebRoutes,
   portalRoutes,
+  likelyRoutes,
   // registry: add new entries above this line
 ];

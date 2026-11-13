@@ -171,3 +171,11 @@ describe('evidence edge cases', () => {
     expect(verifyQuote(f, { sourceType: 'listing', sourceId: SMS_ID, locator: { kind: 'field', name: 'a' }, snippet: 'null' })).toEqual({ verified: false, reason: 'OUT_OF_RANGE' });
   });
 });
+
+describe('formatEvidence on locators stored by code (module 55 verify 1)', () => {
+  it('E662: a field locator stored with `field` (voice/handback.ts, comms/inbound.ts) is worded by that field; one with neither name nor field has no field words; it never throws', () => {
+    expect(formatEvidence({ sourceType: 'call', sourceId: SMS_ID, locator: { kind: 'field', field: 'voice_outcome' } as never, snippet: 'booked' })).toBe('“booked” (voice outcome) in the call');
+    expect(formatEvidence({ sourceType: 'call', sourceId: SMS_ID, locator: { kind: 'field' } as never, snippet: 'no_answer' })).toBe('“no_answer” in the call');
+    expect(formatEvidence({ sourceType: 'call', sourceId: SMS_ID, locator: { kind: 'field', name: 7, field: 'status' } as never, snippet: 'x' })).toBe('“x” (status) in the call');
+  });
+});

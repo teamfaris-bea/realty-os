@@ -15,6 +15,8 @@ export interface SweepIds {
   duplicateId: string;
   /** module 72: one CMA draft of the agent's seller (Owner, Admin and Team Lead read it) */
   cmaId: string;
+  /** module 55: a clean purchase contract on the deal, uploaded by the agent */
+  documentId: string;
 }
 
 export interface SweepPage {
@@ -68,6 +70,7 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/numbers', roles: ADMINS, url: at('/admin/numbers') },
   { path: '/admin/erasure', roles: ADMINS, url: (ids) => `/admin/erasure?contact=${ids.contactId}` },
   { path: '/admin/system', roles: ADMINS, url: at('/admin/system') },
+  { path: '/admin/ai-answering', roles: ADMINS, url: at('/admin/ai-answering') },
   { path: '/admin/integrations/mls', roles: ADMINS, url: at('/admin/integrations/mls') },
   // module 41 (lane admin-pages)
   { path: '/admin/integrations', roles: ADMINS, url: at('/admin/integrations') },
@@ -113,6 +116,18 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/settings/ai-assistant/team', roles: ADMINS, url: at('/settings/ai-assistant/team') },
   // module 72 (web/cma, lane V2-A): the roles with cma.prepare
   { path: '/cma/:cmaId', roles: ['owner', 'admin', 'team_lead', 'agent'], url: (i) => `/cma/${i.cmaId}` },
+  // module 55 (lane phase3-staff): the document page (a TC or ISA off the deal sees its not-available state)
+  { path: '/documents/:documentId', roles: ALL, url: (i) => `/documents/${i.documentId}` },
+  { path: '/documents/:documentId/dates', roles: ALL, url: (i) => `/documents/${i.documentId}/dates` },
+  // module 55 (lane phase3-staff): the Google Ads page (the sweep's tenant has platform:ads uncleared: its dark state)
+  { path: '/ads', roles: ADMINS, url: at('/ads') },
+  // module 55 item 12: Google Business Profile (every staff role reads reviews; the sweep's world has platform:gbp
+  // uncleared, so it sweeps the honest dark state)
+  { path: '/gbp', roles: ALL, url: at('/gbp') },
+  // module 55 (phase3-staff): Likely to move (the sweep world has no approved model: the no_model sentence)
+  { path: '/likely', roles: NOT_TC, url: at('/likely') },
+  // module 55 (phase3-staff): Coaching trends (the sweep world shows whatever state its settings give: a state sentence or counts)
+  { path: '/coaching/trends', roles: NOT_TC, url: at('/coaching/trends') },
 ];
 
 /** Screens outside the app frame (signed out). */

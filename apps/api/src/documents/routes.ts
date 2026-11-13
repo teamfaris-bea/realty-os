@@ -12,6 +12,7 @@
 //   POST /documents/:id/hold {hold, reason}   Owner/Admin as themselves (403 DOCUMENT_HOLD_OWNER_ADMIN
 //                                             to a member who sees the document)                        document.view + document.hold
 //   PUT  /documents/:id/retention             Owner/Admin; 3-10 years after the scope's close           document.view + document.hold
+//   GET  /documents/extractions               the caller's own open extractions (pointers, module 55)  document.view (+ RLS)
 //   GET  /documents/:id/extraction            the proposal, its claims, evidence and the deal's dates   document.view (+ the action's RLS)
 //   POST /documents/:id/extraction/run        read a clean PDF contract now (uploader, tenant-wide)     document.view (+ the action's RLS)
 //   POST /documents/:id/extraction/claims/:claimId/confirm   one date through module 31's confirmInTx    milestone.confirm
@@ -215,6 +216,21 @@ async function registerExtraction(app: FastifyInstance): Promise<void> {
       const d = await R.docById(tx, idOf(req));
       return d?.deal_id ? dealFacts(tx, d.deal_id) : null;
     }),
+  );
+  // module 55: the caller's own open extractions, for the Approvals pointer card. A static segment: Fastify matches it
+  // before /documents/:id whatever the registration order. A read only; nothing is decided here (R-DOC-8, R-STAFF-2).
+  r.get('/documents/extractions', { config: { auth: 'document.view' }, preHandler: authorize('document.view', () => ({})), schema: { response: { 200: S.OpenExtractionsResponse } } }, async (req) =>
+    docTx(req, async (tx) => ({
+      extractions: (await R.openExtractions(tx, 50)).map((x) => ({
+        documentId: x.document_id,
+        dealId: x.deal_id,
+        displayName: x.display_name,
+        versionNo: x.version_no,
+        outcome: (['dates', 'no_text', 'no_dates', 'unreadable'] as const).find((o) => o === x.outcome) ?? null,
+        unreviewedClaims: x.unreviewed,
+        createdAt: x.created_at.toISOString(),
+      })),
+    })),
   );
   r.get('/documents/:id/extraction', { config: { auth: 'document.view' }, preHandler: authorize('document.view', docVisible), schema: { params: S.IdParams, response: { 200: S.ExtractionResponse } } }, async (req) =>
     docTx(req, (tx) => extractionView(tx, req.params.id, readCtx(req))),

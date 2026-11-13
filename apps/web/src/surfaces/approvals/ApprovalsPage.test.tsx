@@ -238,7 +238,8 @@ describe('Approvals inbox', () => {
   });
 
   it('an empty inbox says so plainly', async () => {
-    agentApp(inbox([]), '/approvals');
+    // every source answers empty: a source that fails to load (an unscripted route) is not empty (batch 14 audit R3)
+    agentApp(inbox([]).on('GET /documents/extractions', { status: 200, body: { extractions: [] } }), '/approvals');
     expect(await screen.findByText('Nothing to approve')).toBeInTheDocument();
   });
 

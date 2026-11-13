@@ -56,6 +56,7 @@ Tests sit **next to the code** as `*.test.ts(x)`. The exceptions are `packages/d
 | 17a | web/shell | `apps/web/src/{shell,design}/**`, `apps/web/src/main.tsx`, `apps/web/index.html`, `apps/web/e2e/shell/**` | `apps/web/src/shell/registry.ts` (surface/page registry), `apps/web/src/shell/errorMessages.ts` (code → sentence) |
 | 17b | web/agent | `apps/web/src/surfaces/{feed,contact,thread,compose,approvals,pond,search,tasks,deals,listings}/**`, `apps/web/e2e/agent/**` | none |
 | 17c | web/lead-admin | `apps/web/src/surfaces/{team,admin,imports,settings}/**`, `apps/web/e2e/lead-admin/**` | none |
+| 55 | web/phase3-staff (Phase 3; PHASE2_3_PLAN §5.4 #55) | `apps/web/src/surfaces/{voice,ads,documents,likely,gbp,coaching-trends}/**`, `apps/web/src/surfaces/approvals/{Phase3Approvals,AdShiftApproval,ReviewReplyApproval,ExtractionPointers,VoiceHandback}.tsx` + tests, `apps/web/src/test/staffContract.ts`, `apps/web/e2e/phase3-staff/**`, `apps/api/src/predict/routes.ts` (the read-only `GET /likely`), `apps/api/src/staffWeb/**` (the generated staff web contract) | `apps/api/src/staffWeb/contract.json` (generated; regenerate with `tsx --conditions=@realty/source src/staffWeb/contract.ts --write`) |
 
 Repositories: API modules that query the database put Kysely queries in `apps/api/src/<module>/repos/*.ts` (or `*.repo.ts`). The `selectFrom` lint rule allows exactly those places, plus `packages/db/**` and tests.
 

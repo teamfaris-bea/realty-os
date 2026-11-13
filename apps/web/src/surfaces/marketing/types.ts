@@ -1,7 +1,7 @@
 // View types for module 38's marketing tab, following api/marketing/routes.ts (PieceSchema and friends).
 // Only the fields the web reads are typed; the server is the authority for every label shown.
 
-export type PieceKind = 'website_page' | 'social_post' | 'open_house_invite' | 'flyer' | 'marketplace_export';
+export type PieceKind = 'website_page' | 'social_post' | 'open_house_invite' | 'flyer' | 'marketplace_export' | 'gbp_post';
 export type PieceStatus = 'draft' | 'approved' | 'published' | 'exported' | 'retracted' | 'superseded';
 
 export interface PublicationView {
@@ -22,7 +22,7 @@ export type PublishOption =
   | {
       kind: 'publish';
       connectionId: string;
-      target: 'facebook_page' | 'instagram_business';
+      target: 'facebook_page' | 'instagram_business' | 'gbp_location';
       displayName: string;
     }
   | {

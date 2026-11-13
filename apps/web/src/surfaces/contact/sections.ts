@@ -13,6 +13,7 @@ import { DetailsSlotContext } from './slots.js';
 import { HomeownerPanel } from '../homeowner/HomeownerPanel.js';
 import { AiCarePanelSection } from '../aiCare/Person.js';
 import { HomeValueSection } from '../cma/HomeValueSection.js';
+import { ContactDocumentsSection } from '../documents/DocumentsSection.js';
 
 export interface ContactSection {
   id: string;
@@ -30,6 +31,7 @@ export const contactSections: ContactSection[] = [
   { id: 'homeowner', order: 30, component: HomeownerPanel },
   { id: 'ai-care', order: 1, component: AiCarePanelSection },
   { id: 'cma', order: 15, component: HomeValueSection },
+  { id: 'documents', order: 40, component: ContactDocumentsSection },
   // registry: add new entries above this line
 ];
 

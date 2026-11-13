@@ -23,9 +23,12 @@ import { AGENT_ERROR_MESSAGES, dealDateStaleWords, homeValueRefusalWords } from 
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
-import { MarketingApprovals } from './MarketingApprovals.js';
+import { MarketingApprovals, useMarketingApprovals } from './MarketingApprovals.js';
+import { ExtractionActionPointer, RefusalNotice } from './ExtractionPointers.js';
+import { Phase3Approvals } from './Phase3Approvals.js';
 import { SellerUpdateApproval } from './SellerUpdateApproval.js';
 import { AiApprovalExtras, withoutAiActions } from '../aiCare/Compose.js'; // module 76 (flagged edit)
+import { VOICE_HANDBACK_LABEL, VoiceHandback, VoiceHandbackButtons, isVoiceHandback } from './VoiceHandback.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -72,6 +75,9 @@ export default function ApprovalsPage() {
 
 function Approvals() {
   const q = useInbox();
+  // module 55: "Nothing to approve" only when the marketing drafts and every Phase 3 source are empty too; a source that
+  // failed to load is not known to be empty, so it only shows its notice (batch 14 audit R3)
+  const marketing = useMarketingApprovals();
   const { hash } = useLocation();
   // seller updates sent from this page stay on it with their outcome (they leave the pending inbox when sent)
   const [kept, setKept] = useState<ActionView[]>([]);
@@ -83,14 +89,16 @@ function Approvals() {
   if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
   const items = [...q.data.items, ...kept.filter((k) => !q.data.items.some((i) => i.id === k.id))];
   if (items.length === 0) {
+    const empty = (
+      <EmptyState icon="inbox" title="Nothing to approve">
+        Drafts and replies from the assistant that need you will show up here.
+      </EmptyState>
+    );
     return (
-      <MarketingApprovals
-        whenEmpty={
-          <EmptyState icon="inbox" title="Nothing to approve">
-            Drafts and replies from the assistant that need you will show up here.
-          </EmptyState>
-        }
-      />
+      <div className="flex flex-col gap-4">
+        <MarketingApprovals />
+        <Phase3Approvals whenEmpty={!marketing.isError && marketing.data?.pieces.length === 0 ? empty : null} />
+      </div>
     );
   }
   // one reachability request for every card's contact (not one per card)
@@ -100,10 +108,11 @@ function Approvals() {
     <ReachabilityBatch contactIds={contactIds}>
       <div className="flex flex-col gap-4">
         <MarketingApprovals />
+        <Phase3Approvals />
         <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {items.map((a) => (
             <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
-              {a.kind === 'seller_update_draft' && a.contactId === null ? <SellerUpdateApproval actionId={a.id} onSent={() => setKept((k) => (k.some((x) => x.id === a.id) ? k : [...k, a]))} /> : <ActionCard action={a} />}
+              {a.kind === 'contract_extraction' ? <ExtractionActionPointer action={a} /> : a.kind === 'seller_update_draft' && a.contactId === null ? <SellerUpdateApproval actionId={a.id} onSent={() => setKept((k) => (k.some((x) => x.id === a.id) ? k : [...k, a]))} /> : <ActionCard action={a} />}
             </li>
           ))}
         </ul>
@@ -175,7 +184,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
     <Card as="article" aria-labelledby={titleId} className="flex flex-col gap-3">
       <div>
         <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
-          {kindLabel(action.kind)} · {relativeTime(Date.parse(action.createdAt), now)}
+          {isVoiceHandback(action) ? VOICE_HANDBACK_LABEL : kindLabel(action.kind)} · {relativeTime(Date.parse(action.createdAt), now)}
         </p>
         <H id={titleId} className="text-[19px] font-semibold text-ink">
           {showContact && action.contactId ? (
@@ -195,7 +204,9 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           <blockquote className="whitespace-pre-wrap rounded-xl bg-surface-2 px-3.5 py-2.5 text-[16px] text-ink">{action.draft.body}</blockquote>
         </figure>
       ) : null}
-      {action.claims.length > 0 ? (
+      {isVoiceHandback(action) ? (
+        <VoiceHandback action={action} review={(c) => (c.needsReview ? <ClaimReview claim={c} /> : null)} />
+      ) : action.claims.length > 0 ? (
         <ul className="flex flex-col gap-3" aria-label="What the assistant found">
           {action.claims.map((c) => (
             <li key={c.id}>
@@ -212,7 +223,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
         </Notice>
       ) : null}
       {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{homeValueRefusalWords(approve.error.code, approve.error.details)?.text ?? approve.error.message}</Notice> : null}
-      {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
+      {reject.error ? <RefusalNotice error={reject.error} /> : null}
       {result && !['acknowledged', 'sent', 'queued'].includes(sentResult(result)) ? (
         <SendOutcome result={{ result: sentResult(result), decision: result.decision, message: null }} contactName={name} />
       ) : sendable && reach.blocked ? (
@@ -237,6 +248,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
               </Button>
             ) : null}
           </>
+        ) : isVoiceHandback(action) ? (
+          <VoiceHandbackButtons action={action} pending={approve.pending} onHandled={() => void doApprove()} />
         ) : action.kind === 'handback' && action.contactId ? (
           <>
             <Button icon="message" onClick={() => navigate(`/contacts/${action.contactId}/thread?compose=sms`)}>

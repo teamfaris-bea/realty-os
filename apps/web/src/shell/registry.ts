@@ -50,6 +50,12 @@ import { surface as adminCoachingSurface } from '../surfaces/admin/coaching/inde
 import { surface as adminTransactionsSurface } from '../surfaces/admin/transactions/index.js';
 import { surface as aiCareSurface } from '../surfaces/aiCare/index.js';
 import { surface as cmaSurface } from '../surfaces/cma/index.js';
+import { surface as documentsSurface } from '../surfaces/documents/index.js';
+import { surface as voiceSurface } from '../surfaces/voice/index.js';
+import { surface as adsSurface } from '../surfaces/ads/index.js';
+import { surface as gbpSurface } from '../surfaces/gbp/index.js';
+import { surface as likelySurface } from '../surfaces/likely/index.js';
+import { surface as coachingTrendsSurface } from '../surfaces/coaching-trends/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -92,5 +98,11 @@ export const surfaces: SurfaceModule[] = [
   adminTransactionsSurface,
   aiCareSurface,
   cmaSurface,
+  documentsSurface,
+  voiceSurface,
+  adsSurface,
+  gbpSurface,
+  likelySurface,
+  coachingTrendsSurface,
   // registry: add new entries above this line
 ];

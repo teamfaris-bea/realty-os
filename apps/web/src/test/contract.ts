@@ -63,7 +63,8 @@ export function routeFor(method: string, path: string): string | null {
   return null;
 }
 
-const KNOWN = new Set(['type', 'enum', 'const', 'anyOf', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', '$ref', '$defs', 'default', 'description', 'x-trim']);
+// oneOf and propertyNames: module 55's staff contract (z.discriminatedUnion, z.record; staffContract.ts)
+const KNOWN = new Set(['type', 'enum', 'const', 'anyOf', 'oneOf', 'propertyNames', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', '$ref', '$defs', 'default', 'description', 'x-trim']);
 
 const typeOf = (v: unknown): string => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v);
 const isType = (v: unknown, t: string) => t === typeOf(v) || (t === 'number' && typeof v === 'number');
@@ -82,6 +83,12 @@ export function violations(schema: Schema, value: unknown, path = '', root: Sche
   if (Array.isArray(schema.anyOf)) {
     const branches = (schema.anyOf as Schema[]).map((s) => violations(s, value, path, root));
     if (!branches.some((b) => b.length === 0)) out.push(`${at}: matches none of anyOf (${branches.map((b) => b[0]).join(' | ')})`);
+    return out;
+  }
+  if (Array.isArray(schema.oneOf)) {
+    const branches = (schema.oneOf as Schema[]).map((s) => violations(s, value, path, root));
+    const ok = branches.filter((b) => b.length === 0).length;
+    if (ok !== 1) out.push(`${at}: matches ${ok} of oneOf, not exactly one (${branches.map((b) => b[0] ?? 'ok').join(' | ')})`);
     return out;
   }
   if (schema.type !== undefined) {
@@ -110,6 +117,7 @@ export function violations(schema: Schema, value: unknown, path = '', root: Sche
     const o = value as Record<string, unknown>;
     const props = (schema.properties ?? {}) as Record<string, Schema>;
     for (const r of (schema.required ?? []) as string[]) if (!(r in o) || o[r] === undefined) out.push(`${path}/${r}: required`);
+    if (schema.propertyNames && typeof schema.propertyNames === 'object') for (const k of Object.keys(o)) out.push(...violations(schema.propertyNames as Schema, k, `${path}/${k} (name)`, root));
     for (const [k, v] of Object.entries(o)) {
       if (v === undefined) continue;
       if (props[k]) out.push(...violations(props[k], v, `${path}/${k}`, root));

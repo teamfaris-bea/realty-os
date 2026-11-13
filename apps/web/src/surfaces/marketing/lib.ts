@@ -17,10 +17,12 @@ export const KIND_LABEL: Record<PieceKind, string> = {
   open_house_invite: 'Open house invite',
   flyer: 'Flyer',
   marketplace_export: 'Facebook Marketplace',
+  // module 53/55: made only on request ("Make a Google post"), published to a Business Profile location
+  gbp_post: 'Business Profile post',
 };
 
 /** The order cards appear in (the server sorts by kind name). */
-export const KIND_ORDER: readonly PieceKind[] = ['social_post', 'website_page', 'flyer', 'open_house_invite', 'marketplace_export'];
+export const KIND_ORDER: readonly PieceKind[] = ['social_post', 'website_page', 'flyer', 'open_house_invite', 'marketplace_export', 'gbp_post'];
 
 export function kindLabel(kind: string): string {
   return (KIND_LABEL as Record<string, string>)[kind] ?? 'Marketing piece';
@@ -52,7 +54,13 @@ export const MARKETING_ERROR_MESSAGES: Record<string, string> = {
   FAIR_HOUSING_PACK_UNAVAILABLE: "The fair-housing check isn't available right now, so nothing can be approved. Try again later.",
 };
 
+/** module 55: a GBP post refused while platform:gbp waits for counsel (publish.ts) names that review, not fair housing. */
+const GBP_POST_NOT_CLEARED = 'Google Business Profile posts stay off until counsel reviews them. Export it and copy it to your Business Profile yourself.';
+const GBP_NOT_CONFIGURED = "Google Business Profile isn't set up on this platform yet. Export it and copy it to your Business Profile yourself.";
+
 export function errorText(r: Extract<MutateResult<unknown>, { ok: false }>): string {
+  if (r.code === 'PLATFORM_NOT_CLEARED' && r.details?.pack === 'platform:gbp') return GBP_POST_NOT_CLEARED;
+  if (r.code === 'GBP_NOT_CONFIGURED') return GBP_NOT_CONFIGURED;
   return MARKETING_ERROR_MESSAGES[r.code] ?? r.message;
 }
 

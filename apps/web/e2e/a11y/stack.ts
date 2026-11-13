@@ -30,6 +30,7 @@ import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHar
 import { totpCode, totpStep } from './src/auth/totp.ts';
 import { commsWorld, call, inboundSms, randomEmail, freshReauth, runJobs } from './src/comms/testing.ts';
 import { intake } from './src/leads/testing.ts';
+import { upload as uploadDocument, runScan } from './src/documents/testing.ts';
 import { promiseTask, recompute } from './src/accountability/testing.ts';
 import { makeImportHandlers } from './src/imports/handlers.ts';
 import { HandlerRegistry } from './src/worker/registry.ts';
@@ -97,6 +98,10 @@ const routes = {
     // clock fixture: the consult ended 3 h ago (no application path moves time)
     await h.su.query("UPDATE appointments SET starts_at = clock_timestamp() - interval '4 hours', ends_at = clock_timestamp() - interval '3 hours' WHERE id = $1", [appt.appointment.id]);
     const deal = must(await call(agent, 'POST', '/deals', { primaryContactId: jane, side: 'buy', priceCents: 85000000, expectedCloseDate: '2026-12-18' }), 'deal');
+    // module 55: one clean purchase contract on the deal (the fake scanner), for the document page
+    const doc = await uploadDocument(agent, '/deals/' + deal.deal.id + '/documents', { filename: 'Purchase contract.pdf' });
+    if (doc.status !== 201) throw new Error('document: ' + doc.status + ' ' + JSON.stringify(doc.body));
+    await runScan(h, w.tenantId, doc.body.document.id);
     const listing = must(await call(agent, 'POST', '/listings', { status: 'active', addressLine1: '12 Oak St', city: 'Oakland', region: 'CA', postalCode: '94610', listPriceCents: 85000000, beds: 3, bathsX10: 20, sqft: 1450, propertyType: 'single_family' }), 'listing');
     await intake(h, w, { inquiryType: 'buy', fullName: 'Priya Shah', phones: [phone()], message: 'Is 12 Oak St still available?', propertyText: '12 Oak St', postalCode: '94610' });
     // the Team Lead's exception queue: an overdue assistant-recorded promise and the consult with no outcome
@@ -129,7 +134,7 @@ const routes = {
     const cma = must(await cmaOneTap(agent, marco, { facts: { propertyType: 'single_family', sqft: 1500 } }), 'cma').cma; // E373: not in the MLS history, so the agent enters type and size
     for (const [role, c] of Object.entries(people)) if (c.totpSecret) secrets.set(c.email, c.totpSecret);
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
-    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup, widgetKey: chatWidget.widgetKey, cmaId: cma.id } };
+    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup, documentId: doc.body.document.id, widgetKey: chatWidget.widgetKey, cmaId: cma.id } };
   },
   /** module 65: runs the queued import jobs (snapshot, dry run) once, as the worker would; fake FUB only */
   async '/drain-imports'() {
@@ -188,6 +193,8 @@ export interface SeedIds {
   playbookId: string;
   importId: string;
   duplicateId: string;
+  /** module 55: a clean purchase contract on the deal */
+  documentId: string;
   /** the team's website-chat widget key (module 22), for the widget's stand-in page */
   widgetKey: string;
   /** module 72: the agent's one-tap CMA draft of Marco's home */

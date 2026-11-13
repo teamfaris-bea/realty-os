@@ -81,3 +81,17 @@ export const ConfirmClaimBody = z.strictObject({
 export const RejectClaimBody = z.strictObject({ commandId: z.uuid() });
 export const ClaimDecisionResponse = ExtractionResponse.extend({ dateId: z.uuid().nullable() });
 export const RetentionBody = z.strictObject({ retentionUntil: z.iso.datetime({ offset: true }) });
+/** GET /documents/extractions: the caller's own open contract extractions, as pointers to their date review (module 55). */
+export const OpenExtractionsResponse = z.object({
+  extractions: z.array(
+    z.object({
+      documentId: z.uuid(),
+      dealId: z.uuid(),
+      displayName: z.string(),
+      versionNo: z.number().int(),
+      outcome: z.enum(['dates', 'no_text', 'no_dates', 'unreadable']).nullable(),
+      unreviewedClaims: z.number().int(),
+      createdAt: z.string(),
+    }),
+  ),
+});

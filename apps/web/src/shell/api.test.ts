@@ -112,6 +112,31 @@ describe('ApiClient', () => {
     expect(isRetryable(new Error('x'))).toBe(false);
   });
 
+  it('R-STAFF-8: upload sends the FormData as is, with the CSRF header and same-origin credentials and no content-type (the browser writes the boundary); errors and aborts parse as for any call', async () => {
+    const f = new FakeFetch().on('POST /deals/d1/documents', { status: 201, body: { ok: true } });
+    const api = new ApiClient({ fetch: f.fetch });
+    api.setCsrfToken('tok');
+    const form = new FormData();
+    form.append('file', new Blob(['%PDF-1.4'], { type: 'application/pdf' }), 'Contract.pdf');
+    form.append('kind', 'purchase_contract');
+    await expect(api.upload('/deals/d1/documents', form)).resolves.toEqual({ ok: true });
+    const c = f.calls[0]!;
+    expect(c.method).toBe('POST');
+    expect(c.headers['x-csrf-token']).toBe('tok');
+    expect(c.headers['content-type']).toBeUndefined();
+    expect(c.body).toBe(form);
+    expect([...(c.body as FormData).keys()]).toEqual(['file', 'kind']);
+    f.on('POST /deals/d2/documents', err(413, 'DOCUMENT_TOO_LARGE', { limitBytes: 10_000_000 }));
+    await expect(api.upload('/deals/d2/documents', form)).rejects.toMatchObject({ code: 'DOCUMENT_TOO_LARGE', status: 413, details: { limitBytes: 10_000_000 } });
+    const seen: RequestInit[] = [];
+    const api2 = new ApiClient({ fetch: async (_u, init) => { seen.push(init!); return new Response('{}', { status: 200 }); } });
+    await api2.upload('/x', form);
+    expect(seen[0]!.credentials).toBe('same-origin');
+    const ac = new AbortController();
+    const api3 = new ApiClient({ fetch: async () => { ac.abort(); throw new DOMException('aborted', 'AbortError'); } });
+    await expect(api3.upload('/x', form, { signal: ac.signal })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('URL-encodes invite tokens in the path', async () => {
     const f = new FakeFetch().on('POST /auth/invites/a%2Fb%3Fc/accept', { status: 200, body: { next: 'ready', session: sessionFixture() } });
     await authApi(new ApiClient({ fetch: f.fetch })).acceptInvite('a/b?c', {});

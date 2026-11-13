@@ -319,8 +319,13 @@ export function formatEvidence(ref: EvidenceRef): string {
   switch (ref.locator.kind) {
     case 'transcript_offset':
       return `${quote} at ${clock(ref.locator.startMs)} ${WHERE[ref.sourceType]}`;
-    case 'field':
-      return `${quote} (${ref.locator.name.replace(/_/g, ' ')}) ${WHERE[ref.sourceType]}`;
+    case 'field': {
+      // Stored rows written by code (comms/inbound.ts, voice/handback.ts) carry `field` instead of `name` (E662): read
+      // `name`, else `field`, and word the line without a field name when neither is a string.
+      const loc = ref.locator as { name?: unknown; field?: unknown };
+      const n = typeof loc.name === 'string' ? loc.name : typeof loc.field === 'string' ? loc.field : null;
+      return n === null ? `${quote} ${WHERE[ref.sourceType]}` : `${quote} (${n.replace(/_/g, ' ')}) ${WHERE[ref.sourceType]}`;
+    }
     default:
       return `${quote} ${WHERE[ref.sourceType]}`;
   }

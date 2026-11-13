@@ -69,27 +69,30 @@ function Marketing({ listingId, data, canMake }: { listingId: string; data: List
       {groups.length === 0 ? (
         <MakeMarketing listingId={listingId} canMake={canMake} />
       ) : (
-        <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {groups.map((g) => (
-            <li key={g.kind} className="flex min-w-0 flex-col gap-2" data-piece-kind={g.kind} data-piece-status={g.newest.status}>
-              <PieceCard piece={g.newest} publishingCleared={data.publishingCleared} />
-              {g.older.length > 0 ? (
-                <details className="rounded-2xl border border-line bg-surface px-4">
-                  <summary className="flex min-h-tap cursor-pointer items-center text-[15px] font-medium text-accent">
-                    Earlier versions of the {kindLabel(g.kind).toLowerCase()} ({g.older.length})
-                  </summary>
-                  <ul className="flex flex-col gap-2 pb-4">
-                    {g.older.map((p) => (
-                      <li key={p.id}>
-                        <PieceCard piece={p} publishingCleared={data.publishingCleared} headingLevel={3} />
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <>
+          {canMake && !groups.some((g) => g.kind === 'gbp_post') ? <MakeGooglePost listingId={listingId} /> : null}
+          <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {groups.map((g) => (
+              <li key={g.kind} className="flex min-w-0 flex-col gap-2" data-piece-kind={g.kind} data-piece-status={g.newest.status}>
+                <PieceCard piece={g.newest} publishingCleared={data.publishingCleared} />
+                {g.older.length > 0 ? (
+                  <details className="rounded-2xl border border-line bg-surface px-4">
+                    <summary className="flex min-h-tap cursor-pointer items-center text-[15px] font-medium text-accent">
+                      Earlier versions of the {kindLabel(g.kind).toLowerCase()} ({g.older.length})
+                    </summary>
+                    <ul className="flex flex-col gap-2 pb-4">
+                      {g.older.map((p) => (
+                        <li key={p.id}>
+                          <PieceCard piece={p} publishingCleared={data.publishingCleared} headingLevel={3} />
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </>
   );
@@ -113,6 +116,30 @@ function MakeMarketing({ listingId, canMake }: { listingId: string; canMake: boo
           Make marketing
         </Button>
       ) : null}
+      {failure ? <Notice tone="error">{failure}</Notice> : null}
+      {canMake ? <MakeGooglePost listingId={listingId} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Module 55 (owner question 8): a Business Profile post is made only on request, one draft for the listing
+ * (POST generate {kinds: ['gbp_post']}). Publishing it stays with PieceCard's server options (gbp_location).
+ */
+function MakeGooglePost({ listingId }: { listingId: string }) {
+  const m = usePieceCommand<{ kinds: PieceKind[] }, { pieces: PieceView[] }>();
+  const [failure, setFailure] = useState<string | null>(null);
+  const make = async () => {
+    setFailure(null);
+    const r = await m.run(`/listings/${listingId}/marketing/generate`, { kinds: ['gbp_post'] });
+    if (!r.ok) setFailure(errorText(r));
+  };
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <p className="text-[15px] text-ink-muted">A short post for your Google Business Profile, for you to review before it goes anywhere.</p>
+      <Button variant="secondary" pending={m.pending} pendingLabel="Making the draft" onClick={() => void make()}>
+        Make a Google post
+      </Button>
       {failure ? <Notice tone="error">{failure}</Notice> : null}
     </div>
   );

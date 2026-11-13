@@ -141,3 +141,31 @@ export async function blockedReasonOf(tx: Tx, id: string): Promise<'malware' | '
   const v = r.rows[0]?.reason;
   return v === 'malware' || v === 'unscannable' ? v : null;
 }
+
+export interface OpenExtractionRow {
+  document_id: string;
+  deal_id: string;
+  display_name: string;
+  version_no: number;
+  outcome: string | null;
+  unreviewed: number;
+  created_at: Date;
+}
+
+/**
+ * The caller's own proposed contract extractions (as assistant/repos/actions.ts keeps them out of the inbox), joined to
+ * documents the caller can see (RLS on documents decides; a document they cannot see is skipped), newest first. A read
+ * for the Approvals pointer card only (module 55): the extraction is decided claim by claim on its document (R-DOC-8).
+ */
+export async function openExtractions(tx: Tx, limit: number): Promise<OpenExtractionRow[]> {
+  const r = await sql<OpenExtractionRow>`
+    SELECT d.id AS document_id, d.deal_id, d.display_name, d.version_no, a.payload->>'outcome' AS outcome,
+           (SELECT count(*)::int FROM assistant_claims c WHERE c.tenant_id = a.tenant_id AND c.action_id = a.id AND c.review_status = 'unreviewed') AS unreviewed,
+           a.created_at
+      FROM assistant_actions a
+      JOIN documents d ON d.tenant_id = a.tenant_id AND a.dedupe_key = 'contract_extraction:' || d.id::text
+     WHERE a.tenant_id = app.tenant_id() AND a.owner_user_id = app.user_id() AND a.kind = 'contract_extraction' AND a.status = 'proposed'
+       AND d.deal_id IS NOT NULL
+     ORDER BY a.created_at DESC, a.id DESC LIMIT ${limit}`.execute(tx);
+  return r.rows;
+}
