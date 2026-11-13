@@ -10,8 +10,9 @@ import { type Harness, type Member, type World, selfCreated, suFixture, suRows, 
 export const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
 export const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
-/** IANA fixed-offset zones (Etc/GMT+N is UTC−N). The tests pick one whose local time suits the case. */
-const ETC = Array.from({ length: 25 }, (_, i) => i - 12).map((n) => (n === 0 ? 'Etc/GMT' : n > 0 ? `Etc/GMT-${n}` : `Etc/GMT+${-n}`));
+/** IANA fixed-offset zones (Etc/GMT+N is UTC−N). The tests pick one whose local time suits the case. b12 recheck R25:
+ *  each is its own canonical name (core ianaZone; 'Etc/GMT' is 'UTC'), as the api fixture's (apps/api/src/isa/testing.ts). */
+const ETC = Array.from({ length: 25 }, (_, i) => i - 12).map((n) => (n === 0 ? 'UTC' : n > 0 ? `Etc/GMT-${n}` : `Etc/GMT+${-n}`));
 function localOf(zone: string, at = new Date()): { hour: number; isoDow: number } {
   const f = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23', weekday: 'short' });
   const parts = Object.fromEntries(f.formatToParts(at).map((p) => [p.type, p.value]));

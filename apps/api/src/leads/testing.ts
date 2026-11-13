@@ -24,12 +24,14 @@ import { addPoint } from './repos/contacts.js';
 
 export { call, freshReauth, registerPush, res };
 
-/** An `Etc/GMT±N` zone whose local hour right now is in [from, to) (no DST: stable for a test run). */
+/** An `Etc/GMT±N` zone (or `UTC`) whose local hour right now is in [from, to) (no DST: stable for a test run). b12
+ *  recheck R25: each is its own canonical name (core ianaZone; 'Etc/UTC' is 'UTC'), so a zone read back canonical
+ *  (the AI ISA turn's zones) matches the stored one. */
 export function zoneWithLocalHour(from: number, to: number, nowMs = Date.now()): string {
   const utcHour = new Date(nowMs).getUTCHours() + new Date(nowMs).getUTCMinutes() / 60;
   for (const offset of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7, 8, -8, 9, -9, 10, -10, 11, -11, 12, 13, 14]) {
     const local = (((utcHour + offset) % 24) + 24) % 24;
-    if (local >= from && local < to) return offset === 0 ? 'Etc/UTC' : `Etc/GMT${offset > 0 ? '-' : '+'}${Math.abs(offset)}`;
+    if (local >= from && local < to) return offset === 0 ? 'UTC' : `Etc/GMT${offset > 0 ? '-' : '+'}${Math.abs(offset)}`;
   }
   throw new Error('no zone found');
 }

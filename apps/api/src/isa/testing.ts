@@ -22,16 +22,19 @@ import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
 
 export { call, freshReauth };
 
-const ETC = Array.from({ length: 25 }, (_, i) => i - 12).map((n) => (n === 0 ? 'Etc/GMT' : n > 0 ? `Etc/GMT-${n}` : `Etc/GMT+${-n}`));
-function localOf(zone: string): { hour: number; isoDow: number } {
+// b12 recheck R25: every name is its own canonical name (core ianaZone). 'Etc/GMT' is 'UTC' canonically: the contact
+// stored 'Etc/GMT' while the turn stored 'UTC', so the DB guard refused every AI send ISA_ZONE_UNRESOLVED in the hour
+// (10:00-10:59 UTC) this fixture picked it. testing.test.ts holds every pick to that.
+const ETC = Array.from({ length: 25 }, (_, i) => i - 12).map((n) => (n === 0 ? 'UTC' : n > 0 ? `Etc/GMT-${n}` : `Etc/GMT+${-n}`));
+function localOf(zone: string, at: Date): { hour: number; isoDow: number } {
   const f = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23', weekday: 'short' });
-  const parts = Object.fromEntries(f.formatToParts(new Date()).map((p) => [p.type, p.value]));
+  const parts = Object.fromEntries(f.formatToParts(at).map((p) => [p.type, p.value]));
   return { hour: Number(parts.hour), isoDow: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(parts.weekday!) + 1 };
 }
-/** A fixed-offset zone where it is now 10:00–17:59, Monday to Saturday. */
-export const openZone = () => ETC.find((z) => { const l = localOf(z); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 6; })!;
-/** A fixed-offset zone where it is now 01:00–04:59. */
-export const closedZone = () => ETC.find((z) => { const l = localOf(z); return l.hour >= 1 && l.hour < 5; })!;
+/** A fixed-offset zone where it is now (or at `at`) 10:00–17:59, Monday to Saturday. */
+export const openZone = (at = new Date()) => ETC.find((z) => { const l = localOf(z, at); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 6; })!;
+/** A fixed-offset zone where it is now (or at `at`) 01:00–04:59. */
+export const closedZone = (at = new Date()) => ETC.find((z) => { const l = localOf(z, at); return l.hour >= 1 && l.hour < 5; })!;
 
 export interface IsaWorld extends CommsWorld {
   versionId: string;
