@@ -626,7 +626,8 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(panel.body.handoff).toMatchObject({ id: ho.id, overdue: false });
   });
 
-  it('R-ISA-30: a restart of AI care closes the previous handoff\'s card and executes its action; its deadline then never alerts', async () => {
+  /** Care on the agent's lead ends (the agent ends it): a handoff to the agent with a deadline, its card open. */
+  async function endedByAgent() {
     const agent = w.agents[0]!;
     const l = await isaLead(h, agent);
     expect((await startCare(agent, l.id)).status).toBe(200);
@@ -637,13 +638,33 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     const [ho] = await handoffs([l.id]);
     expect(ho!.sla_class).not.toBe('none');
     expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
+    return { agent, l, ho: ho! };
+  }
+
+  it('R-ISA-30 E521 (b12 recheck R16): a restart of AI care with no human touch since the handoff leaves it open: its card stays, its action stays proposed, and its deadline still alerts', async () => {
+    const { agent, l, ho } = await endedByAgent();
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
+    expect(await actionOf(ho.id)).toMatchObject({ status: 'proposed' });
+    expect(await closedAudit(ho.id)).toEqual([]);
+    // (the sweep is tenant-wide: an earlier case's handoff may escalate in the same sweep)
+    expect((await ageAndSweep(ho.id)).escalated).toBeGreaterThanOrEqual(1);
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+    expect(await overdueOf(l.id)).toBeGreaterThanOrEqual(1);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
+  });
+
+  it('R-ISA-30 (b12 recheck R16): a restart after a human touch since the handoff closes it (care_restarted) and records the deadline as met; it then never alerts', async () => {
+    const { agent, l, ho } = await endedByAgent();
+    await touch(l.id);
     expect((await startCare(agent, l.id)).status).toBe(200);
     expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: null }]);
-    expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
-    expect(await closedAudit(ho!.id)).toEqual([{ reason: 'care_restarted', actor_kind: 'system' }]);
-    await ageAndSweep(ho!.id);
+    expect(await actionOf(ho.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
+    expect(await closedAudit(ho.id)).toEqual([{ reason: 'care_restarted', actor_kind: 'system' }]);
+    expect((await handoffs([l.id]))[0]!.sla_met_at).not.toBeNull();
+    await ageAndSweep(ho.id);
     expect(await overdueOf(l.id)).toBe(0);
-    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 0 });
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_escalation_level: 0 });
   });
 
   it('R-ISA-30: erasing the person leaves no handoff card behind (the card, the action and the handoff cascade from the contact)', async () => {

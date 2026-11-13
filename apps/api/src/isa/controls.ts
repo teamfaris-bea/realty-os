@@ -145,12 +145,21 @@ export async function startCare(actor: UserActor, deps: IsaDeps, contactId: stri
   // (b12 review B12X-4, R-ISA-2: also the automated messages already built, which dispatch then refuses as
   // ASSISTANT_ACTION_WITHDRAWN, and the module 26 trigger firings still scheduled, skipped visibly)
   const sys = await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
-    // b12 recheck R13: AI care restarting on the person ends their earlier handoffs (the new assignment hands off on its
-    // own): each card closes and its action is executed, so its deadline never alerts while the AI cares for them again
+    // b12 recheck R13, R16: AI care restarting on the person ends an earlier handoff only once a human touched the person
+    // since it was written (R-ISA-30: only a human touch clears the deadline; a restart is no touch and earns no credit,
+    // D12): its card closes, its action is executed and the deadline is recorded as met by that touch (what the sweep
+    // would record). An earlier handoff no human touched stays open and its deadline still alerts.
     const prior = await sql<{ id: string; action_id: string }>`SELECT h.id, h.assistant_action_id AS action_id FROM ai_isa_handoffs h
         JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
-      WHERE h.tenant_id = app.tenant_id() AND x.contact_id = ${contactId} AND x.kind = 'ai_isa_handoff' AND x.status = 'proposed' AND h.assignment_id <> ${assignmentId}`.execute(tx);
-    for (const p of prior.rows) await closeHandoffInTx(tx, sa, { id: p.id, actionId: p.action_id }, 'care_restarted', now);
+        JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
+      WHERE h.tenant_id = app.tenant_id() AND x.contact_id = ${contactId} AND x.kind = 'ai_isa_handoff' AND x.status = 'proposed' AND h.assignment_id <> ${assignmentId}
+        AND (h.sla_met_at IS NOT NULL OR c.last_human_touch_at >= h.created_at)`.execute(tx);
+    for (const p of prior.rows) {
+      await sql`UPDATE ai_isa_handoffs h SET sla_met_at = c.last_human_touch_at FROM contacts c
+        WHERE h.tenant_id = app.tenant_id() AND h.id = ${p.id} AND h.sla_class <> 'none' AND h.sla_met_at IS NULL
+          AND c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)`.execute(tx);
+      await closeHandoffInTx(tx, sa, { id: p.id, actionId: p.action_id }, 'care_restarted', now);
+    }
     const e = await sql<{ id: string }>`UPDATE playbook_enrollments SET state = 'stopped', stop_reason = 'ai_isa_started', ended_at = now(), pause_reason = NULL, paused_at = NULL
       WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state IN ('active','paused') RETURNING id`.execute(tx);
     const d = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}

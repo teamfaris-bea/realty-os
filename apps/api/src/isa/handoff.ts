@@ -157,12 +157,14 @@ export type HandoffCloseReason = 'deadline_met' | 'acknowledged' | 'lead_closed'
 
 /**
  * b12 recheck R13: a handoff that is done closes. Its pinned card closes (every open card of its action, whoever holds
- * it; resolved_by NULL, the "handled by its module" close that is final for the key, b12 recheck R22) and its still-proposed action is executed, by the system (a person decides an action
- * only as themselves, 0018; `executed` is what an internal action takes once handled). Done means: a human touch met
- * the deadline (the sweep, in its transaction), "Got it" on a handoff no touch can ever meet (sla_class 'none'), the
- * lead was closed (the sweep: a closed lead takes no touch), or AI care restarted on the person (startCare). An
- * executed action marks the handoff done for the sweep, the panel, the list and the Admin count, so its deadline never
- * alerts afterwards. Idempotent: a second call changes nothing and writes no second audit row.
+ * it; resolved_by NULL, the "handled by its module" close that is final for the key, b12 recheck R22) and its
+ * still-proposed action is executed, by the system (a person decides an action only as themselves, 0018; `executed` is
+ * what an internal action takes once handled). Done means: a human touch met the deadline (the sweep, in its
+ * transaction), "Got it" on a handoff no touch can ever meet (sla_class 'none'), the lead was closed by a person (the
+ * sweep: a closed lead takes no touch), or AI care restarted on the person after a human touch since the handoff
+ * (startCare; a restart alone never ends it, b12 recheck R16). An executed action marks the handoff done for the sweep,
+ * the panel, the list and the Admin count, so its deadline never alerts afterwards. Idempotent: a second call changes
+ * nothing and writes no second audit row.
  */
 export async function closeHandoffInTx(tx: Tx, actor: SystemActor, h: { id: string; actionId: string }, reason: HandoffCloseReason, now: Instant): Promise<boolean> {
   const x = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'executed', updated_at = now()
