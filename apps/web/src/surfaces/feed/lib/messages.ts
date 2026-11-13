@@ -31,6 +31,7 @@ export const AGENT_ERROR_MESSAGES: Record<string, string> = {
   DRAFT_STALE: 'They replied since this was drafted. Read the new message, then send if it still fits.',
   DRAFT_INVALIDATED: "This draft no longer applies: the lead's owner changed. Nothing was sent.",
   ACTION_NOT_PENDING: 'This was already handled.',
+  AI_ISA_HANDOFF_USE_ACK: "This is the assistant's handoff, not a draft, so nothing was sent.",
   ASSISTANT_UNAVAILABLE: "The assistant couldn't write a draft right now. You can write the message yourself.",
   DRAFT_OWNER_ONLY: 'Only the lead’s owner can ask the assistant for a draft.',
   SAVED_SEARCH_INVALID: 'Check the search criteria: something in them is not valid.',

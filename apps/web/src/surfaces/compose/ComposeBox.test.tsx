@@ -383,6 +383,26 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)[0]!.body).toMatchObject({ channel: 'sms', body: 'Hi Jane, Saturday at 11 works. Want me to book it?' });
   });
 
+  it('b12 recheck R11: an AI handoff card opened here (the feed\'s Review) is no draft: the refusal sends nothing and closes nothing, the text stays and Send then sends it as the agent’s own message', async () => {
+    const handoff = draftAction({ kind: 'ai_isa_handoff', category: 'internal', primaryAction: 'acknowledge', draft: null, claims: [], explanation: 'AI care handed back: owner_change' });
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: handoff } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'AI_ISA_HANDOFF_USE_ACK', { handoffId: IDS.claim }))
+      .on(`POST /contacts/${IDS.jane}/messages`, sent());
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const u = user();
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await u.type(box, 'Hi Jane, it is Ava. Calling you in five minutes.');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText("This is the assistant's handoff, not a draft, so nothing was sent. Your text is still here; Send sends it as your own message.")).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
+    expect(box).toHaveValue('Hi Jane, it is Ava. Calling you in five minutes.');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)[0]!.body).toMatchObject({ channel: 'sms', body: 'Hi Jane, it is Ava. Calling you in five minutes.' });
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('a draft whose reasoning the assistant could not verify is flagged "Check this" before sending', async () => {
     const a = draftAction();
     const fake = threadFake().on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: { ...a, claims: [{ ...a.claims[0]!, needsReview: true }] } } });

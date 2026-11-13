@@ -119,6 +119,8 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
   const out: Out = await asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
     if (!peek || peek.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
+    // b12 recheck R11: an AI handoff is acknowledged on its own route, before anything is written here
+    if (peek.kind === 'ai_isa_handoff') refuseOwnDecisionPath(peek);
     if (peek.contactId) await lockContact(tx, peek.contactId as ContactId);
     const a = (await A.actionById(tx, actionId, { lock: true }))!;
     if (a.status === 'invalidated') return { kind: 'invalidated' };
@@ -332,9 +334,15 @@ async function revertApproval(tx: Tx, actionId: string, sendActionId: string): P
  * b11 sends-gates/F1, api-ui/F1: a contract extraction is rejected or confirmed claim by claim on its document (module
  * 42), never by a generic reject (which would close it for good) or a generic claim review (which would mark a claim
  * decided with no deal date). The generic approve only acknowledges it (R-AST-21) and is not refused.
+ * b12 recheck R11: an AI handoff is acknowledged on POST /ai-isa/handoffs/:id/ack; the generic approve and reject both
+ * refuse it, so its pinned card stays open while its deadline does.
  */
 function refuseOwnDecisionPath(a: A.ActionRow): void {
   if (!A.OWN_DECISION_PATH_KINDS.includes(a.kind)) return;
+  if (a.kind === 'ai_isa_handoff') {
+    const handoffId = typeof a.payload.handoffId === 'string' ? a.payload.handoffId : null;
+    throw new AppError('AI_ISA_HANDOFF_USE_ACK', handoffId ? { handoffId } : undefined);
+  }
   const documentId = typeof a.payload.documentId === 'string' ? a.payload.documentId : null;
   throw new AppError('EXTRACTION_USE_DOCUMENT', documentId ? { documentId } : undefined);
 }

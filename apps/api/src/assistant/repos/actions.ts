@@ -158,9 +158,13 @@ export async function actionByDedupeKey(tx: Tx, key: string): Promise<ActionRow 
  * Kinds decided only on their own path, never by the generic card taps: a contract extraction's dates are confirmed or
  * rejected claim by claim on the document (module 42, /documents/:id/extraction), where a confirm writes the deal date
  * through module 31. A generic reject would close the extraction for good and a generic claim review would mark a
- * claim decided without a date (b11 sends-gates/F1, api-ui/F1). The generic approve stays acknowledge-only.
+ * claim decided without a date (b11 sends-gates/F1, api-ui/F1). The generic approve stays acknowledge-only for it.
+ * An AI ISA handoff (module 75) is acknowledged on POST /ai-isa/handoffs/:id/ack and its deadline is met only by a
+ * human touch (R-ISA-30): the generic approve ("Got it") invalidated it as a stale draft and the generic reject
+ * ("Dismiss") decided it, and either closed its pinned card while the deadline stayed open; both refuse it (b12
+ * recheck R11).
  */
-export const OWN_DECISION_PATH_KINDS: readonly string[] = ['contract_extraction'];
+export const OWN_DECISION_PATH_KINDS: readonly string[] = ['contract_extraction', 'ai_isa_handoff'];
 
 /**
  * Open (proposed) actions owned by the current user, newest first. Autonomous messages of an approved

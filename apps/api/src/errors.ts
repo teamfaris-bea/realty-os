@@ -404,6 +404,7 @@ export const ERROR_STATUS = {
   AI_ISA_ATTESTATION_REQUIRED: 422, // turning on or widening needs the typed attestation
   AI_ISA_ROLE_NOT_ELIGIBLE: 403, // TC and the human ISA role cannot opt in (Q-ISA-8)
   AI_ISA_BLOCK_NOT_LIFTABLE: 409, // a block lifts only after a new message from the person
+  AI_ISA_HANDOFF_USE_ACK: 409, // an AI handoff card is never decided by the generic approve or reject: it is acknowledged on POST /ai-isa/handoffs/:id/ack and its deadline met by a human touch (details.handoffId)
   SUBJECT_UNCONFIRMED: 409, // seller facts need an agent-confirmed subject (ISA-3)
   CAPABILITY_NOT_AVAILABLE: 422, // a reserved or unavailable capability
   VOICE_PLAYBOOK_NOT_APPROVED: 409, // module 48: AI answering needs an approved voice_answering version (R-VOICE-1)

@@ -400,7 +400,7 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
     });
   });
 
-  it('R-ISA-30 E521 (b12 recheck R10): a handoff to a1 that a1 dismisses and whose lead a1 then releases to the pond escalates to a1\'s Team Lead, never to a1 alone', async () => {
+  it.each([['rejected'], ['invalidated']] as const)('R-ISA-30 E521 (b12 recheck R10): a handoff to a1 whose card was decided (%s) and whose lead a1 then releases to the pond escalates to a1\'s Team Lead, never to a1 alone', async (decided) => {
     await twoTeams(async (tl2) => {
       const { runOwnershipCommand } = await import('../leads/ownership.js');
       const [a0, a1] = [w.agents[0]!, w.agents[1]!];
@@ -413,14 +413,17 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
       const [ho] = await handoffs([l.id]);
       expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
       expect(ho!.sla_class).not.toBe('none');
-      // a1 dismisses the card: its action is decided and no longer routed
+      // a1's card is decided: before b12 recheck R11 the generic Dismiss rejected it and the generic "Got it" invalidated
+      // it, each closing the card (both refuse it now, R11), so such a row is seeded as those taps left it
       const actionId = (await h.su.query<{ id: string }>(`SELECT assistant_action_id AS id FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.id;
-      expect((await call(a1, 'POST', `/assistant/actions/${actionId}/reject`)).status).toBe(200);
+      expect((await call(a1, 'POST', `/assistant/actions/${actionId}/reject`)).status).toBe(409);
+      await h.su.query(`UPDATE assistant_actions SET status = $2, decided_by_user_id = CASE WHEN $2 = 'rejected' THEN $3::uuid END, decided_at = CASE WHEN $2 = 'rejected' THEN now() END WHERE id = $1`, [actionId, decided, a1.userId]);
+      await h.su.query(`UPDATE priority_feed_items SET state = 'done', resolved_at = now() WHERE assistant_action_id = $1`, [actionId]);
       // a1 releases the lead: rehomeHandbacks moves proposed cards only, so the decided action stays a1's
       expect((await command(a1, l.id, 'release', { reason: 'not_a_fit' })).status).toBe(200);
       await runIsa(h, w.tenantId, 1);
       expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).not.toBe('owned');
-      expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: a1.userId, status: 'rejected' })]);
+      expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: a1.userId, status: decided })]);
       // (the sweep is tenant-wide: an earlier case's handoff may reach its second level in the same sweep)
       expect((await ageAndSweep(ho!.id)).escalated).toBeGreaterThanOrEqual(1);
       expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
@@ -434,5 +437,46 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
       expect(to2).not.toContain(a1.userId);
       expect(to2).toEqual(expect.arrayContaining([tl2.userId, w.owner.userId]));
     });
+  });
+});
+
+describe('b12 recheck R11: an AI handoff card is decided on its own path, never by the generic Approvals taps (R-ISA-30; E521)', () => {
+  it('R-ISA-30: the inbox does not list it; the generic approve ("Got it") and reject ("Dismiss") refuse it AI_ISA_HANDOFF_USE_ACK and change nothing; the ack route records the acknowledgement and leaves the card and the deadline open', async () => {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a1.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids })).ok).toBe(true);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId, sla_met_at: null });
+    expect(ho!.sla_class).not.toBe('none');
+    const actionId = (await h.su.query<{ id: string }>(`SELECT assistant_action_id AS id FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.id;
+    const unchanged = async () => {
+      expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: a1.userId, status: 'proposed' })]);
+      expect(await cards([l.id])).toEqual([expect.objectContaining({ user_id: a1.userId, state: 'open' })]);
+      expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null });
+    };
+    // the Approvals inbox offers no "Got it" or "Dismiss" for it: it is not a card there
+    const inbox = await call<{ items: { id: string }[] }>(a1, 'GET', '/assistant/inbox');
+    expect(inbox.status).toBe(200);
+    expect(inbox.body.items.map((i) => i.id)).not.toContain(actionId);
+    // the generic taps refuse it before any write
+    const ap = await call<{ error?: { code: string; details?: unknown } }>(a1, 'POST', `/assistant/actions/${actionId}/approve`, { commandId: randomUUID() });
+    expect([ap.status, ap.body.error?.code, ap.body.error?.details]).toEqual([409, 'AI_ISA_HANDOFF_USE_ACK', { handoffId: ho!.id }]);
+    await unchanged();
+    const rj = await call<{ error?: { code: string; details?: unknown } }>(a1, 'POST', `/assistant/actions/${actionId}/reject`);
+    expect([rj.status, rj.body.error?.code, rj.body.error?.details]).toEqual([409, 'AI_ISA_HANDOFF_USE_ACK', { handoffId: ho!.id }]);
+    await unchanged();
+    // the acknowledge route works: it records who saw it, and only a human touch meets the deadline
+    const ack = await call<{ handoffId: string; acknowledgedAt: string; slaMet: boolean }>(a1, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {});
+    expect(ack.status).toBe(200);
+    expect(ack.body).toMatchObject({ handoffId: ho!.id, slaMet: false });
+    expect((await h.su.query<{ by: string | null }>(`SELECT acknowledged_by_user_id AS by FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.by).toBe(a1.userId);
+    await unchanged();
+    await touch(l.id);
+    expect((await ageAndSweep(ho!.id)).met).toBeGreaterThanOrEqual(1);
+    expect((await handoffs([l.id]))[0]!.sla_met_at).not.toBeNull();
   });
 });

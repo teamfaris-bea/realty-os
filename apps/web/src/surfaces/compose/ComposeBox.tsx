@@ -333,7 +333,9 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       setNotice({ tone: 'warn', text: `${firstName(contact.name)} replied since this was drafted. Read the new message above, then send if it still fits.` });
       return true;
     }
-    if (code === 'DRAFT_INVALIDATED' || code === 'ACTION_NOT_PENDING') {
+    // b12 recheck R11: an AI handoff card (the feed's Review opens it here) is refused by the generic approve and stays
+    // open; it is detached the same way, so the next Send is the agent's own message (a human touch, R-ISA-30)
+    if (code === 'DRAFT_INVALIDATED' || code === 'ACTION_NOT_PENDING' || code === 'AI_ISA_HANDOFF_USE_ACK') {
       setDraftId(null);
       setNotice({ tone: 'warn', text: `${message} Your text is still here; Send sends it as your own message.` });
       return true;
