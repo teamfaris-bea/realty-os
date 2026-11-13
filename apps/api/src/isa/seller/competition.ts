@@ -68,7 +68,10 @@ export function sourceOf(e: MlsEligibility, row: ListingRow, teamName: string, n
 
 export type CompetitorLine = { ok: true; line: string; channel: 'sms' | 'email' } | { ok: false; refusal: string };
 
-/** One competitor line, and the channel it fits: SMS only when fitsSms and smsSegments both hold (E537 tested). */
+/**
+ * One competitor line, and the channel the line alone with its own footer fits (SMS only when fitsSms and smsSegments both
+ * hold). H2 (index.ts renderSellerFactsInTx) decides a message's channel on the whole message as queued, never on this.
+ */
 export function competitorLine(e: MlsEligibility, row: ListingRow, event: CompetitorEvent, teamName: string, now: Instant): CompetitorLine {
   const d = clientRendering(e, row, null);
   const src = sourceOf(e, row, teamName, now);

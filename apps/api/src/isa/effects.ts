@@ -302,8 +302,11 @@ async function escalationCardInTx(env: ApplyEnv, cls: string, type: string, prio
  */
 export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: IsaState): Promise<string | null> {
   const { tx, deps, ctx, now } = env;
-  // ISA-3 H2: a seller facts message is server-built and re-checked here (TX-B); comps need the bound email, no fallback
-  const sf = await renderSellerFactsInTx(tx, env.actor, ctx.a, now, q);
+  // ISA-3 H2: a seller facts message is server-built and re-checked here (TX-B); comps need the bound email, no fallback;
+  // only ctx.channels (bound and allowed by the policy) and an SMS fit judged on the longest composed body (audit F5)
+  const sf = await renderSellerFactsInTx(tx, env.actor, ctx.a, now, q, {
+    channels: ctx.channels, compose: (core, ch) => composeMessage({ body: core, who: ctx.who, firstInThread: true, optOutHint: true, channel: ch }),
+  });
   if (sf !== null && !sf.ok) return null;
   const channel = sf !== null ? sf.channel : ctx.channels.includes(q.channel) ? q.channel : ctx.channels[0];
   if (channel === undefined) return null;

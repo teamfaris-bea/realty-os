@@ -15,7 +15,7 @@ import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
 import { type CompsBuild, DEFAULT_SELLER_DEPS, type SellerDeps, buildCompsInTx } from './comps.js';
-import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, sourceOf } from './competition.js';
+import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, smsFits, sourceOf } from './competition.js';
 import { assignmentSubjectLinkInTx, sellerGatesInTx, subjectLinkInTx } from './gates.js';
 import { FACT_INTROS, STATUS_LABEL, factsMessage } from './isa1Seam.js';
 import { type AssignmentRow, type LinkResult, assignmentById } from './isa2Seam.js';
@@ -120,15 +120,29 @@ export interface PendingAny {
   lineSha256: string;
 }
 
+/** Where a seller facts message may go (ISA-3 audit F5): ISA-2's channel plan for this assignment. */
+export interface SellerChannels {
+  /** the bound channels the policy allows (ISA-2's ctx.channels: boundPoints ∩ the policy's content.channels) */
+  channels: readonly ('sms' | 'email')[];
+  /** the body as it will be queued (ISA-2's composeMessage, its longest form); the SMS fit is judged on it */
+  compose: (core: string, channel: 'sms' | 'email') => string;
+}
+
 /**
  * H2 (TX-B): the server-built body of a seller facts message, re-checked now (the gates and, for comps, the pipeline:
- * R-CMA-7 at queue). null when the message is not a seller facts message. Comps need a bound email: never SMS, no
- * fallback. Competition goes by SMS only when every line fits three segments, else by email.
+ * R-CMA-7 at queue). null when the message is not a seller facts message. Only a channel the policy allows and the
+ * assignment binds (ISA-2's ctx.channels) is ever used. Comps need that email: never SMS, no fallback. Competition goes
+ * by SMS only when the whole message as queued (intro, every line, every feed's footer, the sign-off) fits three
+ * segments (fitsSms and smsSegments, scope 7), else by email; with no allowed email it is refused (FACTS_DO_NOT_FIT),
+ * never sent as a long SMS. VERIFY (owner): scope 7's last fallback, the 'email_details_pointer' line by SMS, is not
+ * sent: it is not a facts message, and it would offer an email the lead has not given.
  */
-export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant, q: { messageKind: string; handles: readonly string[] }): Promise<SellerFacts> {
+export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant, q: { messageKind: string; handles: readonly string[] }, plan: SellerChannels): Promise<SellerFacts> {
   if (q.messageKind !== 'facts' || !seller(a)) return null;
+  const allowed = (ch: 'sms' | 'email') => plan.channels.includes(ch) && a.boundPoints[ch] !== undefined;
   if (q.handles.includes('comps')) {
     if (a.boundPoints.email === undefined) return { ok: false, codes: ['NO_BOUND_EMAIL'] };
+    if (!allowed('email')) return { ok: false, codes: ['CHANNEL_NOT_ALLOWED'] };
     const b: CompsBuild = await buildCompsInTx(tx, actor, a, now, SELLER_RUNTIME.deps);
     if (!b.ok) return b;
     return { ok: true, channel: 'email', body: b.body, pendingFacts: b.pendingFacts.map((f) => ({ ...f })) };
@@ -145,19 +159,18 @@ export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: Assig
   const rows = new Map((await listingRows(tx, ids)).map((r) => [r.id, r]));
   const lines: string[] = [];
   const facts: PendingAny[] = [];
-  let sms = true;
   for (const id of ids) {
     const r = rows.get(id)!;
     const line = competitorLine(e, r, r.status === 'pending' ? 'competitor_pending' : 'new_competitor', team, now);
     if (!line.ok) return { ok: false, codes: [line.refusal] };
-    if (line.channel !== 'sms') sms = false;
     lines.push(line.line);
     const conn = e.connections.find((c) => c.id === r.mls_connection_id)!;
     facts.push({ factKind: 'competitor', listingId: r.id, connectionId: conn.id, priceKind: 'asking', priceCents: Number(r.list_price_cents), statusAtBuild: r.status, asOf: sourceOf(e, r, team, now)!.asOf, displayRulesVersion: displayRulesVersion(conn), methodVersion: null, valuationDate: null, tier: null, compSetHash: null, lineSha256: '' });
   }
-  let channel: 'sms' | 'email' = sms && a.boundPoints.sms !== undefined ? 'sms' : 'email';
-  if (channel === 'email' && a.boundPoints.email === undefined) channel = 'sms';
-  const body = factsMessage({ intro: FACT_INTROS.competition, lines, attribution: footerOfFeeds(e, facts.map((f) => f.connectionId), channel), disclaimer: null, channel });
+  const bodyOf = (ch: 'sms' | 'email') => factsMessage({ intro: FACT_INTROS.competition, lines, attribution: footerOfFeeds(e, facts.map((f) => f.connectionId), ch), disclaimer: null, channel: ch });
+  const channel: 'sms' | 'email' | null = allowed('sms') && smsFits(plan.compose(bodyOf('sms'), 'sms')) ? 'sms' : allowed('email') ? 'email' : null;
+  if (channel === null) return { ok: false, codes: [plan.channels.some((ch) => a.boundPoints[ch] !== undefined) ? 'FACTS_DO_NOT_FIT' : 'CHANNEL_NOT_ALLOWED'] };
+  const body = bodyOf(channel);
   const { sha256Hex } = await import('@realty/core/compliance');
   return { ok: true, channel, body, pendingFacts: facts.map((f, k) => ({ ...f, lineSha256: sha256Hex(lines[k]!) })) };
 }

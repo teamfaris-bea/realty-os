@@ -11,7 +11,8 @@ import { commsRuntime } from '../../comms/runtime.js';
 import type { CommsDeps } from '../../comms/types.js';
 import type { Providers } from '../../providers/index.js';
 import type { JobHandler, TxJobHandler } from '../../worker/types.js';
-import { type IsaDeps, assignmentById, queueFactsMessageInTx } from './isa2Seam.js';
+import { composeMessage } from './isa1Seam.js';
+import { type IsaDeps, assignmentById, contextFor, queueFactsMessageInTx } from './isa2Seam.js';
 import { renderSellerFactsInTx } from './index.js';
 import { runSellerWatchInTx, sellerWatchSweepInTx } from './watch.js';
 
@@ -43,7 +44,10 @@ export function makeSellerHandlers(depsFor: DepsFor = defaultDeps): JobHandler<u
     async run(ctx, p) {
       const a = await assignmentById(ctx.tx, p.assignmentId);
       if (a === null || a.endedAt !== null) return;
-      const f = await renderSellerFactsInTx(ctx.tx, ctx.actor, a, ctx.now as Instant, { messageKind: 'facts', handles: ['comps'] });
+      const c = await contextFor(ctx.tx, a, ctx.now as Instant);
+      const f = await renderSellerFactsInTx(ctx.tx, ctx.actor, a, ctx.now as Instant, { messageKind: 'facts', handles: ['comps'] }, {
+        channels: c.channels, compose: (core, ch) => composeMessage({ body: core, who: c.who, firstInThread: true, optOutHint: true, channel: ch }),
+      });
       if (f !== null && f.ok) await queueFactsMessageInTx(ctx.tx, { assignmentId: a.id, channel: f.channel, body: f.body });
     },
   };

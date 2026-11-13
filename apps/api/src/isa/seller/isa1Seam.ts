@@ -2,6 +2,7 @@
 // of module 75: every core/isa import of isa/seller goes through this file. Every name is a real ISA-1 export.
 export {
   compSetHash,
+  composeMessage,
   countSentence,
   dollars,
   FACT_INTROS,
