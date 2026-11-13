@@ -171,12 +171,6 @@ export async function pendingPushesOfActiveLinks(tx: Tx): Promise<{ id: string; 
  * appointments and live free/busy only after it holds this lock, and module 14's write takes it too
  * (enqueueCalendarPush), so a slot booked in-app is seen by a concurrent booking.
  */
-/** The record a merge chain ends at (0075's app.contact_merge_root; the record itself when never merged away). */
-export async function mergeRootOf(tx: Tx, contactId: string): Promise<string> {
-  const r = await sql<{ id: string }>`SELECT app.contact_merge_root(app.tenant_id(), ${contactId}::uuid) AS id`.execute(tx);
-  return r.rows[0]?.id ?? contactId;
-}
-
 export async function lockPersonBookings(tx: Tx, userId: string): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended('calendar.book:' || app.tenant_id()::text || ':' || ${userId}::text, 0))`.execute(tx);
 }

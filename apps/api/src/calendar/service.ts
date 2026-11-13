@@ -10,8 +10,8 @@
 //   busy            live free/busy (R-CAL-3): read per request, never stored
 //   bookSlot        booking under the person's advisory lock (E151): re-reads in-app appointments and live
 //                   free/busy after taking the lock; a taken slot returns the next free one instead
-import type { IdGenerator, TenantId, UserActor } from '@realty/core/foundation';
-import { type Database, type Tx, withTenantTx } from '@realty/db';
+import type { ContactId, IdGenerator, TenantId, UserActor } from '@realty/core/foundation';
+import { type Database, type Tx, lockContactRoot, withTenantTx } from '@realty/db';
 import { randomBytes } from 'node:crypto';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
@@ -397,7 +397,8 @@ const overlaps = (s: number, e: number, b: Busy) => Date.parse(b.start) < e && D
 
 /**
  * Books one slot for `userId` as the system actor (the assistant or voice path, module 48). The transaction
- * takes the person's advisory lock first, then re-reads their in-app appointments and their live free/busy, so
+ * takes the contact's locks (and its root survivor's), then the person's advisory lock, then re-reads their in-app
+ * appointments and their live free/busy, so
  * of two concurrent bookings of one slot exactly one wins; the other gets SLOT_TAKEN with the next free slot of
  * the same length (15-minute steps, within 7 days). An unreachable calendar refuses the booking rather than
  * risking a double booking. The new appointment enqueues its calendar push in the same transaction.
@@ -411,6 +412,10 @@ export async function bookSlot(deps: CalendarDeps, tenantId: string, input: Book
     actor,
     async (tx, now) => {
       if (s < now) return { ok: false as const, code: 'SLOT_INVALID' as const };
+      // b12 review F5, b12 recheck R3: a record merged away while it was being booked (an AI-answered call) books on its
+      // root survivor; the contact locks come first (the global order: contact, then the person's booking lock), and the
+      // root is read again under them, so a merge in flight when this started cannot leave the booking behind
+      const contactId = input.contactId ? await lockContactRoot(tx, input.contactId as ContactId) : null;
       await repo.lockPersonBookings(tx, input.userId);
       if (!(await repo.memberActive(tx, input.userId))) return { ok: false as const, code: 'MEMBER_NOT_ACTIVE' as const };
       const windowEnd = new Date(e + SEARCH_MS).toISOString();
@@ -430,8 +435,6 @@ export async function bookSlot(deps: CalendarDeps, tenantId: string, input: Book
         return { ok: false as const, code: 'SLOT_TAKEN' as const, nextSlot: next };
       }
       const id = deps.ids.next<'AppointmentId'>();
-      // b12 review F5: a record merged away while it was being booked (an AI-answered call) books on its root survivor
-      const contactId = input.contactId ? await repo.mergeRootOf(tx, input.contactId) : null;
       await repo.insertBooked(tx, { id, userId: input.userId, contactId, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
       await enqueueCalendarPushLocked(tx, id);
       return { ok: true as const, appointmentId: id };

@@ -29,6 +29,31 @@ export async function lockContacts(tx: Tx, ids: readonly ContactId[]): Promise<v
   for (const id of [...new Set(ids.map((i) => i.toLowerCase() as ContactId))].sort()) await lockContact(tx, id);
 }
 
+/**
+ * Locks a contact and the record its merge chain ends at (0075's app.contact_merge_root), and reads the root again
+ * under the locks until it holds still (b12 recheck R3): a merge that held the record's lock may commit while this
+ * waits and move the record onto a survivor, which is then locked too. Returns the root (the record itself when it was
+ * never merged away). A root found after the first read is locked out of id order; the merge that moved the record
+ * has committed by then, and a held root cannot move again.
+ */
+export async function lockContactRoot(tx: Tx, id: ContactId): Promise<ContactId> {
+  const rootOf = async () =>
+    ((await sql<{ id: string | null }>`SELECT app.contact_merge_root(app.tenant_id(), ${id}::uuid) AS id`.execute(tx)).rows[0]?.id ?? id).toLowerCase() as ContactId;
+  let root = await rootOf();
+  await lockContacts(tx, [id, root]);
+  const held = new Set<string>([id.toLowerCase(), root]);
+  for (let i = 0; i < 64; i++) {
+    const again = await rootOf();
+    if (again === root) return root;
+    root = again;
+    if (!held.has(root)) {
+      await lockContact(tx, root);
+      held.add(root);
+    }
+  }
+  throw new Error('CONTACT_MERGE_ROOT_UNSTABLE');
+}
+
 /** app.lock_address (per-address advisory transaction lock: dedup on intake, consent projection). */
 export async function lockAddress(tx: Tx, addressHmacHex: string): Promise<void> {
   await sql`SELECT app.lock_address(${hmacBytes(addressHmacHex)}::bytea)`.execute(tx);

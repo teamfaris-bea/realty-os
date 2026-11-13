@@ -23,7 +23,7 @@ export {
   withPreTenantThenTenant,
   withTenantTx,
 } from './tenantTx.js';
-export { hmacBytes, lockAddress, lockAddresses, lockContact, lockContacts } from './locks.js';
+export { hmacBytes, lockAddress, lockAddresses, lockContact, lockContactRoot, lockContacts } from './locks.js';
 export { ConsentLedgerNotVisibleError, ConsentSpecError, loadConsentEvents, recordConsentEvent, upsertConsentState } from './consent.js';
 export {
   type ClaimedJob,
