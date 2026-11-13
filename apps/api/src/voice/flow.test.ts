@@ -29,3 +29,24 @@ describe('smoke', () => {
     expect(hb).toHaveLength(1);
   });
 });
+
+describe('b12 review F5: a merge during an AI-answered call (R-OWN-24, R-VOICE handback; E526)', () => {
+  it('R-OWN-24: the record is merged while the AI is on the call: the booked appointment, the handback and its card land on the survivor with the call', async () => {
+    const { command } = await import('../leads/testing.js');
+    const { ownedContact } = await import('../comms/testing.js');
+    const { settled, waitFor } = await import('./testing.js');
+    const survivor = await ownedContact(w.agents[0]!, { consent: false });
+    const c = await aiCall(h, w, SCRIPTS.booking, { faults: { holdBeforeStep: 3 }, settle: false });
+    await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
+    const m = await command(w.owner, survivor.id, 'merge', { loserId: c.contactId, ownerChoice: w.agents[0]!.userId });
+    expect(m.status).toBe(200);
+    h.providers.voiceAgent.transportOf(w.tenantId, c.callId)!.resume();
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(r?.appointmentId).toBeTruthy();
+    const ids = [c.contactId, survivor.id];
+    expect((await h.su.query(`SELECT contact_id FROM calls WHERE id = $1`, [c.callId])).rows).toEqual([{ contact_id: survivor.id }]);
+    expect((await h.su.query(`SELECT contact_id FROM assistant_actions WHERE kind = 'handback' AND payload ->> 'inboundCallId' = $1`, [c.callId])).rows).toEqual([{ contact_id: survivor.id }]);
+    expect((await h.su.query(`SELECT contact_id FROM appointments WHERE contact_id = ANY($1::uuid[]) AND created_by_kind = 'assistant'`, [ids])).rows).toEqual([{ contact_id: survivor.id }]);
+    expect((await h.su.query(`SELECT contact_id, state FROM priority_feed_items WHERE contact_id = ANY($1::uuid[]) AND item_type = 'handback'`, [ids])).rows).toEqual([{ contact_id: survivor.id, state: 'open' }]);
+  });
+});

@@ -20,7 +20,7 @@ import { type Claim, formatDue } from '@realty/core/assistant';
 import type { ContactId, IanaZone, Instant, SystemActor } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
 import type { VoiceHandback, VoiceOutcome } from '@realty/core/voice';
-import { type Tx, lockContact, withTenantTx } from '@realty/db';
+import { type Tx, lockContacts, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import * as A from '../assistant/repos/actions.js';
@@ -102,11 +102,16 @@ export async function writeHandback(actor: SystemActor, deps: Pick<VoiceDeps, 'd
 }
 
 /** The same, inside the caller's system transaction (voice.reconcile). */
-export async function writeHandbackInTx(tx: Tx, now: Instant, actor: SystemActor, deps: Pick<VoiceDeps, 'ids' | 'envelope'>, i: HandbackInput): Promise<HandbackResult | null> {
+export async function writeHandbackInTx(tx: Tx, now: Instant, actor: SystemActor, deps: Pick<VoiceDeps, 'ids' | 'envelope'>, input: HandbackInput): Promise<HandbackResult | null> {
   {
+    // b12 review F5: the record may have been merged away during the call (the session fixed it at takeover); the
+    // handback, its card, notification and tasks go where the merge moved the call: the root survivor. Both records are
+    // locked (sorted), so no further merge of either can interleave.
+    const root = (await sql<{ id: string }>`SELECT app.contact_merge_root(app.tenant_id(), ${input.contactId}::uuid) AS id`.execute(tx)).rows[0]?.id ?? input.contactId;
+    const i: HandbackInput = root === input.contactId ? input : { ...input, contactId: root };
     // VERIFY: the lock order of the end transaction (the contact, then the call row, then the booking's cancel in (g)),
     // and bookSlot's own owner lock (calendar/service.ts) waiting behind it (E427).
-    await lockContact(tx, i.contactId as ContactId);
+    await lockContacts(tx, [...new Set([input.contactId, root])] as ContactId[]);
     const call = (await sql<{ handback_action_id: string | null; ai_takeover_at: Date | null; transfer_outcome: string | null; handled_by: string }>`
       SELECT handback_action_id, ai_takeover_at, transfer_outcome, handled_by FROM calls WHERE tenant_id = app.tenant_id() AND id = ${i.callId} FOR UPDATE`.execute(tx)).rows[0];
     if (!call || call.handled_by !== 'assistant') return null;

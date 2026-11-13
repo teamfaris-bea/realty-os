@@ -430,7 +430,9 @@ export async function bookSlot(deps: CalendarDeps, tenantId: string, input: Book
         return { ok: false as const, code: 'SLOT_TAKEN' as const, nextSlot: next };
       }
       const id = deps.ids.next<'AppointmentId'>();
-      await repo.insertBooked(tx, { id, userId: input.userId, contactId: input.contactId ?? null, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
+      // b12 review F5: a record merged away while it was being booked (an AI-answered call) books on its root survivor
+      const contactId = input.contactId ? await repo.mergeRootOf(tx, input.contactId) : null;
+      await repo.insertBooked(tx, { id, userId: input.userId, contactId, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
       await enqueueCalendarPushLocked(tx, id);
       return { ok: true as const, appointmentId: id };
     },
