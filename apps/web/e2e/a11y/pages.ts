@@ -68,6 +68,7 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/numbers', roles: ADMINS, url: at('/admin/numbers') },
   { path: '/admin/erasure', roles: ADMINS, url: (ids) => `/admin/erasure?contact=${ids.contactId}` },
   { path: '/admin/system', roles: ADMINS, url: at('/admin/system') },
+  { path: '/admin/ai-answering', roles: ADMINS, url: at('/admin/ai-answering') },
   { path: '/admin/integrations/mls', roles: ADMINS, url: at('/admin/integrations/mls') },
   // module 41 (lane admin-pages)
   { path: '/admin/integrations', roles: ADMINS, url: at('/admin/integrations') },
