@@ -1,4 +1,4 @@
-// Which channels can carry a client's sign-in link on this deployment (R-PORTAL-10, E646; F11). A link is never handed
+// Which channels can carry a client's sign-in link on this deployment (R-PORTAL-10, E686; F11). A link is never handed
 // to a fake provider outside tests, and a text needs both Twilio and TELEPHONY_LIVE_REQUESTS=true (without it every
 // text fails TELEPHONY_LIVE_OFF). Pure.
 import type { Config } from '../../config.js';

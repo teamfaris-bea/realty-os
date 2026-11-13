@@ -1,4 +1,4 @@
-// Module 45 portal.sync (R-PORTAL-15; E410, E656, E658; findings F10, F13). Runs the job's transaction as the worker
+// Module 45 portal.sync (R-PORTAL-15; E410, E696, E698; findings F10, F13). Runs the job's transaction as the worker
 // does: one withTenantTx as the system of the tenant.
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -57,7 +57,7 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect(rows.map((r) => [r.source_id, r.by_kind, r.retracted])).toEqual([[confirmed, 'system', false]]);
   });
 
-  it('E656: a moved milestone is retracted by the sync and its new version published; a waived or back-to-proposed one is retracted', async () => {
+  it('E696: a moved milestone is retracted by the sync and its new version published; a waived or back-to-proposed one is retracted', async () => {
     const { d, g } = await granted();
     const a = await milestone(agent(), d, '2031-05-01');
     const b = await milestone(agent(), d, '2031-05-02', 'appraisal');
@@ -74,7 +74,7 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect(rows.filter((r) => r.retracted)).toHaveLength(3);
   });
 
-  it('E656: a milestone a person retracted (at any version) is never published again by the sync', async () => {
+  it('E696: a milestone a person retracted (at any version) is never published again by the sync', async () => {
     const { d, g } = await granted();
     const a = await milestone(agent(), d, '2031-06-01');
     await sync();
@@ -85,7 +85,7 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect((await call(agent(), 'PATCH', `/deal-dates/${a}`, { dueOn: '2031-06-15' })).status).toBe(200);
     await sync();
     expect((await items(g)).filter((r) => !r.retracted)).toEqual([]);
-    // a person may still publish it (E657)
+    // a person may still publish it (E697)
     expect((await publish(agent(), 'milestone', a, [g])).body.results[0]!.result).toBe('published');
   });
 
@@ -122,7 +122,7 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect(await live()).toBe(1); // the open task's next step stays
   });
 
-  it('E658 F10: expiry is stored once: 90 days after the later of closing and the grant (a grant made 100 days after closing too); at once when lost', async () => {
+  it('E698 F10: expiry is stored once: 90 days after the later of closing and the grant (a grant made 100 days after closing too); at once when lost', async () => {
     const closed = await granted();
     await h.su.query(`ALTER TABLE deals DISABLE TRIGGER USER; UPDATE deals SET stage = 'closed', closed_at = now() - interval '100 days' WHERE id = '${closed.d}'; ALTER TABLE deals ENABLE TRIGGER USER`);
     const late = await granted();
@@ -171,7 +171,7 @@ describe('R-PORTAL-15 portal.sync', () => {
 });
 
 describe('R-PORTAL-15 batches', () => {
-  it('E658: a tenant with more open grants than one batch still stores the expiry of every ended deal', async () => {
+  it('E698: a tenant with more open grants than one batch still stores the expiry of every ended deal', async () => {
     const open = await granted();
     const closed = await granted();
     await h.su.query(`ALTER TABLE deals DISABLE TRIGGER USER; UPDATE deals SET stage = 'closed', closed_at = now() WHERE id = '${closed.d}'; ALTER TABLE deals ENABLE TRIGGER USER`);

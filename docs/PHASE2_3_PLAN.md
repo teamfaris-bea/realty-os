@@ -704,7 +704,7 @@ export function renderPortalItem(source: SourceFacts): PortalItemSpec;          
 - **Contract:** `portal/shared/webContract.json` (generated from the Zod schemas; modules 46 and 55 build against it), the copy table `portal/shared/copy.ts`.
 - **Defaults (owner questions Q-PORTAL-1…13, §2.2):** each is one constant or branch: the check-8 clause (Q1), the sealed link (`linkLine`, `portal.seal_link`) and `LINK_TTL_MS` (Q2), `portalClearedInTx` in the invite notice (Q3), `storeExpiry` (Q4), the live-only index and `publishMilestones`' person-retraction clause (Q5), `cardFor` (Q6), `composeHumanMessage` for the notice (Q7), `retractStale`'s task branch (Q8), `renderPortalItem` (Q9), `portalCsrfKey` (Q10), no new role (Q11), `portal.document_download` (Q12), `LOGIN_POINT_CHANGED` (Q13).
 - **Stop line:** `platform:portal` stays uncleared on every deployment until the per-deployment counsel review (DEPLOY §10.1, D11); nothing reaches a real client before an approved pilot. Sign-in by email needs `EMAIL_PROVIDER=smtp`, by text `TELEPHONY_PROVIDER=twilio` and `TELEPHONY_LIVE_REQUESTS=true`; fakes are refused outside tests (503 `{channel}`).
-- **Rules:** R-PORTAL-8…19 (DATA_MODEL Part 2 §9), edge cases E640–E659. Security notes: ARCHITECTURE §21.44.
+- **Rules:** R-PORTAL-8…19 (DATA_MODEL Part 2 §9), edge cases E680–E699. Security notes: ARCHITECTURE §21.44.
 
 #### 46. `web/portal`
 Separate Vite entry; phone-first timeline, documents, next steps; "Message {agent}" opens SMS/email; lint bans staff-surface imports. Lighthouse mobile ≥ 90; axe clean.

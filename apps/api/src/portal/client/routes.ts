@@ -6,9 +6,9 @@
 //   POST /portal/logout                           (CSRF) ends this session, clears the cookie, 204
 //   GET  /portal/timeline?grantId=                milestones, showings, feedback, seller updates; next steps apart
 //   GET  /portal/documents?grantId=               document items
-//   POST /portal/documents/:itemId/stream-token   (CSRF) a 60 s single-use download URL (E649)
-//   GET  /portal/files/:token                     the bytes, once, attachment (E649, E659)
-// A foreign, invisible or non-canonical id is 404 (R-PERM-5, E648).
+//   POST /portal/documents/:itemId/stream-token   (CSRF) a 60 s single-use download URL (E689)
+//   GET  /portal/files/:token                     the bytes, once, attachment (E689, E699)
+// A foreign, invisible or non-canonical id is 404 (R-PERM-5, E688).
 import type { TenantId } from '@realty/core/foundation';
 import { endPortalSession, issuePortalDocumentStream, recordPortalAudit, redeemPortalDocumentDownload, withPortalTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';

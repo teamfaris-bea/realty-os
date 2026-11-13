@@ -1,4 +1,4 @@
-// Module 45 sign-in (R-PORTAL-10, R-PORTAL-11, R-PORTAL-12, R-GATE-14; E640-E646). Fakes only; platform:portal is
+// Module 45 sign-in (R-PORTAL-10, R-PORTAL-11, R-PORTAL-12, R-GATE-14; E680-E686). Fakes only; platform:portal is
 // cleared in the per-test database inside try/finally.
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
@@ -48,8 +48,8 @@ const linkMessages = (contactId: string) =>
   h.su.query<{ id: string; status: string; body: string; channel: string; gate_decision_id: string | null }>(`SELECT id, status, body, channel, gate_decision_id FROM messages WHERE action_category = 'portal_login_link' AND contact_id = $1 ORDER BY created_at`, [contactId]).then((r) => r.rows);
 const providerCalls = () => h.providers.email.sent.length + h.providers.telephony.sms.length;
 
-describe('R-PORTAL-10 one answer for every address (E640)', () => {
-  it('E640: a match, an unknown team or address, a disabled account, a removed point, a throttled account and an opted-out recipient get the same 202, body and headers', async () => {
+describe('R-PORTAL-10 one answer for every address (E680)', () => {
+  it('E680: a match, an unknown team or address, a disabled account, a removed point, a throttled account and an opted-out recipient get the same 202, body and headers', async () => {
     const match = await invited({ firstName: 'Mia' });
     const disabled = await invited({ firstName: 'Dee' });
     await call(w.agents[0]!, 'POST', `/portal-accounts/${disabled.accountId}/disable`, { reason: 'CLIENT_ASKED' });
@@ -85,7 +85,7 @@ describe('R-PORTAL-10 one answer for every address (E640)', () => {
     expect(d.rows[0]!.reason_codes).toContain('CONSENT_REVOKED');
   });
 
-  it('R-PORTAL-10 E640: the reply leaves before requestPortalLogin starts (a lookup held open does not hold the answer)', async () => {
+  it('R-PORTAL-10 E680: the reply leaves before requestPortalLogin starts (a lookup held open does not hold the answer)', async () => {
     const match = await invited({ firstName: 'Ari' });
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
@@ -110,7 +110,7 @@ describe('R-PORTAL-10 one answer for every address (E640)', () => {
     }
   });
 
-  it('E641 R-INT-6: while platform:portal is not cleared every address gets 503 PORTAL_NOT_AVAILABLE and nothing is written or sent', async () => {
+  it('E681 R-INT-6: while platform:portal is not cleared every address gets 503 PORTAL_NOT_AVAILABLE and nothing is written or sent', async () => {
     const match = await invited({ firstName: 'Bo' });
     await setPortalCleared(h, false);
     try {
@@ -127,7 +127,7 @@ describe('R-PORTAL-10 one answer for every address (E640)', () => {
     }
   });
 
-  it('E646 R-PORTAL-10: a channel that cannot really send answers 503 {channel} for every address of that kind (fakes refused outside tests; texts need Twilio and live texting)', async () => {
+  it('E686 R-PORTAL-10: a channel that cannot really send answers 503 {channel} for every address of that kind (fakes refused outside tests; texts need Twilio and live texting)', async () => {
     expect(linkChannels({ env: 'production', telephonyLiveRequests: false, providers: { email: 'smtp', telephony: 'twilio' } })).toEqual({ email: 'real', sms: 'off' });
     expect(linkChannels({ env: 'production', telephonyLiveRequests: true, providers: { email: 'fake', telephony: 'twilio' } })).toEqual({ email: 'off', sms: 'real' });
     expect(linkChannels({ env: 'development', telephonyLiveRequests: true, providers: { email: 'fake', telephony: 'fake' } })).toEqual({ email: 'off', sms: 'off' });
@@ -166,7 +166,7 @@ describe('R-PORTAL-10 one answer for every address (E640)', () => {
   });
 });
 
-describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
+describe('R-PORTAL-11 the sign-in link (E682-E685)', () => {
   it('R-PORTAL-11: the link reaches the fake by email, names whose portal it opens, and the stored body is the fixed line with no link (b14 F2; seal.test.ts covers every status)', async () => {
     const c = await invited({ firstName: 'Nia' });
     await askLink(h, slug, c.email, ip());
@@ -185,7 +185,7 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     expect(indexed.rowCount).toBe(1);
   });
 
-  it('E644: while the outcome is unknown the body still holds no link (the reconcile renders it from its seal, seal.test.ts); once final it is unchanged, and the staff thread shows the line, never the link', async () => {
+  it('E684: while the outcome is unknown the body still holds no link (the reconcile renders it from its seal, seal.test.ts); once final it is unchanged, and the staff thread shows the line, never the link', async () => {
     const c = await invited({ firstName: 'Kit' });
     // the login point is the email; switch it to the phone so the link goes by text
     const phonePoint = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'`, [c.id])).rows[0]!.id;
@@ -211,7 +211,7 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     expect(JSON.stringify(thread.body)).not.toContain('#token='); // the invite notice's ?team= page link is no token
   });
 
-  it('E644: a link still queued after 15 minutes is canceled PORTAL_LINK_EXPIRED; its body never held the link', async () => {
+  it('E684: a link still queued after 15 minutes is canceled PORTAL_LINK_EXPIRED; its body never held the link', async () => {
     const c = await invited({ firstName: 'Pat' });
     h.providers.email.failNext('unavailable');
     await askLink(h, slug, c.email, ip());
@@ -226,7 +226,7 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     expect((await h.su.query<{ status_reason: string }>('SELECT status_reason FROM messages WHERE id = $1', [m!.id])).rows[0]!.status_reason).toBe('PORTAL_LINK_EXPIRED');
   });
 
-  it('E642: a paused conversation still gets the link; a suppression or a person-level do-not-contact blocks it with a decision and no provider call (R-GATE-14)', async () => {
+  it('E682: a paused conversation still gets the link; a suppression or a person-level do-not-contact blocks it with a decision and no provider call (R-GATE-14)', async () => {
     const paused = await invited({ firstName: 'Ivy' });
     const pausedRows = await h.su.query(`UPDATE conversations SET automation_paused_at = now(), automation_pause_reason = 'client_reply' WHERE contact_id = $1`, [paused.id]);
     expect(pausedRows.rowCount).toBe(1);
@@ -254,7 +254,7 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     expect(providerCalls()).toBe(before2);
   });
 
-  it('E643: spouses sharing an email each get their own link naming them, and each link opens only its own portal', async () => {
+  it('E683: spouses sharing an email each get their own link naming them, and each link opens only its own portal', async () => {
     const shared = randomEmail();
     const a = await invited({ firstName: 'Alex', email: shared });
     const b = await invited({ firstName: 'Blair', email: shared });
@@ -273,7 +273,7 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     }
   });
 
-  it('E645: a link works once; again, after 15 minutes, after a newer link, or in two tabs at once, it is 401 PORTAL_LINK_INVALID', async () => {
+  it('E685: a link works once; again, after 15 minutes, after a newer link, or in two tabs at once, it is 401 PORTAL_LINK_INVALID', async () => {
     const c = await invited({ firstName: 'Eve' });
     await h.su.query(`UPDATE portal_login_tokens SET created_at = created_at - interval '2 hours', expires_at = expires_at - interval '2 hours' WHERE portal_account_id = $1`, [c.accountId]);
     await askLink(h, slug, c.email, ip());

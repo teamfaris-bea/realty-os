@@ -62,7 +62,7 @@ export interface DeliverDeps {
   beforeInlineDispatch?: (messageId: string) => Promise<void>;
 }
 
-/** Sends each link (usually one; spouses sharing an email get one each, E643). Never throws: errors are logged by code. */
+/** Sends each link (usually one; spouses sharing an email get one each, E683). Never throws: errors are logged by code. */
 export async function deliverLinks(d: DeliverDeps, links: readonly PortalLoginLink[]): Promise<void> {
   for (const link of links) {
     try {

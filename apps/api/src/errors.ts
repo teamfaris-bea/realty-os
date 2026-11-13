@@ -423,12 +423,12 @@ export const ERROR_STATUS = {
   COACHING_TRENDS_SCOPE: 404, // trends of members the caller may not read (R-COACH-8)
   // ---- module 45 api/portal (R-PORTAL-8…19; every sentence in portal/shared/copy.ts) ----
   PORTAL_SESSION_REQUIRED: 401, // no live client portal session (signed out, expired, revoked, disabled or the portal turned off)
-  PORTAL_LINK_INVALID: 401, // the sign-in link was used, expired, replaced by a newer one, or never existed (E645)
+  PORTAL_LINK_INVALID: 401, // the sign-in link was used, expired, replaced by a newer one, or never existed (E685)
   PORTAL_NOT_AVAILABLE: 503, // the client portal is not turned on here, or this channel cannot send sign-in links (details.channel)
-  PORTAL_NOT_A_PARTY: 409, // the contact is not a party to the deal or listing (E650)
-  PORTAL_LOGIN_POINT_MISSING: 409, // the contact has no active email or phone to sign in with (E651)
+  PORTAL_NOT_A_PARTY: 409, // the contact is not a party to the deal or listing (E690)
+  PORTAL_LOGIN_POINT_MISSING: 409, // the contact has no active email or phone to sign in with (E691)
   PORTAL_SOURCE_NOT_IN_GRANT: 409, // the source does not belong to the grant's deal or listing, or cannot be shared
-  PORTAL_NOT_SELLER_SIDE: 409, // through the deal's listing only a seller or co-seller sees showings, feedback and seller updates (E655)
+  PORTAL_NOT_SELLER_SIDE: 409, // through the deal's listing only a seller or co-seller sees showings, feedback and seller updates (E695)
   PORTAL_GRANT_INACTIVE: 409, // the grant is revoked or lapsed, or its account disabled
   PORTAL_ITEM_RETRACTED: 409, // the item is already retracted (a retraction is final)
   PORTAL_GRANT_REVOKED: 409, // the grant is already revoked (a revocation is final)

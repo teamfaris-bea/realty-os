@@ -1,4 +1,4 @@
-// Publish and retract portal items as a person (R-PORTAL-14; E654, E655, E657). publishable() decides first (core
+// Publish and retract portal items as a person (R-PORTAL-14; E694, E695, E697). publishable() decides first (core
 // refuses before the DB); the item is rendered by renderPortalItem() and inserted as the person, so the items guard and
 // the insert policy re-check it. A batch publishes into each grant in its own savepoint: one grant's refusal never
 // undoes another's item. A retraction is final and records its person; the source can then be published again.

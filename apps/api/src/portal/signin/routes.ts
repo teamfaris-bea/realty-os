@@ -1,4 +1,4 @@
-// Pre-session portal routes (R-PORTAL-10, R-PORTAL-12; E640-E646), mounted under /api/portal by plugin.ts.
+// Pre-session portal routes (R-PORTAL-10, R-PORTAL-12; E680-E686), mounted under /api/portal by plugin.ts.
 //
 //   POST /portal/login   {team, address}  in order, each the same for every address of its kind: the limits; the
 //                        platform:portal clearance (pre-tenant) else 503 PORTAL_NOT_AVAILABLE; the channel can really
@@ -54,7 +54,7 @@ export async function registerSigninRoutes(app: FastifyInstance, limits: SigninL
     {
       ...signin,
       schema: { body: S.LoginBody, response: { 202: S.LoginAccepted } },
-      // the lookup and the delivery run only once the response is on the wire (F12, E640)
+      // the lookup and the delivery run only once the response is on the wire (F12, E680)
       onResponse: async (req, reply) => {
         const job = req.portalSignin;
         if (!job || reply.statusCode !== 202) return;

@@ -10,14 +10,14 @@ export const portalLinkUrl = (webOrigin: string, token: string): string => `${we
 /** The invite notice names the team's sign-in page (no token). */
 export const portalSignInUrl = (webOrigin: string, slug: string): string => `${webOrigin}${PORTAL_PAGE}?team=${encodeURIComponent(slug)}`;
 
-/** The one answer to every sign-in request that reaches the lookup (R-PORTAL-10, E640). */
+/** The one answer to every sign-in request that reaches the lookup (R-PORTAL-10, E680). */
 export const SIGNIN_ACCEPTED =
   'If that email or phone number is the one your agent set up, and it can get messages from us, we sent a sign-in link. It works once, for 15 minutes. Nothing after a few minutes? Ask your agent.';
 
 export const LINK_EMAIL_SUBJECT = 'Your sign-in link';
 
 /**
- * The stored line of a sign-in link message (E643: it names whose portal it opens). The URL is never in it (b14 audit
+ * The stored line of a sign-in link message (E683: it names whose portal it opens). The URL is never in it (b14 audit
  * F2): comms/dispatch.ts renders the sealed URL after this line at the provider send only, so staff reading the thread
  * see this line, which says the link is not kept, and the client gets the line with the link after it.
  */

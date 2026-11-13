@@ -41,7 +41,7 @@ describe('honest copy (R-PORTAL-10, R-PORTAL-11, R-PORTAL-13)', () => {
     for (const c of Object.keys(CODE_SENTENCES)) expect(Object.hasOwn(ERROR_STATUS, c) || c === 'PORTAL_PERSON_ONLY' || c === 'PORTAL_RULE_MILESTONES_ONLY', c).toBe(true);
   });
 
-  it('R-PORTAL-11 E643 (b14 F2): the stored line names whose portal it opens and holds no link; the client gets the line with the link rendered after it', () => {
+  it('R-PORTAL-11 E683 (b14 F2): the stored line names whose portal it opens and holds no link; the client gets the line with the link rendered after it', () => {
     const url = 'https://app.example.test/portal.html#token=AAAA';
     const sms = linkLine({ brokerage: 'Sample Realty', name: 'Jane', channel: 'sms' });
     expect(sms).toBe("Sample Realty: sign-in link for Jane's client portal. It works once, for 15 minutes; if you did not ask for it, ignore this text. Sign in here (the link itself is not kept in the message history):");
@@ -83,7 +83,7 @@ describe('R-PORTAL-18 the grant display copy', () => {
 });
 
 describe('R-PORTAL-9 the portal CSRF token', () => {
-  it('E647 R-PORTAL-9: derived under a portal-only key: the staff token for the same id never validates; a portal token validates only for its session', () => {
+  it('E687 R-PORTAL-9: derived under a portal-only key: the staff token for the same id never validates; a portal token validates only for its session', () => {
     const sid = '01a1d527-588b-713f-914b-8241c9cbd2ba';
     const t = portalCsrfToken(SECRET, sid);
     expect(portalCsrfValid(SECRET, sid, t)).toBe(true);

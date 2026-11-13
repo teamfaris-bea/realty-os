@@ -1,10 +1,10 @@
-// portal.sync (R-PORTAL-15; E410, E656, E658; finding F10, F13): per tenant every 5 minutes, as the system, at most
+// portal.sync (R-PORTAL-15; E410, E696, E698; finding F10, F13): per tenant every 5 minutes, as the system, at most
 // PORTAL_SYNC_BATCH rows per step. Never publishes documents, showings, feedback, seller updates or next steps
 // (core/portal: the rule path publishes confirmed milestones only).
 //   1 retract (as the system: retracted_by_user_id NULL) milestones moved, waived, back to proposed or removed;
 //     documents no longer shared and clean, or whose object is gone (E410); next steps whose task is done or canceled
 //   2 publish each confirmed milestone of each live deal grant whose (grant, deal date, due_version) has no row at all,
-//     unless a person retracted any version of it in that grant (E656)
+//     unless a person retracted any version of it in that grant (E696)
 //   3 store expiry once (F10): closed ⇒ GREATEST(closed_at, granted_at) + 90 days; lost ⇒ GREATEST(now, granted_at +
 //     1 s); a listing sold, withdrawn or expired ⇒ now + 90 days (VERIFY WITH COUNSEL, Q-PORTAL-4)
 //   4 refresh the contact card when the deal owner, listing agent or team sender changed (audited)

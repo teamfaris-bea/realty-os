@@ -1,4 +1,4 @@
-// b14 audit F2 (orchestrator decision (a), a flagged module-22 edit; R-PORTAL-11, E644): the sign-in URL never enters
+// b14 audit F2 (orchestrator decision (a), a flagged module-22 edit; R-PORTAL-11, E684): the sign-in URL never enters
 // messages.body. The message stores a fixed line; the URL lives in a sealed side record (portal_link_seals, migration
 // 0242: definer-only, envelope-encrypted with the message id in the AAD) that comms/dispatch.ts reads as the system
 // at providerSend and in reconcileOutbound, and that goes at the first final status, after 15 minutes, and with the
@@ -85,7 +85,7 @@ function heldEmail(before: (args: unknown[]) => Promise<void>): CommsDeps {
 }
 const quiet = { warn: () => {}, error: () => {} };
 
-describe('b14 F2: the sign-in URL never enters messages.body (R-PORTAL-11, E644)', () => {
+describe('b14 F2: the sign-in URL never enters messages.body (R-PORTAL-11, E684)', () => {
   it('F2 R-PORTAL-11: the provider gets the stored line with the full link rendered after it; the body holds no link while dispatching or once sent; the seal goes at the final status', async () => {
     const c = await invited('Nora');
     const during: Row[] = [];
@@ -148,7 +148,7 @@ describe('b14 F2: the sign-in URL never enters messages.body (R-PORTAL-11, E644)
     }
   });
 
-  it('F2 E644: while the outcome is unknown the seal is kept and the reconcile looks the text up by exactly what the provider got; the body never holds the link; the seal goes once the reconcile decides', async () => {
+  it('F2 E684: while the outcome is unknown the seal is kept and the reconcile looks the text up by exactly what the provider got; the body never holds the link; the seal goes once the reconcile decides', async () => {
     const c = await invited('Kai', { byText: true });
     h.providers.telephony.failNext('timeout_after_submit');
     await askLink(h, slug, c.phone, ip());

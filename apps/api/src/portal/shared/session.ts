@@ -6,7 +6,7 @@
 // - CSRF: a portal-only key is derived from SESSION_SECRET, key = HMAC-SHA256(secret, "realty:portal-csrf:v1"), and
 //   the token is base64url(HMAC-SHA256(key, "portal-csrf:v1:" + sessionId)). The staff token is
 //   HMAC(secret, "csrf:v1:" + sessionId) (auth/tokens.ts): another key and another label, so a staff token never
-//   validates here, even for a colliding id (E647). Compared in constant time. VERIFY (Q-PORTAL-10): a separate secret.
+//   validates here, even for a colliding id (E687). Compared in constant time. VERIFY (Q-PORTAL-10): a separate secret.
 import { base64url, constantTimeEqual, hmacSha256 } from '../../crypto/primitives.js';
 
 export const portalCookieName = (secure: boolean): string => (secure ? '__Host-psid' : 'psid');

@@ -1,4 +1,4 @@
-// Module 45 staff routes (R-PORTAL-13, R-PORTAL-14, R-PORTAL-16, R-PORTAL-18, R-PORTAL-19; E650-E655, E657).
+// Module 45 staff routes (R-PORTAL-13, R-PORTAL-14, R-PORTAL-16, R-PORTAL-18, R-PORTAL-19; E690-E695, E697).
 // Fakes only; platform:portal cleared in the per-test database inside try/finally.
 import { randomUUID } from 'node:crypto';
 import fc from 'fast-check';
@@ -37,8 +37,8 @@ async function listing(line1 = `${100 + Math.floor(Math.random() * 800)} Maple C
   return r.body.listing.id;
 }
 
-describe('R-PORTAL-13 invite (E650-E653)', () => {
-  it('E650: a contact who is not a party is 409 PORTAL_NOT_A_PARTY', async () => {
+describe('R-PORTAL-13 invite (E690-E693)', () => {
+  it('E690: a contact who is not a party is 409 PORTAL_NOT_A_PARTY', async () => {
     const buyer = await client(agent());
     const d = await deal(agent(), buyer.id);
     const stranger = await client(agent(), { firstName: 'Stan' });
@@ -50,7 +50,7 @@ describe('R-PORTAL-13 invite (E650-E653)', () => {
     expect((await call(agent(), 'POST', `/deals/${d}/contacts`, { contactId: stranger.id, role: 'co_buyer' })).status).toBe(200);
   });
 
-  it('E651: no active email or phone is 409 PORTAL_LOGIN_POINT_MISSING; a login point later removed makes the staff view say sign-in is impossible', async () => {
+  it('E691: no active email or phone is 409 PORTAL_LOGIN_POINT_MISSING; a login point later removed makes the staff view say sign-in is impossible', async () => {
     const c = await client(agent(), { firstName: 'Nopo' });
     const d = await deal(agent(), c.id);
     await h.su.query(`UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'old' WHERE contact_id = $1`, [c.id]);
@@ -68,7 +68,7 @@ describe('R-PORTAL-13 invite (E650-E653)', () => {
     expect(view.body.accounts[0]!.loginPoint.hint).toMatch(/^.•••@/);
   });
 
-  it('E652: inviting twice or with two taps at once gives the same account and grant and one notice; resend sends another', async () => {
+  it('E692: inviting twice or with two taps at once gives the same account and grant and one notice; resend sends another', async () => {
     const c = await client(agent(), { firstName: 'Twin' });
     const d = await deal(agent(), c.id);
     const before = h.providers.email.sent.filter((m) => m.to === c.email).length;
@@ -87,7 +87,7 @@ describe('R-PORTAL-13 invite (E650-E653)', () => {
     expect(counts.rows[0]).toEqual({ a: '1', g: '1' });
   });
 
-  it('E652 E653 (b14 F7): invited while the portal was off (no note), then again once it is on: the note goes now, and only a later invite says one was already sent', async () => {
+  it('E692 E693 (b14 F7): invited while the portal was off (no note), then again once it is on: the note goes now, and only a later invite says one was already sent', async () => {
     const c = await client(agent(), { firstName: 'Dawn' });
     const d = await deal(agent(), c.id);
     const notes = () => h.providers.email.sent.filter((m) => m.to === c.email).length;
@@ -112,7 +112,7 @@ describe('R-PORTAL-13 invite (E650-E653)', () => {
     expect(notes()).toBe(1);
   });
 
-  it('E652 (b14 F7): when the first note was blocked, a repeat invite never claims a note was sent; it says none reached them and offers Resend', async () => {
+  it('E692 (b14 F7): when the first note was blocked, a repeat invite never claims a note was sent; it says none reached them and offers Resend', async () => {
     const c = await client(agent(), { firstName: 'Bree' });
     const d = await deal(agent(), c.id);
     const point = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'email'`, [c.id])).rows[0]!.id;
@@ -164,7 +164,7 @@ describe('R-PORTAL-13 invite (E650-E653)', () => {
   });
 });
 
-describe('R-PORTAL-14 publish, retract, revoke (E654, E655, E657)', () => {
+describe('R-PORTAL-14 publish, retract, revoke (E694, E695, E697)', () => {
   it('R-PORTAL-14: every publishable kind a person may publish reaches the client (milestone, document, showing, feedback, seller update, next step)', async () => {
     const l = await listing();
     const seller = await client(agent(), { firstName: 'Mo' });
@@ -193,7 +193,7 @@ describe('R-PORTAL-14 publish, retract, revoke (E654, E655, E657)', () => {
     expect(tl.nextSteps.map((s) => s.title)).toEqual(['Sign the disclosures']);
   });
 
-  it('E654: core refuses an unshared, pending or contact-scoped document and a proposed milestone before the DB; a forged insert is refused by the guard', async () => {
+  it('E694: core refuses an unshared, pending or contact-scoped document and a proposed milestone before the DB; a forged insert is refused by the guard', async () => {
     const c = await client(agent());
     const d = await deal(agent(), c.id);
     const g = (await invite(agent(), d, c.id)).body.grant.id;
@@ -211,7 +211,7 @@ describe('R-PORTAL-14 publish, retract, revoke (E654, E655, E657)', () => {
     expect(forged).toBe('PORTAL_SOURCE_NOT_IN_GRANT');
   });
 
-  it('E655: through the deal\'s listing a buyer-side client is refused PORTAL_NOT_SELLER_SIDE by core, and a forged insert by the guard', async () => {
+  it('E695: through the deal\'s listing a buyer-side client is refused PORTAL_NOT_SELLER_SIDE by core, and a forged insert by the guard', async () => {
     const l = await listing();
     const buyer = await client(agent(), { firstName: 'Bix' });
     const d = await deal(agent(), buyer.id, { side: 'buy', listingId: l });
@@ -238,7 +238,7 @@ describe('R-PORTAL-14 publish, retract, revoke (E654, E655, E657)', () => {
     expect((await publish(agent(), 'document', doc.id, [ga])).body.results[0]!.result).toBe('already_published');
   });
 
-  it('E657: a person retracts by mistake and publishes again; the old row stays retracted with its author; a second retract and a second revoke are 409', async () => {
+  it('E697: a person retracts by mistake and publishes again; the old row stays retracted with its author; a second retract and a second revoke are 409', async () => {
     const c = await client(agent());
     const d = await deal(agent(), c.id);
     const g = (await invite(agent(), d, c.id)).body.grant.id;

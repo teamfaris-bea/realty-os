@@ -24,7 +24,7 @@ describe('R-PORTAL-11 the sign-in link through an automation pause', () => {
     expect(ALWAYS_HUMAN_CATEGORIES.has('portal_login_link')).toBe(false);
   });
 
-  it('E642: a paused conversation still gets the link, by text and by email', () => {
+  it('E682: a paused conversation still gets the link, by text and by email', () => {
     expect(decisionOf(link({ automationPausedAt: PAUSED }))).toEqual({ outcome: 'allow', reasons: [] });
     expect(decisionOf(link({ ...email, automationPausedAt: PAUSED }))).toEqual({ outcome: 'allow', reasons: [] });
   });

@@ -1,6 +1,6 @@
 // api-portal (PHASE2_3_PLAN module 45), the DB half: portal_grants.display, live-only item uniqueness, the replaced
 // items guard (seller side, retraction author), the portal_login_link gate category and portal.document_download.
-// R-PORTAL-14, R-PORTAL-17, R-PORTAL-18, R-PORTAL-19, R-GATE-14 (DB half), E149, E129, E654, E655, E657.
+// R-PORTAL-14, R-PORTAL-17, R-PORTAL-18, R-PORTAL-19, R-GATE-14 (DB half), E149, E129, E694, E695, E697.
 //
 // Real Postgres, every staff write as app_user under RLS (the agent, or the system actor); the superuser only flips
 // platform:portal, ages rows and reads state back.
@@ -93,8 +93,8 @@ describe('R-PORTAL-18 portal_grants.display', () => {
   });
 });
 
-describe('R-PORTAL-14 retraction author and republish (E657)', () => {
-  it('E657: a retracted source is published again as a new item; the old row stays retracted; two live copies are refused', async () => {
+describe('R-PORTAL-14 retraction author and republish (E697)', () => {
+  it('E697: a retracted source is published again as a new item; the old row stays retracted; two live copies are refused', async () => {
     const dd = await createMilestone(h, w, w.agents[0]!, jane.dealId);
     const spec = { grantId: jane.grantId, kind: 'milestone', sourceType: 'deal_date', sourceId: dd };
     const first = await insertItem(h, w, w.agents[0]!, spec);
@@ -137,7 +137,7 @@ describe('R-PORTAL-14 retraction author and republish (E657)', () => {
     expect(r).toBe('PORTAL_ITEM_RETRACTED');
   });
 
-  it('E654: a forged insert of a proposed milestone or an unshared document is refused by the guard', async () => {
+  it('E694: a forged insert of a proposed milestone or an unshared document is refused by the guard', async () => {
     const dd = await createMilestone(h, w, w.agents[0]!, jane.dealId, '2033-03-03');
     await withTenantTx(w.agents[0]!.actor, (tx) => sql`UPDATE deal_dates SET status = 'waived' WHERE id = ${dd}`.execute(tx), { db: h.app });
     expect(await insertItem(h, w, w.agents[0]!, { grantId: jane.grantId, kind: 'milestone', sourceType: 'deal_date', sourceId: dd })).toEqual({ code: 'PORTAL_SOURCE_NOT_IN_GRANT' });
@@ -147,7 +147,7 @@ describe('R-PORTAL-14 retraction author and republish (E657)', () => {
   });
 });
 
-describe('R-PORTAL-19 seller-side binding through the deal listing (E655)', () => {
+describe('R-PORTAL-19 seller-side binding through the deal listing (E695)', () => {
   let listingId: string;
   let showingId: string;
   let attendedShowing: string;
@@ -158,7 +158,7 @@ describe('R-PORTAL-19 seller-side binding through the deal listing (E655)', () =
     attendedShowing = await createShowing(h, w, w.agents[0]!, await createListing(h, w, w.agents[0]!, '9 Oak Road'), jane.contactId);
   });
 
-  it('E655: a buyer-side client (or one who is only the primary contact) is refused PORTAL_NOT_SELLER_SIDE', async () => {
+  it('E695: a buyer-side client (or one who is only the primary contact) is refused PORTAL_NOT_SELLER_SIDE', async () => {
     expect(await insertItem(h, w, w.agents[0]!, { grantId: jane.grantId, kind: 'showing', sourceType: 'showing', sourceId: showingId })).toEqual({ code: 'PORTAL_NOT_SELLER_SIDE' });
     await addDealContact(h, w, w.agents[0]!, jane.dealId, jane.contactId, 'buyer');
     expect(await insertItem(h, w, w.agents[0]!, { grantId: jane.grantId, kind: 'showing', sourceType: 'showing', sourceId: showingId })).toEqual({ code: 'PORTAL_NOT_SELLER_SIDE' });

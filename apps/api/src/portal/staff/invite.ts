@@ -1,4 +1,4 @@
-// Invite a client to the portal (R-PORTAL-13; E650-E653). One transaction as the person, serialized on the contact
+// Invite a client to the portal (R-PORTAL-13; E690-E693). One transaction as the person, serialized on the contact
 // (app.lock_contact: two taps make one account and one live grant): the visible deal or listing (else 404), the contact
 // not merged away (CONTACT_MERGED), a party (else PORTAL_NOT_A_PARTY), the live account reused or created (login point:
 // the one asked for, else the first active email, else the first active phone, else PORTAL_LOGIN_POINT_MISSING), the
@@ -6,7 +6,7 @@
 //
 // After commit, the invite NOTICE: the inviter's own message through composeHumanMessage (dispatch-gated, D1 opt-outs
 // apply, a touch; with no open deal or recent inbound compose makes it marketing, and a marketing opt-out blocks it).
-// No token in it. Nothing is sent while platform:portal is not cleared, and the answer says so (E653). A blocked
+// No token in it. Nothing is sent while platform:portal is not cleared, and the answer says so (E693). A blocked
 // notice returns its decision; the invite stands. A repeat invite (no new account or grant, no resend) answers from
 // what became of the grant's earlier notes (b14 audit F7): sent ⇒ "already invited"; still on its way ⇒ says so; none
 // sent by this inviter yet (an invite while the portal was off) ⇒ the note goes now; else ⇒ none reached them, Resend.

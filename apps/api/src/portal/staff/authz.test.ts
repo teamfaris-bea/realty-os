@@ -1,5 +1,5 @@
 // Module 45 role × route matrix (DATA_MODEL §8 "Client portal", split into portal.view and portal.manage; R-PERM-5,
-// E650). The routes answer exactly what core can() says; every denial is 404.
+// E690). The routes answer exactly what core can() says; every denial is 404.
 import { type Action, type SupportActor, can } from '@realty/core/foundation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
@@ -17,8 +17,8 @@ afterAll(async () => {
   await h?.close();
 });
 
-describe('R-PERM-5 E650 portal.view and portal.manage', () => {
-  it('E650: invite on a deal: Owner, Admin, the team lead of the deal owner and the owning agent may; another agent, the ISA, the TC and support may not (404)', async () => {
+describe('R-PERM-5 E690 portal.view and portal.manage', () => {
+  it('E690: invite on a deal: Owner, Admin, the team lead of the deal owner and the owning agent may; another agent, the ISA, the TC and support may not (404)', async () => {
     const agent = w.agents[0]!;
     const results: Record<string, number> = {};
     for (const [name, who] of [['owner', w.owner], ['admin', w.admin], ['team_lead', w.teamLead!], ['agent', agent], ['other agent', w.agents[1]!], ['isa', w.isa], ['tc', w.tc]] as const) {

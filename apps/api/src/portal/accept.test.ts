@@ -30,7 +30,7 @@ const sync = (tenantId: string) =>
   withTenantTx(systemActor(tenantId, 'worker'), (tx, now) => portalSyncInTx(tx, systemActor(tenantId, 'worker'), { linkSecret: h.config.sessionSecret, publicBaseUrl: h.config.publicBaseUrl }, now), { db: h.database });
 
 describe('R-PORTAL-8 R-PORTAL-13 R-PORTAL-15 R-PORTAL-16 R-PORTAL-17 module 45 acceptance', () => {
-  it('R-PORTAL-10 R-INT-6 E641 E653: with platform:portal uncleared the journey sends nothing and the portal says it is not available', async () => {
+  it('R-PORTAL-10 R-INT-6 E681 E693: with platform:portal uncleared the journey sends nothing and the portal says it is not available', async () => {
     await setPortalCleared(h, false);
     const agent = w.agents[0]!;
     const buyer = await client(agent, { firstName: 'Una' });

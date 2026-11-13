@@ -1,5 +1,5 @@
 // Module 45 client session and client routes (R-PORTAL-9, R-PORTAL-16, R-PORTAL-17; E125, E126, E147, E148,
-// E647-E649, E659). Fakes only; platform:portal cleared in the per-test database inside try/finally.
+// E687-E689, E699). Fakes only; platform:portal cleared in the per-test database inside try/finally.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { csrfTokenFor } from '../auth/tokens.js';
@@ -85,7 +85,7 @@ describe('R-PORTAL-9 the portal session and its CSRF token', () => {
     }
   });
 
-  it('E647: an unsafe client route with no, a wrong, or the staff-derived CSRF token is 403 CSRF_INVALID', async () => {
+  it('E687: an unsafe client route with no, a wrong, or the staff-derived CSRF token is 403 CSRF_INVALID', async () => {
     const s = await setup();
     const sessionId = (await h.su.query<{ id: string }>(`SELECT id FROM portal_sessions WHERE portal_account_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1`, [s.accountId])).rows[0]!.id;
     const staffDerived = csrfTokenFor(h.config.sessionSecret, sessionId);
@@ -119,7 +119,7 @@ describe('R-PORTAL-9 the portal session and its CSRF token', () => {
     expect((await new PortalClient(h, ip()).get('/api/portal/me', { cookie: `__Host-psid=${cur}` })).statusCode).toBe(401);
   });
 
-  it('E659 R-INT-6: withdrawing the pack ends the session at the next request and refuses a download between token and file', async () => {
+  it('E699 R-INT-6: withdrawing the pack ends the session at the next request and refuses a download between token and file', async () => {
     const s = await setup();
     const st = json<{ url: string }>(await s.pc.post(`/api/portal/documents/${s.itemId}/stream-token`));
     await setPortalCleared(h, false);
@@ -151,7 +151,7 @@ describe('R-PORTAL-16 what the client sees', () => {
     for (const id of [s.dealId, s.c.id, s.doc.id, s.accountId]) expect(all).not.toContain(id);
   });
 
-  it('E648 E126: another grant, a deal id, another tenant\'s grant and a non-canonical id are all 404', async () => {
+  it('E688 E126: another grant, a deal id, another tenant\'s grant and a non-canonical id are all 404', async () => {
     const s = await setup();
     const t = await setup(1); // another buyer of the same tenant
     const o = await (async () => {
@@ -193,7 +193,7 @@ describe('R-PORTAL-16 what the client sees', () => {
   });
 });
 
-describe('R-PORTAL-17 downloads (E649)', () => {
+describe('R-PORTAL-17 downloads (E689)', () => {
   it('R-PORTAL-17: the bytes equal the stored object, the headers are an attachment that is never rendered, the download is audited', async () => {
     const s = await setup();
     const st = await s.pc.post(`/api/portal/documents/${s.itemId}/stream-token`);
@@ -216,7 +216,7 @@ describe('R-PORTAL-17 downloads (E649)', () => {
     expect(audits.rows.map((r) => r.action).sort()).toEqual(['portal.document_downloaded', 'portal.document_stream_issued']);
   });
 
-  it('E649 (b14 F8): a HEAD on a download URL never redeems the single-use token (no download audited); the GET after it still downloads, once', async () => {
+  it('E689 (b14 F8): a HEAD on a download URL never redeems the single-use token (no download audited); the GET after it still downloads, once', async () => {
     const s = await setup();
     const url = json<{ url: string }>(await s.pc.post(`/api/portal/documents/${s.itemId}/stream-token`)).url;
     const audited = async () => Number((await h.su.query<{ n: string }>(`SELECT count(*) AS n FROM audit_log WHERE tenant_id = $1 AND action = 'portal.document_downloaded' AND entity_id = $2`, [w.tenantId, s.doc.id])).rows[0]!.n);
@@ -232,7 +232,7 @@ describe('R-PORTAL-17 downloads (E649)', () => {
     expect((await s.pc.get(url)).statusCode).toBe(404);
   });
 
-  it('E649: a reused token, one past 60 s, and a document unshared, an item retracted or a grant revoked before the download are 404 with nothing streamed', async () => {
+  it('E689: a reused token, one past 60 s, and a document unshared, an item retracted or a grant revoked before the download are 404 with nothing streamed', async () => {
     const s = await setup();
     const token = async () => json<{ url: string }>(await s.pc.post(`/api/portal/documents/${s.itemId}/stream-token`)).url;
     const used = await token();

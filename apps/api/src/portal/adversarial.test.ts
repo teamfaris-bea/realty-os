@@ -72,7 +72,7 @@ describe('adversarial: tenancy and the boundary (R-PORTAL-8, R-PORTAL-9, R-TEN-1
     }
   });
 
-  it('E647: a staff session\'s CSRF token, or the portal token of another session, never passes the portal check', async () => {
+  it('E687: a staff session\'s CSRF token, or the portal token of another session, never passes the portal check', async () => {
     const s = await signedIn();
     const t = await signedIn();
     const sid = (await h.su.query<{ id: string }>(`SELECT id FROM portal_sessions WHERE portal_account_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1`, [s.accountId])).rows[0]!.id;
@@ -81,7 +81,7 @@ describe('adversarial: tenancy and the boundary (R-PORTAL-8, R-PORTAL-9, R-TEN-1
     }
   });
 
-  it('E648 E649: non-canonical ids, another account\'s item and another account\'s stream token are 404', async () => {
+  it('E688 E689: non-canonical ids, another account\'s item and another account\'s stream token are 404', async () => {
     const s = await signedIn();
     const t = await signedIn();
     for (const id of [s.itemId.toUpperCase(), `${s.itemId} `, `${s.itemId}%00`, '../../etc/passwd', t.itemId]) {
