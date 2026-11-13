@@ -24,7 +24,8 @@ export function useMarketingApprovals() {
 
 /**
  * The marketing drafts section of the approvals inbox. With no drafts it renders `whenEmpty` (the inbox's
- * own empty state, so "Nothing to approve" is only said when there is nothing of either kind).
+ * own empty state, so "Nothing to approve" is only said when there is nothing of either kind). After a load
+ * error it shows only its notice, never `whenEmpty` beside it (b14: unknown is not empty, as audit R3).
  */
 export function MarketingApprovals({ whenEmpty = null }: { whenEmpty?: ReactNode }) {
   const q = useMarketingApprovals();
@@ -43,14 +44,7 @@ export function MarketingApprovals({ whenEmpty = null }: { whenEmpty?: ReactNode
     }
   }, [focusAt, pieces]);
   if (q.isPending) return null;
-  if (q.isError) {
-    return (
-      <>
-        <Notice tone="error">{`Marketing drafts didn't load. ${messageFor(q.error, AGENT_ERROR_MESSAGES)}`}</Notice>
-        {whenEmpty}
-      </>
-    );
-  }
+  if (q.isError) return <Notice tone="error">{`Marketing drafts didn't load. ${messageFor(q.error, AGENT_ERROR_MESSAGES)}`}</Notice>;
   if (q.data.pieces.length === 0) return <>{whenEmpty}</>;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
