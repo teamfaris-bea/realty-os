@@ -20,6 +20,9 @@
 --   5. R-DATA-7 (ISA-3 audit F7): the guard's address-gone branch runs before its foreign-tenant early return, so the
 --      foreign key's SET NULL during the retention purge (run as the table owner with no app.tenant_id) clears a
 --      confirmed subject instead of leaving it to the CHECK, which aborted the purge. The branch reads nothing.
+--   6. ISA-3 audit F11: a user points the watch at another address only by confirming (never by clearing, so a clear
+--      cannot repoint it to another of the contact's addresses), and subject_cleared_reason changes only with a clear or
+--      a confirmation; a user's clear always records 'address_changed' (the guard's value, not the caller's).
 
 -- =============================================================================
 -- 1. ai_isa_seller_watch
@@ -222,7 +225,17 @@ BEGIN
   IF kind = 'user' AND NOT is_owner AND subj_new IS DISTINCT FROM subj_old AND NOT clearing THEN
     RAISE EXCEPTION 'ISA_SUBJECT_OWNER_ONLY: only the lead''s owner confirms the seller''s home' USING ERRCODE = 'check_violation';
   END IF;
-  IF clearing AND NEW.subject_cleared_reason IS NULL THEN NEW.subject_cleared_reason := 'address_changed'; END IF;
+  -- (batch 13, ISA-3 audit F11) the watch's address and the cleared reason the panel shows: a user points the watch at
+  -- another address only by confirming (the owner, at the current default), never by clearing; the reason changes only
+  -- with a clear or a confirmation, and a user's clear is always an address change (the guard's value, not the caller's)
+  IF NEW.contact_address_id IS DISTINCT FROM OLD.contact_address_id AND NOT confirming AND kind <> 'system' THEN
+    RAISE EXCEPTION 'ISA_SUBJECT_OWNER_ONLY: only the lead''s owner, confirming the home, points the watch at another address' USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.subject_cleared_reason IS DISTINCT FROM OLD.subject_cleared_reason AND NOT confirming AND NOT clearing AND kind <> 'system' THEN
+    RAISE EXCEPTION 'ISA_SUBJECT_OWNER_ONLY: the cleared reason changes only when the subject is cleared' USING ERRCODE = 'check_violation';
+  END IF;
+  IF clearing AND kind <> 'system' THEN NEW.subject_cleared_reason := 'address_changed';
+  ELSIF clearing AND NEW.subject_cleared_reason IS NULL THEN NEW.subject_cleared_reason := 'address_changed'; END IF;
   RETURN NEW;
 END $$;
 CREATE TRIGGER ai_isa_seller_watch_guard BEFORE INSERT OR UPDATE ON ai_isa_seller_watch FOR EACH ROW EXECUTE FUNCTION app.ai_isa_seller_watch_guard();

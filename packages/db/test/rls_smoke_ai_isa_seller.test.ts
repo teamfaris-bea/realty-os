@@ -115,6 +115,31 @@ describe('ai_isa_seller_watch per role (R-ISA-18, R-ISA-26, E536, E538)', () => 
     expect((await watchOf(l)).subject_cleared_reason).toBe('address_changed');
   });
 
+  it('R-ISA-18 E538 (ISA-3 audit F11): the cleared reason changes only with a clear, to the guard\'s value; a user\'s clear never repoints the address', async () => {
+    const l = await sellerLead();
+    const tl = w.tl!.actor;
+    const other = uuid();
+    await suFixture(h.su, `INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, city, region, postal_code) VALUES ($1, $2, $3, 'home', '9 Test Row', 'Testville', 'SC', '29900')`, [w.tenantId, other, l.contactId]);
+    await run(x.agent.actor, confirmSql(l, x.agent.id));
+    const clearSql = (reason: string, addressId: string) => sql`UPDATE ai_isa_seller_watch SET contact_address_id = ${addressId}, subject_address_key = NULL, subject_connection_id = NULL,
+      subject_record_listing_id = NULL, subject_record_date = NULL, subject_facts = NULL, subject_confirmed_by_user_id = NULL, subject_confirmed_at = NULL, subject_cleared_reason = ${reason}
+      WHERE assignment_id = ${l.assignmentId}`;
+    // a clear that also repoints the watch to another of the contact's addresses: refused
+    expect(await codeOf(run(tl, clearSql('address_changed', other)))).toBe('ISA_SUBJECT_OWNER_ONLY');
+    // a clear naming its own reason: the guard writes its value (a user's clear is an address change)
+    expect(await codeOf(run(tl, clearSql('record_changed', l.addressId)))).toBe('ok');
+    expect([(await watchOf(l)).subject_cleared_reason, (await watchOf(l)).contact_address_id]).toEqual(['address_changed', l.addressId]);
+    // no clear, only the reason (the panel shows it): refused for anyone but the system
+    for (const actor of [tl, x.agent.actor]) {
+      expect(await codeOf(run(actor, sql`UPDATE ai_isa_seller_watch SET subject_cleared_reason = 'default_changed' WHERE assignment_id = ${l.assignmentId}`))).toBe('ISA_SUBJECT_OWNER_ONLY');
+    }
+    // no clear, only the address (an unconfirmed watch repointed): refused for a user, the owner included
+    for (const actor of [tl, x.agent.actor]) {
+      expect(await codeOf(run(actor, sql`UPDATE ai_isa_seller_watch SET contact_address_id = ${other} WHERE assignment_id = ${l.assignmentId}`))).toBe('ISA_SUBJECT_OWNER_ONLY');
+    }
+    expect((await watchOf(l)).contact_address_id).toBe(l.addressId);
+  });
+
   it('R-ISA-15 E538: the owner dismisses a near match and resumes comps; the system resumes only after a CMA and never with the owner reason', async () => {
     const l = await sellerLead();
     const id = uuid();
