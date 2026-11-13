@@ -29,6 +29,9 @@
 --     still in app.messages_dispatch_guard (0080's DO block checked only the post-0021 markers). b12 recheck R6: that
 --     refusal is matched as its own branch (the ELSIF on the AI ISA categories followed by its RAISE): its message text
 --     alone is a prefix of the assistant branch's "... mandate (assistant)" refusal, so it proved nothing.
+--  8. b12 recheck R19 (R-ISA-30): ai_isa_handoffs.closed_at and closed_reason record that the system closed a done
+--     handoff and why ('deadline_met', 'acknowledged', 'lead_closed', 'care_restarted'), so the panel can say so; only
+--     the system sets them, once (the handoff guard), and a close is final.
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4; docs/ARCHITECTURE.md §21.43):
 --   * new function app.ai_isa_person_blocked(uuid, uuid) RETURNS boolean: SECURITY DEFINER (owner app_definer,
@@ -52,6 +55,10 @@
 --     assignment never changes).
 --     A larger set of readers only for rows of a person the reader already sees, as for documents (0075).
 --   * ai_isa_handoffs.sla_class CHECK adds 'none'. No grant changes.
+--   * b12 recheck R19: ai_isa_handoffs adds closed_at and closed_reason (CHECKs: a known reason; both or neither).
+--     app.ai_isa_handoffs_guard is replaced (invoker, trigger binding unchanged): 0080's body verbatim except the
+--     lines marked "b12 recheck R19": closed_* join the columns only the system sets, and once set they never change.
+--     No policy or grant changes (isa_update already admits the system; a user still sets only acknowledged_*).
 -- =============================================================================
 
 -- =============================================================================
@@ -554,7 +561,42 @@ ALTER TABLE stage_automation_decisions ADD CONSTRAINT stage_automation_decisions
                     'plan_not_approved','already_in_a_plan','cannot_be_reached','protected_audience','ai_isa_active'));
 
 -- =============================================================================
--- 7. Self-check
+-- 7. b12 recheck R19 (R-ISA-30): a handoff's closed marker (why it is done)
+-- =============================================================================
+ALTER TABLE ai_isa_handoffs ADD COLUMN closed_at timestamptz,
+  ADD COLUMN closed_reason text CONSTRAINT ai_isa_handoffs_closed_reason_check CHECK (closed_reason IN ('deadline_met','acknowledged','lead_closed','care_restarted'));
+ALTER TABLE ai_isa_handoffs ADD CONSTRAINT ai_isa_handoffs_closed_pair CHECK ((closed_at IS NULL) = (closed_reason IS NULL));
+
+-- 0080's handoffs guard verbatim except the lines marked "b12 recheck R19"
+CREATE OR REPLACE FUNCTION app.ai_isa_handoffs_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- another tenant's row: RLS refuses it (the guard never runs ahead of the tenant policy)
+  IF app.tenant_id() IS DISTINCT FROM NEW.tenant_id THEN RETURN NEW; END IF;
+  IF (NEW.tenant_id, NEW.id, NEW.assignment_id, NEW.contact_id, NEW.reason, NEW.basis, NEW.assistant_action_id, NEW.appointment_id,
+      NEW.package, NEW.package_sha256, NEW.sla_class, NEW.recipient_user_id, NEW.created_at)
+     IS DISTINCT FROM (OLD.tenant_id, OLD.id, OLD.assignment_id, OLD.contact_id, OLD.reason, OLD.basis, OLD.assistant_action_id,
+      OLD.appointment_id, OLD.package, OLD.package_sha256, OLD.sla_class, OLD.recipient_user_id, OLD.created_at) THEN
+    RAISE EXCEPTION 'AI_ISA_HANDOFF_FROZEN: a handoff package never changes' USING ERRCODE = 'check_violation';
+  END IF;
+  -- b12 recheck R19: closed_* are the system's too
+  IF app.actor_kind() <> 'system' AND (NEW.pending_message_id, NEW.confirmation_status, NEW.sla_due_at, NEW.sla_met_at,
+       NEW.sla_escalated_at, NEW.sla_escalation_level, NEW.closed_at, NEW.closed_reason) IS DISTINCT FROM (OLD.pending_message_id, OLD.confirmation_status, OLD.sla_due_at,
+       OLD.sla_met_at, OLD.sla_escalated_at, OLD.sla_escalation_level, OLD.closed_at, OLD.closed_reason) THEN
+    RAISE EXCEPTION 'AI_ISA_HANDOFF_ACK_ONLY: "Got it" acknowledges; only a human touch clears the deadline' USING ERRCODE = 'check_violation';
+  END IF;
+  -- b12 recheck R19: a close is final (never reopened, never re-dated, never given another reason)
+  IF OLD.closed_at IS NOT NULL AND (NEW.closed_at, NEW.closed_reason) IS DISTINCT FROM (OLD.closed_at, OLD.closed_reason) THEN
+    RAISE EXCEPTION 'AI_ISA_HANDOFF_CLOSE_FINAL: a closed handoff stays closed' USING ERRCODE = 'check_violation';
+  END IF;
+  IF app.actor_kind() = 'user' AND NEW.acknowledged_at IS NOT NULL AND OLD.acknowledged_at IS NULL
+     AND NEW.acknowledged_by_user_id IS DISTINCT FROM app.user_id() THEN
+    RAISE EXCEPTION 'AI_ISA_HANDOFF_ACK_AS_SELF' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+
+-- =============================================================================
+-- 8. Self-check
 -- =============================================================================
 DO $$
 DECLARE r record; q text;
@@ -598,4 +640,11 @@ BEGIN
   END LOOP;
   SELECT count(*) INTO q FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid WHERE c.relname LIKE 'ai_isa_%' AND pg_get_expr(p.polqual, p.polrelid) LIKE '%contact_merge_root%';
   IF q::int <> 10 THEN RAISE EXCEPTION '0081 self-check failed: % root-survivor policies', q; END IF;
+  -- b12 recheck R19: only the system closes a handoff, and a close is final
+  IF (SELECT p.prosrc !~ 'IF app\.actor_kind\(\) <> ''system'' AND \(NEW\.pending_message_id, [^)]*NEW\.closed_at, NEW\.closed_reason\) IS DISTINCT FROM \(OLD\.pending_message_id, [^)]*OLD\.closed_at, OLD\.closed_reason\)'
+             OR position('IF OLD.closed_at IS NOT NULL AND (NEW.closed_at, NEW.closed_reason) IS DISTINCT FROM (OLD.closed_at, OLD.closed_reason) THEN' IN p.prosrc) = 0
+        FROM pg_proc p WHERE p.oid = 'app.ai_isa_handoffs_guard()'::regprocedure)
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.ai_isa_handoffs'::regclass AND conname = 'ai_isa_handoffs_closed_pair') THEN
+    RAISE EXCEPTION '0081 self-check failed: a user can close an AI handoff, or a close is not final';
+  END IF;
 END $$;

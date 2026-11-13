@@ -898,7 +898,7 @@ Every CREATE OR REPLACE starts from the object's newest definition at merge time
 - Partial unique (message_id, listing_id, fact_kind) WHERE status='sent'.
 
 **`ai_isa_handoffs`**
-- Columns: tenant_id, id, assignment_id (unique), reason, basis, assistant_action_id, appointment_id, package jsonb (frozen), package_sha256, pending_message_id, confirmation_status, sla_class, sla_due_at, sla_met_at, sla_escalated_at, recipient_user_id, acknowledged_*, created_at.
+- Columns: tenant_id, id, assignment_id (unique), reason, basis, assistant_action_id, appointment_id, package jsonb (frozen), package_sha256, pending_message_id, confirmation_status, sla_class, sla_due_at, sla_met_at, sla_escalated_at, recipient_user_id, acknowledged_*, created_at, closed_at and closed_reason (`deadline_met`, `acknowledged`, `lead_closed`, `care_restarted`: why the system closed the handoff; system-only and final, 0081; b12 recheck R19).
 
 **`ai_isa_daily_counts`**
 - Columns: tenant_id, local_day, n; PK (tenant_id, local_day). Written only by the guard.
@@ -949,10 +949,10 @@ All routes are under MATRIX rows. No response carries confidence or score fields
 - **Team policy:** the playbook routes with `kind: 'ai_isa'`.
 - **Leads:**
   - `GET /ai-isa/assignments?scope=mine|team|all&state=`;
-  - `GET /contacts/:id/ai-isa` (the panel: chain status per link with its hold, pause or end effect; capabilities in effect; consent basis per channel; zone set and source; next allowed send; caps used; last decision and why; facts sent; open offer; held topics; handoff deadline; inactivity release date);
+  - `GET /contacts/:id/ai-isa` (the panel: chain status per link with its hold, pause or end effect; capabilities in effect; consent basis per channel; zone set and source; next allowed send; caps used; last decision and why; facts sent; open offer; held topics; handoff deadline and `closedReason`, null while the handoff is open, b12 recheck R19; inactivity release date);
   - `GET /contacts/:id/ai-isa/turns`;
   - `POST /contacts/:id/ai-isa/{start|pause|resume|take-over|end|undo|continue|confirm-subject|lift-block}`;
-  - `POST /ai-isa/handoffs/:id/ack`; `POST /ai-isa/escalations/:id/resolve`.
+  - `POST /ai-isa/handoffs/:id/ack` (its result carries `closedReason` too); `POST /ai-isa/escalations/:id/resolve`.
 - **Errors** (in errors.ts, with sentences): AI_ISA_OFF, AI_ISA_NOT_CLEARED, AI_ISA_POLICY_NOT_APPROVED, AI_ISA_NO_OPTIN, AI_ISA_NOT_OWNER (404 when invisible, R-PERM-5), AI_ISA_ALREADY_ACTIVE, AI_ISA_NO_CHANNEL, AI_ISA_SHARED_ADDRESS, AI_ISA_ACTIVE_CLIENT, AI_ISA_LISTED_ELSEWHERE, AI_ISA_NOT_ROOT, AI_ISA_CALENDAR_REQUIRED, AI_ISA_FIRST_TOUCH_PENDING, AI_ISA_PERSON_DECLINED, AI_ISA_HANDBACK_STALE, AI_ISA_UNDO_EXPIRED, SUBJECT_UNCONFIRMED, CAPABILITY_NOT_AVAILABLE.
 
 ### 9.2 Turn processing

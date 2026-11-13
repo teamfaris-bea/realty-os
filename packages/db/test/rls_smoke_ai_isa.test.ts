@@ -103,12 +103,12 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     expect(src!.src).toContain("tier = 'initiated' AND app.ai_isa_us_federal_holiday(lt::date)");
   });
 
-  it('R-ISA-24 (b12 recheck R6, R5): the batch 12 review migration\'s self-check passes on this schema and fails when the guard loses its non-mandate AI-category refusal or the block helper loses its caller gate', async () => {
+  it('R-ISA-24 (b12 recheck R6, R5, R19): the batch 12 review migration\'s self-check passes on this schema and fails when the guard loses its non-mandate AI-category refusal, the block helper loses its caller gate or the handoff guard lets a user close a handoff', async () => {
     // the self-check block of the batch 12 review migration, found by its suffix (the orchestrator may renumber it)
     const file = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('_b12_review_ai_isa.sql'));
     expect(file).toHaveLength(1);
     const text = readFileSync(`${MIGRATIONS_DIR}/${file[0]}`, 'utf8');
-    const selfCheck = text.slice(text.indexOf('DO $$', text.indexOf('-- 7. Self-check')));
+    const selfCheck = text.slice(text.indexOf('DO $$', text.indexOf('-- 8. Self-check')));
     expect(selfCheck).toMatch(/self-check failed: messages_dispatch_guard lost a D1 refusal/);
     const defOf = async (fn: string) => (await suRows<{ def: string }>(h.su, `SELECT pg_get_functiondef($1::regprocedure) AS def`, [fn]))[0]!.def;
     const checkWith = async (fn: string | null, mutate: (def: string) => string = (d) => d): Promise<string> => {
@@ -137,6 +137,12 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     // the person-block helper without its caller gate (b12 recheck R5)
     const ungated = await checkWith('app.ai_isa_person_blocked(uuid, uuid)', (d) => d.replace(/AND \(app\.is_tenant_wide\(\)[\s\S]*?app\.user_id\(\)\)\)\)/, ''));
     expect(ungated).toMatch(/0081 self-check failed: app\.ai_isa_person_blocked answers a caller who cannot see the record/);
+    // b12 recheck R19: the handoff guard without closed_* among the system's columns, or without the final close
+    const userCloses = await checkWith('app.ai_isa_handoffs_guard()', (d) => d.replace('NEW.sla_escalation_level, NEW.closed_at, NEW.closed_reason)', 'NEW.sla_escalation_level)')
+      .replace('OLD.sla_escalation_level, OLD.closed_at, OLD.closed_reason)', 'OLD.sla_escalation_level)'));
+    expect(userCloses).toMatch(/0081 self-check failed: a user can close an AI handoff, or a close is not final/);
+    const reopens = await checkWith('app.ai_isa_handoffs_guard()', (d) => d.replace(/\n[ \t]*IF OLD\.closed_at IS NOT NULL[^\n]*\n[^\n]*\n[ \t]*END IF;/, ''));
+    expect(reopens).toMatch(/0081 self-check failed: a user can close an AI handoff, or a close is not final/);
   });
 
   it('R-ISA-5: a turn decision holds codes and handles only (a free-text value is refused by the CHECK)', async () => {
@@ -687,6 +693,20 @@ describe('post-handoff messages and the handoff record (R-ISA-14)', () => {
     expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET sla_met_at = now() WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
     expect(await errOf(q(w.system('worker'), sql`UPDATE ai_isa_handoffs SET package = '{"x":1}'::jsonb WHERE id = ${hd!.id}`))).toMatch(/AI_ISA_HANDOFF_FROZEN|package_sha256/);
     expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET acknowledged_at = now(), acknowledged_by_user_id = ${x.agent.id} WHERE id = ${hd!.id}`))).toBe('ok');
+  });
+
+  it('R-ISA-30 (b12 recheck R19): only the system closes a handoff, with a known reason, once; a close is final', async () => {
+    const [hd] = await suRows<{ id: string }>(h.su, `SELECT id FROM ai_isa_handoffs WHERE tenant_id = $1 AND closed_at IS NULL LIMIT 1`, [w.tenantId]);
+    expect(hd).toBeTruthy();
+    expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET closed_at = now(), closed_reason = 'acknowledged' WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
+    expect(await errOf(q(w.owner.actor, sql`UPDATE ai_isa_handoffs SET closed_at = now(), closed_reason = 'acknowledged' WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET closed_at = now() WHERE id = ${hd!.id}`))).toMatch(/ai_isa_handoffs_closed_pair/);
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET closed_at = now(), closed_reason = 'because' WHERE id = ${hd!.id}`))).toMatch(/ai_isa_handoffs_closed_reason_check/);
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET closed_at = now(), closed_reason = 'deadline_met' WHERE id = ${hd!.id}`))).toBe('ok');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET closed_reason = 'lead_closed' WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_CLOSE_FINAL');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET closed_at = NULL, closed_reason = NULL WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_CLOSE_FINAL');
+    // the recipient still acknowledges a closed handoff
+    expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET acknowledged_at = COALESCE(acknowledged_at, now()), acknowledged_by_user_id = COALESCE(acknowledged_by_user_id, ${x.agent.id}) WHERE id = ${hd!.id}`))).toBe('ok');
   });
 });
 

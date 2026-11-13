@@ -15,7 +15,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { actorOf, platformOf } from '../workspace/common.js';
 import { continueCare, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
-import { closeHandoffInTx } from './handoff.js';
+import { closeHandoffInTx, type HandoffCloseReason } from './handoff.js';
 import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf } from './repo.js';
 import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
@@ -62,7 +62,7 @@ async function panel(req: FastifyRequest, contactId: string) {
     const sent = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching') AND dispatched_at > now() - interval '24 hours'`.execute(tx);
     // b12 recheck R13: a handoff whose action the system executed is done (its card closed): never overdue
-    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; done: boolean }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status,
+    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; done: boolean; closed_reason: HandoffCloseReason | null }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status, closed_reason,
         EXISTS (SELECT 1 FROM assistant_actions x WHERE x.tenant_id = ai_isa_handoffs.tenant_id AND x.id = ai_isa_handoffs.assistant_action_id AND x.status = 'executed') AS done
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
     const last = turn.rows[0];
@@ -93,7 +93,8 @@ async function panel(req: FastifyRequest, contactId: string) {
       factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString() })),
       openOffer: null,
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
-      handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && !hd.done && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status } : null,
+      handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && !hd.done && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status,
+        closedReason: hd.closed_reason } : null,
     };
   }, { db: deps.db });
 }
@@ -205,21 +206,25 @@ async function register(app: FastifyInstance): Promise<void> {
     const actor = actorOf(req);
     const db = platformOf(req).db;
     const out = await withTenantTx(actor, async (tx, now) => {
-      const u = await sql<{ id: string; at: Date; met: Date | null; cs: string; cls: string; action_id: string }>`UPDATE ai_isa_handoffs SET acknowledged_at = COALESCE(acknowledged_at, ${new Date(now)}),
+      const u = await sql<{ id: string; at: Date; met: Date | null; cs: string; cls: string; action_id: string; closed: HandoffCloseReason | null }>`UPDATE ai_isa_handoffs SET acknowledged_at = COALESCE(acknowledged_at, ${new Date(now)}),
           acknowledged_by_user_id = COALESCE(acknowledged_by_user_id, ${actor.userId})
-        WHERE tenant_id = app.tenant_id() AND id = ${req.params.id} RETURNING id, acknowledged_at AS at, sla_met_at AS met, confirmation_status AS cs, sla_class AS cls, assistant_action_id AS action_id`.execute(tx);
+        WHERE tenant_id = app.tenant_id() AND id = ${req.params.id} RETURNING id, acknowledged_at AS at, sla_met_at AS met, confirmation_status AS cs, sla_class AS cls, assistant_action_id AS action_id, closed_reason AS closed`.execute(tx);
       const h = u.rows[0];
       if (!h) throw new AppError('NOT_FOUND');
       await audit(tx, actor, { action: 'ai_isa.handoff_acknowledged', entity: { type: 'ai_isa_handoff', id: h.id } });
-      return { body: { handoffId: h.id, acknowledgedAt: h.at.toISOString(), slaMet: h.met !== null, confirmationStatus: h.cs }, close: h.cls === 'none' ? { id: h.id, actionId: h.action_id } : null };
+      return { body: { handoffId: h.id, acknowledgedAt: h.at.toISOString(), slaMet: h.met !== null, confirmationStatus: h.cs, closedReason: h.closed },
+        close: h.cls === 'none' && h.closed === null ? { id: h.id, actionId: h.action_id } : null };
     }, { db });
     // b12 recheck R13: a handoff no touch can ever meet (no deadline) is done once acknowledged: the system closes every
     // card of it (the Team Lead's and each Owner/Admin's too, which the caller's RLS would not reach) and executes its
     // action, right after the acknowledgement commits; a repeat "Got it" retries it. A handoff with a deadline stays open
-    // until a human touch meets it (the sweep).
+    // until a human touch meets it (the sweep). b12 recheck R19: the result says why the handoff is closed, as stored.
     if (out.close !== null) {
       const sys = systemActor(actor.tenantId, 'assistant');
-      await withTenantTx(sys, (tx, now) => closeHandoffInTx(tx, sys, out.close!, 'acknowledged', now), { db });
+      out.body.closedReason = await withTenantTx(sys, async (tx, now) => {
+        await closeHandoffInTx(tx, sys, out.close!, 'acknowledged', now);
+        return (await sql<{ r: HandoffCloseReason | null }>`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${out.close!.id}`.execute(tx)).rows[0]?.r ?? null;
+      }, { db });
     }
     return out.body;
   });

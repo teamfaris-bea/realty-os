@@ -14,6 +14,7 @@ import { teamLeadOf } from '../leads/repos/members.js';
 import { optOutFactsOf } from '../voice/facts.js';
 import { ISA_SLA_MINUTES, type Handoff } from './coreSeam.js';
 import type { AssignmentRow } from './repo.js';
+import type { HANDOFF_CLOSE_REASONS } from './schemas.js';
 import type { SystemActor } from '@realty/core/foundation';
 
 /** 'none' (b12 review B12X-2, F3): no human touch can clear it, so there is no deadline (0081). */
@@ -152,8 +153,8 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   return handoffId;
 }
 
-/** Why a handoff is done (b12 recheck R13): the audit reason of closeHandoffInTx. */
-export type HandoffCloseReason = 'deadline_met' | 'acknowledged' | 'lead_closed' | 'care_restarted';
+/** Why a handoff is done (b12 recheck R13): the audit reason of closeHandoffInTx, stored as closed_reason (R19, 0081). */
+export type HandoffCloseReason = (typeof HANDOFF_CLOSE_REASONS)[number];
 
 /**
  * b12 recheck R13: a handoff that is done closes. Its pinned card closes (every open card of its action, whoever holds
@@ -171,6 +172,8 @@ export async function closeHandoffInTx(tx: Tx, actor: SystemActor, h: { id: stri
     WHERE tenant_id = app.tenant_id() AND id = ${h.actionId} AND kind = 'ai_isa_handoff' AND status = 'proposed' RETURNING id`.execute(tx);
   await resolveFeedFor(tx, h.actionId, now);
   if (x.rows.length === 0) return false;
+  // b12 recheck R19: the handoff records that it is closed and why (system-only, final: 0081's guard)
+  await sql`UPDATE ai_isa_handoffs SET closed_at = ${new Date(now)}, closed_reason = ${reason} WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND closed_at IS NULL`.execute(tx);
   await audit(tx, actor, { action: 'ai_isa.handoff_closed', entity: { type: 'ai_isa_handoff', id: h.id }, reason });
   return true;
 }

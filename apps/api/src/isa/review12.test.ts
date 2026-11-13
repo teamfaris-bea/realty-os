@@ -676,6 +676,51 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect((await handoffs([l.id]))[0]).toMatchObject({ sla_escalation_level: 0 });
   });
 
+  it('R-ISA-30 (b12 recheck R19): the panel\'s handoff and the "Got it" result say why a handoff is closed: null while open, then deadline_met, lead_closed, acknowledged or care_restarted', async () => {
+    type PanelHandoff = { id: string; reason: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; closedReason: string | null };
+    const panelOf = async (as: TestClient, contactId: string) => {
+      const p = await call<{ handoff: PanelHandoff | null }>(as, 'GET', `/contacts/${contactId}/ai-isa`);
+      expect(p.status).toBe(200);
+      return p.body.handoff;
+    };
+    const closedReasonOf = async (handoffId: string) => (await h.su.query<{ r: string | null }>(`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE id = $1`, [handoffId])).rows[0]!.r;
+    // open, acknowledged with a deadline: nothing closed it; then a touch and the sweep: deadline_met
+    const met = await handedToA1();
+    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaDueAt: expect.any(String), slaMetAt: null, overdue: false, confirmationStatus: expect.any(String), closedReason: null });
+    const ack = await call<Record<string, unknown>>(met.a1, 'POST', `/ai-isa/handoffs/${met.ho.id}/ack`, {});
+    expect([ack.status, ack.body]).toEqual([200, { handoffId: met.ho.id, acknowledgedAt: expect.any(String), slaMet: false, confirmationStatus: expect.any(String), closedReason: null }]);
+    await touch(met.l.id);
+    await ageAndSweep(met.ho.id);
+    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaDueAt: expect.any(String), slaMetAt: expect.any(String), overdue: false, confirmationStatus: expect.any(String), closedReason: 'deadline_met' });
+    // a lead closed while its deadline runs: lead_closed, which the panel tells apart from a handoff the sweep never reached
+    const shut = await handedToA1();
+    expect((await command(shut.a1, shut.l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
+    await runIsa(h, w.tenantId, 1);
+    expect(await panelOf(w.owner, shut.l.id)).toMatchObject({ id: shut.ho.id, overdue: false, closedReason: null });
+    await ageAndSweep(shut.ho.id);
+    expect(await panelOf(w.owner, shut.l.id)).toMatchObject({ id: shut.ho.id, slaMetAt: null, overdue: false, closedReason: 'lead_closed' });
+    // no deadline (D1): "Got it" closes it and says so, and a repeat says so again
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const [none] = await handoffs([l.id]);
+    expect(none!.sla_class).toBe('none');
+    for (let i = 0; i < 2; i += 1) {
+      const a = await call<Record<string, unknown>>(agent, 'POST', `/ai-isa/handoffs/${none!.id}/ack`, {});
+      expect([a.status, a.body]).toEqual([200, { handoffId: none!.id, acknowledgedAt: expect.any(String), slaMet: false, confirmationStatus: expect.any(String), closedReason: 'acknowledged' }]);
+    }
+    expect(await panelOf(agent, l.id)).toMatchObject({ id: none!.id, overdue: false, closedReason: 'acknowledged' });
+    // a restart after a touch: care_restarted (the panel then shows the new assignment, so the stored marker is read)
+    const again = await endedByAgent();
+    expect(await closedReasonOf(again.ho.id)).toBeNull();
+    await touch(again.l.id);
+    expect((await startCare(again.agent, again.l.id)).status).toBe(200);
+    expect(await closedReasonOf(again.ho.id)).toBe('care_restarted');
+  });
+
   it('R-ISA-30: erasing the person leaves no handoff card behind (the card, the action and the handoff cascade from the contact)', async () => {
     const { freshReauth } = await import('./testing.js');
     const { l } = await handedToA1();

@@ -181,6 +181,8 @@ export interface AiIsaHandoffsTable {
   acknowledged_at: Timestamp | null;
   acknowledged_by_user_id: string | null;
   created_at: Generated<Timestamp>;
+  closed_at: Timestamp | null;
+  closed_reason: string | null;
 }
 
 /** public.ai_isa_person_blocks (table) */

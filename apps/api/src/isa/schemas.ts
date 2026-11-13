@@ -12,8 +12,12 @@ export const CHANNELS = ['sms', 'email'] as const;
 export const CAPABILITIES = ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const;
 export const STATES = ['starting', 'awaiting_reply', 'engaged', 'nurture', 'scheduling', 'booking', 'awaiting_agent', 'paused', 'ended'] as const;
 export const LINK_EFFECTS = ['ok', 'hold', 'pause', 'end'] as const;
+/** b12 recheck R19: the CHECK of ai_isa_handoffs.closed_reason (0081). */
+export const HANDOFF_CLOSE_REASONS = ['deadline_met', 'acknowledged', 'lead_closed', 'care_restarted'] as const;
 
 const Iso = z.string();
+/** Why the system closed a handoff (isa/handoff.ts closeHandoffInTx; ai_isa_handoffs.closed_reason, 0081), or null. */
+const HandoffClosedReason = z.enum(HANDOFF_CLOSE_REASONS).nullable();
 
 // ---- tenant (settings.ai_isa) -------------------------------------------------------------------------------
 export const AdminView = z.object({
@@ -142,7 +146,9 @@ export const PanelResponse = z.object({
   factsSent: z.array(z.object({ factKind: z.string(), listingId: z.uuid().nullable(), sentAt: Iso })),
   openOffer: z.object({ id: z.uuid(), status: z.string(), slots: z.array(z.object({ startsAt: Iso, endsAt: Iso })), expiresAt: Iso }).nullable(),
   heldTopics: z.array(z.object({ class: z.string(), since: Iso, sentence: z.string() })),
-  handoff: z.object({ id: z.uuid(), reason: z.string(), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string() }).nullable(),
+  // b12 recheck R19: closedReason says why the system closed it (null while open), so a lead-closed handoff is told
+  // apart from one a sweep has not reached
+  handoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), closedReason: HandoffClosedReason }).nullable(),
   inactivityReleaseAt: Iso.nullable(),
   inactivitySentence: z.string().nullable(),
   block: z.object({ reason: z.string(), since: Iso, sentence: z.string() }).nullable(),
@@ -187,7 +193,7 @@ export const StartResult = ControlResult.extend({ stoppedEnrollment: z.boolean()
 export const PauseBody = z.strictObject({ reason: z.enum(['user']).optional() });
 export const LiftBlockBody = z.strictObject({ inboundMessageId: z.uuid(), attestation: z.string().trim().min(20).max(2000) });
 export const LiftBlockResult = z.object({ lifted: z.boolean() });
-export const AckResult = z.object({ handoffId: z.uuid(), acknowledgedAt: Iso, slaMet: z.boolean(), confirmationStatus: z.string() });
+export const AckResult = z.strictObject({ handoffId: z.uuid(), acknowledgedAt: Iso, slaMet: z.boolean(), confirmationStatus: z.string(), closedReason: HandoffClosedReason });
 export const ResolveResult = z.object({ assignmentId: z.uuid(), cleared: z.string() });
 export const EscalationParams = z.strictObject({ id: z.uuid() });
 export const ResolveBody = z.strictObject({ class: z.string().regex(/^[a-z_]{2,40}$/) });
