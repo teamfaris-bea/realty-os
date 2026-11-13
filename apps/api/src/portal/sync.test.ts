@@ -163,3 +163,16 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect(a.rowCount).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('R-PORTAL-15 batches', () => {
+  it('E658: a tenant with more open grants than one batch still stores the expiry of every ended deal', async () => {
+    const open = await granted();
+    const closed = await granted();
+    await h.su.query(`ALTER TABLE deals DISABLE TRIGGER USER; UPDATE deals SET stage = 'closed', closed_at = now() WHERE id = '${closed.d}'; ALTER TABLE deals ENABLE TRIGGER USER`);
+    // a batch of one: the open grant is older, and must not take the only slot
+    await withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => portalSyncInTx(tx, systemActor(w.tenantId, 'worker'), { linkSecret: h.config.sessionSecret, publicBaseUrl: h.config.publicBaseUrl }, now, 1), { db: h.database });
+    const r = await h.su.query<{ id: string; e: Date | null }>('SELECT id, expires_at AS e FROM portal_grants WHERE id = ANY($1::uuid[])', [[open.g, closed.g]]);
+    expect(r.rows.find((x) => x.id === closed.g)!.e).not.toBeNull();
+    expect(r.rows.find((x) => x.id === open.g)!.e).toBeNull();
+  });
+});

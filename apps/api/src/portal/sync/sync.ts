@@ -99,21 +99,24 @@ async function publishMilestones(tx: Tx, actor: SystemActor, limit: number): Pro
 }
 
 async function storeExpiry(tx: Tx, limit: number): Promise<number> {
+  // the candidates are chosen among the grants that need an expiry now (closed or lost deals, listings off the market),
+  // so a tenant with more open grants than one batch still gets every ended one in turn
   const deals = await sql`
     UPDATE portal_grants g SET expires_at = CASE WHEN d.stage = 'closed' THEN GREATEST(d.closed_at, g.granted_at) + interval '90 days'
                                                  ELSE GREATEST(now(), g.granted_at + interval '1 second') END
       FROM deals d
-     WHERE g.tenant_id = app.tenant_id() AND d.tenant_id = g.tenant_id AND d.id = g.deal_id AND g.expires_at IS NULL
-       AND g.revoked_at IS NULL AND (d.stage = 'lost' OR (d.stage = 'closed' AND d.closed_at IS NOT NULL))
-       AND g.id IN (SELECT g2.id FROM portal_grants g2 WHERE g2.tenant_id = app.tenant_id() AND g2.expires_at IS NULL AND g2.revoked_at IS NULL
-                     AND g2.deal_id IS NOT NULL ORDER BY g2.granted_at LIMIT ${limit})`.execute(tx);
+     WHERE g.tenant_id = app.tenant_id() AND d.tenant_id = g.tenant_id AND d.id = g.deal_id
+       AND g.id IN (SELECT g2.id FROM portal_grants g2 JOIN deals d2 ON d2.tenant_id = g2.tenant_id AND d2.id = g2.deal_id
+                     WHERE g2.tenant_id = app.tenant_id() AND g2.expires_at IS NULL AND g2.revoked_at IS NULL
+                       AND (d2.stage = 'lost' OR (d2.stage = 'closed' AND d2.closed_at IS NOT NULL))
+                     ORDER BY g2.granted_at LIMIT ${limit})`.execute(tx);
   const listings = await sql`
     UPDATE portal_grants g SET expires_at = now() + interval '90 days'
-      FROM listings l
-     WHERE g.tenant_id = app.tenant_id() AND l.tenant_id = g.tenant_id AND l.id = g.listing_id AND g.expires_at IS NULL
-       AND g.revoked_at IS NULL AND l.status IN ('sold','withdrawn','expired')
-       AND g.id IN (SELECT g2.id FROM portal_grants g2 WHERE g2.tenant_id = app.tenant_id() AND g2.expires_at IS NULL AND g2.revoked_at IS NULL
-                     AND g2.listing_id IS NOT NULL ORDER BY g2.granted_at LIMIT ${limit})`.execute(tx);
+     WHERE g.tenant_id = app.tenant_id()
+       AND g.id IN (SELECT g2.id FROM portal_grants g2 JOIN listings l ON l.tenant_id = g2.tenant_id AND l.id = g2.listing_id
+                     WHERE g2.tenant_id = app.tenant_id() AND g2.expires_at IS NULL AND g2.revoked_at IS NULL
+                       AND l.status IN ('sold','withdrawn','expired')
+                     ORDER BY g2.granted_at LIMIT ${limit})`.execute(tx);
   return Number(deals.numAffectedRows ?? 0) + Number(listings.numAffectedRows ?? 0);
 }
 
@@ -125,7 +128,8 @@ async function refreshCards(tx: Tx, actor: SystemActor, deps: CardDeps, limit: n
       LEFT JOIN listings l ON l.tenant_id = g.tenant_id AND l.id = g.listing_id
      WHERE g.tenant_id = app.tenant_id() AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())
        AND (g.display ? 'agentName' OR g.display ? 'textTo' OR g.display ? 'emailTo')
-     ORDER BY g.granted_at LIMIT ${limit}`.execute(tx);
+     -- a different slice each 5-minute pass, so a tenant with more live grants than one batch is covered in turn
+     ORDER BY md5(g.id::text || floor(extract(epoch FROM now()) / 300)::text) LIMIT ${limit}`.execute(tx);
   let n = 0;
   for (const g of live.rows) {
     const cur = displayOf(g.display);
