@@ -184,6 +184,7 @@ export const SearchSchema = z.object({
   prefill: Criteria,
   alertChannel: z.string(),
   alertFrequency: z.string(),
+  origin: z.enum(['standard', 'ai_isa']), // ISA-2b (flagged)
   matches: z.array(ListingSchema),
   /** R-MLS-7: why a size criterion matches no MLS listing (or some none); null: nothing to say */
   sizeNote: z.string().nullable(),

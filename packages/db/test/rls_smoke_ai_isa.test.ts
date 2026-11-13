@@ -100,7 +100,8 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
     const want = Array.from({ length: 26 }, (_, i) => usFederalHolidays(2020 + i)).flat().filter((d) => d >= '2020-01-01' && d <= '2045-12-31');
     expect(r.rows.map((x) => x.d)).toEqual([...new Set(want)].sort());
     const [src] = await suRows<{ src: string }>(h.su, `SELECT prosrc AS src FROM pg_proc WHERE oid = 'app.ai_isa_send_check(public.messages)'::regprocedure`);
-    expect(src!.src).toContain("tier = 'initiated' AND app.ai_isa_us_federal_holiday(lt::date)");
+    // b13 (0083, ISA-2b): by the turn's kind OR the derived tier, as TX1 does
+    expect(src!.src).toContain("(t.message_kind = 'initiated' OR tier = 'initiated') AND app.ai_isa_us_federal_holiday(lt::date)");
   });
 
   it('R-ISA-24 (b12 recheck R6, R5, R19): the batch 12 review migration\'s self-check passes on this schema and fails when the guard loses its non-mandate AI-category refusal, the block helper loses its caller gate or the handoff guard lets a user close a handoff', async () => {
@@ -1049,5 +1050,112 @@ describe('a merged-away record under the survivor (b12 review db-isa-merge-1, db
     const ack = await q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET acknowledged_at = now(), acknowledged_by_user_id = app.user_id() WHERE id = ${handoffId}::uuid RETURNING id`);
     expect(ack.length).toBe(1);
     void m;
+  });
+});
+
+// ---- ISA-2b (append only) -------------------------------------------------------------------------------------
+
+describe('ISA-2b: the guard\'s holiday check (R-ISA-10) and one open AI message (R-ISA-11)', () => {
+  // b13: 0081 (b12 review B12X-6) already holds the holiday function and its refusal, and its case above proves the
+  // function equal to core on 2020-2045; 0083 adds ISA-2b's turn-kind condition and app_definer-only EXECUTE.
+  it('R-ISA-10: only app_definer can EXECUTE the holiday function and the send check (app_user is refused)', async () => {
+    const [p] = await suRows<{ u1: boolean; u2: boolean; d1: boolean; d2: boolean; pub: boolean }>(h.su, `SELECT
+      has_function_privilege('app_user', 'app.ai_isa_us_federal_holiday(date)', 'EXECUTE') AS u1,
+      has_function_privilege('app_user', 'app.ai_isa_send_check(public.messages)', 'EXECUTE') AS u2,
+      has_function_privilege('app_definer', 'app.ai_isa_us_federal_holiday(date)', 'EXECUTE') AS d1,
+      has_function_privilege('app_definer', 'app.ai_isa_send_check(public.messages)', 'EXECUTE') AS d2,
+      has_function_privilege('public', 'app.ai_isa_us_federal_holiday(date)', 'EXECUTE') AS pub`);
+    expect(p).toEqual({ u1: false, u2: false, d1: true, d2: true, pub: false });
+    const [f] = await suRows<{ secdef: boolean; vol: string }>(h.su, `SELECT prosecdef AS secdef, provolatile::text AS vol FROM pg_proc WHERE oid = 'app.ai_isa_us_federal_holiday(date)'::regprocedure`);
+    expect(f).toEqual({ secdef: false, vol: 'i' });
+    expect(await errOf(withTenantTx(w.owner.actor, (tx) => sql`SELECT app.ai_isa_us_federal_holiday(now()::date)`.execute(tx), { db: h.app }))).toMatch(/permission denied/);
+  });
+
+  it('R-ISA-10: on a holiday (Thanksgiving, today made one for the test) an initiated message (turn kind or derived tier) is refused ISA_QUIET_HOURS in any zone; a reply passes', async () => {
+    // the database clock cannot move: the test swaps the pure function for one that calls today a holiday, then restores it
+    const [def] = await suRows<{ d: string }>(h.su, `SELECT pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS d`);
+    await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$ SELECT d BETWEEN current_date - 1 AND current_date + 1 $$`);
+    try {
+      const l = await leadUnderCare(x);
+      await grantFromOwnDisclosure(l, { scopeStated: true });
+      await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+        VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
+      const msgOf = async (id: string) => {
+        try {
+          await withTenantTx(x.w.system('worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx), { db: h.app });
+          return 'ok';
+        } catch (e) { return (e as Error).message; }
+      };
+      const m1 = await queueAi(x, l, { kind: 'initiated' });
+      expect(await msgOf(m1.messageId)).toMatch(/ISA_QUIET_HOURS: initiated AI messages wait (past a federal holiday|for a permitted day)/);
+      await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m1.actionId]);
+      // the derived tier: a turn marked reply, but no own inbound in the window, is initiated by the guard
+      const m2 = await queueAi(x, l, { kind: 'reply' });
+      expect(await dispatchCode(x, m2.messageId)).not.toBe('ok');
+      await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m2.actionId]);
+      await inbound(x, l);
+      expect(await dispatchCode(x, (await queueAi(x, l, { kind: 'reply' })).messageId)).toBe('ok');
+    } finally {
+      await h.su.query(def!.d);
+    }
+    const [back] = await suRows<{ t: boolean }>(h.su, `SELECT app.ai_isa_us_federal_holiday('2026-11-26') AND NOT app.ai_isa_us_federal_holiday('2026-11-27') AS t`);
+    expect(back!.t).toBe(true);
+  });
+
+  it('R-ISA-10 (0083, b13): a message the turn planned as initiated is held to the weekday and holiday rules even inside the reply window (derived tier reply), which 0081 alone let through; a planned reply is not', async () => {
+    // There is no fake clock: today is made a refused day in this file's own database (the pack's initiated_days
+    // without today, as on a Sunday; then a holiday calendar holding today), and both are restored after.
+    const zone = openZone();
+    const [now] = await suRows<{ d: string; dow: number; rules: Record<string, unknown>; def: string }>(h.su, `SELECT to_char((now() AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS d,
+      extract(isodow FROM now() AT TIME ZONE $1)::int AS dow, (SELECT rules FROM jurisdiction_packs WHERE key = 'platform:ai_isa') AS rules,
+      pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def`, [zone]);
+    const why = async (messageId: string) => {
+      try {
+        await withTenantTx(w.system('worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx), { db: h.app });
+        return 'ok';
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
+    const refusedDay = async <T>(fn: () => Promise<T>): Promise<T> => {
+      await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('initiated_days', $1::jsonb) WHERE key = 'platform:ai_isa'`,
+        [JSON.stringify([1, 2, 3, 4, 5, 6, 7].filter((d) => d !== now!.dow))]);
+      try { return await fn(); } finally { await h.su.query(`UPDATE jurisdiction_packs SET rules = $1::jsonb WHERE key = 'platform:ai_isa'`, [JSON.stringify(now!.rules)]); }
+    };
+    const holiday = async <T>(fn: () => Promise<T>): Promise<T> => {
+      await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$ SELECT d = DATE '${now!.d}' $$`);
+      try { return await fn(); } finally { await h.su.query(now!.def); }
+    };
+    const l = await leadUnderCare(x, { zone });
+    await grantFromOwnDisclosure(l, { scopeStated: true });
+    await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+      VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
+    await inbound(x, l); // the person wrote just now: the guard derives the reply tier
+    const planned = await queueAi(x, l, { kind: 'initiated', zones: [zone] });
+    expect(await refusedDay(() => why(planned.messageId))).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait for a permitted day in /);
+    expect(await holiday(() => why(planned.messageId))).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait past a federal holiday in /);
+    expect(await initiatedDayNow(h, zone, () => why(planned.messageId))).toBe('ok');
+    // a planned reply in the same state goes on that day and that holiday (the rules are for initiated messages)
+    const l2 = await leadUnderCare(x, { zone });
+    await inbound(x, l2);
+    const reply = await queueAi(x, l2, { kind: 'reply', zones: [zone] });
+    expect(await refusedDay(() => holiday(() => why(reply.messageId)))).toBe('ok');
+    const [back] = await suRows<{ def: string; rules: Record<string, unknown> }>(h.su, `SELECT pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def,
+      (SELECT rules FROM jurisdiction_packs WHERE key = 'platform:ai_isa') AS rules`);
+    expect(back).toEqual({ def: now!.def, rules: now!.rules });
+  });
+
+  it('R-ISA-11 E515: a second proposed ai_isa_message for the contact violates assistant_actions_ai_isa_open_uq; a superseded one is refused ASSISTANT_ACTION_WITHDRAWN', async () => {
+    const l = await leadUnderCare(x);
+    await inbound(x, l);
+    const first = await queueAi(x, l);
+    // a second proposed action without the supersede (TX-B always withdraws first): the partial unique index refuses it
+    const err = await errOf(withTenantTx(x.w.system('assistant'), (tx) => sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy,
+        playbook_version_id, status, owner_user_id, explanation, payload, pinned_inbound_seq, ai_isa_turn_id, epoch, dedupe_key)
+      VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'ai_isa_message', 'ai_isa_message', 'ai_isa_mandate', ${x.versionId}, 'proposed', ${x.agent.id}, 'x', '{}'::jsonb, 0, ${first.turnId}, 1, ${'d:' + uuid()})`.execute(tx), { db: h.app }));
+    expect(err).toMatch(/assistant_actions_ai_isa_open_uq|duplicate key/);
+    const second = await queueAi(x, l);
+    expect(await dispatchCode(x, first.messageId)).toBe('ASSISTANT_ACTION_WITHDRAWN');
+    expect(await dispatchCode(x, second.messageId)).toBe('ok');
   });
 });

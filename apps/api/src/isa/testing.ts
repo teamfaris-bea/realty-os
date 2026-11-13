@@ -19,6 +19,7 @@ import { HandlerRegistry } from '../worker/registry.js';
 import { DEFAULT_AI_ISA_CONTENT } from './coreSeam.js';
 import { makeIsaHandlers } from './handlers.js';
 import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
+import { dispatchStaleHandler } from '../worker/handlers/dispatchStale.js';
 
 export { call, freshReauth };
 
@@ -59,12 +60,12 @@ export interface IsaWorld extends CommsWorld {
 }
 
 /** A tenant with the AI ISA fully authorized on fakes: pack cleared, switch on, an approved policy, agent 0 opted in. */
-export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean } = {}): Promise<IsaWorld> {
+export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[] } = {}): Promise<IsaWorld> {
   const w = await commsWorld(h, { agents: 2, teamLead: true });
   const pb = randomUUID();
   const versionId = randomUUID();
   const versionSha = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
-  const content = { ...DEFAULT_AI_ISA_CONTENT };
+  const content = { ...DEFAULT_AI_ISA_CONTENT, ...(o.capabilities ? { capabilities: o.capabilities } : {}) };
   await h.su.query(`SET session_replication_role = replica`);
   try {
     await h.su.query(`INSERT INTO playbooks (tenant_id, id, kind, scope, name, status) VALUES ($1, $2, 'ai_isa', 'team', 'AI assistant', 'active')`, [w.tenantId, pb]);
@@ -86,9 +87,10 @@ export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: bool
   return { ...w, versionId, versionSha, ai };
 }
 
-export async function optInAgent(h: ApiHarness, agent: TestClient, versionId: string, capabilities: string[] = ['converse']): Promise<void> {
+export async function optInAgent(h: ApiHarness, agent: TestClient, versionId: string, capabilities: string[] = ['converse'],
+  o: { timezone?: string; availability?: { weekday: number; start: string; end: string }[]; bookingKinds?: string[] } = {}): Promise<void> {
   await freshReauth(h, agent);
-  const r = await call(agent, 'PUT', '/me/ai-isa/opt-in', { versionId, capabilities, channels: ['sms', 'email'], timezone: 'America/New_York', availability: [], bookingKinds: [] });
+  const r = await call(agent, 'PUT', '/me/ai-isa/opt-in', { versionId, capabilities, channels: ['sms', 'email'], timezone: o.timezone ?? 'America/New_York', availability: o.availability ?? [], bookingKinds: o.bookingKinds ?? [] });
   if (r.status !== 200) throw new Error(`opt-in: ${r.status} ${JSON.stringify(r.body)}`);
 }
 
@@ -112,22 +114,49 @@ export async function startCare(agent: TestClient, contactId: string, body: Reco
  *  back, a day out, without running (a worker that is behind). */
 export function isaWorker(h: ApiHarness, o: { hold?: readonly string[] } = {}) {
   const deps = depsFromPlatform(h.app.platform);
-  const all = [...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never];
+  const all = [...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never, dispatchStaleHandler() as never];
   const handlers = all.map((x) => (o.hold?.includes(x.kind) ? { ...x, run: async (ctx: { now: Instant }) => ({ retryAt: (ctx.now + 86_400_000) as Instant }) } : x)) as typeof all;
   const registry = new HandlerRegistry().registerAll(handlers);
   return createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime', 'default'], concurrency: 1, worker: `isa-test-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger });
 }
 
-/** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. Jobs of a `hold` kind stay pending. */
-export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { hold?: readonly string[] } = {}): Promise<void> {
+/** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. Jobs of a `hold` kind stay pending.
+ *  `beforeTick` (ISA-2b) runs before each job of a round. */
+export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { hold?: readonly string[]; beforeTick?: () => Promise<void> } = {}): Promise<void> {
   const notDue = ['ai_isa.sweep', 'ai_isa.sla', ...(o.hold ?? [])];
   for (let i = 0; i < rounds; i += 1) {
     await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind <> ALL ($2::text[])`, [tenantId, notDue]);
     // the debounce reads conversations.last_inbound_at: age it so a due turn runs now
     await h.su.query(`UPDATE conversations SET last_inbound_at = last_inbound_at - interval '1 minute' WHERE tenant_id = $1 AND last_inbound_at > now() - interval '1 minute'`, [tenantId]);
     await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > now() - interval '3 minutes'`, [tenantId]);
-    await isaWorker(h, o).drain(30);
+    if (o.beforeTick) {
+      const wk = isaWorker(h, o);
+      for (let k = 0; k < 30; k += 1) {
+        await o.beforeTick();
+        if ((await wk.drain(1)) === 0) break;
+      }
+    } else await isaWorker(h, o).drain(30);
   }
+}
+
+/** The conversation's reply address (what an email from the team carries as Reply-To), minted like dispatch does. */
+export async function replyAddressOf(h: ApiHarness, tenantId: string, contactId: string): Promise<string> {
+  const { replyAddress, replyToken, replyTokenHash } = await import('../comms/render.js');
+  const deps = depsFromPlatform(h.app.platform) as unknown as { linkSecret: Uint8Array; publicBaseUrl: string };
+  const c = await h.su.query<{ id: string }>(`SELECT id FROM conversations WHERE contact_id = $1`, [contactId]);
+  const token = replyToken(deps.linkSecret, tenantId, c.rows[0]!.id);
+  await h.su.query(`UPDATE conversations SET reply_token_hash = $2 WHERE id = $1 AND reply_token_hash IS NULL`, [c.rows[0]!.id, replyTokenHash(token)]);
+  return replyAddress(deps.publicBaseUrl, token);
+}
+
+/** Runs the AI ISA sweep once now (the periodic job's body), then drains what it enqueued. */
+export async function sweepNow(h: ApiHarness, tenantId: string, rounds = 3): Promise<void> {
+  const { withTenantTx } = await import('@realty/db');
+  const { systemActor } = await import('../worker/systemActor.js');
+  const { sweepInTx } = await import('./handlers.js');
+  const deps = depsFromPlatform(h.app.platform);
+  await withTenantTx(systemActor(tenantId as never, 'assistant'), (tx, now) => sweepInTx(tx, deps, systemActor(tenantId as never, 'assistant'), now), { db: h.database });
+  await runIsa(h, tenantId, rounds);
 }
 
 export async function assignmentOf(h: ApiHarness, contactId: string) {
@@ -153,4 +182,66 @@ export async function handbacksOf(h: ApiHarness, contactId: string) {
 export async function handoffOf(h: ApiHarness, contactId: string) {
   return (await h.su.query<{ id: string; reason: string; sla_class: string; package: Record<string, unknown>; pending_message_id: string | null; confirmation_status: string }>(
     `SELECT id, reason, sla_class, package, pending_message_id, confirmation_status FROM ai_isa_handoffs WHERE contact_id = $1`, [contactId])).rows;
+}
+
+// ---- buyer fixtures (ISA-2b items 10–12; synthetic data only, VERIFY fixtures) -----------------------------------
+
+/** The person's own-form express_written grant (scope stated, naming the brokerage) and a fake "not listed" DNC result. */
+export async function grantInitiated(h: ApiHarness, tenantId: string, lead: IsaLead): Promise<void> {
+  const { createHash } = await import('node:crypto');
+  const hmacHex = async (addr: string) => {
+    const deps = depsFromPlatform(h.app.platform);
+    const { withTenantTx } = await import('@realty/db');
+    const { systemActor } = await import('../worker/systemActor.js');
+    return withTenantTx(systemActor(tenantId as never, 'worker'), async (tx) => Buffer.from(await deps.envelope.inTx(tx, tenantId as never).hmacAddress(tenantId as never, addr)).toString('hex'), { db: h.database });
+  };
+  await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('d12_effective_at', (now() - interval '30 days')::text) WHERE key = 'platform:ai_isa'`);
+  const ts = (await h.su.query<{ b: string }>(`SELECT brokerage_legal_name AS b FROM tenant_settings WHERE tenant_id = $1`, [tenantId])).rows[0]!;
+  const disc = randomUUID();
+  const src = randomUUID();
+  const body = `By submitting you agree that ${ts.b} may text and email you about homes (${disc}).`;
+  await h.su.query(`INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'website')`, [tenantId, src, `Own form (test) ${src.slice(0, 8)}`]);
+  await h.su.query(`INSERT INTO consent_disclosures (tenant_id, id, channel_scope, purpose_scope, body, body_sha256, names_seller, source_kind, scope_stated)
+    VALUES ($1, $2, ARRAY['sms','email'], ARRAY['marketing','informational'], $3, $4, $5, 'own_form', true)`, [tenantId, disc, body, createHash('sha256').update(body).digest('hex'), ts.b]);
+  await h.su.query(`INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome, consent_disclosure_id)
+    VALUES ($1, gen_random_uuid(), $2, $3, now(), 'buy', 'fp-' || gen_random_uuid(), 'new_contact', $4)`, [tenantId, lead.id, src, disc]);
+  for (const [kind, ch, addr] of [['phone', 'sms', lead.phone], ['email', 'email', lead.email]] as const) {
+    await h.su.query(`INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level, source,
+        occurred_at, recorded_at, contact_id, actor_kind, disclosure_id, evidence, imported)
+      VALUES ($1, gen_random_uuid(), $2, decode($3, 'hex'), '•••', $4, 'marketing', 'grant', 'express_written', 'web_form', now(), now(), $5, 'system', $6, '{}'::jsonb, false)`,
+      [tenantId, kind, await hmacHex(addr), ch, lead.id, disc]);
+  }
+  await h.su.query(`INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+    VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [tenantId, await hmacHex(lead.phone)]);
+}
+
+export interface FakeListing {
+  id: string;
+}
+
+/** An MLS (or team) listing row written as the sync would (fixtures bypass the system-only triggers). */
+export async function buyerListing(h: ApiHarness, tenantId: string, o: { connectionId?: string | null; source?: 'mls' | 'team'; status?: string; price?: number; city?: string;
+  beds?: number; lease?: boolean; version?: number; seenHoursAgo?: number; offMarket?: boolean; teamListingId?: string | null; description?: string; agentUserId?: string; displayAllowed?: boolean } = {}): Promise<string> {
+  const id = randomUUID();
+  const src = o.source ?? 'mls';
+  await h.su.query(`SET session_replication_role = replica`);
+  try {
+    await h.su.query(`INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft, property_type,
+        description, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, team_listing_id, last_seen_in_feed_at, off_market_at, is_lease, mls_normalize_version, listing_agent_user_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'CA', '94110', $8, $9, 20, 1400, 'single_family', $10, $11, now(), $12, $13, $14, $15, $16, $17, $18, $19)`,
+      [tenantId, id, src, src === 'mls' ? `M${id.slice(0, 8)}` : null, o.status ?? 'active', `${10 + Math.floor(Math.random() * 900)} Sample Ave`, o.city ?? 'Oakland', (o.price ?? 500000) * 100,
+        o.beds ?? 3, o.description ?? 'Bright home near the park.', src === 'mls' ? (o.connectionId ?? null) : null, src === 'mls' ? 'Other Brokerage (test)' : null, o.displayAllowed ?? true,
+        o.teamListingId ?? null, src === 'mls' ? new Date(Date.now() - (o.seenHoursAgo ?? 1) * 3_600_000) : null, o.offMarket ? new Date() : null, o.lease ?? false, o.version ?? 2,
+        src === 'team' ? (o.agentUserId ?? null) : null]);
+  } finally {
+    await h.su.query(`SET session_replication_role = origin`);
+  }
+  return id;
+}
+
+/** Seeds usable qualification claims onto the machine (the bundle tests; J1 qualifies through the fake model). */
+export async function seedClaims(h: ApiHarness, contactId: string, claims: { field: string; value: unknown; quote: string }[]): Promise<void> {
+  const m = (await h.su.query<{ id: string }>(`SELECT id FROM messages WHERE contact_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, [contactId])).rows[0]!;
+  const rows = claims.map((c, k) => ({ claimId: randomUUID(), field: c.field, value: c.value, quote: c.quote, messageId: m.id, saidAt: Date.now() - 60_000 + k }));
+  await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(machine, '{claims}', $2::jsonb) WHERE contact_id = $1 AND ended_at IS NULL`, [contactId, JSON.stringify(rows)]);
 }

@@ -271,6 +271,9 @@ export async function resumeCare(actor: UserActor, deps: IsaDeps, contactId: str
     const a = await loadFor(tx, contactId);
     if (a.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
     if (a.pausedAt === null || a.finalizeAt !== null) throw new AppError('AI_ISA_NOT_PAUSED');
+    // item 9: resume drops the offer (core) and the booking would then be ignored: not while it is being booked
+    if (a.machine.offer?.status === 'accepting' || (await sql<{ n: number }>`SELECT count(*)::int AS n FROM ai_isa_slot_offers WHERE tenant_id = app.tenant_id()
+        AND assignment_id = ${a.id} AND status = 'accepting'`.execute(tx)).rows[0]!.n > 0) throw new AppError('AI_ISA_BOOKING_IN_PROGRESS');
     // the chain must hold (a hold is fine: it is not a pause)
     const chain = await evaluateChain(tx, a, chainEnvOf(deps));
     if (chain.effect === 'pause' || chain.effect === 'end') throw new AppError((chain.worst?.code === 'AI_ISA_NOT_CLEARED' ? 'AI_ISA_NOT_CLEARED' : chain.worst?.code === 'AI_ISA_NO_OPTIN' ? 'AI_ISA_NO_OPTIN' : 'AI_ISA_OFF'));

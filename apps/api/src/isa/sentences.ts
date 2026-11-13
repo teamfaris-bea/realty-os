@@ -23,6 +23,37 @@ const START_REFUSALS: Record<string, string> = {
   AI_ISA_NO_CHANNEL: 'No phone or email of theirs can receive AI messages.',
   AI_ISA_LISTED_ELSEWHERE: 'Their home is listed with another brokerage.',
 };
+/** Control and booking refusals (ISA-2b; the web shows the sentence). */
+export const CONTROL_REFUSALS: Record<string, string> = {
+  AI_ISA_BOOKING_IN_PROGRESS: 'The AI assistant is booking the time they agreed to. Resume after the booking finishes (a few seconds).',
+};
+
+/** The buyer bundle's honest unavailable codes (item 10), each as a panel sentence. VERIFY WITH MLS. */
+export const BUNDLE_SENTENCES: Record<string, string> = {
+  CAPABILITY_OFF: 'Sharing listings is not on for this lead (policy, opt-in or side).',
+  CRITERIA_INCOMPLETE: 'Not enough of what they want yet: an area is needed before any home is shared.',
+  CONSENT_TIER_MISSING: 'No consent from their own form for messages they did not ask for, so no listings are sent.',
+  MLS_NOT_ELIGIBLE: 'No MLS feed may reach clients right now (connection, counsel review or freshness).',
+  LEASE_UNCHECKED: 'Matching MLS rows have not been checked for leases yet, so none are shared.',
+  NO_MATCH: 'No current listing matches what they told us (homes sent in the last 90 days are skipped).',
+};
+
+/** Offer and booking codes on the turn and the panel (item 8–9), each as a plain sentence. */
+export const BOOKING_SENTENCES: Record<string, string> = {
+  CALENDAR_UNAVAILABLE: 'Your calendar could not be read just now, so no times were offered.',
+  KIND_NOT_ALLOWED: 'That appointment kind is not in your opt-in or the team policy.',
+  APPOINTMENT_ALREADY_SET: 'They already have an appointment with the team.',
+  NO_FREE_SLOT: 'No free time fits your availability, the notice period and their time zones.',
+  NO_AVAILABILITY: 'Your availability leaves no hours inside routing hours.',
+  OFFER_EXPIRED: 'The offered times expired before they answered.',
+  CONFIRMATION_TOO_LATE: 'A confirmation could not go out before the notice period (quiet hours or daily limits).',
+  CARE_PAUSED: 'AI care was paused before the booking.',
+  CARE_NOT_LIVE: 'AI care ended before the booking.',
+  CONFIRMATION_ON_HOLD: 'Sending is on hold, so the AI did not book a time it could not confirm.',
+  SLOT_TAKEN: 'That time was just taken; new times were offered.',
+  SLOT_SOURCE_CHANGED: 'Your calendar changed; new times were offered.',
+};
+
 export function startRefusalSentence(code: string): string {
   return START_REFUSALS[code] ?? 'AI care cannot start right now.';
 }

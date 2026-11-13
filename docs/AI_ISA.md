@@ -361,6 +361,7 @@ A DB guard in the style of `tenant_settings_batch_text_guard` (0021_fub_parity.s
 - **A pause that races an inbound:** ingestion takes the assignment `FOR SHARE` after lock 2, so either it sees the pause (R-AST-9 path) or the pause's transition sees the unconsumed inbound and writes the handback (R-ISA-29).
 
 ---
+- **ISA-2b.** After a take over the handoff's recipient is the person who took over (the latest `take_over` control row; `paused_by_user_id` keeps only the first pause), with the card and the deadline, while the lead is still with the assignment's owner (batch 13: a lead that moved goes to its new owner, an unowned one to the escalation, b12 review F1, F3); a different owner is notified; escalation follows the owner's chain; an End keeps the owner (`endedByUserId` in the package). The book job's tx#1 takes lock 5 FIRST, then the offer row FOR UPDATE, and nothing of locks 2–4; nothing holding 2–4 ever updates an `accepting` offer. Resume is refused while an offer is accepting (AI_ISA_BOOKING_IN_PROGRESS): resume drops the offer and the booking would then be ignored.
 
 ## 4. The conversation policy: module 74, `packages/core/src/isa` (pure, property-tested)
 The shape is that of core/voice: a pure `step(state, event, facts) → {state, actions}` (packages/core/src/voice/machine.ts:355). "Core never sends, dials or books" (:32-33).
@@ -511,6 +512,7 @@ Readiness is computed by core only from **usable** claims: verified, not needs_r
    - The external push is the existing job (push.ts:154-213).
    - If the confirmation is refused or cancelled, the package says "confirmation not sent: confirm by hand" and the card becomes critical.
 8. **Kinds:** buyer `buyer_consult`, seller `listing_appointment`, phone `consult` (CHECK at 0001:2085). `created_by_kind='assistant'`, `set_by_user_id` NULL.
+- **ISA-2b (as built).** confirmationInTime's nextSendAt is the latest of the reply window, the instant the person's rolling AI and automated 24 h counts fall below the caps, and the last AI outbound plus the minimum gap. Acknowledgements ("ok", "great", "perfect", a tapback) are never agreement, even to a one-slot offer: one clarification (Q10; VERIFY WITH COUNSEL). The book job runs two transactions: tx#1 (lock 5, the offer FOR UPDATE; CARE_NOT_LIVE, CARE_PAUSED, CONFIRMATION_ON_HOLD, OFFER_EXPIRED, CONFIRMATION_TOO_LATE, APPOINTMENT_ALREADY_SET, then bookSlotInTx with the offer's link) and TX-C (locks 2→3→4). Codes core lacks reach the machine as CALENDAR_UNAVAILABLE, the honest code kept on the row and the turn. Booked while paused after the read: the handoff has no confirmation and the notes BOOKED_WHILE_PAUSED, CONFIRMATION_NOT_SENT. Booked after care ended: a separate critical card ("Booked {time} after AI care ended; the confirmation was not sent: confirm or cancel it yourself."). Booked but the machine did not end: a system pause (check_this) and the same card. One open appointment per person per organizer (the cross-organizer residual is stated in DATA_MODEL R-ISA-13).
 
 ### 4.7 The handoff package and its deadline (R-ISA-14, R-ISA-30)
 - **Exactly one per assignment.** Every end writes one: an `assistant_actions` row of kind `ai_isa_handoff` (category and autonomy internal) with dedupe `ai_isa_handoff:{assignment}`, plus one `ai_isa_handoffs` row (unique assignment_id).
@@ -606,6 +608,7 @@ Every AI ISA message has `purpose='marketing'`. `message_kind` (reply or initiat
 Notes on counting:
 - The statuses counted are dispatching, dispatch_unknown, sent, delivered, failed and undelivered (with the IN_FLIGHT set at apps/api/src/assistant/enrollments.ts:37).
 - When a cap is reached with an inbound unanswered, R-ISA-29 writes the card and the human answers.
+- **ISA-2b.** The guard checks holidays too (`app.ai_isa_us_federal_holiday`, equal to core `usFederalHolidays`: 0081, b12 review B12X-6), together with the weekday rule, whenever the turn's kind OR the derived tier is initiated (0083, lane number 0192; 0081 alone checked the derived tier); the deferral reads `initiatedDays` and `noInitiatedOnHolidays` from the policy, so core, TX1, the deferral and the guard agree.
 
 ### 5.4 Where each check is enforced
 
@@ -632,6 +635,7 @@ Notes on counting:
 - **The opt-out codes in GUARD_DENY_REASONS** end care.
 
 New reason codes go into `ReasonCode` and `explain`, with sentences.
+- **ISA-2b.** Quiet hours in the guard: weekday and holiday for initiated by turn kind or derived tier (0083, lane number 0192). FACT_CHANGED (replan) is raised by TX1 when a pending listing fact no longer passes every rule or its status or price changed; an as-of change alone never cancels.
 
 **Rules version and repeated codes (sends-gates/F4).**
 - ISA-1 added checks 0, 8 and 12 under `RULES_VERSION = 'core-compliance/3.1.0'` (gate.ts), which goes into `gate_decisions.core_rules_version`. Decisions for every other category are the same as under 3.0.0 (non-interference, property-tested); only the label changed. So no AI ISA decision is stored under the pre-ISA label 3.0.0.
@@ -666,6 +670,7 @@ New reason codes go into `ReasonCode` and `explain`, with sentences.
   - Qualification claims need a verbatim client own-text quote.
   - If a shared comp's close price or date changes later, the agent gets a card. Nothing is auto-corrected.
 - **The full rendered body** of every message template passes contentGuard. Pending is worded "Pending (not yet sold)", because "under contract" trips CONTRACT_TOPIC (guard.ts:160; autonomy.ts:74 guards the whole rendered message).
+- **ISA-2b channel plan (Q7).** A facts message goes on the inbound's channel if its initiated tier passes and, for SMS, the composed body fits 3 segments; else by email if bound and passing; else by SMS with whole listing lines dropped from the end (attribution and disclaimer kept, at least one line); else nothing (FACTS_DO_NOT_FIT). There is no "I can email you" pointer. contentGuard runs over every rendered body. A sent facts message is replaced by a placeholder in later prompts.
 
 ### 6.2 Buyer: searches and listings
 - **Criteria** are built by core from usable claims into `SearchCriteria` (packages/core/src/assistant/search.ts:17-38). The AI never supplies keywords.
@@ -673,6 +678,7 @@ New reason codes go into `ReasonCode` and `explain`, with sentences.
 - **Rendering:** "{beds} bd · {baths} ba · {sqft} sq ft · {locality} — listed at $X (asking price) · {Active|Coming soon} · Listed by {brokerage}". A fact the row does not have is left out: an unknown size (every Spark row until the MLS confirms its living-area field, DATA_MODEL R-MLS-7) is never "0 sq ft" or a guess. The address appears only when `InternetAddressDisplayYN` allows it. No photos by SMS.
 - **Saved searches.** `propose_saved_search` is refused unless the initiated tier passes on the alert channel. It calls `proposeSavedSearchInTx` (searches.ts:71-99) with `origin: 'ai_isa'`, and it becomes active only on the agent's approval (SAVED_SEARCH_APPROVAL_REQUIRES_HUMAN, 0001:2827-2840; R-AST-10). While care is live, an origin `ai_isa` search sends **no** alerts of its own: its matches become `listing_event`s that are sent under the AI checks. At the handoff it is set to `paused` with "Review this saved search before alerts start" (next step `review_saved_search`). After the owner re-approves, alerts follow D1 as today.
 - **The buyer watch** (`ai_isa.buyer_watch`, daily, for buyers without an approved search) emits `listing_event`s for new matches, and for price or status changes of shared listings. A status change comes only from the row's own newer `mls_modified_at`. A shared listing that went pending is mentioned only if the client asks: "Pending (not yet sold), not available".
+- **ISA-2b bundle rules (VERIFY WITH MLS).** Leases and rows not yet lease-checked (`mls_normalize_version < 2`, LEASE_UNCHECKED), off-market rows and stale rows are never shared. A team listing is shared only with a live, displayed, client-eligible MLS mirror (so "listed as Active in the MLS as of" is true); an off-MLS, office-exclusive or coming-soon team listing never is (TEAM_NOT_ON_MLS). At the handoff the AI-origin search pauses and its matches of homes the AI already sent are marked alerted with that message.
 
 ### 6.3 Seller: comps, competition and market changes (D9 reuse; no second path)
 
@@ -994,6 +1000,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
   - `ai_isa.sweep` (every 5 minutes): stop signals, link failures, offer expiry, stuck turns, pause expiry, inactivity warnings, shared address and active client;
   - `ai_isa.ownership_changed`;
   - `ai_isa.handoff_enrich`.
+- **ISA-2b.** `ai_isa.offer` and `ai_isa.book` are standalone jobs (isa/booking/offer.ts, book.ts). A send_result is emitted for every terminal status: blocked, sent, dispatch_unknown and failed in dispatch; canceled from an inbound cancel, the supersede and the care cancel; delivered, undelivered and failed from status callbacks; dispatch_unknown from the stale reaper; the reconciled status from reconcileOutbound (isa/sendResult.ts).
 
 ### 9.3 Idempotency
 

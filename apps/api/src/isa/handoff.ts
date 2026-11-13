@@ -18,6 +18,9 @@ import type { AssignmentRow } from './repo.js';
 import type { HANDOFF_CLOSE_REASONS } from './schemas.js';
 import type { SystemActor } from '@realty/core/foundation';
 
+/** basis is codes-only (0080 ai_isa_codes_only): core's version 'isa-readiness/1' is stored as 'isa-readiness:1' (ISA-2b). */
+const codeOf = (v: string) => v.replace(/[^A-Za-z0-9_:.@-]/g, ':').slice(0, 64);
+
 /** 'none' (b12 review B12X-2, F3): no human touch can clear it, so there is no deadline (0081). */
 export type SlaClass = 'critical' | 'high' | 'normal' | 'low' | 'none';
 
@@ -68,6 +71,37 @@ export async function handoffTarget(tx: Tx, a: Pick<AssignmentRow, 'contactId' |
   return { contactId: root?.id ?? a.contactId, primary: null, escalation: rec.escalation, sentence, closed };
 }
 
+/** Who took over (the latest `take_over` control's user) while the take over is pending or final, else null. */
+async function takerOf(tx: Tx, assignmentId: string): Promise<string | null> {
+  const r = await sql<{ reason: string | null; u: string | null }>`SELECT a.pause_reason AS reason, (SELECT c.by_user_id FROM ai_isa_controls c
+      WHERE c.tenant_id = a.tenant_id AND c.assignment_id = a.id AND c.kind = 'take_over' ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS u
+    FROM ai_isa_assignments a WHERE a.tenant_id = app.tenant_id() AND a.id = ${assignmentId}`.execute(tx);
+  const x = r.rows[0];
+  return x?.reason === 'taking_over' ? (x.u ?? null) : null;
+}
+
+/**
+ * The handoff recipient (b12 review F1, F3 with ISA-2b item 5, Q1; R-ISA-15, R-ISA-30): handoffTarget's record and
+ * routing, and while a take over is pending or final (pause_reason `taking_over`: the finalize, or any end inside the
+ * undo window, a booking's included) the person who took over, from the latest `take_over` control row
+ * (paused_by_user_id keeps only the FIRST pause), as long as the lead is still with the assignment's owner (a lead that
+ * moved goes to its new owner, an unowned one to the escalation: handoffTarget). An inactive taker falls back to
+ * handoffTarget's recipient. Escalation follows the owner's chain. An End keeps the owner, with endedByUserId.
+ */
+export async function recipientFor(tx: Tx, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>): Promise<HandoffTarget & { takerUserId: string | null; endedByUserId: string | null }> {
+  const target = await handoffTarget(tx, a);
+  const taker = await takerOf(tx, a.id);
+  const ender = await sql<{ u: string | null; reason: string | null }>`SELECT a.pause_reason AS reason, (SELECT c.by_user_id FROM ai_isa_controls c
+      WHERE c.tenant_id = a.tenant_id AND c.assignment_id = a.id AND c.kind = 'end' ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS u
+    FROM ai_isa_assignments a WHERE a.tenant_id = app.tenant_id() AND a.id = ${a.id}`.execute(tx);
+  const endedByUserId = ender.rows[0]?.reason === 'ending' ? (ender.rows[0].u ?? null) : null;
+  if (taker !== null && taker !== a.ownerUserId && target.primary === a.ownerUserId) {
+    const m = await sql<{ active: boolean }>`SELECT status = 'active' AS active FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${taker}`.execute(tx);
+    if (m.rows[0]?.active) return { ...target, primary: taker, escalation: target.escalation.filter((u) => u !== taker), takerUserId: taker, endedByUserId };
+  }
+  return { ...target, takerUserId: taker, endedByUserId };
+}
+
 /** Whether D1 leaves any human channel to the person (a text or call to a phone, an email): its reachability. */
 async function humanReachable(tx: Tx, contactId: string): Promise<{ any: boolean; callback: boolean }> {
   const o = await optOutFactsOf(tx, contactId);
@@ -84,6 +118,8 @@ export interface HandoffInput {
   /** extra frozen sentences as codes ("CONFIRMATION_NOT_SENT", "BOOKED_WHILE_PAUSED", "IN_FLIGHT:<id>") */
   notes?: string[];
   nextSteps?: string[];
+  /** TX-C (ISA-2b item 9): the booked appointment's detail (ids, kind, times, organizer, offer, the agreed message and quote, the link and the read time) */
+  appointmentDetail?: Record<string, unknown>;
 }
 
 /** Writes the one handoff of `a` (idempotent on the assignment). Returns the handoff id, or null if one exists. */
@@ -95,14 +131,26 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     SELECT seq, status, decision, denied, message_id FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} ORDER BY created_at`.execute(tx);
   const facts = await sql<{ fact_kind: string; listing_id: string | null; message_id: string | null }>`
     SELECT fact_kind, listing_id, message_id FROM ai_isa_shared_facts WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND status = 'sent'`.execute(tx);
-  const target = await handoffTarget(tx, a);
+  const target = await recipientFor(tx, a);
   const reach = await humanReachable(tx, target.contactId);
   const unanswered = await sql<{ id: string }>`SELECT m.id FROM messages m JOIN conversations c ON c.tenant_id = m.tenant_id AND c.id = m.conversation_id
     WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${target.contactId} AND m.direction = 'inbound' AND m.created_at >= ${new Date(a.startedAt)}
       AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.tenant_id = m.tenant_id AND o.conversation_id = m.conversation_id AND o.direction = 'outbound'
                         AND o.status IN ('sent','delivered') AND o.created_at > m.created_at)
     ORDER BY m.created_at`.execute(tx);
-  const nextSteps = i.nextSteps ?? nextStepsFor(h, reach.callback);
+  // ISA-2b item 12: the AI-origin saved search (the end action paused an active one before this handoff)
+  const ss = (await sql<{ id: string; status: string }>`SELECT id, status FROM saved_searches WHERE tenant_id = app.tenant_id() AND origin = 'ai_isa'
+    AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${target.contactId}::uuid)) AND status IN ('proposed','approved','active','paused')
+    ORDER BY created_at DESC LIMIT 1`.execute(tx)).rows[0] ?? null;
+  const nextSteps = [...(i.nextSteps ?? nextStepsFor(h, reach.callback)), ...(ss ? [ss.status === 'proposed' ? 'approve_saved_search' : 'review_saved_search'] : [])];
+  // R-ISA-16 (ISA-2b item 3): the stored inactivity deadline (R-OWN-23) and the team zone, for the package and the card sentence
+  const inact = await sql<{ release: Date | null; tz: string }>`SELECT c.inactivity_release_at AS release, s.default_timezone AS tz FROM contacts c
+    JOIN tenant_settings s ON s.tenant_id = c.tenant_id WHERE c.tenant_id = app.tenant_id() AND c.id = ${target.contactId}`.execute(tx);
+  const releaseAt = inact.rows[0]?.release ?? null;
+  // ISA-2b item 9: the confirmation status follows its message: `scheduled` when the message waits for the window (§4.7)
+  const pendingStatus = i.pendingMessageId
+    ? ((await sql<{ s: string }>`SELECT status AS s FROM messages WHERE tenant_id = app.tenant_id() AND id = ${i.pendingMessageId}`.execute(tx)).rows[0]?.s === 'scheduled' ? 'scheduled' : 'queued')
+    : 'none';
   const pkg = {
     v: 1,
     reason: h.reason,
@@ -110,6 +158,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     priority: h.priority,
     basis: h.basis,
     appointment: h.appointment,
+    appointmentDetail: i.appointmentDetail ?? null,
     openOffer: h.openOffer,
     commitments: h.commitments,
     claims: a.machine.claims.filter((c) => h.claims.includes(c.claimId)).map((c) => ({ claimId: c.claimId, field: c.field, value: c.value, quote: c.quote, messageId: c.messageId })),
@@ -120,6 +169,10 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     notes: i.notes ?? [],
     startedAt: a.startedAt,
     epoch: a.epoch,
+    inactivityReleaseAt: releaseAt?.toISOString() ?? null,
+    savedSearch: ss,
+    recipientUserId: target.primary,
+    endedByUserId: target.endedByUserId,
   };
   const actionId = ids.next<'X'>() as string;
   const handoffId = ids.next<'X'>() as string;
@@ -136,22 +189,40 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   const body = JSON.stringify(pkg);
   await sql`INSERT INTO ai_isa_handoffs (tenant_id, id, assignment_id, contact_id, reason, basis, assistant_action_id, appointment_id, package, package_sha256,
       pending_message_id, confirmation_status, sla_class, sla_due_at, recipient_user_id)
-    VALUES (app.tenant_id(), ${handoffId}, ${a.id}, ${target.contactId}, ${h.reason}, ${JSON.stringify(h.basis ? { rule: h.basis.rule, ruleVersion: h.basis.ruleVersion, claimIds: h.basis.claimIds } : {})}::jsonb,
+    VALUES (app.tenant_id(), ${handoffId}, ${a.id}, ${target.contactId}, ${h.reason}, ${JSON.stringify(h.basis ? { rule: h.basis.rule, ruleVersion: codeOf(h.basis.ruleVersion), claimIds: h.basis.claimIds } : {})}::jsonb,
       ${actionId}, ${h.appointment?.appointmentId ?? null}, ${body}::jsonb, encode(sha256(convert_to(${body}::jsonb::text, 'UTF8')), 'hex'),
-      ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? 'queued' : 'none'}, ${cls}, ${due === null ? sql`now()` : sql`${new Date(due)}`}, ${target.primary})`.execute(tx);
+      ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? pendingStatus : 'none'}, ${cls}, ${due === null ? sql`now()` : sql`${new Date(due)}`}, ${target.primary})`.execute(tx);
   const hot = h.priority === 'critical';
+  // R-ISA-16 E516 (ISA-2b item 3): the inactivity warning's card names the pond date in the team zone
+  const cardText = h.reason === 'inactivity_warning' && releaseAt !== null ? inactivityCardText(label, releaseAt, inact.rows[0]!.tz) : target.sentence;
   for (const userId of targets) {
     await upsertFeedItem(tx, ids, {
       userId, itemType: 'ai_isa_handoff', band: 'pinned', contactId: target.contactId, subjectType: 'ai_isa_handoff', subjectId: handoffId, assistantActionId: actionId,
-      score: hot ? 98 : h.priority === 'high' ? 90 : 75, reasons: [{ code: `AI_ISA_HANDOFF:${h.reason}`, text: target.sentence }],
+      score: hot ? 98 : h.priority === 'high' ? 90 : 75, reasons: [{ code: `AI_ISA_HANDOFF:${h.reason}`, text: cardText }],
       dedupeKey: `ai_isa_handoff:${a.id}`, dueAt: due,
     });
     // a notification names no content: the reason code only (the AI summary is never in a notification)
     await notifyUser(tx, ids, { userId, kind: hot ? 'ai_isa_handoff_hot' : 'ai_isa_handoff', priority: hot ? 'critical' : h.priority === 'high' ? 'high' : 'normal',
       title: `AI care handed back: ${label}`.slice(0, 120), body: null, subjectType: 'contact', subjectId: target.contactId, dedupeKey: `ai_isa_handoff:${a.id}` }, now);
   }
+  // Q1 (ISA-2b item 5): after a take over the taker gets the card and the deadline; a different owner is told AI care ended
+  if (target.takerUserId !== null && target.primary === target.takerUserId && a.ownerUserId !== target.takerUserId) {
+    await notifyUser(tx, ids, { userId: a.ownerUserId, kind: 'ai_isa_ended', priority: 'normal', title: `AI care ended: ${label} was taken over`.slice(0, 120), body: null,
+      subjectType: 'contact', subjectId: target.contactId, dedupeKey: `ai_isa_ended:${a.id}` }, now);
+  }
   await audit(tx, actor, { action: 'ai_isa.handoff_created', entity: { type: 'ai_isa_handoff', id: handoffId }, reason: h.reason });
   return handoffId;
+}
+
+/** R-ISA-16 E516: "{Name} returns to the pond on {date, team zone} unless you touch them. AI care has handed back." */
+export function inactivityCardText(label: string, releaseAt: Date, zone: string): string {
+  let date: string;
+  try {
+    date = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short', month: 'short', day: 'numeric' }).format(releaseAt);
+  } catch {
+    date = releaseAt.toISOString().slice(0, 10);
+  }
+  return `${label} returns to the pond on ${date} unless you touch them. AI care has handed back.`.slice(0, 200);
 }
 
 /** Why a handoff is done (b12 recheck R13): the audit reason of closeHandoffInTx, stored as closed_reason (R19, 0081). */
@@ -361,5 +432,30 @@ async function sweepFailedInTx(tx: Tx, actor: SystemActor, handoffId: string, er
   o.log?.warn('AI handoff deadline sweep failed on one handoff; the pass went on', { errorCode: 'AI_ISA_HANDOFF_SWEEP_FAILED', details: { handoffId, failures, error } });
   if (failures === null || failures === AI_ISA_SWEEP_ALERT_AFTER) {
     o.alerts?.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: actor.tenantId, details: { reason: 'AI_ISA_HANDOFF_SWEEP_FAILING', handoffId, failures, error } });
+  }
+}
+
+/**
+ * Item 9 (R-ISA-14; E533): the post-handoff confirmation did not go out. `not_sent` (canceled by a non-acknowledgement
+ * inbound, failed, undelivered, blocked, or late): the card becomes critical (score 98, AI_ISA_CONFIRMATION_NOT_SENT),
+ * an `ai_isa_handoff_hot` notification, and the deadline is pulled in to 15 minutes. `closed` (ISA_HANDOFF_CLOSED: a
+ * person reached them first): the card says so, nothing hot. Codes only; never message content.
+ */
+export async function confirmationNotSentInTx(tx: Tx, ids: IdGenerator, h: { id: string; assignmentId: string; contactId: string; recipientUserId: string | null }, kind: 'not_sent' | 'closed', now: Instant): Promise<void> {
+  const label = (await contactLabel(tx, h.contactId)) ?? 'A lead';
+  if (kind === 'closed') {
+    await sql`UPDATE priority_feed_items SET reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_NEEDED', text: 'Someone on the team reached them first, so the AI confirmation was not sent.' }])}::jsonb,
+        updated_at = now() WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
+    return;
+  }
+  const due = new Date(now + ISA_SLA_MINUTES.critical * 60_000);
+  await sql`UPDATE ai_isa_handoffs SET sla_due_at = least(sla_due_at, ${due}) WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND sla_met_at IS NULL`.execute(tx);
+  await sql`UPDATE priority_feed_items SET score = 98, band = 'pinned', due_at = least(COALESCE(due_at, ${due}), ${due}),
+      reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_SENT', text: 'The appointment confirmation was not sent: confirm it by hand.' }])}::jsonb, updated_at = now()
+    WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
+  const targets = h.recipientUserId ? [h.recipientUserId] : await adminUserIds(tx);
+  for (const userId of targets) {
+    await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_hot', priority: 'critical', title: `Confirm the appointment: ${label}`.slice(0, 120), body: null,
+      subjectType: 'contact', subjectId: h.contactId, dedupeKey: `ai_isa_confirmation_not_sent:${h.id}` }, now);
   }
 }

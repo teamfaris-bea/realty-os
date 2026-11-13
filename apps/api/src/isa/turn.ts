@@ -16,17 +16,21 @@ import { aiRunAad } from '../assistant/runs.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { systemActor } from '../worker/systemActor.js';
 import {
-  buildIsaPrompt, capabilitiesInEffect, clientOwnText, decideAction, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
+  buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
+import { calendarLiveInTx, nextSendAtInTx } from './booking/rows.js';
+import { buildBuyerBundleInTx, type BuyerBundle, EMPTY_BUNDLE } from './buyer/bundle.js';
+import { savedSearchAllowedInTx } from './buyer/savedSearch.js';
 
 export type TurnDeps = IsaDeps & { envelope: EnvelopeService };
 
 export const DEBOUNCE_MS = 20_000;
 export const DEBOUNCE_CAP_MS = 120_000;
 export const HOLD_RETRY_MS = 15 * 60_000;
+export const SEND_RESULT_WAIT_MS = 2_000;
 
 export interface TurnPayload {
   assignmentId: string;
@@ -45,19 +49,22 @@ interface Prepared {
   pinnedSeq: number;
   event: IsaEvent;
   prompt: ReturnType<typeof buildIsaPrompt>;
+  /** item 10: the buyer bundle built from the database in TX-A (handles → facts); rides to TX-B */
+  bundle: BuyerBundle;
   decideBase: Omit<Parameters<typeof decideAction>[1], 'now'>;
 }
 
 /** The bound-point turn inbounds not yet consumed, with their per-conversation ordinal as seq (R-ISA-28). */
 async function turnInbounds(tx: Tx, a: AssignmentRow): Promise<IsaInbound[]> {
   const bound = Object.values(a.boundPoints).map((p) => p!.point_id);
-  const r = await sql<{ id: string; channel: 'sms' | 'email'; body: string; created_at: Date; seq: string; kw: string | null }>`
+  const r = await sql<{ id: string; channel: 'sms' | 'email'; body: string; created_at: Date; seq: string; kw: string | null; reaction: boolean }>`
     WITH ordered AS (
       SELECT m.id, m.channel, m.body, m.created_at, m.from_address, m.is_auto_reply, m.email_dkim_aligned, m.opt_out_keyword,
              row_number() OVER (ORDER BY m.created_at, m.id) AS seq
         FROM messages m JOIN conversations c ON c.tenant_id = m.tenant_id AND c.id = m.conversation_id
        WHERE m.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND m.direction = 'inbound')
-    SELECT o.id, o.channel, o.body, o.created_at, o.seq, o.opt_out_keyword AS kw FROM ordered o
+    SELECT o.id, o.channel, o.body, o.created_at, o.seq, o.opt_out_keyword AS kw,
+           EXISTS (SELECT 1 FROM message_reactions r WHERE r.tenant_id = app.tenant_id() AND r.message_id = o.id) AS reaction FROM ordered o
      WHERE o.seq > ${a.machine.lastInboundSeq} AND o.created_at >= ${new Date(a.startedAt - (a.machine.lastInboundSeq === 0 ? 86_400_000 : 0))}
        AND o.channel IN ('sms','email') AND NOT o.is_auto_reply AND (o.channel = 'sms' OR o.email_dkim_aligned IS TRUE)
        AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = app.tenant_id() AND p.id = ANY (${bound}::uuid[]) AND p.address = o.from_address)
@@ -67,7 +74,9 @@ async function turnInbounds(tx: Tx, a: AssignmentRow): Promise<IsaInbound[]> {
     const own = clientOwnText(m.body, m.channel);
     return {
       seq: Number(m.seq), messageId: m.id, channel: m.channel, at: instantFromDate(m.created_at), ownText: own.text.slice(0, 1600), ownTextReliable: own.reliable,
-      classification: { kind: (m.kw ? 'stop' : 'none') as 'stop' | 'none', needsReview: false }, reaction: false,
+      classification: { kind: (m.kw ? 'stop' : 'none') as 'stop' | 'none', needsReview: false },
+      // R-ISA-13 E529: a tapback (message_reactions names this inbound) is an acknowledgement and never a slot choice
+      reaction: m.reaction,
     };
   });
 }
@@ -87,7 +96,7 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
     const peek = await assignmentById(tx, p.assignmentId);
     if (peek === null || peek.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
     await lockForTurn(tx, peek.contactId, peek.id);
-    const a = (await assignmentById(tx, p.assignmentId, 'update'))!;
+    let a = (await assignmentById(tx, p.assignmentId, 'update'))!;
     if (a.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
     if (p.epoch !== a.epoch && p.trigger === 'timer') return { kind: 'done', code: 'STALE_EPOCH' } as const;
     // the link-failure table: a hold defers before any model call; a pause or end applies and stops (§3.1)
@@ -103,11 +112,12 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
       return { kind: 'done', code: `ENDED:${chain.worst!.code}` } as const;
     }
     if (a.pausedAt !== null) {
-      if (p.timer === 'pause_expiry') {
+      // R-ISA-16 E516: the inactivity warning ends paused care too (core machine.ts onTimer), with the pinned handoff
+      if (p.timer === 'pause_expiry' || p.timer === 'inactivity_warning') {
         const ctx = await contextFor(tx, a, now);
-        const r = step(a.machine, { type: 'timer', at: now, timer: 'pause_expiry' }, ctx.facts);
+        const r = step(a.machine, { type: 'timer', at: now, timer: p.timer }, ctx.facts);
         await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, r);
-        return { kind: 'done', code: 'PAUSE_EXPIRY' } as const;
+        return { kind: 'done', code: p.timer === 'pause_expiry' ? 'PAUSE_EXPIRY' : 'INACTIVITY_WARNING' } as const;
       }
       return { kind: 'done', code: 'PAUSED' } as const;
     }
@@ -117,7 +127,32 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
     if (inbounds.length > 0 && conv.lastInboundAt !== null && now - conv.lastInboundAt < DEBOUNCE_MS && now - inbounds[0]!.at < DEBOUNCE_CAP_MS) {
       return { kind: 'retry', retryAt: (conv.lastInboundAt + DEBOUNCE_MS) as Instant } as const;
     }
-    const ctx = await contextFor(tx, a, now);
+    // R-ISA-4: an AI message already terminal whose send_result has not run yet (its turn still sending or deferred):
+    // wait 2 s so core sees the delivery first (a fast "2" after the offer), within the debounce cap
+    if (inbounds.length > 0 && now - inbounds[0]!.at < DEBOUNCE_CAP_MS) {
+      const pend = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ai_isa_turns t JOIN messages m ON m.tenant_id = t.tenant_id AND m.id = t.message_id
+        WHERE t.tenant_id = app.tenant_id() AND t.assignment_id = ${a.id} AND t.status IN ('sending','deferred')
+          AND m.status IN ('sent','delivered','failed','undelivered','blocked','canceled','dispatch_unknown')`.execute(tx);
+      if (pend.rows[0]!.n > 0) return { kind: 'retry', retryAt: (now + SEND_RESULT_WAIT_MS) as Instant } as const;
+    }
+    // item 8: an inbound waits (2 s, within the debounce cap) while the offer is being booked
+    if (inbounds.length > 0 && a.machine.offer?.status === 'accepting' && now - inbounds[0]!.at < DEBOUNCE_CAP_MS) {
+      return { kind: 'retry', retryAt: (now + SEND_RESULT_WAIT_MS) as Instant } as const;
+    }
+    let ctx = await contextFor(tx, a, now);
+    // item 8: a due offer expiry is applied BEFORE an inbound event, so row 10 never books an expired offer
+    const off = a.machine.offer;
+    if (inbounds.length > 0 && off !== null && off.status === 'offered' && off.expiresAt !== null && off.expiresAt <= now) {
+      const ex = step(a.machine, { type: 'timer', at: now, timer: 'offer_expiry' }, ctx.facts);
+      await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, ex);
+      a = (await assignmentById(tx, a.id, 'update'))!;
+      ctx = await contextFor(tx, a, now);
+    }
+    // Q10: while an offer is offered, acknowledgement-only own text ("ok", "great", a tapback) reaches core as a
+    // reaction: one clarification, never a booking (core's YES_RE would book a one-slot offer: an ISA-1 follow-up)
+    if (a.machine.offer?.status === 'offered') {
+      for (const m of inbounds) if (!m.reaction && isAcknowledgementOnly(m.ownText, false) && !/^\s*(?:yes|yeah|yep|yup|that\s+works|works(?:\s+for\s+me)?)[\s.!]*$/iu.test(m.ownText)) m.reaction = true;
+    }
     const event: IsaEvent = p.trigger === 'timer' && p.timer ? { type: 'timer', at: now, timer: p.timer }
       : inbounds.length > 0 ? { type: 'inbound', at: now, messages: inbounds }
       : a.machine.phase === 'starting' ? { type: 'start', at: now }
@@ -129,7 +164,7 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
     const lastSeq = inbounds.at(-1)?.seq ?? a.machine.lastInboundSeq;
     const awaiting = r.actions.find((x) => x.kind === 'await_model');
     const applied = await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: turn.id, pinnedSeq: conv.seq }, { state: r.state, actions: r.actions.filter((x) => x.kind !== 'await_model') });
-    await sql`UPDATE ai_isa_assignments SET last_inbound_seq = GREATEST(last_inbound_seq, ${lastSeq}) WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx);
+    await sql`UPDATE ai_isa_assignments SET last_inbound_seq = GREATEST(last_inbound_seq, ${lastSeq}) WHERE tenant_id = app.tenant_id() AND id = ${a.id} AND ended_at IS NULL AND last_inbound_seq < ${lastSeq}`.execute(tx);
     if (!awaiting || applied.ended || applied.paused) {
       await sql`UPDATE ai_isa_turns SET status = CASE WHEN message_id IS NOT NULL THEN status WHEN ${applied.ended} THEN 'handed_off' ELSE 'no_reply' END,
           state_after = ${r.state.ended !== null ? 'ended' : r.state.phase}
@@ -145,7 +180,10 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
   // R-ISA-20: the last 20 messages to and from bound points only; inbound as client own text; team text not quotable
   const bound = Object.values(a.boundPoints).map((p) => p!.point_id);
   const msgs = await sql<{ id: string; direction: 'inbound' | 'outbound'; channel: 'sms' | 'email'; body: string; created_at: Date }>`
-    SELECT m.id, m.direction, m.channel, m.body, m.created_at FROM messages m
+    SELECT m.id, m.direction, m.channel,
+           -- R-ISA-17 E509: a facts message never re-enters a prompt (its prices, addresses and brokerages are server data)
+           CASE WHEN m.direction = 'outbound' AND EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = m.tenant_id AND f.message_id = m.id)
+                THEN '[listing details sent by the server]' ELSE m.body END AS body, m.created_at FROM messages m
      WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${a.contactId} AND m.channel IN ('sms','email')
        AND ((m.direction = 'inbound' AND NOT m.is_auto_reply AND (m.channel = 'sms' OR m.email_dkim_aligned IS TRUE)
              AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = m.tenant_id AND p.id = ANY (${bound}::uuid[]) AND p.address = m.from_address)
@@ -155,24 +193,40 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
      ORDER BY m.created_at DESC LIMIT 20`.execute(tx);
   const caps = capabilitiesInEffect(ctx.content, (await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx)).rows[0]?.c ?? ['converse']);
   const first = (await sql<{ n: string | null }>`SELECT split_part(COALESCE(display_name, ''), ' ', 1) AS n FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${a.contactId}`.execute(tx)).rows[0]?.n ?? null;
-  const messages = msgs.rows.reverse().map((m) => ({ messageId: m.id, direction: m.direction, channel: m.channel, text: m.direction === 'inbound' ? clientOwnText(m.body, m.channel).text : m.body, at: instantFromDate(m.created_at) }));
+  // R-ISA-27 E495: an inbound email's own text is reliable only when clientOwnText says so (an inline reply under a
+  // quoted offer is not); SMS and team text keep their text as written
+  const messages = msgs.rows.reverse().map((m) => {
+    const own = m.direction === 'inbound' ? clientOwnText(m.body, m.channel) : null;
+    return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : m.body, at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
+  });
+  // item 8: the calendar and the offer as decideAction sees them
+  const calendarLive = await calendarLiveInTx(tx, a.ownerUserId);
+  const mo = a.machine.offer;
+  const turnOffer = mo === null ? null : { handle: 'O1', status: (mo.status === 'requested' ? 'pending_delivery' : mo.status) as 'pending_delivery' | 'offered' | 'accepting', slots: mo.slots, deliveredAt: mo.deliveredAt, zones: mo.zones };
+  const nextSend = mo?.status === 'offered' ? await nextSendAtInTx(tx, { contactId: a.contactId, zones: ctx.zones, content: ctx.content, now }) : null;
+  const inTime = (slot: Parameters<typeof confirmationInTime>[0]['slot']) => confirmationInTime({ slot, nextSendAt: nextSend, minNoticeHours: ctx.content.booking.minNoticeHours });
+  // item 10: the buyer listing bundle (the database only; the model sees HandleLabels and nothing else)
+  const bundle = aw !== null ? await buildBuyerBundleInTx(tx, ctx, { shareAllowed: caps.has('share_listings'), now }) : EMPTY_BUNDLE;
+  const savedSearch = aw !== null ? await savedSearchAllowedInTx(tx, ctx, { capability: caps.has('propose_saved_search') }) : false;
   const replyChannel = (a.machine.lastInboundChannel && ctx.channels.includes(a.machine.lastInboundChannel) ? a.machine.lastInboundChannel : ctx.channels[0]) ?? 'sms';
   const prompt = buildIsaPrompt({
-    side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end', ...[...caps].filter((c) => c === 'book_appointments').map(() => 'offer_slots')],
+    side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end',
+      ...(bundle.handles.length > 0 ? ['share_listings'] : []), ...(savedSearch ? ['propose_saved_search'] : []),
+      ...(caps.has('book_appointments') && calendarLive && mo === null ? ['offer_slots'] : []), ...(caps.has('book_appointments') && mo?.status === 'offered' ? ['book_slot'] : [])],
     replyAllowedNow: ctx.facts.windowOpenNow, replyChannel, windowLabel: `${ctx.content.window.startSec / 3600}:00–${ctx.content.window.endSec / 3600}:00 local`,
-    heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: [], unavailable: ['listings: BUNDLE_NOT_BUILT', 'sold_comps_unavailable: PLATFORM_NOT_CLEARED'],
-    offer: null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
+    heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: bundle.handles, unavailable: [...(bundle.unavailable ? [`listings: ${bundle.unavailable}`] : []), 'sold_comps_unavailable: PLATFORM_NOT_CLEARED'],
+    offer: mo !== null && mo.status === 'offered' ? { handle: 'O1', slotLabels: mo.slots.map((sl, k) => `${k + 1}) ${formatSlot(sl, mo.zones[0]!)}`) } : null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
   });
-  const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.channel === 'sms' || m.direction === 'inbound' }));
+  const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.ownTextReliable }));
   const decideBase: Prepared['decideBase'] = {
-    side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(), competitionHandles: new Set(), compsAvailable: false,
-    heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive: false, offer: null, meetRequested: a.machine.intents.length > 0,
-    confirmationInTime: () => false, savedSearchAllowed: false, intents: a.machine.intents, priorClaims: a.machine.claims, appointmentBooked: a.machine.appointment,
+    side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(bundle.handles.map((x) => x.handle)), competitionHandles: new Set(), compsAvailable: false,
+    heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive, offer: turnOffer, meetRequested: a.machine.intents.length > 0,
+    confirmationInTime: inTime, savedSearchAllowed: savedSearch, intents: a.machine.intents, priorClaims: a.machine.claims, appointmentBooked: a.machine.appointment,
     mlsListedElsewhere: false, subjectConfirmed: false, zone: ctx.facts.zone,
     identity: { brokerageLegalName: ctx.who.brokerageName, teamName: ctx.who.teamName, agentFirstName: ctx.who.agentFirstName, scope: 'agent', allowedLinkHosts: [] } as never,
     promptSources: prompt.sources, claimId: (i: number) => `${turnId.slice(0, 24)}${String(i).padStart(12, '0')}`.slice(0, 36),
   };
-  return { a, ctx, turnId, attempt, pinnedSeq, event, prompt, decideBase };
+  return { a, ctx, turnId, attempt, pinnedSeq, event, prompt, bundle, decideBase };
 }
 
 /** One full turn (the job body). */
@@ -235,7 +289,7 @@ async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: s
         0, 0, ${m.latency}, ${parsed !== null && parsed.ok ? 'succeeded' : 'failed'}, ${a.ownerUserId})`.execute(tx);
     await sql`UPDATE ai_isa_turns SET ai_run_id = ${runId} WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
     const ctx = await contextFor(tx, a, now);
-    const env = { tx, deps, actor: actor(tenantId), ctx, now, turnId: pre.turnId, pinnedSeq: pre.pinnedSeq };
+    const env = { tx, deps, actor: actor(tenantId), ctx, now, turnId: pre.turnId, pinnedSeq: pre.pinnedSeq, bundle: pre.bundle };
     if (parsed === null || !parsed.ok) {
       const r = step(a.machine, { type: 'model_failed', at: now, epoch: a.epoch, reason: parsed === null ? 'provider' : 'schema' }, ctx.facts);
       const repair = r.actions.some((x) => x.kind === 'await_model');

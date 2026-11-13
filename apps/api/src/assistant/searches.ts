@@ -48,13 +48,15 @@ interface SearchRow {
   alertFrequency: 'instant' | 'daily' | 'weekly';
   lastAlertedAt: Instant | null;
   approvedAt: Instant | null;
+  /** 0190 (ISA-2b flagged): 'ai_isa' for a search the AI assistant proposed */
+  origin: 'standard' | 'ai_isa';
 }
 
-type RawSearch = { id: string; contact_id: string; name: string; status: SearchRow['status']; criteria: unknown; criterion_evidence: Record<string, string>; proposed_by_action_id: string | null; alert_channel: 'email' | 'sms'; alert_frequency: SearchRow['alertFrequency']; last_alerted_at: Date | null; approved_at: Date | null };
-const COLS = sql`id, contact_id, name, status, criteria, criterion_evidence, proposed_by_action_id, alert_channel, alert_frequency, last_alerted_at, approved_at`;
+type RawSearch = { origin: 'standard' | 'ai_isa'; id: string; contact_id: string; name: string; status: SearchRow['status']; criteria: unknown; criterion_evidence: Record<string, string>; proposed_by_action_id: string | null; alert_channel: 'email' | 'sms'; alert_frequency: SearchRow['alertFrequency']; last_alerted_at: Date | null; approved_at: Date | null };
+const COLS = sql`id, contact_id, name, status, criteria, criterion_evidence, proposed_by_action_id, alert_channel, alert_frequency, last_alerted_at, approved_at, origin`;
 function row(x: RawSearch): SearchRow {
   const parsed = SearchCriteriaSchema.safeParse(x.criteria);
-  return { id: x.id, contactId: x.contact_id, name: x.name, status: x.status, criteria: parsed.success ? parsed.data : ({} as SearchCriteria), criterionEvidence: x.criterion_evidence, proposedByActionId: x.proposed_by_action_id, alertChannel: x.alert_channel, alertFrequency: x.alert_frequency, lastAlertedAt: x.last_alerted_at ? (x.last_alerted_at.getTime() as Instant) : null, approvedAt: x.approved_at ? (x.approved_at.getTime() as Instant) : null };
+  return { id: x.id, contactId: x.contact_id, name: x.name, status: x.status, criteria: parsed.success ? parsed.data : ({} as SearchCriteria), criterionEvidence: x.criterion_evidence, proposedByActionId: x.proposed_by_action_id, alertChannel: x.alert_channel, alertFrequency: x.alert_frequency, lastAlertedAt: x.last_alerted_at ? (x.last_alerted_at.getTime() as Instant) : null, approvedAt: x.approved_at ? (x.approved_at.getTime() as Instant) : null, origin: x.origin ?? 'standard' };
 }
 
 async function searchById(tx: Tx, id: string, lock = false): Promise<SearchRow | null> {
@@ -71,7 +73,9 @@ export async function searchContact(tx: Tx, id: string): Promise<string | null> 
 // ---- proposal (call pipeline) ------------------------------------------------------------------------
 
 /** Stores a proposal from search-proposal claims (in the caller's system transaction). Null: nothing to propose. */
-export async function proposeSavedSearchInTx(tx: Tx, deps: AssistantDeps, tenantId: string, i: { contact: ContactCore; claims: readonly Claim[]; aiRunId: string | null; callId: string | null; inboundSeq: number; now: Instant }): Promise<{ searchId: string; actionId: string } | null> {
+export async function proposeSavedSearchInTx(tx: Tx, deps: AssistantDeps, tenantId: string, i: { contact: ContactCore; claims: readonly Claim[]; aiRunId: string | null; callId: string | null; inboundSeq: number; now: Instant;
+  // ISA-2b (flagged, additive; defaults keep the call pipeline unchanged): the AI ISA proposal's origin and wording
+  origin?: 'standard' | 'ai_isa'; dedupeKey?: string; triggerRef?: Record<string, unknown>; name?: string; explanation?: string; alertChannel?: 'email' | 'sms' }): Promise<{ searchId: string; actionId: string } | null> {
   const owner = i.contact.ownerUserId;
   if (!owner) return null;
   const withCriteria = i.claims.filter((c) => c.structured?.criterion !== undefined);
@@ -91,20 +95,20 @@ export async function proposeSavedSearchInTx(tx: Tx, deps: AssistantDeps, tenant
     playbookVersionId: null,
     status: 'proposed',
     ownerUserId: owner,
-    explanation: p.unchecked.length > 0 ? 'A saved search from the call. Some criteria need your check before they are used.' : 'A saved search from what they said on the call. Approve it to start alerts.',
+    explanation: i.explanation ?? (p.unchecked.length > 0 ? 'A saved search from the call. Some criteria need your check before they are used.' : 'A saved search from what they said on the call. Approve it to start alerts.'),
     payload: { searchId, unchecked: p.unchecked, prefill: p.prefill },
     pinnedInboundSeq: i.inboundSeq,
     boundOwnershipSeq: i.contact.periodSeq,
     aiRunId: i.aiRunId,
-    triggerRef: { kind: 'call_ready', ...(i.callId ? { callId: i.callId } : {}) },
-    dedupeKey: i.callId ? `search_proposal:${i.callId}` : null,
+    triggerRef: i.triggerRef ?? { kind: 'call_ready', ...(i.callId ? { callId: i.callId } : {}) },
+    dedupeKey: i.dedupeKey ?? (i.callId ? `search_proposal:${i.callId}` : null),
     claims: withCriteria,
   });
   if (!ok) return null;
   await sql`
-    INSERT INTO saved_searches (tenant_id, id, contact_id, name, status, criteria, criterion_evidence, proposed_by_action_id)
-    VALUES (app.tenant_id(), ${searchId}, ${i.contact.id}, ${'Search from the call'}, 'proposed', ${JSON.stringify(p.criteria)}::jsonb,
-            ${JSON.stringify(p.criterionEvidence)}::jsonb, ${actionId})`.execute(tx);
+    INSERT INTO saved_searches (tenant_id, id, contact_id, name, status, criteria, criterion_evidence, proposed_by_action_id, origin, alert_channel)
+    VALUES (app.tenant_id(), ${searchId}, ${i.contact.id}, ${i.name ?? 'Search from the call'}, 'proposed', ${JSON.stringify(p.criteria)}::jsonb,
+            ${JSON.stringify(p.criterionEvidence)}::jsonb, ${actionId}, ${i.origin ?? 'standard'}, ${i.alertChannel ?? 'email'})`.execute(tx);
   await A.upsertFeed(tx, deps.ids, { userId: owner, itemType: 'saved_search_review', contactId: i.contact.id, subjectType: 'saved_search', subjectId: searchId, assistantActionId: actionId, score: 50, reasons: [{ code: 'SEARCH_PROPOSED', text: 'Saved search ready for your review' }], dedupeKey: `search:${searchId}` });
   return { searchId, actionId };
 }
@@ -140,6 +144,8 @@ export interface SearchView {
   prefill: Record<string, unknown>;
   alertChannel: string;
   alertFrequency: string;
+  /** ISA-2b (flagged, cut 3): 'ai_isa' when the AI assistant proposed it (review it before alerts start) */
+  origin: 'standard' | 'ai_isa';
   matches: ListingView[];
   /** R-MLS-7: why a size criterion (checked or prefilled) matches no MLS listing, or some none; null: nothing to say */
   sizeNote: string | null;
@@ -220,6 +226,14 @@ async function mlsSizes(tx: Tx, e: MlsEligibility): Promise<'none' | 'some' | 'a
   return n === 0 ? null : sized === 0 ? 'none' : sized < n ? 'some' : 'all';
 }
 
+/**
+ * Module 24 (flagged one-place export, ISA-2b item 10): the client-eligible matching of saved searches, unchanged, for
+ * the AI ISA buyer bundle (which then applies its own stricter rules, isa/buyer/search.ts).
+ */
+export function matchClientListingsInTx(tx: Tx, criteria: SearchCriteria, limit: number, eligibility: MlsEligibility): Promise<RawListing[]> {
+  return matchingListings(tx, criteria, limit, eligibility);
+}
+
 async function proposalPrefill(tx: Tx, s: SearchRow): Promise<{ unchecked: string[]; prefill: Record<string, unknown> }> {
   if (!s.proposedByActionId) return { unchecked: [], prefill: {} };
   const a = await A.actionById(tx, s.proposedByActionId);
@@ -234,7 +248,7 @@ export async function previewSearch(actor: UserActor, searchId: string, deps: As
     const p = s.status === 'proposed' ? await proposalPrefill(tx, s) : { unchecked: [], prefill: {} };
     const e = await mlsEligibility(tx, now);
     const sizeNote = hasSizeCriterion(s.criteria, p.prefill) ? sizeCriterionNote(s.criteria, p.prefill as Partial<SearchCriteria>, await mlsSizes(tx, e)) : null;
-    return { id: s.id, contactId: s.contactId, name: s.name, status: s.status, criteria: s.criteria, criterionEvidence: s.criterionEvidence, unchecked: p.unchecked, prefill: p.prefill, alertChannel: s.alertChannel, alertFrequency: s.alertFrequency, matches: (await matchingListings(tx, s.criteria, 20, e)).map(listingView), sizeNote };
+    return { id: s.id, contactId: s.contactId, name: s.name, status: s.status, criteria: s.criteria, criterionEvidence: s.criterionEvidence, unchecked: p.unchecked, prefill: p.prefill, alertChannel: s.alertChannel, alertFrequency: s.alertFrequency, origin: s.origin, matches: (await matchingListings(tx, s.criteria, 20, e)).map(listingView), sizeNote };
   });
 }
 

@@ -43,6 +43,7 @@ import { adminUserIds, contactLabel, handlerOf, notifyUser, upsertFeedItem } fro
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { dkimAligned, ingestForAiIsaInTx, pauseForSyncedMailInTx } from '../isa/ingest.js';
+import { emitIsaSendResultsInTx } from '../isa/sendResult.js';
 import { clientOwnText, isAcknowledgementOnly } from '../isa/coreSeam.js';
 import type { DkimVerdict } from '../leadEmail/trust.js';
 import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
@@ -413,6 +414,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   }
   const pausedEnrollments = await auto.pauseEnrollments(tx, sharing, reason, messageId, now);
   const canceledAssistant = await msgs.cancelQueuedAssistant(tx, sharing, 'CLIENT_REPLIED', { keepPostHandoff: isAcknowledgementOnly(clientOwnText(body, e.kind === 'email' ? 'email' : 'sms').text, rx !== null) });
+  await emitIsaSendResultsInTx(tx, canceledAssistant, 'canceled'); // ISA-2b (flagged, R-ISA-3 E494): the AI ISA ids among them reach core
   // R-NURT-5 / R-INBOX-2 (module 22): the scheduled trigger runs of every contact on the address, too
   // (module 26's executeTriggerRun also re-checks the pause)
   const canceledTriggerRuns = await msgs.cancelScheduledTriggerRuns(tx, sharing);

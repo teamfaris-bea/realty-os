@@ -143,7 +143,7 @@ export const PanelResponse = z.object({
   nextAllowedSendAt: Iso.nullable(),
   capsSentence: z.string(),
   lastDecision: z.object({ status: z.string(), codes: z.array(z.string()), at: Iso, sentence: z.string() }).nullable(),
-  factsSent: z.array(z.object({ factKind: z.string(), listingId: z.uuid().nullable(), sentAt: Iso })),
+  factsSent: z.array(z.object({ factKind: z.string(), listingId: z.uuid().nullable(), sentAt: Iso, source: z.string().nullable(), asOf: Iso.nullable() })),
   openOffer: z.object({ id: z.uuid(), status: z.string(), slots: z.array(z.object({ startsAt: Iso, endsAt: Iso })), expiresAt: Iso }).nullable(),
   heldTopics: z.array(z.object({ class: z.string(), since: Iso, sentence: z.string() })),
   // b12 recheck R19: closedReason says why the system closed it (null while open), so a lead-closed handoff is told

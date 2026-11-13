@@ -21,6 +21,10 @@ export interface NormalizedInbound {
   subject: string | null;
   text: string;
   headers: Record<string, string>;
+  /** module 22 (flagged, ISA-2b): every Authentication-Results value the provider reported, in order (Postmark; VERIFY vendor) */
+  authResults?: string[];
+  /** module 22 (flagged, ISA-2b): SendGrid Inbound Parse's `dkim` field, raw (VERIFY vendor) */
+  dkimField?: string;
 }
 
 export type NormalizedEventType = 'delivered' | 'bounced' | 'complained' | 'opened' | 'clicked' | 'failed' | 'unsubscribed' | 'ignored';
@@ -117,14 +121,16 @@ export function parsePostmarkInbound(body: unknown): NormalizedInbound | null {
   const full = (v: unknown) => (Array.isArray(v) ? v.map((x) => str((x as Record<string, unknown>)?.Email)) : []);
   const recipients = uniq([str(b.OriginalRecipient), ...full(b.ToFull), ...full(b.CcFull), ...full(b.BccFull), ...addressList(str(b.To)), ...addressList(str(b.Cc))]);
   const headers: Record<string, string> = {};
+  const authResults: string[] = [];
   if (Array.isArray(b.Headers)) {
-    for (const h of b.Headers as Record<string, unknown>[]) {
+    for (const h of (b.Headers as Record<string, unknown>[]).slice(0, 500)) {
       const n = str(h?.Name);
       if (n && !(n in headers)) headers[n] = str(h?.Value);
+      if (n.toLowerCase() === 'authentication-results') authResults.push(str(h?.Value));
     }
   }
   const text = str(b.TextBody) || htmlToText(str(b.HtmlBody));
-  return { eventId: `postmark:${messageId}`, from, recipients, subject: str(b.Subject) || null, text: text.slice(0, MAX_TEXT), headers };
+  return { eventId: `postmark:${messageId}`, from, recipients, subject: str(b.Subject) || null, text: text.slice(0, MAX_TEXT), headers, ...(authResults.length > 0 ? { authResults } : {}) };
 }
 
 const POSTMARK_HARD = new Set(['HardBounce', 'BadEmailAddress', 'ManuallyDeactivated']);
@@ -174,7 +180,7 @@ export function parseSendgridInbound(fields: Record<string, string>): Normalized
   const eventId = mid
     ? `sendgrid:${mid.trim().slice(0, 180)}`
     : `sendgrid:sha256:${createHash('sha256').update(JSON.stringify([from, recipients, fields.subject ?? '', text])).digest('hex')}`;
-  return { eventId, from, recipients, subject: fields.subject ?? null, text: text.slice(0, MAX_TEXT), headers };
+  return { eventId, from, recipients, subject: fields.subject ?? null, text: text.slice(0, MAX_TEXT), headers, ...(fields.dkim !== undefined ? { dkimField: fields.dkim } : {}) };
 }
 
 /** SendGrid Event Webhook: a JSON array of events. Null when the body is not one. */
