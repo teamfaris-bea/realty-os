@@ -7,12 +7,13 @@ import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { systemActor } from '../worker/systemActor.js';
-import { call } from '../admin/testing.js';
+import { call, freshReauth } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness, testConfig } from '../auth/testHarness.js';
 import { connectFlow } from '../integrations/testing.js';
 import { createProviders } from '../providers/index.js';
 import { installNetworkTripwire } from '../providers/integrations/spark.testing.js';
 import { campaignName, mapTargeting, runReconcile } from './mirror.js';
+import { buildOverview } from './overview.js';
 import { ADS_NOT_SET_UP, FakeAds, UnconfiguredAds } from './provider.js';
 import { GOOGLE_ADS_SCOPES } from '../integrations/catalog.js';
 import { type AdsWorld, adsWorld, campaignOf, connectAds, depsOf, midMonth, passTime, resetAdsPack, setAdsPack } from './testing.js';
@@ -41,6 +42,9 @@ interface Overview {
   monthToDate: { spentCents: number; zone: string };
 }
 const overview = async (w: AdsWorld) => (await call<Overview>(w.owner, 'GET', '/ads')).body;
+/** GET /ads's view at the pass clock (the route reads the DB clock; these passes run on the fake platform's) */
+const overviewAt = (w: AdsWorld, o: { readsWhileDark?: boolean; capCountsEveryCampaign?: boolean } = {}) =>
+  withTenantTx(w.owner.actor(), (tx) => buildOverview(tx, w.clock.now() as never, o), { db: h.database });
 const conn = async (id: string) => (await h.su.query('SELECT status, status_reason, last_error_code, last_synced_at FROM integration_connections WHERE id = $1', [id])).rows[0];
 const costs = async (tenantId: string) =>
   (await h.su.query<{ lead_source_id: string; month: string; amount_cents: string; origin: string; note: string | null }>(
@@ -283,6 +287,30 @@ describe('connection states (R-INT-2; E453, E454)', () => {
       await resetAdsPack(h);
     }
     expect(w.fake.applied).toEqual([]);
+  });
+
+  it('E454 R-ADS-13 (b11 ads-5): the same account disconnected and connected again is a new connection: the old one sends no "not checked" alert while the new one is checked every hour, and the page says nothing is unchecked', async () => {
+    const w = await adsWorld(h, { clockMs: midMonth() });
+    const { connectionId: old, accountId } = await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-re' }] });
+    await runReconcile(depsOf(h, w), w.tenantId);
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'POST', `/admin/integrations/connections/${old}/disconnect`)).status).toBe(200);
+    // module 21 cannot reconnect a disconnected row in place: the Owner connects the same account again, a new row
+    const again = await connectFlow(h, w.owner, 'ads_google', { externalAccountId: accountId, leadSourceId: w.sourceId }, [{ id: accountId }]);
+    expect(again.cb.result).toBe('CONNECTED');
+    expect(again.connectionId).not.toBe(old);
+    for (const _ of [1, 2, 3, 4]) {
+      w.clock.advance(HOUR_MS);
+      const r = await runReconcile(depsOf(h, w), w.tenantId);
+      expect(r.connections.map((c) => [c.connectionId, c.outcome])).toEqual([[again.connectionId, 'synced']]);
+      expect(r.uncheckedAlerts).toBe(0);
+    }
+    expect(await notes(w.tenantId)).toEqual([]);
+    const ov = await overviewAt(w);
+    expect(ov.uncheckedSentence).toBeNull();
+    expect(ov.state).not.toBe('connection_not_live');
+    // the old row's campaign is kept (never deleted); the new connection mirrors the account's campaign as its own row
+    expect((await h.su.query('SELECT count(*)::int AS n FROM ad_campaigns WHERE tenant_id = $1', [w.tenantId])).rows[0].n).toBe(2);
   });
 
   it('R-ADS-13 (b11 api-ui/F2): no lead source: nothing is mirrored or costed and the page says so without pointing at a control the web app does not have', async () => {
