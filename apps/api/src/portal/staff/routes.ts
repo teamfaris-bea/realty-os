@@ -17,13 +17,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../../errors.js';
+import { asSystem, depsFromPlatform } from '../../comms/runtime.js';
 import { authorize } from '../../rbac.js';
 import { platformOf } from '../../workspace/common.js';
 import { dealFacts } from '../../workspace/deals.js';
 import { LOGIN_POINT_CHANGED } from '../shared/copy.js';
 import * as S from '../shared/schemas.js';
 import { linkChannelWords, linkChannels } from '../signin/delivery.js';
-import { accountFacts, canFor, grantFacts, grantById, itemGrant, listingPortalFacts, mergedFacts, scopeFacts, staffTx } from './common.js';
+import { accountActionScopes, accountFacts, canFor, grantFacts, grantById, itemGrant, listingPortalFacts, mergedFacts, scopeFacts, staffTx } from './common.js';
 import { invite } from './invite.js';
 import { changeLoginPoint, disableAccount, revokeGrant, setGrantTitle } from './manage.js';
 import { itemPreview, publishBatch, retractItem } from './publish.js';
@@ -37,7 +38,11 @@ export async function registerStaffRoutes(app: FastifyInstance): Promise<void> {
   const listingF = (req: FastifyRequest) => staffTx(req, (tx) => listingPortalFacts(tx, idOf(req)));
   const grantF = (req: FastifyRequest) => staffTx(req, (tx) => grantFacts(tx, idOf(req)));
   const itemF = (req: FastifyRequest) => staffTx(req, async (tx) => { const g = await itemGrant(tx, idOf(req)); return g ? scopeFacts(tx, g) : null; });
-  const accountF = (req: FastifyRequest) => staffTx(req, (tx) => accountFacts(tx, idOf(req)));
+  // Q-PORTAL-14 (conservative default): an account action needs the person's role on every live grant of the account
+  const accountF = async (req: FastifyRequest) => {
+    const scopes = await asSystem(depsFromPlatform(platformOf(req)), req.actor!.tenantId, 'worker', (tx) => accountActionScopes(tx, idOf(req)));
+    return staffTx(req, (tx) => accountFacts(tx, idOf(req), scopes));
+  };
 
   const channels = (req: FastifyRequest) => {
     const c = linkChannels(platformOf(req).config);

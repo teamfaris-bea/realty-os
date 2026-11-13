@@ -109,10 +109,36 @@ export async function grantsOfAccount(tx: Tx, accountId: string): Promise<GrantS
   return r.rows.map((g) => ({ id: g.id, accountId: g.portal_account_id, dealId: g.deal_id, listingId: g.listing_id }));
 }
 
-export async function accountFacts(tx: Tx, accountId: string): Promise<ResourceFacts | null> {
+/**
+ * The scopes an account action must be allowed on (Q-PORTAL-14, conservative default; b14 audit owner question): every
+ * LIVE grant of the account (unrevoked, unexpired), else every grant when none is live. Read as the system (scopes only:
+ * ids, no content), because a grant on a deal the person cannot see must still count against them.
+ */
+export async function accountActionScopes(tx: Tx, accountId: string): Promise<GrantScope[]> {
+  const r = await sql<{ id: string; portal_account_id: string; deal_id: string | null; listing_id: string | null; live: boolean }>`
+    SELECT id, portal_account_id, deal_id, listing_id, (revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())) AS live
+      FROM public.portal_grants WHERE tenant_id = app.tenant_id() AND portal_account_id = ${accountId}`.execute(tx);
+  const all = r.rows.map((g) => ({ id: g.id, accountId: g.portal_account_id, dealId: g.deal_id, listingId: g.listing_id, live: g.live }));
+  const live = all.filter((g) => g.live);
+  return (live.length > 0 ? live : all).map(({ live: _l, ...g }) => g);
+}
+
+/**
+ * The facts of an account action (disable, login point): the person's facts on EVERY given scope, ANDed (Q-PORTAL-14:
+ * an agent who owns one grant's deal no longer repoints or disables an account another agent's deal grant also uses;
+ * Owner and Admin, who manage all, still may). null when the account is not visible to the person.
+ */
+export async function accountFacts(tx: Tx, accountId: string, scopes: readonly GrantScope[]): Promise<ResourceFacts | null> {
   const a = await sql<{ id: string }>`SELECT id FROM portal_accounts WHERE tenant_id = app.tenant_id() AND id = ${accountId}`.execute(tx);
   if (a.rows.length === 0) return null;
-  return mergedFacts(tx, await grantsOfAccount(tx, accountId));
+  const out = { own: scopes.length > 0, team: scopes.length > 0, deal: scopes.length > 0 };
+  for (const g of scopes) {
+    const f = await scopeFacts(tx, g);
+    out.own &&= f?.own === true;
+    out.team &&= f?.team === true;
+    out.deal &&= f?.deal === true;
+  }
+  return out;
 }
 
 export async function itemGrant(tx: Tx, itemId: string): Promise<GrantScope | null> {

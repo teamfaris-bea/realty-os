@@ -274,6 +274,31 @@ describe('R-PORTAL-14 publish, retract, revoke (E694, E695, E697)', () => {
     expect(audit.rows.map((r) => r.action)).toEqual(expect.arrayContaining(['portal.invited', 'portal.granted', 'portal.display_updated', 'portal.login_point_changed', 'portal.account_disabled']));
   });
 
+  it('Q-PORTAL-14 (b14 audit owner question, conservative default): an account used by two agents\' deals is repointed or disabled only by someone who manages every live grant of it (Owner/Admin), never by either agent alone', async () => {
+    const c = await client(agent(), { firstName: 'Ola' });
+    const mine = await deal(agent(), c.id);
+    const inv = await invite(agent(), mine, c.id);
+    expect(inv.status).toBe(200);
+    // the same client on a deal another agent owns, with its own grant on the same account
+    const other = await call<{ deal: { id: string } }>(w.owner, 'POST', '/deals', { primaryContactId: c.id, side: 'sell', ownerUserId: w.agents[1]!.userId });
+    expect(other.status, JSON.stringify(other.body)).toBe(201);
+    const inv2 = await invite(w.owner, other.body.deal.id, c.id);
+    expect(inv2.status, JSON.stringify(inv2.body)).toBe(200);
+    expect(inv2.body.account.id).toBe(inv.body.account.id);
+    expect(inv2.body.grant.id).not.toBe(inv.body.grant.id);
+    const acct = inv.body.account.id;
+    const phone = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'`, [c.id])).rows[0]!.id;
+    for (const who of [agent(), w.agents[1]!]) {
+      expect((await call(who, 'POST', `/portal-accounts/${acct}/login-point`, { pointId: phone })).status).toBe(404);
+      expect((await call(who, 'POST', `/portal-accounts/${acct}/disable`, { reason: 'WRONG_PERSON' })).status).toBe(404);
+    }
+    expect((await h.su.query<{ login_point_id: string; status: string }>('SELECT login_point_id, status FROM portal_accounts WHERE id = $1', [acct])).rows[0]!.status).not.toBe('disabled');
+    expect((await call(w.owner, 'POST', `/portal-accounts/${acct}/login-point`, { pointId: phone })).status).toBe(200);
+    // once the other agent's grant is revoked, the account is the first agent's alone again
+    expect((await call(w.owner, 'POST', `/portal-grants/${inv2.body.grant.id}/revoke`)).status).toBe(200);
+    expect((await call(agent(), 'POST', `/portal-accounts/${acct}/disable`, { reason: 'CLIENT_ASKED' })).status).toBe(200);
+  });
+
   it('R-PORTAL-16: the item preview says what publishable() says and writes nothing', async () => {
     const c = await client(agent());
     const d = await deal(agent(), c.id);
