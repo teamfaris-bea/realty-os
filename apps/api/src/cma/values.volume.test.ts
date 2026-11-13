@@ -8,13 +8,16 @@
 // read on this fixture plus 10,000 queued in-house notes uses no Seq Scan on messages, playbook_step_runs or
 // home_valuations. Its pass time (it runs in the shared 5-minute compliance transaction) is printed; the brief's
 // p95 < 50 ms is not met at this volume (VERIFY below), and the assertion only guards against the per-run seq scan.
+// Reported (b13 audit V2B-8, VERIFY in ARCHITECTURE §21.49): one seller-update reconcile pass with platform:cma cleared,
+// per due listing and over a full RECONCILE_BATCH in its one locking transaction.
 import { addLocalDays } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { MLS_VOLUME, mlsVolumeFixture } from '../mls/testing.js';
-import { call, reconcile, sellerListing } from '../sellerUpdates/testing.js';
+import { RECONCILE_BATCH } from '../sellerUpdates/reconcile.js';
+import { call, draftsOf, reconcile, sellerListing } from '../sellerUpdates/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { depsOf } from '../assistant/testing.js';
 import { depsFromPlatform } from '../comms/runtime.js';
@@ -220,5 +223,23 @@ describe('b13 audit V2B-6: the home-value sweep at volume (E623; lane V2-B brief
     // ORDER BY sees every one, each paying the RLS probes on messages, valuations and addresses); measured 165-230 ms on
     // the batch 13 machine under load. The bound here only guards against the per-run seq scan coming back.
     expect(p95(times)).toBeLessThan(1_000);
+  }, 900_000);
+});
+
+describe('b13 audit V2B-8: one seller-update reconcile pass with platform:cma cleared (reported, VERIFY)', () => {
+  it('R-SELL-2 R-CMA-10: the time one reconcile pass spends per due listing once the value section runs the engine, and that time over a full batch, all in one transaction holding FOR UPDATE on the listings', async () => {
+    const K = 10;
+    const ls: string[] = [];
+    for (let i = 0; i < K; i++) {
+      const l = await sellerListing(w.agents[0]!, { postalCode: HOT_ZIP });
+      await h.su.query('UPDATE listings SET city = $2 WHERE id = $1', [l.listingId, BIG_CITY]);
+      ls.push(l.listingId);
+    }
+    const t0 = performance.now();
+    await withCmaCleared(() => reconcile(h, w.tenantId));
+    const ms = performance.now() - t0;
+    for (const id of ls) expect((await draftsOf(h, id)).length).toBe(1);
+    const each = ms / K;
+    console.info(`[values volume] one reconcile pass, ${K} due listings with platform:cma cleared: ${Math.round(ms)} ms (${Math.round(each)} ms a listing); a full batch of ${RECONCILE_BATCH} at that rate holds its transaction and row locks about ${Math.round((each * RECONCILE_BATCH) / 1000)} s`);
   }, 900_000);
 });
