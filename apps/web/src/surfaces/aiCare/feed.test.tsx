@@ -1,0 +1,131 @@
+// AI care in the feed and around sends (R-ISA-14, R-ISA-30, R-ISA-3, R-ISA-15; E496, E521, E533; V1, V9, V13, V17).
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it } from 'vitest';
+import { card, draftAction, feed } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, ISA_IDS, contactReads, handoffView, isaApp, iso, panel, row } from './testing.js';
+
+const handoffCard = (over = {}) =>
+  card({ itemType: 'ai_isa_handoff', band: 'pinned', dueAt: iso(900_000), subjectType: 'ai_isa_handoff', subjectId: ISA_IDS.handoff, reasons: [{ code: 'AI_ISA_HANDOFF:escalated', label: 'AI care handed back to you' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane }, ...over });
+
+function feedOf(cards: ReturnType<typeof card>[], o: { live?: boolean; handoff?: ReturnType<typeof handoffView> } = {}) {
+  return contactReads(new FakeFetch())
+    .on('GET /feed', { status: 200, body: feed(cards.filter((c) => c.band === 'pinned'), cards.filter((c) => c.band !== 'pinned')) })
+    .on('GET /ai-isa/assignments?scope=all&state=live', { status: 200, body: { rows: o.live ? [row()] : [], holdSentence: null } })
+    .on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: o.handoff ?? handoffView() })
+    .on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel() });
+}
+
+describe('AI care feed cards (module 76)', () => {
+  it('R-ISA-14 E521: a handoff card shows why, their quoted words, the line the AI wrote, what is unanswered, the next steps and the deadline; never "Review"', async () => {
+    isaApp(feedOf([handoffCard()]), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(within(c).getByText('AI care handed back')).toBeInTheDocument();
+    expect(await within(c).findByText('They asked to talk to a person.')).toBeInTheDocument();
+    expect(within(c).getByText(/we have cash ready/).closest('li')!.textContent).toMatch(/financing status: cash \(as stated by the client\) · “we have cash ready”/);
+    expect(within(c).getByText(/“I've let Ava know you'd like to talk\.”/)).toBeInTheDocument();
+    expect(within(c).getByText('1 message from them has no answer.')).toBeInTheDocument();
+    expect(within(c).getByRole('button', { name: 'Call them' })).toBeInTheDocument();
+    expect(within(c).getByText(/A message was already on its way when care stopped/)).toBeInTheDocument();
+    expect(within(c).getByText(/^Respond by /)).toBeInTheDocument();
+    expect(within(c).getByRole('timer')).toHaveAccessibleName(/Handoff for Jane Doe/);
+    expect(within(c).getByText("Got it doesn't meet the deadline: a call, text or email to Jane from you or a collaborator does.")).toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: 'Review' })).toBeNull();
+    expect(c.textContent).not.toMatch(/\b[A-Z]{2,}_[A-Z_]+\b|confidence|score/);
+  });
+
+  it('R-ISA-30: Got it opens "Seen at … The deadline still runs." with the pending message line and no Cancel (Q3)', async () => {
+    const pending = { id: ISA_IDS.pending, kind: 'confirmation' as const, channel: 'sms', status: 'scheduled', scheduledFor: iso(1_800_000) };
+    const fake = feedOf([handoffCard()], { handoff: handoffView({ pendingMessage: pending }) }).on(`POST /ai-isa/handoffs/${ISA_IDS.handoff}/ack`, { status: 200, body: { handoffId: ISA_IDS.handoff, acknowledgedAt: new Date().toISOString(), slaMet: false, confirmationStatus: 'queued' } });
+    isaApp(fake, '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    await userEvent.setup().click(await within(c).findByRole('button', { name: 'Got it' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Handoff seen' });
+    expect(within(sheet).getByText(/^Seen at .*\. The deadline still runs\.$/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/An AI confirmation is scheduled for .*before then stops it\./)).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: /Cancel/ })).toBeNull();
+    expect(fake.callsTo(`POST /ai-isa/handoffs/${ISA_IDS.handoff}/ack`)[0]!.body).toEqual({});
+  });
+
+  it("E521 V8: without canAcknowledge there is no Got it, and the line names who can; the deadline names the owner, never \"you\"", async () => {
+    isaApp(feedOf([handoffCard()], { handoff: handoffView({ canAcknowledge: false, recipientUserId: null }) }), '/', 'team_lead', { userId: ISA_IDS.tl });
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('Only Owner/Admin can mark this seen.')).toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: 'Got it' })).toBeNull();
+    expect(within(c).getByText(/from Ava or a collaborator does\./)).toBeInTheDocument();
+  });
+
+  it('V9 Q10: a met deadline reads "Done: Jane was reached at …" and the card stays', async () => {
+    isaApp(feedOf([handoffCard()], { handoff: handoffView({ slaMetAt: iso(-60_000) }) }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText(/^Done: Jane was reached at /)).toBeInTheDocument();
+  });
+
+  it('R-ISA-23: a hold-topic escalation says the AI stays off the topic; resolve continues the conversation, never the topic', async () => {
+    const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_HOLD_TOPIC:pricing_negotiation', label: 'x' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    const fake = feedOf([esc], { live: true }).on(`POST /ai-isa/escalations/${ISA_IDS.assignment}/resolve`, { status: 200, body: { assignmentId: ISA_IDS.assignment, cleared: 'pricing_negotiation' } });
+    isaApp(fake, '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_escalation');
+    expect(await within(c).findByText('Waiting on you: price or value. The AI assistant is staying off this topic.')).toBeInTheDocument();
+    await userEvent.setup().click(within(c).getByRole('button', { name: "I've handled it; the AI may continue" }));
+    expect(await within(c).findByText('Marked handled. The AI assistant may continue the conversation, and still stays off this topic.')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /ai-isa/escalations/${ISA_IDS.assignment}/resolve`)[0]!.body).toEqual({ class: 'pricing_negotiation' });
+  });
+
+  it('R-ISA-3: the activity card says what happens to their reply only while care is live', async () => {
+    const act = card({ itemType: 'ai_isa_activity', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_ACTIVITY', label: 'x' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    const v = isaApp(feedOf([act], { live: true }), '/', 'agent');
+    expect(await screen.findByText("They replied. The AI assistant takes this turn, or hands it to you if it can't.")).toBeInTheDocument();
+    v.view.unmount();
+    isaApp(feedOf([act], { live: false }), '/', 'agent');
+    expect(await screen.findByText("They replied while AI care was on. AI care isn't live now; open the person to see why.")).toBeInTheDocument();
+  });
+
+  it('R-ISA-15: another card of a contact under live care gets the strip "AI care is on" with Pause and Take over; Call says it pauses', async () => {
+    const other = card({ primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane } });
+    isaApp(feedOf([other], { live: true }), '/', 'agent');
+    const strip = await screen.findByTestId('ai-feed-strip');
+    expect(within(strip).getByText('AI care is on')).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: 'Pause' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: 'Take over' })).toBeInTheDocument();
+    expect(await screen.findByText('Calling pauses AI care for Jane.')).toBeInTheDocument();
+  });
+});
+
+describe('compose, approvals and the inbox (module 76)', () => {
+  it('R-ISA-3: the compose box says sending pauses AI care, and who can resume it', async () => {
+    const fake = feedOf([], { live: true }).on(`GET /contacts/${IDS.jane}/ai-isa/turns`, { status: 200, body: { turns: [] } });
+    isaApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`, 'team_lead', { userId: ISA_IDS.tl });
+    expect(await screen.findByText('Sending or scheduling this pauses AI care for Jane now. Ava can resume it.')).toBeInTheDocument();
+  });
+
+  it('V1: approvals, the person page and the thread prefill never list ai_isa_message or ai_isa_handoff actions', async () => {
+    const items = [draftAction({ id: ISA_IDS.pending, kind: 'ai_isa_message', explanation: 'AI ISA draft' }), draftAction({ id: ISA_IDS.optin, kind: 'ai_isa_handoff', explanation: 'AI care handed back' }), draftAction()];
+    const fake = feedOf([]).on('GET /assistant/inbox', { status: 200, body: { items } });
+    const v = isaApp(fake, '/approvals', 'agent');
+    await waitFor(() => expect(screen.getAllByRole('article').length).toBe(1));
+    expect(screen.queryByText('AI ISA draft')).toBeNull();
+    expect(screen.queryByText('AI care handed back')).toBeNull();
+    v.view.unmount();
+    isaApp(fake, `/contacts/${IDS.jane}`, 'agent');
+    await screen.findAllByText('Jane Doe');
+    await waitFor(() => expect(fake.callsTo('GET /assistant/inbox').length).toBeGreaterThan(1));
+    expect(screen.queryByText('AI ISA draft')).toBeNull();
+  });
+
+  it('R-ISA-3 V1: a handback in my inbox offers "Let the AI assistant continue", which opens Start and posts fromHandbackId', async () => {
+    const hb = draftAction({ id: IDS.handback, kind: 'handback', primaryAction: 'acknowledge', draft: null, explanation: 'They replied' });
+    const fake = feedOf([])
+      .on('GET /assistant/inbox', { status: 200, body: { items: [hb] } })
+      .on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel({ state: 'none', canStart: true }) })
+      .on('GET /me/ai-isa', { status: 404, body: { error: { code: 'NOT_FOUND', requestId: 'r' } } })
+      .on(`POST /contacts/${IDS.jane}/ai-isa/start`, { status: 409, body: { error: { code: 'AI_ISA_HANDBACK_STALE', requestId: 'r' } } });
+    isaApp(fake, '/approvals', 'agent');
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Let the AI assistant continue' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Start AI care' });
+    await u.click((await within(sheet).findAllByRole('button', { name: /^Start as/ }))[0]!);
+    expect(await within(sheet).findByText('They wrote again or a reply was already queued. Open the thread instead.')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/ai-isa/start`)[0]!.body).toEqual({ side: 'buyer', fromHandbackId: IDS.handback });
+  });
+});
