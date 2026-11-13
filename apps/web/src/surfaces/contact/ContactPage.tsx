@@ -32,6 +32,7 @@ import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
 import { AiCareStrip } from '../aiCare/Person.js';
+import { AiLabelsProvider } from '../aiCare/Thread.js';
 import { renderMentions } from '@realty/core/parity/people';
 
 export default function ContactPage() {
@@ -218,7 +219,9 @@ function FullView({ contact }: { contact: ContactFullView }) {
       ) : null}
 
       <Section title="Conversation" action={<ButtonLink to={`/contacts/${contact.id}/thread`} variant="quiet">Open</ButtonLink>}>
-        <RecentTimeline contactId={contact.id} contact={{ id: contact.id, name: contact.displayName }} />
+        <AiLabelsProvider contact={contact}>
+          <RecentTimeline contactId={contact.id} contact={{ id: contact.id, name: contact.displayName }} />
+        </AiLabelsProvider>
       </Section>
 
       <Section title="Tasks">

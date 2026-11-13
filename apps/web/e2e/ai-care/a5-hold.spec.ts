@@ -3,7 +3,7 @@
 // (on fakes link 1 is 'ok', V3); with the team cap at 0 the panel's team link holds and the replies clause appears;
 // the Owner raises the cap and the next turn runs with no click on the lead. Phone 390×844 and desktop 1440×900.
 import { expect, test } from 'playwright/test';
-import { isPhone, signIn } from '../journeys/helpers.js';
+import { isPhone, signIn, shot } from '../journeys/helpers.js';
 import type { JourneyStack } from '../journeys/stack.js';
 import { type IsaLeadInfo, type IsaWorldInfo, axe, confirmPassword, expectNoCode, isaLeadOf, isaWorldOf, openFromNav, press, runIsa, signInAs, startIsaStack, strip } from './isa.js';
 
@@ -28,7 +28,7 @@ test.afterAll(async () => {
 
 const HOLD = 'AI assistant sending is off on this deployment.';
 
-test('J6 E517 V3: the deployment hold shows on the list, panel and thread without the replies clause, and never "answering"', async ({ page }) => {
+test('J6 E517 V3: the deployment hold shows on the list, panel and thread without the replies clause, and never "answering"', async ({ page }, info) => {
   test.setTimeout(180_000);
   await signIn(page, stack, w.agents[0]!);
   const taps = { taps: 0 };
@@ -38,16 +38,19 @@ test('J6 E517 V3: the deployment hold shows on the list, panel and thread withou
   const banner = page.getByTestId('ai-hold');
   await expect(banner).toContainText(`${HOLD} Nothing reaches the people under AI care from this deployment.`);
   await expect(banner).not.toContainText('replies');
+  await shot(page, info, 'ai-care', 'list');
   expect(await axe(page)).toEqual([]);
   await page.goto(`${stack.webUrl}/contacts/${lead.id}`);
   await expect(strip(page)).toContainText('AI assistant is handling this conversation');
   await expect(page.getByTestId('ai-hold')).toContainText(`${HOLD} Nothing reaches Jane from this deployment.`);
   await expect(page.getByTestId('ai-hold')).not.toContainText('replies');
+  await shot(page, info, 'ai-care', 'person-live');
   await expectNoCode(page);
   expect(await axe(page)).toEqual([]);
   await page.goto(`${stack.webUrl}/contacts/${lead.id}/thread`);
   await expect(page.getByTestId('ai-thread-banner').getByTestId('ai-hold')).toContainText(HOLD);
   await expect(page.locator('main')).not.toContainText(/answering/);
+  await shot(page, info, 'ai-care', 'thread-live');
   expect(await axe(page)).toEqual([]);
 });
 

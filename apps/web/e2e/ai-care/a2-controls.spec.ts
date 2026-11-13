@@ -3,7 +3,7 @@
 // the handoff card; End (2 taps) with Undo; a hand-typed text shows the warning before Send and the Resume toast
 // after. Real API on a fresh database, fakes only. Phone 390×844 and desktop 1440×900; taps are counted.
 import { expect, test } from 'playwright/test';
-import { pollSql } from '../journeys/helpers.js';
+import { pollSql, shot } from '../journeys/helpers.js';
 import type { JourneyStack } from '../journeys/stack.js';
 import { type IsaWorldInfo, axe, expectNoCode, isaLeadOf, isaWorldOf, press, runIsa, signInAs, startIsaStack, strip } from './isa.js';
 
@@ -60,7 +60,7 @@ test('J3 R-ISA-15: Pause from the list in 1 tap; the team lead sees Pause but no
   expect((await state(l.id))[0]!.paused_at).toBeNull();
 });
 
-test('J3 E496: Take over → Undo within 10 s → paused, never live; the compose box waits for the toast', async ({ page }) => {
+test('J3 E496: Take over → Undo within 10 s → paused, never live; the compose box waits for the toast', async ({ page }, info) => {
   test.setTimeout(180_000);
   const l = await liveLead();
   await signInAs(page, stack, w.agents[0]!);
@@ -71,6 +71,7 @@ test('J3 E496: Take over → Undo within 10 s → paused, never live; the compos
   const toast = page.getByTestId('ai-undo-toast');
   await expect(toast).toContainText('You took over. AI care ends in 10 seconds; Undo keeps it paused instead.');
   await expect(toast.getByRole('button', { name: 'Undo' })).toBeFocused();
+  await shot(page, info, 'ai-care', 'undo-toast');
   expect(await axe(page)).toEqual([]);
   await press(page, toast.getByRole('button', { name: 'Undo' }), taps);
   await expect(toast).toBeHidden();

@@ -6,12 +6,13 @@
 //   each in words for this reader. It renders nothing without an assignment, a Start or a block, and nothing for a TC
 //   or on a 403/404 (R-PERM-5).
 // - StartSheet: the owner's 2-tap start ("Start AI care" → a side), naming the opt-in it relies on (Q12).
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, ButtonLink, Card, Dialog, Notice, announce, useStickyBottom } from '../../design/index.js';
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
-import type { ContactFullView } from '../feed/lib/types.js';
+import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
+import { type ApiError, useApi } from '../../shell/index.js';
 import { type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useMe, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './Controls.js';
 import { BUILT } from './built.js';
@@ -130,7 +131,7 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
     <div className="flex flex-col gap-3">
       {live ? <HoldBanner hold={hold} first={first} viewer={viewer} /> : null}
       {a && a.pausedAt && !a.endedAt ? <PausedLines p={p} viewer={viewer} contact={contact} /> : null}
-      {p.block ? <BlockLines block={p.block} viewer={viewer} /> : null}
+      {p.block ? <BlockLines block={p.block} viewer={viewer} contactId={contact.id} /> : null}
       {a && live ? (
         <>
           <Section title="What it may do">
@@ -283,12 +284,85 @@ function ContinueCare({ contact, viewer }: { contact: ContactFullView; viewer: V
   );
 }
 
-function BlockLines({ block, viewer }: { block: NonNullable<PanelResponse['block']>; viewer: ViewerInfo }) {
+function BlockLines({ block, viewer, contactId }: { block: NonNullable<PanelResponse['block']>; viewer: ViewerInfo; contactId: string }) {
+  const [open, setOpen] = useState(false);
+  const liftable = !NOT_LIFTABLE.has(block.reason) && viewer.isOwner;
   return (
-    <div className="flex flex-col gap-1" data-testid="ai-block">
-      <p className="text-[15px] text-ink">{blockWords(block.reason)}</p>
-      {!NOT_LIFTABLE.has(block.reason) && viewer.isOwner ? <p className="text-[14px] text-ink-muted">Lift is not available here yet.</p> : null}
+    <div className="flex flex-col gap-1">
+      <p className="text-[15px] text-ink" data-testid="ai-block">
+        {blockWords(block.reason)}
+      </p>
+      {liftable ? (
+        <div>
+          <Button variant="secondary" onClick={() => setOpen(true)}>
+            Lift the block
+          </Button>
+          {open ? <LiftSheet contactId={contactId} since={block.since} onClose={() => setOpen(false)} /> : null}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+const LIFT_EXAMPLE = 'Example: They texted on Nov 12 asking us to keep sending listings, so I am lifting the block.';
+
+/** The owner lifts a liftable block: one of their messages since the block, and a confirmation the owner types (≥ 20 characters). */
+function LiftSheet({ contactId, since, onClose }: { contactId: string; since: string; onClose(): void }) {
+  const api = useApi();
+  // the thread's own timeline query (same key and request as thread/ThreadPage.tsx useTimeline)
+  const t = useQuery<TimelineResponse, ApiError>({ queryKey: ['timeline', contactId], queryFn: ({ signal }) => api.get<TimelineResponse>(`/contacts/${contactId}/timeline?limit=100`, { signal }) });
+  const act = useIsaAction<{ inboundMessageId: string; attestation: string }, { lifted: boolean }>('POST', { kind: 'lift', contactId });
+  const [pick, setPick] = useState<string | null>(null);
+  const [text, setText] = useState('');
+  const [done, setDone] = useState<string | null>(null);
+  const inbound = (t.data?.items ?? []).filter((i) => i.type === 'message' && (i.detail ?? '').endsWith(':inbound') && Date.parse(i.occurredAt) > Date.parse(since));
+  const ok = pick !== null && text.trim().length >= 20;
+  return (
+    <Dialog title="Lift the block" onClose={onClose}>
+      <div className="flex flex-col gap-3 text-[15px]">
+        {done ? (
+          <p role="status">{done}</p>
+        ) : t.isPending ? (
+          <p className="text-ink-muted">Loading</p>
+        ) : inbound.length === 0 ? (
+          <p>A restart needs a new message from them first. None has arrived since the block.</p>
+        ) : (
+          <>
+            <fieldset className="flex flex-col gap-1">
+              <legend className="font-semibold">Their message since the block</legend>
+              {inbound.map((i) => (
+                <label key={i.id} className="flex min-h-tap items-start gap-2">
+                  <input type="radio" name="lift-inbound" className="mt-1 h-5 w-5" checked={pick === i.id} onChange={() => setPick(i.id)} />
+                  <span>
+                    “{i.preview ?? ''}” <span className="text-ink-muted">· {localTime(i.occurredAt)}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="flex flex-col gap-1 font-semibold" htmlFor="lift-attestation">
+              Why you are lifting it, in your words
+              <textarea id="lift-attestation" aria-describedby="lift-example" value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={2000} className="rounded-xl border border-line bg-surface px-3 py-2 font-normal" />
+            </label>
+            <p id="lift-example" className="text-[14px] text-ink-muted">
+              {LIFT_EXAMPLE} At least 20 characters.
+            </p>
+            <Button
+              variant="primary"
+              disabled={!ok}
+              pending={act.pending}
+              onClick={async () => {
+                const r = await act.run(`/contacts/${contactId}/ai-isa/lift-block`, { inboundMessageId: pick!, attestation: text.trim() });
+                const msg = r.ok ? 'Lifted. You can start AI care again.' : r.message;
+                setDone(msg);
+                announce(msg);
+              }}
+            >
+              Lift the block
+            </Button>
+          </>
+        )}
+      </div>
+    </Dialog>
   );
 }
 

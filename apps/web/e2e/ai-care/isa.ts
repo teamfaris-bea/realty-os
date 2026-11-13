@@ -52,6 +52,8 @@ const ROUTES = String.raw`
   async '/isa-window-past'(b) { await h.su.query("UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1 AND finalize_at IS NOT NULL", [b.contactId]); return { ok: true }; },
   /** { from, body } an inbound text to the ISA world's number */
   async '/isa-sms-in'(b) { const r = await inboundSms(h, b.from, world('i').mainNumber, b.body); return { status: r.statusCode }; },
+  /** an Admin of the ISA world (invited and accepted through the API, with TOTP) */
+  async '/isa-admin'() { const a = await h.invite(world('i').owner, 'admin', { mfa: true }); clients.set('i.admin', a); return who(a); },
   /** { as } a fresh re-auth for API setup steps */
   async '/isa-reauth'(b) { await freshReauth(h, client(b.as)); return { ok: true }; },
 `;

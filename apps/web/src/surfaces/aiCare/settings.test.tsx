@@ -72,7 +72,7 @@ describe('My AI assistant (/settings/ai-assistant)', () => {
     isaApp(fake, '/settings/ai-assistant', 'agent');
     const u = userEvent.setup();
     await u.click(await screen.findByRole('button', { name: 'Pause all my leads' }));
-    expect(await screen.findByText('Paused 2. Resume each lead from its page.')).toBeInTheDocument();
+    expect(await screen.findByText('Paused 2. Resume each lead from its page.', { ignore: '[data-testid="announcer"], script, style' })).toBeInTheDocument();
     await u.click(screen.getByRole('button', { name: 'Turn off for all my leads' }));
     expect(within(await screen.findByRole('dialog')).getByText('This ends AI care for your 2 leads now and withdraws your opt-in. Each comes back to you with a handoff.')).toBeInTheDocument();
   });
@@ -114,7 +114,7 @@ describe('AI assistant (ISA) (/settings/ai-assistant/team)', () => {
     isaApp(fake, '/settings/ai-assistant/team', 'admin');
     const u = userEvent.setup();
     await u.click(await screen.findByRole('button', { name: 'Turn on' }));
-    expect(await screen.findByText('Only the account owner can turn this on.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('ai-team-line').textContent).toBe('Only the account owner can turn this on.'));
     const cap = screen.getByLabelText(/Most AI messages a day/);
     await u.clear(cap);
     await u.type(cap, '200');

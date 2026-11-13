@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { err } from '../../shell/testing/fakeApi.js';
 import type { PanelResponse } from './api.js';
-import { FakeFetch, IDS, ISA_IDS, contactReads, fullContact, handoffView, isaApp, isaError, meView, optIn, panel, row } from './testing.js';
+import { FakeFetch, IDS, ISA_IDS, contactReads, fullContact, handoffView, isaApp, isaError, iso, meView, optIn, panel, row } from './testing.js';
 import { UNDO_MS, windowFromPanel, windowFromResponse } from './undoStore.js';
 
 const CONTROL = { assignmentId: ISA_IDS.assignment, state: 'paused', epoch: 1, inFlight: [], canceled: 0, undoUntil: null, sentence: 'Paused: nobody is following up automatically.' };
@@ -133,6 +133,29 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(screen.getAllByText(/AI care ended:/).length).toBeGreaterThan(0);
   });
 
+  it('V18 E498: a liftable block (a complaint) offers the owner Lift: their message since the block and a typed confirmation of 20 or more characters', async () => {
+    const since = iso(-3_600_000);
+    const p = panel({ state: 'ended', block: { reason: 'complaint', since, sentence: 'x' }, startRefusal: { code: 'AI_ISA_PERSON_DECLINED', sentence: 'x' } });
+    const inbound = { id: IDS.message, type: 'message', occurredAt: iso(-600_000), actor: null, detail: 'sms:inbound', preview: 'Sorry, please keep sending me homes', note: null, provenance: 'native' };
+    const fake = person(p, { live: false })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: [inbound], nextCursor: null } })
+      .on(`POST /contacts/${IDS.jane}/ai-isa/lift-block`, { status: 200, body: { lifted: true } });
+    isaApp(fake, `/contacts/${IDS.jane}`, 'agent');
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Lift the block' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Lift the block' });
+    await u.click(await within(sheet).findByRole('radio', { name: /Sorry, please keep sending me homes/ }));
+    const box = within(sheet).getByLabelText('Why you are lifting it, in your words');
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    const go = within(sheet).getByRole('button', { name: 'Lift the block' });
+    await u.type(box, 'too short');
+    expect(go).toBeDisabled();
+    await u.type(box, ' but now it is long enough to count');
+    await u.click(go);
+    expect(await within(sheet).findByText('Lifted. You can start AI care again.')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/ai-isa/lift-block`)[0]!.body).toEqual({ inboundMessageId: IDS.message, attestation: 'too short but now it is long enough to count' });
+  });
+
   it('E513: a paused strip says who can resume, and when a forgotten pause ends', async () => {
     isaApp(person(panel({ state: 'paused' }), { live: false }), `/contacts/${IDS.jane}`, 'team_lead', { userId: ISA_IDS.tl });
     const strip = await screen.findByTestId('ai-strip');
@@ -149,7 +172,9 @@ describe('the AI care panel and strip (module 76)', () => {
     isaApp(fake, `/contacts/${IDS.jane}`, 'agent');
     const strip = await screen.findByTestId('ai-strip');
     await userEvent.setup().click(within(strip).getAllByRole('button', { name: 'Pause' })[0]!);
-    expect(await screen.findByText('AI care already ended: They opted out.')).toBeInTheDocument();
+    // the strip re-renders in its ended state, and the fresh state is said through the Announcer
+    await waitFor(() => expect(announced()).toBe('AI care already ended: They opted out.'));
+    await waitFor(() => expect(screen.getByTestId('ai-strip').textContent).toMatch(/AI care ended: They opted out\./));
   });
 
   it('R-ISA-15: a non-owner pause says the owner is told, and what may still reach the person', async () => {
@@ -157,7 +182,7 @@ describe('the AI care panel and strip (module 76)', () => {
     isaApp(fake, `/contacts/${IDS.jane}`, 'team_lead', { userId: ISA_IDS.tl });
     const strip = await screen.findByTestId('ai-strip');
     await userEvent.setup().click(within(strip).getAllByRole('button', { name: 'Pause' })[0]!);
-    expect(await screen.findByText(/Paused: nobody is following up automatically\. Ava is told and can resume it\. 1 message was already on its way at .*It may still reach Jane\./)).toBeInTheDocument();
+    await waitFor(() => expect(within(strip).getByTestId('ai-control-line').textContent).toMatch(/^Paused: nobody is following up automatically\. Ava is told and can resume it\. 1 message was already on its way at .*It may still reach Jane\.$/));
   });
 
   it('R-PERM-5: a TC never fetches AI care; a 404 panel renders nothing', async () => {
