@@ -41,6 +41,7 @@ export async function offeredSlots(o: { db: Database; calendar: CalendarDeps; te
     const active = await sql<{ ok: boolean }>`SELECT status = 'active' AS ok FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${owner}`.execute(tx);
     if (active.rows[0]?.ok !== true) return [];
     const range = { start: toIso(o.now), end: toIso((o.now + SLOT_HORIZON_DAYS * 24 * 60 * MIN) as Instant) };
+    // VERIFY: busyForBooking (and bookSlot) latency on a live call; a slow read delays the offer, never the disclosure
     const b = await busyForBooking(o.calendar, tx, o.tenantId as TenantId, owner, range);
     if (b.calendar === 'unavailable') return [];
     return freeSlots(o.now, o.hours, b.busy);

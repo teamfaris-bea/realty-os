@@ -1,4 +1,4 @@
-// Job handler of module 48 (registered in worker/handlers/index.ts by one additive line; R-VOICE-7, R-VOICE-21; E439).
+// Job handler of module 48 (registered in worker/handlers/index.ts by one additive line; R-VOICE-7, R-VOICE-21).
 //
 //   voice.reconcile   per tenant every 5 minutes, standalone. An AI call with no handback 10 minutes after it ended,
 //                     or whose session should long be over (ai_takeover_at + the content's maxCallSeconds + 10 min),

@@ -1133,7 +1133,7 @@ Read-only, per user, Phase 2 (modules 68 and 69). **smoke** in this subsection m
 - **R-VOICE-9** Voice answering ships dark: an AI-handled call needs the Owner-enabled, attested setting in the active compliance policy and the `platform:voice` pack cleared (counsel and the vendor latency spike); only the Owner turns it on, including by re-activating an older voice-on policy version; turning it off is open to Admins. [DB, smoke]
 - **R-VOICE-10** Vendor failure or latency beyond the pack threshold falls back to voicemail; the caller is never left in silence. [api]
 - **R-VOICE-11** Takeover timing: decided once at call start and stored (ai_takeover_at for a yes; recording_decision.voiceTakeover {at, code} for both), replayed on retries. With a takeover planned the Dial timeout is voice_answer_after_seconds. The DB guard decides at the takeover instant; a refusal is the Phase 1 voicemail, unchanged. [api]
-- **R-VOICE-12** No takeover when ai_enabled is false, the agent is unconfigured, the fake agent meets real telephony, or the active policy has recording off (O13). [api]
+- **R-VOICE-12** No takeover when ai_enabled is false, the agent is unconfigured, the fake agent meets real telephony, TELEPHONY_LIVE_REQUESTS is off on real telephony (O5; refusal TELEPHONY_LIVE_OFF), or the active policy has recording off (O13). [api]
 - **R-VOICE-13** Caller ID is not identity: the model's context holds no contact data, only the approved content, enabled ledger tools, offered slots when allowed and fixed lines. [api + type test]
 - **R-VOICE-14** Ledger: every closed-set entry after both announcements is written with core's seq before its effect; entries the DB cannot hold are listed in the handback by seq, reason and time; at most 200 rows, then the session ends to voicemail through core. [api + DB]
 - **R-VOICE-15** One handback per AI call, written with voice_outcome, transfer_outcome and handback_action_id in one transaction, merging a ring-time or recovery handback. Claims are code-built and quote-free; the caller's words live only in the encrypted transcript. Critical unless transferred live. [api]
@@ -1368,21 +1368,6 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E131 | Extraction quotes a closing date that is not in the PDF | Needs review; never a milestone until confirmed (module 42: `documents/decide.ts` verifies the quote at its page's character range; the confirm is `EXTRACTION_CLAIM_NEEDS_REVIEW` and 0069 `app.deal_dates_evidence_guard` refuses the date) | R-DOC-2, R-DOC-8, R-TXN-1 |
 | E132 | A Google review names the client and the price | The reply draft omits both; still a tap | R-GBP-1 |
 | E133 | Negative review | Reply drafted on tap only; review requests were never gated by sentiment | R-GBP-1, R-MKT-11 |
-| E460 | platform:gbp not reviewed (also with D11's seven packs recorded) | No review stored, no provider call; GBP posts export only; the DB refuses a gbp_location publication (PLATFORM_NOT_CLEARED, platform:gbp); the status says why | R-GBP-3 |
-| E461 | GBP API access not granted (N15) / production adapter unconfigured | No gbp_location connects; GbpProvider not called; "Not set up on this platform yet"; posts export | R-GBP-3 |
-| E462 | A GBP post publish times out | 'unknown', looked up by the reconcile pass, never posted again; lookup unsupported or uncleared ⇒ "Check your Google Business Profile" | R-MKT-12, R-GBP-2 |
-| E463 | Listing goes off market with a live GBP post | Retracted after Google confirms the deletion; unsupported or unconfigured ⇒ "remove it yourself" card | R-MKT-12, R-GBP-3 |
-| E464 | Two Owners/Admins tap Post reply at once | One provider call; the second answers REPLY_IN_PROGRESS | R-GBP-4 |
-| E465 | Reply call times out or the process dies after the tap | Action stays approved; the sync marks it replied when Google shows the same text, else back to proposed after 5 minutes; never "Replied" before | R-GBP-4 |
-| E466 | Reviewer edits the review after the draft was written | Posting refused REPLY_STALE; draft again against the new text | R-GBP-4 |
-| E467 | Review removed at Google | Blanked after a complete single-pass sweep (rating, text, name); open draft invalidated; "Removed at Google"; a failed page, an unreadable review or a list over 5 pages removes nothing | R-GBP-5 |
-| E468 | The business replied directly in Google | reply_status replied with no action; open draft superseded; "Replied on Google outside Realty OS" | R-GBP-5 |
-| E469 | Draft names the reviewer, an amount, an address, a date, a phone/email or a deal word, or has a hard fair-housing term | Post refused REPLY_PRIVACY with each code and span; the person edits; still a tap | R-GBP-1 |
-| E470 | Review text carries instructions for the model | The model has no CRM data; its output passes the guard or nothing is stored; nothing posts without a tap | R-GBP-1, R-GBP-4 |
-| E471 | GET/approve/reject /assistant/actions/:id on a reply draft, or another kind's action id sent to a GBP route | NOT_FOUND; never "acknowledged" without posting | R-GBP-4 |
-| E472 | A Team Lead asks for team trends while tl_sees_call_scores is off, or the definer is called with an id outside their team | API: tl_not_allowed, no numbers; definer: the whole call refused (COACHING_TRENDS_SCOPE) | R-COACH-8 |
-| E473 | An item has fewer than 5 scored calls in a window, or a member-week inside has 1-4 | n shown, met withheld (NULL from the DB), "Not enough reviewed calls yet"; differencing two answers reveals nothing about fewer than 5 calls | R-COACH-7, R-COACH-8 |
-| E474 | Rubric version changes, a recording is shredded, call reviews are turned off or the pack becomes uncleared | Only the requested version counts; shredded recordings leave the counts; off/uncleared ⇒ no numbers for anyone, the state says why | R-COACH-7, R-COACH-8 |
 | E134 | A Page is disconnected and reconnected in the same tenant | **Retired: owner decision D2 (2026-11-11): no Messenger/Instagram identities exist; a Page is a publishing connection only.** Old handling: Same HMACs: identities, history and opt-outs intact; sends were `CHANNEL_NOT_CONNECTED` meanwhile | R-CHAN-1, R-INBOX-7 |
 | E135 | A Page moves from tenant A to tenant B | Live in one tenant at a time; B connects it only through the provider callback (proof of control); A's opt-outs stay in A (R-CONSENT-20); in B the window lets the team reply only to people who write first; the connect dialog says so. D2: a Page is a publishing connection only (R-MKT-12); the window part is gone (R-INBOX-6 retired), the one-tenant rule stands | R-INT-3 |
 | E136 | Meta webhook for a Page with no connected or degraded connection | **Retired: owner decision D2 (2026-11-11): the product receives no Meta webhooks.** Old handling: `unrouted`, platform alert, nothing delivered | R-TEN-11 |
@@ -1401,26 +1386,6 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E149 | A staff session sets the portal account GUC | `portal_account_id()` is NULL for staff; staff RLS only | R-TEN-14 |
 | E150 | Voice answering turned off, or its playbook revoked, mid-evening | New AI-handled calls are refused by the DB; calls in progress finish with their handback; an Admin cannot turn it back on, even by re-activating the older policy version | R-VOICE-9, R-VOICE-7 |
 | E151 | The assistant books a slot the agent just booked in-app | The booking transaction takes the user's advisory lock and re-reads free slots; the assistant offers the next slot | R-VOICE-4 |
-| E420 | Voice off, playbook revoked or pack withdrawn during the ring | The DB refuses; Phase 1 voicemail and missed-call card; no assistant row. | R-VOICE-11, R-VOICE-9, R-VOICE-1 |
-| E421 | Nobody can be rung with a takeover planned | The assistant answers at once; ai_takeover_at = the decision instant. | R-VOICE-3, R-VOICE-11 |
-| E422 | The agent presses 1 before the takeover | No AI; ai_takeover_at stays as the decision record. | R-VOICE-11 |
-| E423 | A retried voice fetch or dial-result after the takeover | The same reconnect; no second session, ledger row, handback or transfer outcome. | R-VOICE-11 |
-| E424 | Hang-up during the disclosure | caller_ended, one critical handback, no tool rows, no recording kept. | R-VOICE-2, R-VOICE-15 |
-| E425 | Pre-answer fallback (disclosure/announcement failed or declined, playback timeout, connect failure) | Voicemail with the notice; fallback_voicemail, answered_at null, kept. | R-VOICE-2, R-VOICE-10 |
-| E426 | Vendor error or latency mid-call | Voicemail under the announced basis; the reason in the handback. | R-VOICE-10, R-VOICE-15 |
-| E427 | bookSlot commits after the hang-up | The end transaction waits, cancels and pushes; UNCONFIRMED_SLOT. | R-VOICE-16 |
-| E428 | Calendar unreachable at the start (no slots) or mid-booking (booking_result false) | The handback says so. | R-VOICE-16, R-VOICE-15 |
-| E429 | A tool request before both announcements, an unknown tool, a request after a pre-disclosure end, or the 201st row | Unlogged; seq gaps allowed. | R-VOICE-14 |
-| E430 | A ring-time handback exists | The voice result merges into it and its pending enrichment cannot replace the draft; one handback, no missed-call card. Already handled by the agent ⇒ a new voice handback. | R-VOICE-15 |
-| E431 | The final status beats the end transaction on a never-answered call | At most one missed-call card plus exactly one handback. | R-VOICE-15 |
-| E432 | The owner declines, the whisper times out, or 1 is pressed after the hold | Back to the assistant; critical handback and promise task. | R-VOICE-19, R-VOICE-6 |
-| E433 | Hang-up during the hold (seen from ended_at) | caller_ended, never bridged, critical handback. | R-VOICE-19, R-VOICE-15 |
-| E434 | No verified alert phone | An allowed transfer ends at once as no_answer. | R-VOICE-19, R-VOICE-6 |
-| E435 | Spoofed caller ID | The model knows nothing of the contact; booking and transfer reach only its owner; the handback never asserts who called. | R-VOICE-13 |
-| E436 | ai_enabled false, agent unconfigured, fake agent on real telephony, or recording off | No takeover; Phase 1 unchanged. | R-VOICE-12 |
-| E437 | Anyone creates a module-10 version (voice off, admin/repos/policy.ts:45-50) or an Admin activates one | Answering stops; GET says why. An Owner re-activating an older voice-on version via module 10 turns it back on under that attestation; GET says so. | R-VOICE-20 |
-| E438 | An opt-out said over the disclosure is not processed (R-VOICE-2) | A needs-review note points to the recording; no revoke. | R-VOICE-2, R-VOICE-18 |
-| E439 | Two AI calls for one contact at once | Separate sessions and handbacks; bookings serialized by the bookSlot lock (E151). | R-VOICE-16, R-VOICE-15 |
 | E152 | An open-house email to 900 contacts, 40 unsubscribed | 860 sent, 40 blocked and counted on the send, not 40 exceptions | R-MKT-8 |
 | E153 | A forged "Zillow lead" email from an unaligned domain | `needs_review`; no routing to an autonomous first response; nothing is texted to the number inside it | R-INBOX-9 |
 | E154 | A chat visitor types someone else's phone number | Nothing automated is sent to it; the agent sees it marked "typed in chat, not verified" | R-INBOX-5 |
@@ -1581,6 +1546,26 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E417 | A snippet not on its page, or a quoted day other than the proposed day | `needs_review`; the confirm is `EXTRACTION_CLAIM_NEEDS_REVIEW`; the database refuses the date (`DEAL_DATE_EVIDENCE_INVALID`); the person may dismiss it | R-DOC-8, R-AST-5 |
 | E418 | A photo (JPEG or PNG) of a contract; also no PDF reader configured, or a listing or contact document | No extraction; "Photos and scans are not read. Enter the dates by hand." (or "Reading dates from PDFs is not set up on this platform") | R-DOC-8, R-INT-1 |
 | E419 | A deal closes | Its clean documents with no retention set get `closed_at + 7 years` within one pass, never shortened or overwritten (an Owner's date stands; a contact document is not stamped). Owner or Admin values outside 3–10 years are refused (`DOCUMENT_RETENTION_OUT_OF_RANGE`), and changes are audited | R-DOC-10 |
+| E420 | Voice off, playbook revoked or pack withdrawn during the ring | The DB refuses; Phase 1 voicemail and missed-call card; no assistant row. | R-VOICE-11, R-VOICE-9, R-VOICE-1 |
+| E421 | Nobody can be rung with a takeover planned | The assistant answers at once; ai_takeover_at = the decision instant. | R-VOICE-3, R-VOICE-11 |
+| E422 | The agent presses 1 before the takeover | No AI; ai_takeover_at stays as the decision record. | R-VOICE-11 |
+| E423 | A retried voice fetch or dial-result after the takeover | The same reconnect; no second session, ledger row, handback or transfer outcome. | R-VOICE-11 |
+| E424 | Hang-up during the disclosure | caller_ended, one critical handback, no tool rows, no recording kept. | R-VOICE-2, R-VOICE-15 |
+| E425 | Pre-answer fallback (disclosure/announcement failed or declined, playback timeout, connect failure) | Voicemail with the notice; fallback_voicemail, answered_at null, kept. | R-VOICE-2, R-VOICE-10 |
+| E426 | Vendor error or latency mid-call | Voicemail under the announced basis; the reason in the handback. | R-VOICE-10, R-VOICE-15 |
+| E427 | bookSlot commits after the hang-up | The end transaction waits, cancels and pushes; UNCONFIRMED_SLOT. | R-VOICE-16 |
+| E428 | Calendar unreachable at the start (no slots) or mid-booking (booking_result false) | The handback says so. | R-VOICE-16, R-VOICE-15 |
+| E429 | A tool request before both announcements, an unknown tool, a request after a pre-disclosure end, or the 201st row | Unlogged; seq gaps allowed. | R-VOICE-14 |
+| E430 | A ring-time handback exists | The voice result merges into it and its pending enrichment cannot replace the draft; one handback, no missed-call card. Already handled by the agent ⇒ a new voice handback. | R-VOICE-15 |
+| E431 | The final status beats the end transaction on a never-answered call | At most one missed-call card plus exactly one handback. | R-VOICE-15 |
+| E432 | The owner declines, the whisper times out, or 1 is pressed after the hold | Back to the assistant; critical handback and promise task. | R-VOICE-19, R-VOICE-6 |
+| E433 | Hang-up during the hold (seen from ended_at) | caller_ended, never bridged, critical handback. | R-VOICE-19, R-VOICE-15 |
+| E434 | No verified alert phone | An allowed transfer ends at once as no_answer. | R-VOICE-19, R-VOICE-6 |
+| E435 | Spoofed caller ID | The model knows nothing of the contact; booking and transfer reach only its owner; the handback never asserts who called. | R-VOICE-13 |
+| E436 | ai_enabled false, agent unconfigured, fake agent on real telephony, the telephony kill switch off on real telephony, or recording off | No takeover; Phase 1 unchanged. | R-VOICE-12 |
+| E437 | Anyone creates a module-10 version (voice off, admin/repos/policy.ts:45-50) or an Admin activates one | Answering stops; GET says why. An Owner re-activating an older voice-on version via module 10 turns it back on under that attestation; GET says so. | R-VOICE-20 |
+| E438 | An opt-out said over the disclosure is not processed (R-VOICE-2) | A needs-review note points to the recording; no revoke. | R-VOICE-2, R-VOICE-18 |
+| E439 | Two AI calls for one contact at once | Separate sessions and handbacks; bookings serialized by the bookSlot lock (E151). | R-VOICE-16, R-VOICE-15 |
 | E440 | An Owner or Admin taps Approve while `platform:ads` is not cleared | `ADS_NOT_CLEARED` (API and DB, for the Owner, an Admin and the system); nothing recorded, no provider call | R-ADS-7 |
 | E441 | Counsel reviewed `platform:ads` but the vendor check (`rules.vendor_ready_at`) is not recorded | Still dark: no approval and no planned row; the page says "…it also waits for the vendor check" | R-ADS-7, R-INT-6 |
 | E442 | The pack is withdrawn after the tap (while the apply is in flight, or before a readback re-apply) | The planned row fails `PACK_WITHDRAWN`; no budget call is made for it; a call already sent is recorded as it resolves (applied, failed and paused rows, `executed` and `trigger_ref` are never gated); only new approvals and plans are refused | R-ADS-7, R-ADS-10 |
@@ -1601,6 +1586,21 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E457 | An Owner and an Admin tap Approve at the same moment | One plan; the other gets `ACTION_NOT_PENDING` | R-ADS-9, R-ADS-2 |
 | E458 | Google Ads reports targeting that does not map to a radius of the listing, or that the validator refuses | Stored as `{}` or refused; the proposal keeps it with `TARGETING_REFUSED` and the validator's field names (never values); never moved; nothing is written back | R-ADS-4, R-FH-4, R-ADS-12 |
 | E459 | Someone taps Resume while month-to-date spend is at or over the monthly cap | `ADS_MONTHLY_CAP_REACHED` until the cap rises or the month turns; nothing planned | R-ADS-5, R-ADS-9 |
+| E460 | platform:gbp not reviewed (also with D11's seven packs recorded) | No review stored, no provider call; GBP posts export only; the DB refuses a gbp_location publication (PLATFORM_NOT_CLEARED, platform:gbp); the status says why | R-GBP-3 |
+| E461 | GBP API access not granted (N15) / production adapter unconfigured | No gbp_location connects; GbpProvider not called; "Not set up on this platform yet"; posts export | R-GBP-3 |
+| E462 | A GBP post publish times out | 'unknown', looked up by the reconcile pass, never posted again; lookup unsupported or uncleared ⇒ "Check your Google Business Profile" | R-MKT-12, R-GBP-2 |
+| E463 | Listing goes off market with a live GBP post | Retracted after Google confirms the deletion; unsupported or unconfigured ⇒ "remove it yourself" card | R-MKT-12, R-GBP-3 |
+| E464 | Two Owners/Admins tap Post reply at once | One provider call; the second answers REPLY_IN_PROGRESS | R-GBP-4 |
+| E465 | Reply call times out or the process dies after the tap | Action stays approved; the sync marks it replied when Google shows the same text, else back to proposed after 5 minutes; never "Replied" before | R-GBP-4 |
+| E466 | Reviewer edits the review after the draft was written | Posting refused REPLY_STALE; draft again against the new text | R-GBP-4 |
+| E467 | Review removed at Google | Blanked after a complete single-pass sweep (rating, text, name); open draft invalidated; "Removed at Google"; a failed page, an unreadable review or a list over 5 pages removes nothing | R-GBP-5 |
+| E468 | The business replied directly in Google | reply_status replied with no action; open draft superseded; "Replied on Google outside Realty OS" | R-GBP-5 |
+| E469 | Draft names the reviewer, an amount, an address, a date, a phone/email or a deal word, or has a hard fair-housing term | Post refused REPLY_PRIVACY with each code and span; the person edits; still a tap | R-GBP-1 |
+| E470 | Review text carries instructions for the model | The model has no CRM data; its output passes the guard or nothing is stored; nothing posts without a tap | R-GBP-1, R-GBP-4 |
+| E471 | GET/approve/reject /assistant/actions/:id on a reply draft, or another kind's action id sent to a GBP route | NOT_FOUND; never "acknowledged" without posting | R-GBP-4 |
+| E472 | A Team Lead asks for team trends while tl_sees_call_scores is off, or the definer is called with an id outside their team | API: tl_not_allowed, no numbers; definer: the whole call refused (COACHING_TRENDS_SCOPE) | R-COACH-8 |
+| E473 | An item has fewer than 5 scored calls in a window, or a member-week inside has 1-4 | n shown, met withheld (NULL from the DB), "Not enough reviewed calls yet"; differencing two answers reveals nothing about fewer than 5 calls | R-COACH-7, R-COACH-8 |
+| E474 | Rubric version changes, a recording is shredded, call reviews are turned off or the pack becomes uncleared | Only the requested version counts; shredded recordings leave the counts; off/uncleared ⇒ no numbers for anyone, the state says why | R-COACH-7, R-COACH-8 |
 | E475 | The migration or release owner is neither superuser nor BYPASSRLS (for example a managed admin role) | Refused before any pending file, and on a fresh database before the bookkeeping schema exists. The message names the role and both reasons: backfills would update zero rows (0034:41, 0032:83, 0035:272, 0045:320), and 0001 cannot create the BYPASSRLS roles. Nothing is applied. | R-DEPLOY-2 |
 | E476 | The owner has the attributes, but its UPDATE on a FORCE-RLS probe table updates 0 rows or errors (provider behaviour) | Release and preflight refuse, giving the SQLSTATE. Nothing is changed. | R-DEPLOY-2 |
 | E477 | A non-superuser owner lacks CREATEROLE or CREATE on the database, or lacks ADMIN on an existing app_user, app_definer or app_retention (pre-created by a provider console) | Refused, naming the role or privilege and the grant an administrator must make. Nothing is changed. | R-DEPLOY-2, R-DEPLOY-3 |

@@ -1,4 +1,4 @@
-// The deterministic fake voice agent (module 48; R-VOICE-11). It replays @realty/core/voice/testing SCRIPTS on its own
+// The deterministic fake voice agent (module 48; R-VOICE-12). It replays @realty/core/voice/testing SCRIPTS on its own
 // virtual clock, records what the session said, the tool results and the hand-offs, and injects faults (a connect
 // failure, a vendor error at step n, model latency, a closed transport). Not for production paths: production uses
 // UnconfiguredVoiceAgent (providers/index.ts). Every name in the scripts is generic (public repository).

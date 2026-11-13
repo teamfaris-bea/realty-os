@@ -1,4 +1,4 @@
-// The calls-row effects of an AI session (R-VOICE-2, R-VOICE-10, R-VOICE-20; E116, E117, E425).
+// The calls-row effects of an AI session (R-VOICE-2, R-VOICE-10; E116, E117, E425).
 //
 //   disclosed   ai_disclosed_at = the instant the platform reported the disclosure played
 //   announced   one UPDATE: recording_announced_at = answered_at = that instant, status in_progress, only while the

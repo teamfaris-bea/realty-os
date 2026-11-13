@@ -1,4 +1,4 @@
-// The live transfer of an AI call to the contact's own agent (R-VOICE-6, R-VOICE-16; E432, E433, E434).
+// The live transfer of an AI call to the contact's own agent (R-VOICE-6, R-VOICE-19; E432, E433, E434).
 //
 // Core decided the transfer (warm_transfer allowed: the owner, inside routing hours, a hot caller, within the hold).
 // Module 48 rings only that owner, on their verified alert phone, from the team number, for the hold, then the
@@ -40,6 +40,8 @@ export async function startTransfer(actor: SystemActor, deps: Pick<VoiceDeps, 'd
   }, { db: deps.db, retries: 2 });
   if (!r) return { kind: 'no_phone' };
   const urls = inboundUrls(deps.comms, actor.tenantId, callId);
+  // VERIFY (Twilio, N12): that a caller hang-up during the hold ends the owner's Dial leg, and answerOnBridge on a call
+  // the assistant has already answered. VERIFY WITH COUNSEL (C2): recording the transferred human leg (record: true).
   return {
     kind: 'ring',
     twiml: ringTwiml({ announcement: null, callerId: r.teamNumber, agentPhone: r.phone, timeoutS: holdSeconds, record: true, screenUrl: urls.screen, actionUrl: urls.dialResult, recordingStatusCallbackUrl: urls.callRecording }),

@@ -1,10 +1,11 @@
-// The takeover of a missed inbound call by the assistant (module 48 item 4; R-VOICE-1, R-VOICE-3, R-VOICE-9, R-VOICE-12,
+// The takeover of a missed inbound call by the assistant (module 48 item 4; R-VOICE-1, R-VOICE-3, R-VOICE-9, R-VOICE-11, R-VOICE-12,
 // R-GATE-9; E420, E421, E423, E425, E436).
 //
 //   planTakeover  right after Phase 1's planInboundCall, once per call: core's shouldAnswer on the DB clock plus the
 //                 platform checks core cannot see (R-VOICE-12: ai_enabled, a configured vendor, no fake agent on real
 //                 telephony, the kill switch, recording on). The decision {at, code} is stored on the call
 //                 (recording_decision.voiceTakeover, and ai_takeover_at for a yes) and a retried fetch replays it.
+//                 VERIFY: no reader rejects the extra recording_decision keys (comms/voice.ts, dial.ts, recordings.ts).
 //                 A ring plan with a takeover rings for voice_answer_after_seconds; a voicemail plan (nobody to
 //                 ring) is taken over at once (E421, O3).
 //   takeOver      the Dial ended unanswered (or nobody could be rung): contact lock, then ONE update makes the call
@@ -220,6 +221,8 @@ export async function aiCallByRef(actor: SystemActor, deps: Pick<VoiceDeps, 'db'
  *   AI call, transfer connected ⇒ the bridged call ended: hang up
  *   AI call otherwise           ⇒ reconnect (a retried takeover dial-result, E423)
  *   ringing call with a takeover decision ⇒ take it over (a refusal is Phase 1's voicemail, E420)
+ * VERIFY (Twilio, N12): the DialCallStatus a hold timeout and an owner's decline report, and that the Dial action fires
+ * after a bridged transfer ends (both read here only through calls.transfer_outcome).
  */
 export async function aiDialResult(actor: SystemActor, deps: VoiceDeps, callId: string): Promise<string | null> {
   const c = await withTenantTx(actor, (tx) => callRow(tx, { id: callId }), { db: deps.db });

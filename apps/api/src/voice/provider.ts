@@ -1,4 +1,4 @@
-// The voice-agent port of module 48 (PHASE2_3_PLAN §5.4 #48; R-VOICE-10, R-VOICE-11, R-VOICE-13; N12).
+// The voice-agent port of module 48 (PHASE2_3_PLAN §5.4 #48; R-VOICE-10, R-VOICE-12, R-VOICE-13; N12).
 //
 // Source-neutral: no vendor is named and no vendor SDK is imported. Every transport capability below is a
 // DESIGN ASSUMPTION about a real voice stack (telephony media stream + STT + LLM + TTS), to be checked per

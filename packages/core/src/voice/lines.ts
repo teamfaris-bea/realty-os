@@ -29,11 +29,13 @@ export const VOICE_LINES = {
   ownerUnavailableCallback: "Your agent couldn't pick up just now. I'm the team's automated assistant: I can book a time for you, or take a message and they'll call you back.",
   /** E115 with E112: no phone callback is offered (voice opted out on a phone, or do-not-contact). */
   ownerUnavailableNoCallback: "Your agent couldn't pick up just now. I'm the team's automated assistant: I can book a time for you, or take a message for them.",
-  /** E151: the slot was taken in the meantime. */
-  bookingFailed: "That time was just taken. I'm the team's automated assistant; let me find another one.",
-  /** Booked, with the confirmation promised only on an allowed channel (E112). */
-  bookedConfirmSms: "You're booked. The team's automated assistant will send you a confirmation by text.",
-  bookedConfirmEmail: "You're booked. The team's automated assistant will send you a confirmation by email.",
+  /** E151 and E428: any failed booking (the slot was taken meanwhile, the calendar is unavailable, the slot is no longer
+   *  valid). Generic, so it never claims the slot was taken (owner question O1's default, module 48). */
+  bookingFailed: "I couldn't book that time. I'm the team's automated assistant; let me find another one.",
+  /** Booked, with the agent's confirmation mentioned only on an allowed channel (E112). The assistant never sends it: it
+   *  is a one-tap draft for the agent (R-VOICE-17), so the line promises the agent, not the assistant (O1's default). */
+  bookedConfirmSms: "You're booked. I'm the team's automated assistant; your agent will confirm by text.",
+  bookedConfirmEmail: "You're booked. I'm the team's automated assistant; your agent will confirm by email.",
   bookedNoConfirmation: "You're booked. I'm the team's automated assistant, and I've passed the details to your agent.",
   /** The booking result never arrived: nothing is promised, the agent confirms (R-VOICE-7). */
   bookingUnconfirmed: "I'm the team's automated assistant, and I couldn't confirm that time just now. Your agent will confirm it with you.",

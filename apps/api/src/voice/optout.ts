@@ -1,4 +1,4 @@
-// An opt-out heard in the caller's own words during an AI call (R-VOICE-15, R-CONSENT-7, -8, R-CHAN-3, R-PAR-12, D1).
+// An opt-out heard in the caller's own words during an AI call (R-VOICE-18, R-CONSENT-7, -8, R-CHAN-3, R-PAR-12, D1).
 //
 // Core heard it (classifyInbound on 'voice', in callerTurnSignals) and handed the classification over as
 // `apply_inbound`; this runs exactly what the SMS/email ingestion runs for the same classification (comms/inbound.ts),

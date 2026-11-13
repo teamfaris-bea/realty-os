@@ -1,4 +1,4 @@
-// Owner enablement of AI answering and its read state (module 48 item 9; R-VOICE-9, R-VOICE-22, R-PERM-5; E150, E437).
+// Owner enablement of AI answering and its read state (module 48 item 9; R-VOICE-9, R-VOICE-20, R-PERM-5; E150, E437).
 //
 //   GET  /voice/answering           settings.compliance (not loosening): the honest state, 'dark' | 'off' | 'on', and why
 //   PUT  /voice/answering/settings  answer-after seconds and when; narrowing is Owner/Admin, widening is a loosening
@@ -22,9 +22,10 @@ import { AppError } from '../errors.js';
 import { teamVoicePlaybook, voicePack, voiceSettingsRow } from './facts.js';
 import type { VoiceDeps } from './runtime.js';
 
-/** The sentence the Owner confirms to turn AI answering on. VERIFY WITH COUNSEL (C2). */
+/** The sentence the Owner confirms to turn AI answering on: owner question O11's default (missed and after-hours calls,
+ *  as voice_answer_when allows). VERIFY WITH COUNSEL (C2). */
 export const VOICE_ATTESTATION_TEXT =
-  "I am the Owner of this team. I turn on AI answering for missed calls: the assistant says it is an AI and that the call is recorded, and I accept responsibility for using it.";
+  'I am the Owner. I reviewed the disclosure and turn on AI answering of missed and after-hours calls for this team.';
 
 export const NO_HOT_RULE_SENTENCE = 'Nobody is transferred live: no hot-lead rule is set.';
 export const OWNER_ONLY_DISABLE_SENTENCE = "Only the Owner can turn AI answering off under this team's policy. Turning AI off for the team also stops it.";
