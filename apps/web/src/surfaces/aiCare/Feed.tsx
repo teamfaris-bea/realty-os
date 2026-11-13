@@ -18,9 +18,9 @@ import { countdownWords, formatCountdown } from '../feed/lib/format.js';
 import { useNow } from '../feed/lib/hooks.js';
 import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
-import { AiCareControls, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useViewer } from './Controls.js';
+import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
 import { localTime } from './time.js';
-import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, bookedWhen, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, bookedWhen, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -37,10 +37,14 @@ export function AiFeedItem({ card, render }: { card: FeedCard; render: (c: FeedC
 
 function LiveStrip({ contactId }: { contactId: string | null }) {
   const row = useLiveRow(contactId);
+  // batch 13 isa-4 F2: the hold banner on every AI care surface (the shared query's holdSentence; no panel here, so no
+  // replies clause)
+  const hold = useHold(null);
   if (!row) return null;
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2" data-testid="ai-feed-strip">
       <p className="text-[15px] font-semibold text-ink">AI care is on</p>
+      <HoldBanner hold={hold} first={firstOf(row.name, 'them')} replies={false} />
       <AiCareControls target={targetOfRow(row)} label={`AI care for ${row.name}`} />
     </div>
   );
@@ -62,6 +66,11 @@ export function AiCareFeedCard({ card }: { card: FeedCard }) {
   const o = useOwner(contactId, row);
   const viewer = useViewer(o.ownerUserId, o.ownerName);
   const name = card.contact?.name ?? 'This person';
+  // batch 13 isa-4 F2: every AI card carries the hold banner; an escalation card reads the panel (its body does too, one
+  // query), so a panel link hold adds the replies clause there
+  const escalation = card.itemType === 'ai_isa_escalation';
+  const panel = usePanel(contactId ?? '', escalation);
+  const hold = useHold(escalation ? panel.data : null);
   return (
     <Card as="article" aria-labelledby={`ai-card-${card.id}`} className="flex flex-col gap-3 border-accent/50" data-testid={`ai-card-${card.itemType}`}>
       <div>
@@ -76,7 +85,8 @@ export function AiCareFeedCard({ card }: { card: FeedCard }) {
           )}
         </h3>
       </div>
-      {card.itemType === 'ai_isa_handoff' ? <HandoffBody card={card} viewer={viewer} /> : card.itemType === 'ai_isa_escalation' ? <EscalationBody card={card} viewer={viewer} ownerName={o.ownerName} /> : <ActivityBody card={card} row={row} />}
+      <HoldBanner hold={hold} first={firstOf(card.contact?.name, 'them')} viewer={viewer} />
+      {card.itemType === 'ai_isa_handoff' ? <HandoffBody card={card} viewer={viewer} /> : escalation ? <EscalationBody card={card} viewer={viewer} ownerName={o.ownerName} /> : <ActivityBody card={card} row={row} hold={hold} viewer={viewer} />}
       <UndoToastHost ownerUserId={o.ownerUserId ?? undefined} ownerName={o.ownerName} />
     </Card>
   );
@@ -90,7 +100,7 @@ function OpenThread({ contactId }: { contactId: string }) {
   );
 }
 
-function ActivityBody({ card, row }: { card: FeedCard; row: ListRow | null }) {
+function ActivityBody({ card, row, hold, viewer }: { card: FeedCard; row: ListRow | null; hold: HoldState; viewer: ViewerInfo }) {
   const id = card.contact?.id ?? '';
   if (!row)
     return (
@@ -100,7 +110,12 @@ function ActivityBody({ card, row }: { card: FeedCard; row: ListRow | null }) {
     );
   return (
     <>
-      <p className="text-[15px] text-ink">They replied. The AI assistant takes this turn, or hands it to you if it can't.</p>
+      <p className="text-[15px] text-ink">
+        {hold.sentence
+          ? // batch 13 isa-4 F2: nothing implies a live send while a hold applies
+            `They replied. Nothing the AI assistant writes reaches ${firstOf(row.name, 'them')} from this deployment; if it can't answer, it hands the reply to ${ownerWho(viewer)}.`
+          : `They replied. The AI assistant takes this turn, or hands it to ${ownerWho(viewer)} if it can't.`}
+      </p>
       <AiCareControls target={targetOfRow(row)} label={`AI care for ${row.name}`} />
       <OpenThread contactId={id} />
     </>

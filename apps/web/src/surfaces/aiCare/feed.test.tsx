@@ -8,10 +8,10 @@ import { FakeFetch, IDS, ISA_IDS, contactReads, handoffView, isaApp, iso, panel,
 const handoffCard = (over = {}) =>
   card({ itemType: 'ai_isa_handoff', band: 'pinned', dueAt: iso(900_000), subjectType: 'ai_isa_handoff', subjectId: ISA_IDS.handoff, reasons: [{ code: 'AI_ISA_HANDOFF:escalated', label: 'AI care handed back to you' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane }, ...over });
 
-function feedOf(cards: ReturnType<typeof card>[], o: { live?: boolean; handoff?: ReturnType<typeof handoffView> } = {}) {
+function feedOf(cards: ReturnType<typeof card>[], o: { live?: boolean; handoff?: ReturnType<typeof handoffView>; hold?: string } = {}) {
   return contactReads(new FakeFetch())
     .on('GET /feed', { status: 200, body: feed(cards.filter((c) => c.band === 'pinned'), cards.filter((c) => c.band !== 'pinned')) })
-    .on('GET /ai-isa/assignments?scope=all&state=live', { status: 200, body: { rows: o.live ? [row()] : [], holdSentence: null } })
+    .on('GET /ai-isa/assignments?scope=all&state=live', { status: 200, body: { rows: o.live ? [row()] : [], holdSentence: o.hold ?? null } })
     .on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: o.handoff ?? handoffView() })
     .on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel() });
 }
@@ -132,6 +132,32 @@ describe('AI care feed cards (module 76)', () => {
     v.view.unmount();
     isaApp(feedOf([act], { live: false }), '/', 'agent');
     expect(await screen.findByText("They replied while AI care was on. AI care isn't live now; open the person to see why.")).toBeInTheDocument();
+  });
+
+  it('E517 (batch 13 isa-4 F2): under a hold every AI card and the live strip carry the banner, and the activity card never says the AI takes the turn', async () => {
+    const hold = 'AI assistant sending is off on this deployment.';
+    const banner = 'AI assistant sending is off on this deployment. Nothing reaches Jane from this deployment.';
+    const act = card({ itemType: 'ai_isa_activity', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_ACTIVITY', label: 'x' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    const other = card({ primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane } });
+    isaApp(feedOf([act, other, handoffCard()], { live: true, hold }), '/', 'agent');
+    const a = await screen.findByTestId('ai-card-ai_isa_activity');
+    expect(await within(a).findByText(banner)).toBeInTheDocument();
+    expect(within(a).getByText("They replied. Nothing the AI assistant writes reaches Jane from this deployment; if it can't answer, it hands the reply to you.")).toBeInTheDocument();
+    expect(a.textContent).not.toMatch(/takes this turn/);
+    const strip = await screen.findByTestId('ai-feed-strip');
+    expect(within(strip).getByText(banner)).toBeInTheDocument();
+    const h = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(within(h).getByText(banner)).toBeInTheDocument();
+    // no panel link holds here: the replies clause is not added
+    expect(document.body.textContent).not.toMatch(/Their replies (?:come|go) to/);
+  });
+
+  it('E517 (batch 13 isa-4 F2): an escalation card under a panel link hold adds the replies clause', async () => {
+    const esc = card({ itemType: 'ai_isa_escalation', band: 'pinned', subjectType: 'ai_isa_assignment', subjectId: ISA_IDS.assignment, reasons: [{ code: 'AI_ISA_HOLD_TOPIC:pricing_negotiation', label: 'x' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane } });
+    const chain = panel().chain.map((l) => (l.link === 1 ? { ...l, effect: 'hold' as const, code: 'AI_ISA_LIVE_OFF', sentence: 'x' } : l));
+    isaApp(feedOf([esc], { live: true }).on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel({ chain }) }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_escalation');
+    expect(await within(c).findByText('AI assistant sending is off on this deployment. Nothing reaches Jane from this deployment. Their replies come to you as usual.')).toBeInTheDocument();
   });
 
   it('R-ISA-15: another card of a contact under live care gets the strip "AI care is on" with Pause and Take over; Call says it pauses', async () => {

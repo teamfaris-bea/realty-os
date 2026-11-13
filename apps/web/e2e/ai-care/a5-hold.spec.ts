@@ -1,5 +1,5 @@
 // a5-hold (J6; E517; R-ISA-1, R-ISA-22): with AI_ISA_LIVE_SENDS false (the default on this deployment) the shared
-// hold sentence puts the banner on the list, the panel, the thread and the feed strip, without the replies clause
+// hold sentence puts the banner on the list, the panel, the thread and the feed's AI card, without the replies clause
 // (on fakes link 1 is 'ok', V3); with the team cap at 0 the panel's team link holds and the replies clause appears;
 // the Owner raises the cap and the next turn runs with no click on the lead. Phone 390×844 and desktop 1440×900.
 import { expect, test } from 'playwright/test';
@@ -28,7 +28,7 @@ test.afterAll(async () => {
 
 const HOLD = 'AI assistant sending is off on this deployment.';
 
-test('J6 E517 V3: the deployment hold shows on the list, panel and thread without the replies clause, and never "answering"', async ({ page }, info) => {
+test('J6 E517 V3: the deployment hold shows on the list, panel, thread and feed without the replies clause, and never "answering"', async ({ page }, info) => {
   test.setTimeout(180_000);
   await signIn(page, stack, w.agents[0]!);
   const taps = { taps: 0 };
@@ -52,6 +52,15 @@ test('J6 E517 V3: the deployment hold shows on the list, panel and thread withou
   await expect(page.locator('main')).not.toContainText(/answering/);
   await shot(page, info, 'ai-care', 'thread-live');
   expect(await axe(page)).toEqual([]);
+  // the feed (batch 13 isa-4 F2): their reply writes the activity card (link 1 is 'ok' on fakes); it carries the banner
+  // without the replies clause and never says the AI takes the turn
+  await stack.fixture('/isa-sms-in', { from: lead.phone, body: 'Thanks, still looking' });
+  await page.goto(`${stack.webUrl}/`);
+  const activity = page.getByTestId('ai-card-ai_isa_activity');
+  await expect(activity.getByTestId('ai-hold')).toContainText(`${HOLD} Nothing reaches Jane from this deployment.`);
+  await expect(activity.getByTestId('ai-hold')).not.toContainText('replies');
+  await expect(activity).not.toContainText('takes this turn');
+  await expectNoCode(page);
 });
 
 test('J6 E517: with the team cap at 0 the team link holds: the panel adds the replies clause; raising the cap runs the next turn with no click', async ({ page }) => {
