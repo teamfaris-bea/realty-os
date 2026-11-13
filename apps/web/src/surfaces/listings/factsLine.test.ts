@@ -11,4 +11,9 @@ describe('R-MLS-7 E603: listing lines never state a size they do not have', () =
     expect(factsLine({ beds: 3, bathsX10: 25, sqft: 1650 })).toBe('3 bd · 2.5 ba · 1,650 sq ft');
     expect(factsLine({ beds: 3, bathsX10: 20, sqft: null })).not.toMatch(/sq ft|\b0\b/);
   });
+
+  it('E609 R-MLS-7: a size of 0 is no size: never "0 sq ft"', () => {
+    expect(factsLine({ beds: 3, bathsX10: 20, sqft: 0 })).toBe('3 bd · 2 ba');
+    expect(factsLine({ beds: null, bathsX10: null, sqft: 0 })).toBe('');
+  });
 });

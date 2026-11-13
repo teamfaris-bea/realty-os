@@ -36,6 +36,12 @@ describe('renderPiece: bound facts render live (R-MKT-3, E90)', () => {
     expect(r.text).toContain('12 Oak St, Unit 4B, Austin, TX 78701');
   });
 
+  it('E609 R-MLS-7 R-MKT-3: a size of 0 is no size: the facts line leaves it out, never "0 sq ft"', () => {
+    const r = ok(renderPiece(piece('flyer'), teamListing({ sqft: 0 }), IDENTITY, STRICT));
+    expect(r.text).toContain('3 bd · 2.5 ba');
+    expect(r.text).not.toMatch(/\b0 sq ft/);
+  });
+
   it('R-MKT-3: the open-house time renders from the piece, in its zone', () => {
     const r = ok(renderPiece(piece('open_house_invite'), teamListing(), IDENTITY, STRICT));
     expect(r.text).toContain('Open house: Sat, Nov 14, 1:00 PM – 3:00 PM CST');

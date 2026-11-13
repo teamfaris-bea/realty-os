@@ -66,4 +66,20 @@ describe('E603 R-MLS-7: ISA facts never state a size they do not have', () => {
     expect(lines.filter((l) => /^\d+\. Sold for/.test(l)).map((l) => SIZE.test(l))).toEqual([true, false, true, true]);
     expect(r.body).not.toMatch(/\b0 sq ft/);
   });
+
+  it('E609 R-MLS-7: a size of 0 is no size: a buyer or competitor line, the subject line and a comp line never say "0 sq ft"', () => {
+    const zero = listing({ sqft: 0 });
+    const r = renderBuyerListing(zero, src);
+    expect(r.ok && r.line).not.toMatch(SIZE);
+    const c = renderCompetitor(zero, src, 'new_competitor');
+    expect(c.ok && c.line).not.toMatch(SIZE);
+    expect(subjectLine({ recordDate: '2020-01-02', beds: 3, sqft: 0 })).toBe("Compared using your home's MLS record from Jan 2, 2020: 3 bd. Tell me if that's changed.");
+    const comp = (k: number, sqft: number | null): IsaCompView => ({ identity: `id${k}`, closePriceCents: 40_000_000 + k * 1_000_000, closeDate: '2026-08-0' + ((k % 9) + 1), beds: 3, sqft, tier: 'within_1mi', locationLabel: null, listingBrokerageName: 'Other Brokerage Inc', why: 'Same type, within a mile' });
+    const result: IsaCompResult = { methodVersion: 'cma/1', comps: [comp(0, 0), comp(1, 1800), comp(2, 1750)], areaLookbackMonths: 12, sizeFilterApplied: true, bedsFilterApplied: true, sentences: [] };
+    const e = renderCompsEmail({ result, gates: { blockers: [], packsCleared: true, subjectConfirmed: true }, subject: { recordDate: '2020-01-02', beds: 3, sqft: 0 }, mlsName: 'Sample MLS', teamName: 'Maple Team', asOf: AS_OF, stateStatement: null, attribution: null });
+    expect(e.ok).toBe(true);
+    if (!e.ok) return;
+    expect(e.body).not.toMatch(/\b0 sq ft/);
+    expect(e.body.split('\n\n').filter((l) => /^\d+\. Sold for/.test(l)).map((l) => SIZE.test(l))).toEqual([false, true, true]);
+  });
 });

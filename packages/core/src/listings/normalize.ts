@@ -28,6 +28,7 @@
 //   LivingArea). A mapping with `sqft: null` (an MLS whose finished-living-area field is not confirmed: Spark) reads no
 //   size, and a field of SIZE_FIELDS_NEVER_USED (BuildingAreaTotal: total building area; unfinished or below-grade area
 //   alone) is never read, whatever the mapping says. Fields are never added together and never stand in for each other.
+//   A size of 0 is unknown (null, with no source and no issue): many feeds send 0 for "not entered".
 //   PostalCode is stored as sent: a ZIP+4 is not folded and not inferred (VERIFY WITH MLS).
 import { type Instant, instantFromIso } from '../foundation/index.js';
 import { PROPERTY_TYPES } from '../assistant/index.js';
@@ -550,9 +551,11 @@ export function normalizeMlsListing(raw: ResoLike, mapping: FieldMapping): Listi
   const beds = bounded('beds', 'The bedroom count', count('beds', 'The bedroom count', true), SMALLINT_MAX);
   const bathsRaw = count('baths', 'The bathroom count', false);
   const baths = bathsRaw === null ? null : bounded('baths', 'The bathroom count', Math.round(bathsRaw * 10), SMALLINT_MAX);
-  // R-MLS-7: only the confirmed finished-living-area field is read; with none, the size is unknown (never another field)
+  // R-MLS-7: only the confirmed finished-living-area field is read; with none, the size is unknown (never another field).
+  // A size of 0 (or one that rounds to 0) is a feed's placeholder, not a living area: unknown too, with no issue.
   const areaRaw = sizeField === null ? null : count('sqft', 'The living area', false);
-  const area = areaRaw === null ? null : bounded('sqft', 'The living area', Math.round(areaRaw), INTEGER_MAX);
+  const areaWhole = areaRaw === null ? null : Math.round(areaRaw);
+  const area = areaWhole === null || areaWhole <= 0 ? null : bounded('sqft', 'The living area', areaWhole, INTEGER_MAX);
   const photosCount = count('photosCount', 'The photo count', true);
 
   // address

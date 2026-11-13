@@ -58,11 +58,16 @@ export interface FactSource {
   fresh: boolean;
 }
 
+/** A size the line may state (R-MLS-7): a positive number; null, omitted or 0 is no size, never "0 sq ft". */
+function hasSize(v: number | null | undefined): v is number {
+  return typeof v === 'number' && v > 0;
+}
+
 function structural(d: DisplayListing): string {
   const parts: string[] = [];
   if (d.beds !== undefined && d.beds !== null) parts.push(`${d.beds} bd`);
   if (d.bathsX10 !== undefined && d.bathsX10 !== null) parts.push(`${d.bathsX10 / 10} ba`);
-  if (d.sqft !== undefined && d.sqft !== null) parts.push(`${String(d.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft`);
+  if (hasSize(d.sqft)) parts.push(`${String(d.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft`);
   if (d.locality !== undefined) parts.push(d.locality.city);
   const head = parts.join(' · ');
   return d.address !== undefined && !d.addressHidden ? `${d.address.line1}, ${head}` : head;
@@ -191,7 +196,7 @@ export const SELLER_DATA_LINES: readonly string[] = Object.freeze([
  * facts the record has are named: an unknown size (R-MLS-7) is left out, and with neither fact there is no list.
  */
 export function subjectLine(s: SubjectFacts): string {
-  const parts = [s.beds !== null ? `${s.beds} bd` : null, s.sqft !== null ? `${String(s.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft` : null].filter((x) => x !== null);
+  const parts = [s.beds !== null ? `${s.beds} bd` : null, hasSize(s.sqft) ? `${String(s.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft` : null].filter((x) => x !== null);
   return `Compared using your home's MLS record from ${dateLabel(s.recordDate)}${parts.length > 0 ? `: ${parts.join(', ')}` : ''}. Tell me if that's changed.`;
 }
 
@@ -216,7 +221,7 @@ export function renderCompsEmail(i: { result: IsaCompResult; gates: CompGates; s
   if (r.comps.some((c) => c.closePriceCents === null || c.closeDate === null)) return { ok: false, refusal: 'CLOSE_OMITTED' };
   if (r.comps.some((c) => c.listingBrokerageName === null || c.listingBrokerageName.trim() === '')) return { ok: false, refusal: 'BROKERAGE_MISSING' };
   const lines = r.comps.map((c, k) => {
-    const facts = [c.beds !== null ? `${c.beds} bd` : null, c.sqft !== null ? `${String(c.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft` : null, c.locationLabel].filter((x) => x !== null).join(' · ');
+    const facts = [c.beds !== null ? `${c.beds} bd` : null, hasSize(c.sqft) ? `${String(c.sqft).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sq ft` : null, c.locationLabel].filter((x) => x !== null).join(' · ');
     return `${k + 1}. Sold for ${dollars(c.closePriceCents as number)} on ${dateLabel(c.closeDate as string)} (sale price) · ${facts} · Listed by ${c.listingBrokerageName} · ${c.why}`;
   });
   const body = [

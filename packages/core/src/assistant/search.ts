@@ -336,7 +336,9 @@ export function matchListing(c: SearchCriteria, l: ListingFacts): boolean {
   const atMost = (max: number | undefined, v: number | null): boolean => max === undefined || (v !== null && v <= max);
   if (!atLeast(c.priceMinCents, l.listPriceCents) || !atMost(c.priceMaxCents, l.listPriceCents)) return false;
   if (!atLeast(c.bedsMin, l.beds) || !atLeast(c.bathsMinX10, l.bathsX10)) return false;
-  if (!atLeast(c.sqftMin, l.sqft) || !atMost(c.sqftMax, l.sqft)) return false;
+  // R-MLS-7: an unknown size (null, or 0) never meets a size criterion
+  const size = l.sqft !== null && l.sqft > 0 ? l.sqft : null;
+  if (!atLeast(c.sqftMin, size) || !atMost(c.sqftMax, size)) return false;
   if (c.propertyTypes !== undefined && (l.propertyType === null || !c.propertyTypes.includes(l.propertyType))) return false;
   if (c.keywords !== undefined) {
     const hay = words(l.description ?? '');

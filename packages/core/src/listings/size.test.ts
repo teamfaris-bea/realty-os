@@ -57,6 +57,17 @@ describe('R-MLS-7: size is finished living area only from a confirmed field', ()
     expect(facts({ ...RESO_FULL, ...AREAS }, m)).toMatchObject({ sqft: 1700, valuation: { sizeSource: 'AboveGradeFinishedArea' } });
   });
 
+  it('E609 R-MLS-7: a size of 0 (or one that rounds to 0) from the size field is unknown: no size, no size source, no issue, never "0 sq ft" finished area', () => {
+    for (const v of [0, '0', '0.00', 0.4, '0.4']) {
+      const r = normalizeMlsListing({ ...RESO_FULL, LivingArea: v }, MAPPING);
+      expect(Array.isArray(r)).toBe(false);
+      const f = r as ListingFacts;
+      expect([v, f.sqft, f.valuation.sizeSource, f.valuation.unreadable]).toEqual([v, null, null, []]);
+      expect(f.beds).toBe(3); // every other fact as before
+    }
+    expect(facts({ ...RESO_FULL, LivingArea: 0.5 })).toMatchObject({ sqft: 1, valuation: { sizeSource: 'LivingArea' } }); // rounds to 1: a size
+  });
+
   it('E606: PostalCode is stored as sent (ZIP+4 or ZIP5): never normalized or inferred (VERIFY WITH MLS)', () => {
     expect(facts({ ...RESO_FULL, PostalCode: '29401-1234' }).postalCode).toBe('29401-1234');
     expect(facts({ ...RESO_FULL, PostalCode: '294011234' }).postalCode).toBe('294011234');
@@ -77,6 +88,16 @@ describe('E603 R-MLS-7: an unknown size is never invented by a size filter', () 
     expect(r.listings.map((l) => l.mlsNumber)).toEqual(['C1']);
     expect(r.why.filter((w) => w.criterion === 'sqft_band').map((w) => w.detail)).toEqual(['1800 sq ft is within ±20 % of 1800 sq ft']);
     expect(competingSet(subject, [candidate(2, null)], { ...rule, sqftBandPct: null }).listings.map((l) => l.mlsNumber)).toEqual(['C2']);
+  });
+
+  it('E609 R-MLS-7: a size of 0 is no size for a size band and a saved-search criterion (never "within ±20 % of 0 sq ft", never "at most 1,500 sq ft")', () => {
+    const zero = { ...subject, sqft: 0 };
+    expect(competingSet(zero, [candidate(1, 0), candidate(2, 1800)], rule).listings).toEqual([]);
+    expect(competingSet({ ...subject, sqft: 1800 }, [candidate(1, 0)], rule).listings).toEqual([]);
+    const l = { source: 'team' as const, status: 'active' as const, postalCode: '29401', city: 'Charleston', region: 'SC', listPriceCents: 40_000_000, beds: 3, bathsX10: 20, sqft: 0, propertyType: 'single_family' as const, description: null };
+    expect(matchListing({ postalCodes: ['29401'] }, l)).toBe(true);
+    expect(matchListing({ postalCodes: ['29401'], sqftMax: 1_500 }, l)).toBe(false);
+    expect(matchListing({ postalCodes: ['29401'], sqftMin: 0 }, l)).toBe(false);
   });
 
   it('E603 R-MLS-7: a saved-search size criterion never matches a listing of unknown size', () => {

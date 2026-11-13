@@ -132,7 +132,8 @@ export function competingSet(subject: ListingFacts, candidates: readonly Listing
     if (sqftPct !== null) {
       const s = subject.sqft;
       const q = c.sqft;
-      if (s === null || q === null) continue;
+      // R-MLS-7: an unknown size (null, or 0) never passes a size band
+      if (s === null || q === null || s <= 0 || q <= 0) continue;
       // integer comparison: |q - s| ≤ s × pct / 100
       if (Math.abs(q - s) * 100 > s * sqftPct) continue;
       why.push({ criterion: 'sqft_band', detail: `${q} sq ft is within ±${sqftPct} % of ${s} sq ft` });
