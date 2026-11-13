@@ -81,6 +81,32 @@ describe('E616 R-CMA-9: the report PDF', () => {
     });
   });
 
+  // Batch 13 (task 55, R-MLS-7; audit cma-v2a F4): a CMA shared before migration 0082, when a Spark size came from
+  // BuildingAreaTotal, keeps those stored sizes (0082 rewrites no CMA). Readiness at every download computes
+  // notLivingArea from the stored size sources, so its PDF is refused. The guard freezes a shared row, so the fixture
+  // writes the old sizes with triggers off, as that earlier sync would have stored them.
+  it('R-MLS-7 E652 E616: a shared CMA whose stored sizes came from BuildingAreaTotal has no PDF (CMA_NOT_SHAREABLE SIZE_NOT_LIVING_AREA); nothing is audited', async () => {
+    const c = await withPlatformCmaCleared(h, () => sharedCma());
+    const su = await h.su.connect();
+    try {
+      await su.query('SET session_replication_role = replica');
+      await su.query(
+        `UPDATE cma_reports SET subject = jsonb_set(subject, '{resolved,sizeSource}', '"BuildingAreaTotal"'),
+                result = jsonb_set(result, '{comps}', (SELECT jsonb_agg(jsonb_set(x, '{sale,sizeSource}', '"BuildingAreaTotal"')) FROM jsonb_array_elements(result->'comps') x))
+          WHERE id = $1`,
+        [c.id],
+      );
+    } finally {
+      await su.query('SET session_replication_role = origin');
+      su.release();
+    }
+    await withPlatformCmaCleared(h, async () => {
+      const r = await pdf(agent(), c.id);
+      expect([r.statusCode, JSON.parse(r.body).error]).toEqual([409, expect.objectContaining({ code: 'CMA_NOT_SHAREABLE', details: { blockers: ['SIZE_NOT_LIVING_AREA'] } })]);
+    });
+    expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE action = 'cma.report_downloaded' AND entity_id = $1", [c.id])).rows[0].n).toBe(0);
+  });
+
   it('E605 E616: a state minimum above 28 pt has no PDF prominence (CMA_STATEMENT_NOT_RENDERABLE NO_PROMINENCE)', async () => {
     const c = await withPlatformCmaCleared(h, () => sharedCma());
     await h.su.query('UPDATE integration_connections SET license_pack = $2::jsonb WHERE id = $1', [w.mls, JSON.stringify(cmaPack({ valuation: { statements: { CA: { text: 'Statement (fixture).', min_point_size: 30 } } } }))]);

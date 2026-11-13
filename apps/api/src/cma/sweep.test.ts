@@ -97,6 +97,29 @@ describe('R-CMA-7 E612: the sweep cancels a queued share whose readiness fails',
     expect(await msg(q.messageId)).toMatchObject({ status: 'canceled', status_reason: 'CMA_SELLER_WITHHELD' });
   });
 
+  // Batch 13 (task 55, R-MLS-7; audit cma-v2a F4): a share queued before migration 0082 whose stored sizes came from
+  // BuildingAreaTotal (0082 rewrites no CMA). The guard freezes a shared row, so the fixture writes the old sizes with
+  // triggers off, as that earlier sync would have stored them.
+  it('E612 R-MLS-7 E652: a queued share whose stored sizes came from BuildingAreaTotal is canceled CMA_SIZE_NOT_LIVING_AREA, and the view says so in words', async () => {
+    const q = await queuedShare();
+    const su = await h.su.connect();
+    try {
+      await su.query('SET session_replication_role = replica');
+      await su.query(
+        `UPDATE cma_reports SET subject = jsonb_set(subject, '{resolved,sizeSource}', '"BuildingAreaTotal"'),
+                result = jsonb_set(result, '{comps}', (SELECT jsonb_agg(jsonb_set(x, '{sale,sizeSource}', '"BuildingAreaTotal"')) FROM jsonb_array_elements(result->'comps') x))
+          WHERE id = $1`,
+        [q.cmaId],
+      );
+    } finally {
+      await su.query('SET session_replication_role = origin');
+      su.release();
+    }
+    await withPlatformCmaCleared(h, async () => expect((await sweep()).canceledCmaShares).toBe(1));
+    expect(await msg(q.messageId)).toMatchObject({ status: 'canceled', status_reason: 'CMA_SIZE_NOT_LIVING_AREA', dispatched_at: null });
+    expect((await view(q.cmaId)).share!.message!.sentence).toMatch(/not finished living area/);
+  });
+
   it('E612 (e) E27: a share held for a re-tap after a client reply is still queued: when the feed then goes stale it is canceled too', async () => {
     const q = await queuedShare();
     await h.su.query('UPDATE conversations SET inbound_seq = inbound_seq + 1, last_inbound_at = now() WHERE contact_id = $1', [q.c]);
