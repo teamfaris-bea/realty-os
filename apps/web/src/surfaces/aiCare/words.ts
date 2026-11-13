@@ -353,7 +353,10 @@ export function capabilityLine(c: { capability: string; allowed: boolean }, v: V
 
 // ---- next steps and notes (handoff.ts:106-115) ---------------------------------------------------------------------
 
-export const NEXT_STEPS = ['call_now', 'confirm_appointment', 'answer_pricing_question', 'reply_to_complaint', 'review_fair_housing_question', 'review_consent', 'review_saved_search', 'prepare_cma', 'confirm_subject'] as const;
+// batch 13 isa-4 F5: ISA-2b appends approve_saved_search (a proposed AI-origin saved search) or review_saved_search
+export const NEXT_STEPS = ['call_now', 'confirm_appointment', 'answer_pricing_question', 'reply_to_complaint', 'review_fair_housing_question', 'review_consent', 'review_saved_search', 'approve_saved_search', 'prepare_cma', 'confirm_subject'] as const;
+/** Steps that are not built: they say "{step}: not available yet." (any other unknown step is "Another check", no claim). */
+export const UNBUILT_STEPS: ReadonlySet<string> = new Set(['prepare_cma', 'confirm_subject']);
 export type NextStep = (typeof NEXT_STEPS)[number];
 export const NEXT_STEP_WORDS: Record<NextStep, string> = {
   call_now: 'Call them',
@@ -363,6 +366,7 @@ export const NEXT_STEP_WORDS: Record<NextStep, string> = {
   review_fair_housing_question: 'Answer their question about the area yourself',
   review_consent: 'Review their consent',
   review_saved_search: 'Review the saved search',
+  approve_saved_search: 'Approve the saved search',
   prepare_cma: 'Prepare a CMA',
   confirm_subject: "Confirm the home they're selling",
 };

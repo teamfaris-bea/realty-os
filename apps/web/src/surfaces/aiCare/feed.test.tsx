@@ -91,6 +91,25 @@ describe('AI care feed cards (module 76)', () => {
     expect(c.textContent).not.toMatch(/Respond by|Overdue/);
   });
 
+  it('R-ISA-14 (batch 13 isa-4 F5): ISA-2b\'s approve_saved_search step opens the person\'s searches for review', async () => {
+    const h = handoffView();
+    const v = isaApp(feedOf([handoffCard()], { handoff: { ...h, package: { ...h.package, nextSteps: ['approve_saved_search'] } } }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    await userEvent.setup().click(await within(c).findByRole('button', { name: 'Approve the saved search' }));
+    await waitFor(() => expect(v.router.state.location.pathname).toBe(`/contacts/${IDS.jane}`));
+    expect(v.router.state.location.search).toBe('?review=searches');
+    expect(v.router.state.location.hash).toBe('#searches');
+  });
+
+  it('R-ISA-22 (batch 13 isa-4 F5): an unknown next step reads "Another check" and never "not available yet"; Prepare a CMA is not available yet', async () => {
+    const h = handoffView();
+    isaApp(feedOf([handoffCard()], { handoff: { ...h, package: { ...h.package, nextSteps: ['prepare_cma', 'brand_new_step'] } } }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('Prepare a CMA: not available yet.')).toBeInTheDocument();
+    expect(within(c).getByText('Another check')).toBeInTheDocument();
+    expect(c.textContent).not.toMatch(/Another check: not available yet/);
+  });
+
   it('V9 Q10: a met deadline reads "Done: Jane was reached at …" and the card stays', async () => {
     isaApp(feedOf([handoffCard()], { handoff: handoffView({ slaMetAt: iso(-60_000) }) }), '/', 'agent');
     const c = await screen.findByTestId('ai-card-ai_isa_handoff');

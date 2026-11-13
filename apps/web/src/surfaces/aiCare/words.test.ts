@@ -116,7 +116,13 @@ describe('R-ISA-22 words (module 76)', () => {
 
   it('R-ISA-22: every next step and note handoff.ts writes is covered; a prefixed note drops its id', () => {
     const h = readFileSync(join(ROOT, 'apps/api/src/isa/handoff.ts'), 'utf8');
-    for (const s of [...h.matchAll(/out\.push\('([a-z_]+)'\)/g)].map((m) => m[1]!)) expect(NEXT_STEPS as readonly string[], s).toContain(s);
+    // batch 13 isa-4 F5: every step literal nextStepsFor pushes AND every one the nextSteps line appends (ISA-2b's
+    // saved-search steps), not only out.push; a literal compared with === is a condition, not a step
+    const fn = /function nextStepsFor[\s\S]*?\n}\n/.exec(h)?.[0] ?? '';
+    const line = /const nextSteps = [^\n]*/.exec(h)?.[0] ?? '';
+    const steps = [...`${fn}\n${line}`.matchAll(/(?<!===\s)'([a-z]+_[a-z_]+)'/g)].map((m) => m[1]!);
+    expect(steps).toEqual(expect.arrayContaining(['call_now', 'confirm_appointment', 'review_saved_search', 'approve_saved_search']));
+    for (const s of steps) expect(NEXT_STEPS as readonly string[], s).toContain(s);
     expect(noteWords('IN_FLIGHT:01900000-0000-7000-8000-000000000001')).not.toMatch(/0190/);
     expect(noteWords('CONFIRMATION_NOT_SENT')).toMatch(/confirm by hand/);
     expect(noteWords('SOMETHING_NEW')).toBe(OTHER_CHECK);

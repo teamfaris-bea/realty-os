@@ -20,7 +20,7 @@ import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
 import { localTime } from './time.js';
-import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, bookedWhen, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, bookedWhen, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -413,6 +413,7 @@ function NextStep({ step, contactId, name }: { step: string; contactId: string; 
         </Button>
       );
     case 'review_saved_search':
+    case 'approve_saved_search':
       return (
         <Button variant="secondary" onClick={() => navigate(`/contacts/${contactId}?review=searches#searches`)}>
           {label}
@@ -425,10 +426,7 @@ function NextStep({ step, contactId, name }: { step: string; contactId: string; 
         </Button>
       );
     default:
-      return (
-        <span className="inline-flex min-h-tap items-center text-[15px] text-ink-muted">
-          {cap(label)}: not available yet.
-        </span>
-      );
+      // batch 13 isa-4 F5: only a step known to be unbuilt says "not available yet"; an unknown one makes no claim
+      return <span className="inline-flex min-h-tap items-center text-[15px] text-ink-muted">{UNBUILT_STEPS.has(step) ? `${cap(label)}: not available yet.` : label}</span>;
   }
 }
