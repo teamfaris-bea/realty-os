@@ -116,6 +116,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   // module 55 item 12: Google Business Profile (every staff role reads reviews; the sweep's world has platform:gbp
   // uncleared, so it sweeps the honest dark state)
   { path: '/gbp', roles: ALL, url: at('/gbp') },
+  // module 55 (phase3-staff): Likely to move (the sweep world has no approved model: the no_model sentence)
+  { path: '/likely', roles: NOT_TC, url: at('/likely') },
 ];
 
 /** Screens outside the app frame (signed out). */

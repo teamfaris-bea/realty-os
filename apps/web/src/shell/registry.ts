@@ -52,6 +52,7 @@ import { surface as documentsSurface } from '../surfaces/documents/index.js';
 import { surface as voiceSurface } from '../surfaces/voice/index.js';
 import { surface as adsSurface } from '../surfaces/ads/index.js';
 import { surface as gbpSurface } from '../surfaces/gbp/index.js';
+import { surface as likelySurface } from '../surfaces/likely/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -96,5 +97,6 @@ export const surfaces: SurfaceModule[] = [
   voiceSurface,
   adsSurface,
   gbpSurface,
+  likelySurface,
   // registry: add new entries above this line
 ];
