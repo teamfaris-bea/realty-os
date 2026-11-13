@@ -209,6 +209,7 @@ A turn may compose and a message may send only while every link holds. Every lin
 | 7 | No stop signal for the person since start, and no person block | system triggers (§5.1) | — | `ai_isa_stop_signals`, `ai_isa_person_blocks` |
 | 8 | No address shared with another person; no open deal or active team listing with the person as a party | data | — | contact_points, deals, listings |
 | 9 | Consent evidence for the channel and tier (§5.2) | the lead (ledger) | — | consent_events / consent_state / messages / dnc_checks |
+| 10 | "Seller home" (seller- or both-side assignments; ISA-3 H5, `isa/seller/gates.ts subjectLinkInTx`): no live team listing or mirror at the subject's key (else end `active_client`), no other live MLS listing at it (else end `listed_elsewhere`, also refused at start by H4), no undismissed live near match (else pause `possible_listing`) | data; the owner's "different home" answers | — | listings, `ai_isa_seller_watch.near_match_dismissed` |
 
 **Link-failure table.** One table, applied identically at ingestion, in TX-A, TX-B and TX1, by the sweep and in the guard's reason classes.
 
@@ -684,7 +685,7 @@ New reason codes go into `ReasonCode` and `explain`, with sentences.
 
 **Permission to compute.**
 - A new MATRIX action `ai_isa.seller_facts` with `system: ['assistant']`, agreed with cma-api.
-- `compsForSubjectInTx(tx, deps, subject, valuationDate, {onBehalfOf: ownerUserId})` refuses unless the owner holds `cma.prepare` for the contact (R-CMA-6; "an absent system means never the system actor", d9-cma-final.txt:555; packages/core/src/foundation/authz.ts:428-429). This is re-checked in TX-B and TX1. An architecture test proves no other caller exists.
+- `compsForSubjectInTx(tx, actor, now, {kind: 'contact_address', contactAddressId}, {contactId, onBehalfOf: {userId}})` (as built, ISA-3; `apps/api/src/cma/service.ts`) refuses unless the actor holds `ai_isa.seller_facts` (system via `assistant` only) and the owner's role holds `cma.prepare` for the contact through `canAsRole` (R-CMA-6; `cma.prepare` has no `system` grant: "Absent: never the system actor", packages/core/src/foundation/authz.ts:514, the MATRIX row at :735). This is re-checked in TX-B and TX1. An architecture test proves no other caller exists.
 
 **The subject (R-ISA-18).**
 - It is resolved exactly as V1-C does (d9-cma-final.txt:547-705): the contact's 'property' address → `addressKey` → `mlsRowsAtAddress`, with facts from the newest record (V1-C subject.ts `newest()`); closed records are sale history (E365).
@@ -938,7 +939,8 @@ Every CREATE OR REPLACE starts from the object's newest definition at merge time
 |---|---|---|---|---|
 | optins | self; Owner/Admin all; TL for team members | self | status only (self, Owner/Admin, system) | none |
 | assignments, controls | `app.contact_detail_visible(tenant, contact)` (0039:171), or tenant-wide | owner as self (guard); controls: anyone allowed to control (guard) | per the guard; controls: none | none |
-| turns, slot_offers, shared_facts, handoffs, seller_watch | the contact-detail audience, staff only | system only (seller_watch subject confirmation: the owner) | system; handoffs: the recipient may set acknowledged_*; seller_watch: the owner confirms the subject | none |
+| turns, slot_offers, shared_facts, handoffs | the contact-detail audience, staff only | system only | system; handoffs: the recipient may set acknowledged_* | none |
+| seller_watch (as built, 0084) | tenant-wide, the contact-detail audience, or the root survivor's (0081's rule), staff only | the system, or the assignment's owner as themselves (never a user route other than the owner's: ISA-3 audit F2) | the system, tenant-wide, the contact-detail audience or the root survivor's, narrowed by the invoker guard: only the live owner confirms, dismisses a near match or resumes comps; the system never confirms; any other user only clears the subject or marks it disputed; a user repoints the address only by confirming, and the cleared reason changes only with a clear (ISA-3 audit F11); the address trigger runs as the editor | none (cascade with the assignment) |
 | stop_signals | contact-detail audience; tenant-wide | any tenant actor (`tenant_id = app.tenant_id()`) | none | none |
 | person_blocks | contact-detail audience | system | system; the owner lifts (guard) | none |
 | daily_counts | Owner/Admin | guard | guard | none |
@@ -975,6 +977,7 @@ All routes are under MATRIX rows. No response carries confidence or score fields
   - `GET /contacts/:id/ai-isa/turns`;
   - `POST /contacts/:id/ai-isa/{start|pause|resume|take-over|end|undo|continue|confirm-subject|lift-block}`;
   - `POST /ai-isa/handoffs/:id/ack` (its result carries `closedReason` too); `POST /ai-isa/escalations/:id/resolve`.
+- **Seller (as built, ISA-3; `apps/api/src/isa/seller/routes.ts`):** `GET /contacts/:id/ai-isa/seller` (`ai_isa.view`; read as the viewer, never runs the comps pipeline); `POST /contacts/:id/ai-isa/confirm-subject {contactAddressId, recordListingId, factsSha256}`, `POST …/ai-isa/seller/near-match-different {listingIds}` and `POST …/ai-isa/seller/resume-comps` (`ai_isa.subject_confirm`: the live seller assignment's owner, as themselves; audited); `POST …/ai-isa/seller/subject-disputed` (`ai_isa.pause`: anyone who may pause, owner question 9; it never inserts the watch row, so a Team Lead or Admin is not refused by its INSERT policy, ISA-3 audit F2).
 - **Errors** (in errors.ts, with sentences): AI_ISA_OFF, AI_ISA_NOT_CLEARED, AI_ISA_POLICY_NOT_APPROVED, AI_ISA_NO_OPTIN, AI_ISA_NOT_OWNER (404 when invisible, R-PERM-5), AI_ISA_ALREADY_ACTIVE, AI_ISA_NO_CHANNEL, AI_ISA_SHARED_ADDRESS, AI_ISA_ACTIVE_CLIENT, AI_ISA_LISTED_ELSEWHERE, AI_ISA_NOT_ROOT, AI_ISA_CALENDAR_REQUIRED, AI_ISA_FIRST_TOUCH_PENDING, AI_ISA_PERSON_DECLINED, AI_ISA_HANDBACK_STALE, AI_ISA_UNDO_EXPIRED, SUBJECT_UNCONFIRMED, CAPABILITY_NOT_AVAILABLE.
 
 ### 9.2 Turn processing
@@ -1068,6 +1071,22 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 | integrations/catalog.ts (21) | PACK_GATES entries |
 | config.ts | `AI_ISA_LIVE_SENDS` (default false; logged at start-up) |
 | registries | routes, errors, worker handlers, authz MATRIX and audit actions, eslint R-PRED-4 and mail-sync-boundary lists |
+
+**As built (ISA-3, the seller part; batch 13).** One call each into `apps/api/src/isa/seller/index.ts` from ISA-2's files, plus the flagged registry and module edits:
+
+| File (module) | Edit |
+|---|---|
+| isa/turn.ts (75) | H1 `sellerBundleInTx` (handles, unavailable codes, the three flags) beside ISA-2b's buyer bundle; H8 `factPlaceholdersInTx` (a sent facts message is its fixed placeholder) |
+| isa/effects.ts (75) | H2 `renderSellerFactsInTx` in `queueIsaMessageInTx`, given ISA-2's `ctx.channels` and composed body (audit F5); `writeSellerFactsInTx`; H6 `onEscalationInTx` on the escalate path |
+| isa/send.ts, comms/dispatch.ts (75, 22) | H3 `sellerFactsCurrentInTx` in `aiIsaGateFacts`, run as dispatch's own actor (audit F11) |
+| isa/controls.ts, isa/repo.ts (75) | H4 `sellerStartRefusalInTx` in `startRefusal`; H5 `sellerSubjectLinkInTx` as link 10 (§3.1) |
+| cma/service.ts, cma/gates.ts, cma/subject.ts, cma/deps.ts (71, V1-C) | `compsForSubjectInTx`; `clientReadiness` `use: 'ai_isa'`; `export` on `newest`; the `connectionClientEligible` re-export (FEED_STALE for a stale feed, audit F8) |
+| core/listings licence.ts, types.ts, competing.ts (23, V1-A) | `ValuationUse` `'ai_isa_comps'`, `aiIsaComps`, the exhaustive switch; `sqftBandPct` |
+| mls/admin.ts, mls/routes.ts (24) | `ai_isa_comps` in the valuation pack keys, values and strict bodies |
+| core/valuation/index.ts (70, V1-B) | exports `tierName` and the three area-sentence builders |
+| core/foundation/authz.ts | `canAsRole`; MATRIX `ai_isa.seller_facts` (system via `assistant` only) and `ai_isa.subject_confirm`; the five seller audit actions |
+| errors.ts, routes.ts, worker/handlers/index.ts | SUBJECT_* codes; `sellerRoutes`; the three seller jobs |
+| integrations/catalog.ts (21) | PACK_GATES `platform:ai_isa_seller_data`: batch 12's "The assistant's recent-sales emails" is kept, not the brief's "AI assistant recent sales for seller leads", because the copy lint names the assistant "the assistant", never "AI" (b12 review ui-1); its line says the emails are not built in this version |
 
 ---
 
@@ -1265,7 +1284,7 @@ The lane briefs are in <lane_briefs>.
 | E534 | platform:cma or platform:ai_isa_seller_data uncleared (the default); the licence has `automated_notes: true` but no `ai_isa_comps` | No sold comps or nearby sales (PACK_DOES_NOT_ALLOW). Competition with asking prices still allowed. The panel says why. | R-ISA-18 |
 | E535 | The feed is stale; a row unseen for 3 days in a fresh feed; a fact labelled with another connection's date | No fact from the stale source. The unseen row is never sent. Each fact uses its own as-of. | R-ISA-18, -17 |
 | E536 | The subject is unconfirmed, disputed, older than 10 years or not in the MLS; fewer than 3 comps; city tier or 24-month lookback; COMPS_HIDDEN; the model tries to share 2 of 6; a question about a nearby sale whose reason is not_among_closest, implausible_price or sale_condition | No comps (never padded, never partial, no hidden count). Complete set or nothing. Off-whitelist reasons go to `data_unavailable`. "Prepare a CMA" or "Confirm subject". | R-ISA-18 |
-| E537 | A competitor goes active to pending, or changes price, between build and send; a sync moves only `last_synced_at`; a competitor drops out of the top 10 | FACT_CHANGED: a server re-render without a model call, "Pending (not yet sold)", at most one rebuild. A sync alone does not cancel. No event from absence. | R-ISA-18, -19 |
+| E537 | A competitor goes active to pending, or changes price, between build and send; a sync moves only `last_synced_at`; a rank change (a competitor's place in the set moves) | FACT_CHANGED: a server re-render without a model call, "Pending (not yet sold)", at most one rebuild. A sync alone does not cancel. No event from absence. | R-ISA-18, -19 |
 | E538 | A live listing at the subject: by the team; by another brokerage; a near match; AVM display N; the owner loses `cma.prepare` scope | End `active_client`; end `listed_elsewhere`; pause `possible_listing`; SELLER_WITHHELD (no sold facts); loss of scope means no seller facts (ai_isa.seller_facts). | R-ISA-18, -26 |
 | E539 | A forged contactId; another contact's handle; another tenant's listing; a `fromHandbackId` from another contact or a stale one | 404, or dropped; nothing read; AI_ISA_HANDBACK_STALE. | R-ISA-20, -2 |
 
