@@ -143,12 +143,12 @@ describe('AI ISA schema invariants (R-ISA-21, R-ISA-15)', () => {
       expect(d).toContain(`NEW.${from}`);
       return d.replace(`NEW.${from}`, `NEW.${to}`).replace(`OLD.${from}`, `OLD.${to}`);
     };
-    const userCloses = await checkWith('app.ai_isa_handoffs_guard()', mutated('sweep_failures, NEW.closed_at, NEW.closed_reason)', 'sweep_failures)'));
+    const userCloses = await checkWith('app.ai_isa_handoffs_guard()', mutated('sweep_failure_count, NEW.closed_at, NEW.closed_reason)', 'sweep_failure_count)'));
     expect(userCloses).toMatch(guardRefused);
     const reopens = await checkWith('app.ai_isa_handoffs_guard()', (d) => d.replace(/\n[ \t]*IF OLD\.closed_at IS NOT NULL[^\n]*\n[^\n]*\n[ \t]*END IF;/, ''));
     expect(reopens).toMatch(guardRefused);
-    // b12 recheck R24: the handoff guard without sweep_failures among the system's columns
-    const userCounts = await checkWith('app.ai_isa_handoffs_guard()', mutated('sla_escalation_level, NEW.sweep_failures, NEW.closed_at', 'sla_escalation_level, NEW.closed_at'));
+    // b12 recheck R24: the handoff guard without sweep_failure_count among the system's columns
+    const userCounts = await checkWith('app.ai_isa_handoffs_guard()', mutated('sla_escalation_level, NEW.sweep_failure_count, NEW.closed_at', 'sla_escalation_level, NEW.closed_at'));
     expect(userCounts).toMatch(guardRefused);
   });
 
@@ -721,11 +721,11 @@ describe('post-handoff messages and the handoff record (R-ISA-14)', () => {
     const [hd] = await suRows<{ id: string }>(h.su, `SELECT hd.id FROM ai_isa_handoffs hd JOIN contacts c ON c.tenant_id = hd.tenant_id AND c.id = hd.contact_id
       WHERE hd.tenant_id = $1 AND c.owner_user_id = $2 LIMIT 1`, [w.tenantId, x.agent.id]);
     expect(hd).toBeTruthy();
-    expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
-    expect(await errOf(q(w.owner.actor, sql`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
-    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET sweep_failures = -1 WHERE id = ${hd!.id}`))).toMatch(/ai_isa_handoffs_sweep_failures_check/);
-    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE id = ${hd!.id}`))).toBe('ok');
-    expect((await suRows<{ n: number }>(h.su, `SELECT sweep_failures AS n FROM ai_isa_handoffs WHERE id = $1`, [hd!.id]))[0]!.n).toBe(1);
+    expect(await errOf(q(x.agent.actor, sql`UPDATE ai_isa_handoffs SET sweep_failure_count = sweep_failure_count + 1 WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
+    expect(await errOf(q(w.owner.actor, sql`UPDATE ai_isa_handoffs SET sweep_failure_count = sweep_failure_count + 1 WHERE id = ${hd!.id}`))).toBe('AI_ISA_HANDOFF_ACK_ONLY');
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET sweep_failure_count = -1 WHERE id = ${hd!.id}`))).toMatch(/ai_isa_handoffs_sweep_failure_count_check/);
+    expect(await errOf(q(w.system('assistant'), sql`UPDATE ai_isa_handoffs SET sweep_failure_count = sweep_failure_count + 1 WHERE id = ${hd!.id}`))).toBe('ok');
+    expect((await suRows<{ n: number }>(h.su, `SELECT sweep_failure_count AS n FROM ai_isa_handoffs WHERE id = $1`, [hd!.id]))[0]!.n).toBe(1);
   });
 });
 

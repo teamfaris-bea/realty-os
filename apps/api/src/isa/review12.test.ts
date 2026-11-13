@@ -671,7 +671,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
       await h.su.query(`SET session_replication_role = origin`);
     }
     const state = async (id: string) => (await h.su.query<{ level: number; met: boolean; closed: string | null; failures: number }>(
-      `SELECT sla_escalation_level AS level, sla_met_at IS NOT NULL AS met, closed_reason AS closed, sweep_failures AS failures FROM ai_isa_handoffs WHERE id = $1`, [id])).rows[0]!;
+      `SELECT sla_escalation_level AS level, sla_met_at IS NOT NULL AS met, closed_reason AS closed, sweep_failure_count AS failures FROM ai_isa_handoffs WHERE id = $1`, [id])).rows[0]!;
     const deps = depsFromPlatform(h.app.platform);
     const actor = systemActor(w.tenantId, 'assistant');
     const alerts = memoryAlerts();

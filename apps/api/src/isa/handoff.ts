@@ -246,11 +246,11 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
   const at = new Date(now);
   // b12 recheck R20: also an acknowledged handoff with no deadline that is still open (the ack route's own close after
   // the acknowledgement failed): it is closed here, so that close is retried until it holds
-  // b12 recheck R24: a row whose work failed on an earlier pass sorts after every other (sweep_failures), so failing
+  // b12 recheck R24: a row whose work failed on an earlier pass sorts after every other (sweep_failure_count), so failing
   // rows never fill the 200 ahead of a healthy one
   const rows = await sql<SweepRow>`
     SELECT s.* FROM (
-      SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level, h.sweep_failures,
+      SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level, h.sweep_failure_count,
              CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
              CASE WHEN x.status = 'proposed' THEN x.owner_user_id END AS holder_user_id,
              CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
@@ -265,7 +265,7 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
         LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
        WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.closed_at IS NULL AND (h.sla_class <> 'none' OR h.acknowledged_at IS NOT NULL)) s
      WHERE s.ack_close OR s.touch_met OR s.lead_closed OR s.escalate
-     ORDER BY s.sweep_failures > 0, s.sla_due_at, s.id LIMIT 200`.execute(tx);
+     ORDER BY s.sweep_failure_count > 0, s.sla_due_at, s.id LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
     // b12 recheck R24: each row's work runs in its own savepoint. A row whose work fails (a close a guard keeps
     // refusing, say) is rolled back alone, counted and reported, and the pass goes on: before, one such row aborted the
@@ -297,7 +297,7 @@ interface SweepRow {
   created_at: Date;
   sla_due_at: Date;
   sla_escalation_level: number;
-  sweep_failures: number;
+  sweep_failure_count: number;
   owner_user_id: string | null;
   holder_user_id: string | null;
   previous_user_id: string | null;
@@ -338,7 +338,7 @@ export const AI_ISA_SWEEP_ALERT_AFTER = 3;
 
 /**
  * b12 recheck R24: a row the deadline sweep failed on. Its failed passes are counted on the handoff
- * (ai_isa_handoffs.sweep_failures, system-only, 0081) in a savepoint of their own; each failure is logged
+ * (ai_isa_handoffs.sweep_failure_count, system-only, 0081) in a savepoint of their own; each failure is logged
  * (AI_ISA_HANDOFF_SWEEP_FAILED, the handoff id and the SQLSTATE only), and the pass that reaches
  * AI_ISA_SWEEP_ALERT_AFTER raises one P2 `WORKER_ERROR` (reason AI_ISA_HANDOFF_SWEEP_FAILING; OPERATIONS §4.17), so a
  * poisoned row is surfaced rather than retried silently forever. When even the count cannot be written, every pass
@@ -350,8 +350,8 @@ async function sweepFailedInTx(tx: Tx, actor: SystemActor, handoffId: string, er
   let failures: number | null = null;
   await sql`SAVEPOINT ai_isa_sla_count`.execute(tx);
   try {
-    const u = await sql<{ n: number }>`UPDATE ai_isa_handoffs SET sweep_failures = sweep_failures + 1 WHERE tenant_id = app.tenant_id() AND id = ${handoffId}
-      RETURNING sweep_failures AS n`.execute(tx);
+    const u = await sql<{ n: number }>`UPDATE ai_isa_handoffs SET sweep_failure_count = sweep_failure_count + 1 WHERE tenant_id = app.tenant_id() AND id = ${handoffId}
+      RETURNING sweep_failure_count AS n`.execute(tx);
     failures = u.rows[0]?.n ?? null;
     await sql`RELEASE SAVEPOINT ai_isa_sla_count`.execute(tx);
   } catch {

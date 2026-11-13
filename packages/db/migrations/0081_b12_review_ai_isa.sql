@@ -33,7 +33,7 @@
 --     handoff and why ('deadline_met', 'acknowledged', 'lead_closed', 'care_restarted'; b12 recheck R23:
 --     'care_continued', the owner's Continue AI care on the continued-from assignment's own handoff), so the panel can
 --     say so; only the system sets them, once (the handoff guard), and a close is final.
---  9. b12 recheck R24 (R-ISA-30): ai_isa_handoffs.sweep_failures counts the deadline sweep's failed passes on the
+--  9. b12 recheck R24 (R-ISA-30): ai_isa_handoffs.sweep_failure_count counts the deadline sweep's failed passes on the
 --     handoff (the sweep runs each row in a savepoint; a failing row is rolled back alone), system-only (the guard).
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4; docs/ARCHITECTURE.md §21.43):
@@ -62,7 +62,7 @@
 --     app.ai_isa_handoffs_guard is replaced (invoker, trigger binding unchanged): 0080's body verbatim except the
 --     lines marked "b12 recheck R19": closed_* join the columns only the system sets, and once set they never change.
 --     No policy or grant changes (isa_update already admits the system; a user still sets only acknowledged_*).
---   * b12 recheck R24: ai_isa_handoffs adds sweep_failures (CHECK >= 0, default 0), joined to the guard's system-only
+--   * b12 recheck R24: ai_isa_handoffs adds sweep_failure_count (CHECK >= 0, default 0), joined to the guard's system-only
 --     columns (the guard line marked "b12 recheck R24"); the self-check asserts it. No policy or grant changes.
 -- =============================================================================
 
@@ -574,9 +574,9 @@ ALTER TABLE ai_isa_handoffs ADD COLUMN closed_at timestamptz,
 ALTER TABLE ai_isa_handoffs ADD CONSTRAINT ai_isa_handoffs_closed_pair CHECK ((closed_at IS NULL) = (closed_reason IS NULL));
 -- b12 recheck R24: the deadline sweep's failed passes on this handoff (each row runs in its own savepoint; a failed
 -- row is rolled back alone and counted here, and the pass that reaches 3 raises a P2 alert naming it). System-only.
-ALTER TABLE ai_isa_handoffs ADD COLUMN sweep_failures integer NOT NULL DEFAULT 0 CONSTRAINT ai_isa_handoffs_sweep_failures_check CHECK (sweep_failures >= 0);
+ALTER TABLE ai_isa_handoffs ADD COLUMN sweep_failure_count integer NOT NULL DEFAULT 0 CONSTRAINT ai_isa_handoffs_sweep_failure_count_check CHECK (sweep_failure_count >= 0);
 
--- 0080's handoffs guard verbatim except the lines marked "b12 recheck R19" (and R24: sweep_failures)
+-- 0080's handoffs guard verbatim except the lines marked "b12 recheck R19" (and R24: sweep_failure_count)
 CREATE OR REPLACE FUNCTION app.ai_isa_handoffs_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   -- another tenant's row: RLS refuses it (the guard never runs ahead of the tenant policy)
@@ -587,10 +587,10 @@ BEGIN
       OLD.appointment_id, OLD.package, OLD.package_sha256, OLD.sla_class, OLD.recipient_user_id, OLD.created_at) THEN
     RAISE EXCEPTION 'AI_ISA_HANDOFF_FROZEN: a handoff package never changes' USING ERRCODE = 'check_violation';
   END IF;
-  -- b12 recheck R19: closed_* are the system's too (b12 recheck R24: and sweep_failures)
+  -- b12 recheck R19: closed_* are the system's too (b12 recheck R24: and sweep_failure_count)
   IF app.actor_kind() <> 'system' AND (NEW.pending_message_id, NEW.confirmation_status, NEW.sla_due_at, NEW.sla_met_at,
-       NEW.sla_escalated_at, NEW.sla_escalation_level, NEW.sweep_failures, NEW.closed_at, NEW.closed_reason) IS DISTINCT FROM (OLD.pending_message_id, OLD.confirmation_status, OLD.sla_due_at,
-       OLD.sla_met_at, OLD.sla_escalated_at, OLD.sla_escalation_level, OLD.sweep_failures, OLD.closed_at, OLD.closed_reason) THEN
+       NEW.sla_escalated_at, NEW.sla_escalation_level, NEW.sweep_failure_count, NEW.closed_at, NEW.closed_reason) IS DISTINCT FROM (OLD.pending_message_id, OLD.confirmation_status, OLD.sla_due_at,
+       OLD.sla_met_at, OLD.sla_escalated_at, OLD.sla_escalation_level, OLD.sweep_failure_count, OLD.closed_at, OLD.closed_reason) THEN
     RAISE EXCEPTION 'AI_ISA_HANDOFF_ACK_ONLY: "Got it" acknowledges; only a human touch clears the deadline' USING ERRCODE = 'check_violation';
   END IF;
   -- b12 recheck R19: a close is final (never reopened, never re-dated, never given another reason)
@@ -651,7 +651,7 @@ BEGIN
   IF q::int <> 10 THEN RAISE EXCEPTION '0081 self-check failed: % root-survivor policies', q; END IF;
   -- b12 recheck R19: only the system closes a handoff, and a close is final (b12 recheck R24: only the system counts
   -- the sweep's failures)
-  IF (SELECT p.prosrc !~ 'IF app\.actor_kind\(\) <> ''system'' AND \(NEW\.pending_message_id, [^)]*NEW\.sweep_failures, NEW\.closed_at, NEW\.closed_reason\) IS DISTINCT FROM \(OLD\.pending_message_id, [^)]*OLD\.sweep_failures, OLD\.closed_at, OLD\.closed_reason\)'
+  IF (SELECT p.prosrc !~ 'IF app\.actor_kind\(\) <> ''system'' AND \(NEW\.pending_message_id, [^)]*NEW\.sweep_failure_count, NEW\.closed_at, NEW\.closed_reason\) IS DISTINCT FROM \(OLD\.pending_message_id, [^)]*OLD\.sweep_failure_count, OLD\.closed_at, OLD\.closed_reason\)'
              OR position('IF OLD.closed_at IS NOT NULL AND (NEW.closed_at, NEW.closed_reason) IS DISTINCT FROM (OLD.closed_at, OLD.closed_reason) THEN' IN p.prosrc) = 0
         FROM pg_proc p WHERE p.oid = 'app.ai_isa_handoffs_guard()'::regprocedure)
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.ai_isa_handoffs'::regclass AND conname = 'ai_isa_handoffs_closed_pair') THEN

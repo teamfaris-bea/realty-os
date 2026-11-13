@@ -183,7 +183,7 @@ export interface AiIsaHandoffsTable {
   created_at: Generated<Timestamp>;
   closed_at: Timestamp | null;
   closed_reason: string | null;
-  sweep_failures: Generated<number>;
+  sweep_failure_count: Generated<number>;
 }
 
 /** public.ai_isa_person_blocks (table) */

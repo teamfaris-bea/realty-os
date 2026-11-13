@@ -898,7 +898,7 @@ Every CREATE OR REPLACE starts from the object's newest definition at merge time
 - Partial unique (message_id, listing_id, fact_kind) WHERE status='sent'.
 
 **`ai_isa_handoffs`**
-- Columns: tenant_id, id, assignment_id (unique), reason, basis, assistant_action_id, appointment_id, package jsonb (frozen), package_sha256, pending_message_id, confirmation_status, sla_class, sla_due_at, sla_met_at, sla_escalated_at, recipient_user_id, acknowledged_*, created_at, closed_at and closed_reason (`deadline_met`, `acknowledged`, `lead_closed`, `care_restarted`, `care_continued`: why the system closed the handoff; system-only and final, 0081; b12 recheck R19, R23), sweep_failures (the deadline sweep's failed passes on the handoff; system-only, 0081; b12 recheck R24).
+- Columns: tenant_id, id, assignment_id (unique), reason, basis, assistant_action_id, appointment_id, package jsonb (frozen), package_sha256, pending_message_id, confirmation_status, sla_class, sla_due_at, sla_met_at, sla_escalated_at, recipient_user_id, acknowledged_*, created_at, closed_at and closed_reason (`deadline_met`, `acknowledged`, `lead_closed`, `care_restarted`, `care_continued`: why the system closed the handoff; system-only and final, 0081; b12 recheck R19, R23), sweep_failure_count (the deadline sweep's failed passes on the handoff; system-only, 0081; b12 recheck R24).
 
 **`ai_isa_daily_counts`**
 - Columns: tenant_id, local_day, n; PK (tenant_id, local_day). Written only by the guard.
