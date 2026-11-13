@@ -627,6 +627,59 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     // a replay of the same job books nothing more
     expect(await book.runBookJob(d as never, bw.tenantId, { assignmentId: a.id, offerId: o!.id })).not.toBe('BOOKED');
     expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM appointments WHERE contact_id = $1`, [l.id])).rows[0]!.n).toBe(1);
+    // b13 review B13-MRG-1: and writes no "booked after AI care ended" card: this assignment's own handoff carries the
+    // appointment and its confirmation
+    expect((await h.su.query(`SELECT 1 FROM priority_feed_items WHERE dedupe_key = $1`, [`ai_isa_booked:${o!.id}`])).rows).toEqual([]);
+  });
+
+  const bookJobsOf = async (offerId: string) => (await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM jobs WHERE tenant_id = $1 AND kind = 'ai_isa.book' AND payload->>'offerId' = $2`, [bw.tenantId, offerId])).rows[0]!.n;
+  const bookedCards = async (offerId: string) => (await h.su.query<{ state: string; code: string }>(`SELECT state, reasons->0->>'code' AS code FROM priority_feed_items WHERE dedupe_key = $1 ORDER BY created_at`, [`ai_isa_booked:${offerId}`])).rows;
+
+  it('R-ISA-13 R-ISA-14 (b13 review B13-MRG-1): a normal booking, then two sweep passes: no book job runs again, no "booked after AI care ended" card, no critical notification', async () => {
+    const { l, o } = await offered();
+    await reply(l, '2');
+    expect((await assignmentOf(h, l.id))!.end_reason).toBe('appointment_booked');
+    expect((await h.su.query(`SELECT machine->'offer'->>'status' AS os FROM ai_isa_assignments WHERE contact_id = $1`, [l.id])).rows).toEqual([{ os: 'accepting' }]); // core keeps the offer when it ends
+    const jobs = await bookJobsOf(o!.id);
+    const { sweepNow } = await import('./testing.js');
+    for (let i = 0; i < 2; i++) await sweepNow(h, bw.tenantId, 2);
+    expect(await bookJobsOf(o!.id)).toBe(jobs);
+    expect(await bookedCards(o!.id)).toEqual([]);
+    expect((await h.su.query(`SELECT 1 FROM notifications WHERE dedupe_key = $1`, [`ai_isa_booked:${o!.id}`])).rows).toEqual([]);
+    expect((await handoffOf(h, l.id))[0]!.confirmation_status).not.toBe('none');
+  });
+
+  it('R-ISA-15 E523 (b13 review B13-MRG-1): a booking after care ended gets its card once; the job\'s own retry after a crash before TX-C writes it; the sweep never runs the job again and a dismissed card never comes back', async () => {
+    const { l, o } = await offered();
+    const { bookTestHooks } = await import('./booking/book.js');
+    bookTestHooks.afterCareRead = async () => {
+      bookTestHooks.afterCareRead = undefined;
+      await inboundSms(h, l.phone, bw.mainNumber, 'STOP');
+      await runIsa(h, bw.tenantId, 2, { beforeTick: async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND kind = 'ai_isa.book' AND status = 'pending'`, [bw.tenantId]); } });
+    };
+    try {
+      await reply(l, '2');
+    } finally {
+      bookTestHooks.afterCareRead = undefined;
+    }
+    await runIsa(h, bw.tenantId, 3);
+    expect((await assignmentOf(h, l.id))!.end_reason).toBe('opted_out');
+    expect(await bookedCards(o!.id)).toEqual([{ state: 'open', code: 'AI_ISA_BOOKED_AFTER_END' }]);
+    // a crash between tx#1 and TX-C: the card was never written; the job's own retry (a lease that ran out) replays
+    // tx#1 straight to TX-C and writes it
+    await h.su.query(`DELETE FROM notifications WHERE dedupe_key = $1`, [`ai_isa_booked:${o!.id}`]);
+    await h.su.query(`DELETE FROM priority_feed_items WHERE dedupe_key = $1`, [`ai_isa_booked:${o!.id}`]);
+    const { runBookJob } = await import('./booking/book.js');
+    const d = { ...depsFromPlatform(h.app.platform), adapters: h.providers.integrations, now: () => Date.now() };
+    expect(await runBookJob(d as never, bw.tenantId, { assignmentId: (await assignmentOf(h, l.id))!.id, offerId: o!.id })).toBe('BOOKED_AFTER_END');
+    expect(await bookedCards(o!.id)).toEqual([{ state: 'open', code: 'AI_ISA_BOOKED_AFTER_END' }]);
+    const jobs = await bookJobsOf(o!.id);
+    const { sweepNow } = await import('./testing.js');
+    // the agent dismisses it: later passes neither run the job again nor bring the card back
+    await h.su.query(`UPDATE priority_feed_items SET state = 'done', resolved_at = now() WHERE dedupe_key = $1`, [`ai_isa_booked:${o!.id}`]);
+    for (let i = 0; i < 2; i++) await sweepNow(h, bw.tenantId, 2);
+    expect(await bookJobsOf(o!.id)).toBe(jobs);
+    expect(await bookedCards(o!.id)).toEqual([{ state: 'done', code: 'AI_ISA_BOOKED_AFTER_END' }]);
   });
 
   it('R-ISA-13: a crash before the book job ran (stuck accepting): the sweep re-enqueues it and it finishes once', async () => {
@@ -641,6 +694,37 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect((await offerOf(l.id))!.status).toBe('accepted');
     expect((await assignmentOf(h, l.id))!.end_reason).toBe('appointment_booked');
     expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM appointments WHERE contact_id = $1`, [l.id])).rows[0]!.n).toBe(1);
+  });
+
+  it('R-ISA-13 (b13 review B13-MRG-2): the stuck read pages in (updated_at, id) order: with more stuck rows than a page, one pass re-enqueues every one and each is then decided', async () => {
+    const hold = async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND kind = 'ai_isa.book' AND status = 'pending'`, [bw.tenantId]); };
+    const stuck: { l: { id: string }; id: string }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { l, o } = await offered();
+      await reply(l, '2', 0);
+      await runIsa(h, bw.tenantId, 3, { beforeTick: hold });
+      expect((await offerOf(l.id))!.status).toBe('accepting');
+      // the job is lost (a crash) before the next lead's turns run
+      await h.su.query(`DELETE FROM jobs WHERE tenant_id = $1 AND kind = 'ai_isa.book' AND status = 'pending'`, [bw.tenantId]);
+      stuck.push({ l, id: o!.id });
+    }
+    // the rows have been accepting for over 5 minutes
+    await h.su.query(`SET session_replication_role = replica; UPDATE ai_isa_slot_offers SET updated_at = now() - interval '6 minutes' WHERE id IN (${stuck.map((x) => `'${x.id}'`).join(',')}); SET session_replication_role = origin`);
+    const { bookingSweepInTx, bookingSweepLimits } = await import('./handlers.js');
+    const pageSize = bookingSweepLimits.pageSize;
+    bookingSweepLimits.pageSize = 1;
+    try {
+      await withTenantTx(systemActor(bw.tenantId as never, 'assistant'), (tx, now) => bookingSweepInTx(tx, depsFromPlatform(h.app.platform), now), { db: h.database });
+    } finally {
+      bookingSweepLimits.pageSize = pageSize;
+    }
+    const pending = (await h.su.query<{ id: string }>(`SELECT payload->>'offerId' AS id FROM jobs WHERE tenant_id = $1 AND kind = 'ai_isa.book' AND status = 'pending'`, [bw.tenantId])).rows.map((r) => r.id);
+    expect(pending).toEqual(expect.arrayContaining(stuck.map((x) => x.id)));
+    // each row is then decided (the leads chose the same time of the same agent: one books, the others are SLOT_TAKEN)
+    await runIsa(h, bw.tenantId, 4);
+    const decided = (await h.su.query<{ status: string }>(`SELECT status FROM ai_isa_slot_offers WHERE id = ANY ($1::uuid[])`, [stuck.map((x) => x.id)])).rows.map((r) => r.status);
+    expect(decided.filter((x) => x === 'accepted')).toHaveLength(1);
+    expect(decided.filter((x) => x === 'refused')).toHaveLength(2);
   });
 
   it('R-ISA-15 E523: a STOP during tx#1 → booked, no confirmation, the booked-after-end card', async () => {

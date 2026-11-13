@@ -19,7 +19,8 @@
 //        (booking_unavailable), the honest code kept on the row and the turn. Booked and live: end appointment_booked,
 //        the confirmation the handoff's pending message (E528). Booked but paused after step 2 (E523): end with no
 //        confirmation, notes BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT. Booked after care ended: the handoff is
-//        frozen, so a separate critical card. Booked but the machine did not hold the offer as accepting, or held it
+//        frozen, so a separate critical card, unless care ended ON this booking (its own handoff carries the
+//        appointment: a replay, b13 review B13-MRG-1). Booked but the machine did not hold the offer as accepting, or held it
 //        and did not end on the result: a system pause (check_this) and the same card. AI care is never live after a
 //        booking.
 import type { Instant, SystemActor, TenantId } from '@realty/core/foundation';
@@ -152,8 +153,14 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
     const read = readAt ?? o.updatedAt;
     const machineAccepting = a.machine.offer !== null && a.machine.offer.id === o.id && a.machine.offer.status === 'accepting';
     if (a.endedAt !== null) {
-      if (booked) await bookedCardInTx(tx, deps, a, o, 'AI_ISA_BOOKED_AFTER_END', now);
-      return booked ? 'BOOKED_AFTER_END' : 'ENDED';
+      if (!booked) return 'ENDED';
+      // b13 review B13-MRG-1: care ended ON this booking (appointment_booked): its own handoff carries the appointment
+      // and its confirmation, so a replay writes no "booked after AI care ended" card
+      const handed = await sql<{ x: number }>`SELECT 1 AS x FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
+        AND appointment_id = ${o.appointmentId}`.execute(tx);
+      if (handed.rows.length > 0) return 'HANDED_BACK';
+      await bookedCardInTx(tx, deps, a, o, 'AI_ISA_BOOKED_AFTER_END', now);
+      return 'BOOKED_AFTER_END';
     }
     const ctx = await contextFor(tx, a, now);
     const turn = await ensureTurn(tx, deps.ids, ctx, { triggerKind: 'booking', triggerKey: `booking:${o.id}`, pinnedSeq: a.lastInboundSeq, status: 'no_reply' });

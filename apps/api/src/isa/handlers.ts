@@ -178,9 +178,12 @@ export async function sweepInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, now: 
 
 export const BOOKING_STUCK_MS = 5 * 60_000;
 
+/** The booking sweep's stuck read: rows per page and pages per pass (b13 review B13-MRG-2). Tests may lower pageSize. */
+export const bookingSweepLimits = { pageSize: 100, pages: 20 };
+
 /**
  * The booking part of the sweep (items 8–9): an offer unsent at its expiry is canceled (OFFER_EXPIRED_UNSENT); a row
- * accepting for 5 minutes, or decided while the machine still says accepting, gets its book job again (tx#1 replays
+ * accepting for 5 minutes, or decided while a LIVE machine still says accepting, gets its book job again (tx#1 replays
  * a decided row straight to TX-C); a post-handoff confirmation still unsent at the slot's notice time is canceled
  * (CONFIRMATION_LATE) and the card made critical. The notice is the booking policy's, kept with the appointment at TX-C
  * (appointmentDetail.minNoticeHours; batch 13 audit ISA2B-14); a package without it (written before batch 13) falls back
@@ -197,13 +200,29 @@ export async function bookingSweepInTx(tx: Tx, deps: IsaDeps, now: Instant): Pro
     }
     await sql`UPDATE ai_isa_slot_offers SET status = 'expired', refusal_code = 'OFFER_EXPIRED_UNSENT' WHERE tenant_id = app.tenant_id() AND id = ${o.id} AND status = 'pending_delivery'`.execute(tx);
   }
-  const stuck = await sql<{ id: string; assignment_id: string }>`SELECT o.id, o.assignment_id FROM ai_isa_slot_offers o JOIN ai_isa_assignments a ON a.tenant_id = o.tenant_id AND a.id = o.assignment_id
-    WHERE o.tenant_id = app.tenant_id() AND (
-        (o.status = 'accepting' AND o.updated_at < ${new Date(now - BOOKING_STUCK_MS)})
-     OR (o.status IN ('accepted','refused') AND a.machine->'offer'->>'id' = o.id::text AND a.machine->'offer'->>'status' = 'accepting'))
-    LIMIT 100`.execute(tx);
-  for (const o of stuck.rows) {
-    await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.book', payload: { assignmentId: o.assignment_id, offerId: o.id }, dedupeKey: `ai_isa.book:${o.id}` }); // the same key: deduped while a job is pending or running
+  // b13 review B13-MRG-1: the decided-row disjunct is for a LIVE machine only. Core keeps `offer` (still 'accepting')
+  // in the state it ends care with, so every booked assignment matched it forever: the job ran again every pass and
+  // TX-C wrote a false "booked after AI care ended" card each time the last one was dismissed. An assignment that ended
+  // has nothing left to wait for (the job's own retries cover a crash between tx#1 and TX-C).
+  // b13 review B13-MRG-2: read in (updated_at, id) order and in pages, so every stuck row is reached in one pass,
+  // never the same arbitrary 100.
+  // the cursor is the row's updated_at as text: a JS Date would drop its microseconds and read the same row again
+  let after: { at: string; id: string } | null = null;
+  for (let page = 0; page < bookingSweepLimits.pages; page += 1) {
+    const stuck: { rows: { id: string; assignment_id: string; at: string }[] } = await sql<{ id: string; assignment_id: string; at: string }>`SELECT o.id, o.assignment_id, o.updated_at::text AS at
+        FROM ai_isa_slot_offers o JOIN ai_isa_assignments a ON a.tenant_id = o.tenant_id AND a.id = o.assignment_id
+      WHERE o.tenant_id = app.tenant_id() AND (
+          (o.status = 'accepting' AND o.updated_at < ${new Date(now - BOOKING_STUCK_MS)})
+       OR (o.status IN ('accepted','refused') AND a.ended_at IS NULL AND a.machine->'offer'->>'id' = o.id::text AND a.machine->'offer'->>'status' = 'accepting'))
+        AND (${after === null} OR (o.updated_at, o.id) > (${after?.at ?? null}::timestamptz, ${after?.id ?? null}::uuid))
+      ORDER BY o.updated_at, o.id
+      LIMIT ${bookingSweepLimits.pageSize}`.execute(tx);
+    for (const o of stuck.rows) {
+      await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.book', payload: { assignmentId: o.assignment_id, offerId: o.id }, dedupeKey: `ai_isa.book:${o.id}` }); // the same key: deduped while a job is pending or running
+    }
+    if (stuck.rows.length < bookingSweepLimits.pageSize) break;
+    const last = stuck.rows[stuck.rows.length - 1]!;
+    after = { at: last.at, id: last.id };
   }
   const late = await sql<{ id: string; assignment_id: string; contact_id: string; recipient_user_id: string | null; m: string }>`SELECT h.id, h.assignment_id, h.contact_id, h.recipient_user_id, h.pending_message_id AS m
       FROM ai_isa_handoffs h JOIN messages m ON m.tenant_id = h.tenant_id AND m.id = h.pending_message_id
