@@ -294,3 +294,35 @@ describe('b13 audit V2B-4 R-MLS-7: a seller value range never rests on BuildingA
     }
   });
 });
+
+describe('b13 audit V2B-10 E633 R-CMA-7 R-MLS-5: a secondary MLS mirror of the subject listing at a variant key is never a near match on the seller-range path', () => {
+  it('E633: relisted under a new MLS number, the team listing keeps its first MLS record (still live, at the variant "780 Sample Street"; the listing is "780 Sample Avenue") as a second mirror; resolveSubject puts it in the self set, so the range shows (has_data); unlinked, the same row reads "another live MLS listing may be this home"', async () => {
+    const w3 = await assistantWorld(h, { agents: 1 });
+    const a3 = w3.agents[0]!;
+    const m3 = await mlsConnection(h, w3.tenantId, w3.owner.userId!, { pack: cmaPack({ maxStalenessHours: 72 }), lastSyncedAt: new Date() });
+    const mw3 = { h, tenantId: w3.tenantId, mls: m3 };
+    await localSales(mw3, 8);
+    const first = `TA${Date.now() % 100000}`;
+    const second = `TB${Date.now() % 100000}`;
+    const own = await teamListing(a3 as TestClient, { addressLine1: '780 Sample Avenue', postalCode: '94110', status: 'active', mlsNumber: first });
+    const seller = await ownedContact(a3 as TestClient, { consent: false, firstName: 'Sam' });
+    expect((await call(a3, 'POST', `/listings/${own}/contacts`, { contactId: seller.id, role: 'seller' })).status).toBe(200);
+    // the first MLS record, at a variant of the address (another street key), linked by its number
+    const secondary = await mlsSale(mw3, { mlsNumber: first, line1: '780 Sample Street', status: 'active', closePriceCents: null, closeDate: null, sqft: 1450 });
+    // relisted: the team listing takes the new number, and its new MLS record is at the listing's own address
+    expect((await call(a3, 'PATCH', `/listings/${own}`, { mlsNumber: second })).status).toBe(200);
+    const primary = await mlsSale(mw3, { mlsNumber: second, line1: '780 Sample Avenue', status: 'active', closePriceCents: null, closeDate: null, sqft: 1450 });
+    const linked = (await h.su.query<{ id: string; team_listing_id: string | null }>('SELECT id, team_listing_id FROM listings WHERE id = ANY ($1::uuid[])', [[secondary, primary]])).rows;
+    expect(linked.map((r) => r.team_listing_id)).toEqual([own, own]);
+    const u = await withCmaCleared(async () => {
+      await reconcile(h, w3.tenantId);
+      return (await call<{ update: ValueUpdate }>(a3, 'GET', `/listings/${own}/seller-update`)).body.update;
+    });
+    expect(valueOf(u).state).toBe('has_data');
+    expect(JSON.stringify(valueOf(u))).not.toMatch(/another live MLS listing may be this home/);
+    // the control: the same row without the mirror link is a near match (fail closed, the range withheld)
+    await h.su.query('UPDATE listings SET team_listing_id = NULL WHERE id = $1', [secondary]);
+    const v = (await withCmaCleared(() => call<{ update: ValueUpdate }>(a3, 'POST', `/seller-updates/${u.id}/reassemble`))).body.update;
+    expect(valueOf(v)).toMatchObject({ state: 'unavailable', lines: [{ text: 'Value range unavailable: another live MLS listing may be this home.', feedback: null }] });
+  });
+});
