@@ -167,20 +167,28 @@ export async function transcribeRecording(recordingId: string, deps: CommsDeps, 
 
 export const STREAM_TOKEN_TTL_MS = 60_000;
 
-/** core.can facts for recording.play / transcript.view, from RLS-visible rows (null ⇒ 404). */
+/**
+ * core.can facts for recording.play / transcript.view, from RLS-visible rows (null ⇒ 404). A recording stays on the
+ * record its call was made on when that record is merged away (the call moves, the recording does not), so the person
+ * the facts are about is the record's ROOT SURVIVOR (`app.contact_merge_root`, 0075; the record itself when it was never
+ * merged). RLS on recordings (0078: recordings_select and recording_scope follow the root too) decides whether the row is
+ * visible at all; the contact is joined LEFT so a hidden survivor only makes own/team false.
+ */
 export async function recordingFacts(tx: Tx, recordingId: string): Promise<ResourceFacts | null> {
-  const r = await sql<{ own: boolean; on_call: boolean; team: boolean; deal: boolean; tl: boolean; tc: boolean }>`
+  const r = await sql<{ own: boolean; on_call: boolean; team: boolean | null; deal: boolean; tl: boolean; tc: boolean }>`
     SELECT c.owner_user_id IS NOT DISTINCT FROM app.user_id() AND c.owner_user_id IS NOT NULL AS own,
            r.agent_user_id IS NOT DISTINCT FROM app.user_id() AND r.agent_user_id IS NOT NULL AS on_call,
            c.owner_user_id = ANY (app.my_team_member_ids()) AS team,
-           r.contact_id = ANY (app.my_deal_contact_ids()) AS deal,
+           (r.contact_id = ANY (app.my_deal_contact_ids()) OR m.root = ANY (app.my_deal_contact_ids())) AS deal,
            s.team_lead_recording_access AS tl, s.tc_recording_access AS tc
-      FROM recordings r JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = r.contact_id
+      FROM recordings r
+      CROSS JOIN LATERAL (SELECT app.contact_merge_root(r.tenant_id, r.contact_id) AS root) m
+      LEFT JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = m.root
       JOIN tenant_settings s ON s.tenant_id = r.tenant_id
      WHERE r.tenant_id = app.tenant_id() AND r.id = ${recordingId}`.execute(tx);
   const f = r.rows[0];
   if (!f) return null;
-  return { own: f.own, onCall: f.on_call, team: f.team, deal: f.deal, settings: { teamLeadRecordingAccess: f.tl, tcRecordingAccess: f.tc } };
+  return { own: f.own, onCall: f.on_call, team: f.team === true, deal: f.deal, settings: { teamLeadRecordingAccess: f.tl, tcRecordingAccess: f.tc } };
 }
 
 export async function issueStreamToken(actor: UserActor, recordingId: string, purpose: 'play' | 'download', deps: CommsDeps): Promise<{ token: string; expiresAt: string; url: string }> {
