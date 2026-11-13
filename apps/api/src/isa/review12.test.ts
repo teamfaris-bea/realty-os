@@ -615,6 +615,48 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed' });
   });
 
+  it('R-ISA-30 E521 (b12 recheck R20): when the system close after "Got it" on a no-deadline handoff fails, the ack still answers what is true (acknowledged, not closed) and the deadline sweep closes it', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ sla_class: 'none', recipient_user_id: agent.userId });
+    // the system close fails once: a trigger the superuser adds refuses this handoff's close (and only it)
+    await h.su.query(`CREATE FUNCTION public.r20_refuse_close() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.id = '${ho!.id}'::uuid AND OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL THEN RAISE EXCEPTION 'R20_INJECTED_FAILURE'; END IF;
+        RETURN NEW; END $$`);
+    await h.su.query(`CREATE TRIGGER r20_refuse_close BEFORE UPDATE ON ai_isa_handoffs FOR EACH ROW EXECUTE FUNCTION public.r20_refuse_close()`);
+    let ack: Awaited<ReturnType<typeof call<Record<string, unknown>>>>;
+    try {
+      ack = await call<Record<string, unknown>>(agent, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {});
+    } finally {
+      await h.su.query(`DROP TRIGGER r20_refuse_close ON ai_isa_handoffs`);
+      await h.su.query(`DROP FUNCTION public.r20_refuse_close()`);
+    }
+    // the acknowledgement committed; the close did not, and the answer says so
+    expect([ack.status, ack.body]).toEqual([200, { handoffId: ho!.id, acknowledgedAt: expect.any(String), slaMet: false, confirmationStatus: expect.any(String), closedReason: null }]);
+    expect((await h.su.query<{ by: string | null }>(`SELECT acknowledged_by_user_id AS by FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.by).toBe(agent.userId);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
+    expect(await actionOf(ho!.id)).toMatchObject({ status: 'proposed' });
+    expect(await closedAudit(ho!.id)).toEqual([]);
+    // the retry: the deadline sweep closes an acknowledged no-deadline handoff that is still open, once
+    const deps = depsFromPlatform(h.app.platform);
+    const actor = systemActor(w.tenantId, 'assistant');
+    const sweep = () => withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor), { db: h.database });
+    expect((await sweep()).closed).toBeGreaterThanOrEqual(1);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: null }]);
+    expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
+    expect(await closedAudit(ho!.id)).toEqual([{ reason: 'acknowledged', actor_kind: 'system' }]);
+    await sweep();
+    expect(await closedAudit(ho!.id)).toHaveLength(1);
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 0 });
+    const panel = await call<{ handoff: { closedReason: string | null } | null }>(agent, 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(panel.body.handoff?.closedReason).toBe('acknowledged');
+  });
+
   it('R-ISA-30 E521: a lead closed while its handoff has a deadline: the sweep closes the card and executes the action, never sends an overdue alert, and the deadline is not recorded as met', async () => {
     const { l, ho, a1 } = await handedToA1();
     expect((await command(a1, l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);

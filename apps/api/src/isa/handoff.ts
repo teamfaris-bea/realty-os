@@ -241,7 +241,9 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
   // many pile up they never fill the 200 and starve a newer handoff; a touch or a close brings it back. Every row read
   // leaves the set or moves up a level, so the 200 bound the work of one pass and every due row is reached in turn.
   const at = new Date(now);
-  const rows = await sql<{ id: string; action_id: string; contact_id: string; lead_closed: boolean; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null; touch_met: boolean; escalate: boolean }>`
+  // b12 recheck R20: also an acknowledged handoff with no deadline that is still open (the ack route's own close after
+  // the acknowledgement failed): it is closed here, so that close is retried until it holds
+  const rows = await sql<{ id: string; action_id: string; contact_id: string; lead_closed: boolean; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null; ack_close: boolean; touch_met: boolean; escalate: boolean }>`
     SELECT s.* FROM (
       SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level,
              CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
@@ -249,16 +251,21 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
              CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
                     WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.owner_user_id IS NOT NULL ORDER BY e.seq DESC LIMIT 1) END AS previous_user_id,
              COALESCE(h.recipient_user_id, a.owner_user_id) AS frozen_user_id, c.last_human_touch_at AS touched,
-             COALESCE(c.last_human_touch_at >= h.created_at, false) AS touch_met,
-             (h.sla_escalation_level = 0 AND h.sla_due_at <= ${at}::timestamptz)
-               OR (h.sla_escalation_level = 1 AND h.sla_due_at + (h.sla_due_at - h.created_at) <= ${at}::timestamptz) AS escalate
+             h.sla_class = 'none' AS ack_close,
+             h.sla_class <> 'none' AND COALESCE(c.last_human_touch_at >= h.created_at, false) AS touch_met,
+             h.sla_class <> 'none' AND ((h.sla_escalation_level = 0 AND h.sla_due_at <= ${at}::timestamptz)
+               OR (h.sla_escalation_level = 1 AND h.sla_due_at + (h.sla_due_at - h.created_at) <= ${at}::timestamptz)) AS escalate
         FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
         JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
         LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
-       WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' AND h.closed_at IS NULL) s
-     WHERE s.touch_met OR s.lead_closed OR s.escalate
+       WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.closed_at IS NULL AND (h.sla_class <> 'none' OR h.acknowledged_at IS NOT NULL)) s
+     WHERE s.ack_close OR s.touch_met OR s.lead_closed OR s.escalate
      ORDER BY s.sla_due_at, s.id LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
+    if (r.ack_close) {
+      if (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'acknowledged', now)) closed += 1;
+      continue;
+    }
     if (r.touch_met) {
       await sql`UPDATE ai_isa_handoffs SET sla_met_at = ${r.touched} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
       await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'deadline_met', now);

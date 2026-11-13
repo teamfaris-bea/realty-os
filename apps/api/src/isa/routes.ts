@@ -219,12 +219,19 @@ async function register(app: FastifyInstance): Promise<void> {
     // card of it (the Team Lead's and each Owner/Admin's too, which the caller's RLS would not reach) and executes its
     // action, right after the acknowledgement commits; a repeat "Got it" retries it. A handoff with a deadline stays open
     // until a human touch meets it (the sweep). b12 recheck R19: the result says why the handoff is closed, as stored.
+    // b12 recheck R20: the acknowledgement has committed by then, so a failed close is no failed "Got it": the answer
+    // stays 200 and says it is not closed yet (closedReason null), and the deadline sweep closes an acknowledged
+    // no-deadline handoff that is still open (slaSweepInTx), so the cards never stay open for want of a retry.
     if (out.close !== null) {
       const sys = systemActor(actor.tenantId, 'assistant');
-      out.body.closedReason = await withTenantTx(sys, async (tx, now) => {
-        await closeHandoffInTx(tx, sys, out.close!, 'acknowledged', now);
-        return (await sql<{ r: HandoffCloseReason | null }>`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${out.close!.id}`.execute(tx)).rows[0]?.r ?? null;
-      }, { db });
+      try {
+        out.body.closedReason = await withTenantTx(sys, async (tx, now) => {
+          await closeHandoffInTx(tx, sys, out.close!, 'acknowledged', now);
+          return (await sql<{ r: HandoffCloseReason | null }>`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${out.close!.id}`.execute(tx)).rows[0]?.r ?? null;
+        }, { db });
+      } catch (err) {
+        req.log.warn({ code: 'AI_ISA_HANDOFF_CLOSE_DEFERRED', err }, 'handoff close after the acknowledgement failed; the deadline sweep retries it');
+      }
     }
     return out.body;
   });
