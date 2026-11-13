@@ -211,6 +211,39 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect((await h.su.query(`SELECT 1 FROM appointments WHERE contact_id = $1`, [l.id])).rows).toHaveLength(0);
   });
 
+  // batch 13 audit ISA2B-02: the send window is checked at the instant the caps clear (core's confirmationInTime only
+  // compares nextSendAt with the notice time, so nextSendAt itself must be a time the confirmation can really go out)
+  it('R-ISA-13: CONFIRMATION_TOO_LATE when the caps clear after the window closes: the confirmation waits for 08:00, after the 09:00 slot\'s notice time', async () => {
+    const { l, o } = await offered();
+    // the fixed-offset zone of this world (openZone: it is 10:00-17:59 there now)
+    const m = /^Etc\/GMT([+-])(\d+)$/.exec(zone);
+    const offH = zone === 'UTC' ? 0 : m ? (m[1] === '-' ? 1 : -1) * Number(m[2]) : NaN;
+    expect(Number.isFinite(offH), zone).toBe(true);
+    const DAY = 86_400_000;
+    const now = Date.now();
+    const midnight = Math.floor((now + offH * 3_600_000) / DAY) * DAY - offH * 3_600_000; // local midnight today, as an instant
+    const clearAt = midnight + 20.5 * 3_600_000; // 20:30 local tonight: after the 20:00 close
+    // the AI's own sends move out of the 24 hours (only the automated cap and the window decide)
+    await h.su.query(`UPDATE messages SET dispatched_at = now() - interval '25 hours' WHERE contact_id = $1 AND direction = 'outbound' AND dispatched_at IS NOT NULL`, [l.id]);
+    const conv = (await h.su.query<{ id: string }>(`SELECT id FROM conversations WHERE contact_id = $1`, [l.id])).rows[0]!;
+    for (let i = 0; i < 3; i += 1) {
+      await h.su.query(`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body, status,
+          initiator, purpose, action_category, dispatched_at, occurred_at) VALUES ($1, gen_random_uuid(), $2, $3, 'sms', 'outbound', $4, $5, $6, 'Alert', 'sent',
+          'system', 'informational', 'search_alert', $7, now())`, [bw.tenantId, conv.id, l.id, bw.mainNumberId, bw.mainNumber, l.phone, new Date(clearAt - DAY)]);
+    }
+    // the agreed slot: 09:00 local tomorrow (12.5 h after the caps clear, but only 1 h after the window opens at 08:00)
+    const startsAt = midnight + DAY + 9 * 3_600_000;
+    await h.su.query(`UPDATE ai_isa_slot_offers SET slots = jsonb_build_array(jsonb_build_object('startsAt', $2::bigint, 'endsAt', $3::bigint)) WHERE id = $1`, [o!.id, startsAt, startsAt + 1_800_000]);
+    await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(machine, '{offer,slots}', (SELECT slots FROM ai_isa_slot_offers WHERE id = $2)) WHERE contact_id = $1`, [l.id, o!.id]);
+    await h.su.query(`UPDATE ai_isa_slot_offers SET status = 'accepting', accepted_slot = 1, accepted_message_id = $2 WHERE id = $1`, [o!.id, o!.offered_message_id]);
+    await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(jsonb_set(machine, '{offer,status}', '"accepting"'), '{offer,acceptedIndex}', '0') WHERE contact_id = $1`, [l.id]);
+    const { runBookJob } = await import('./booking/book.js');
+    const d = { ...depsFromPlatform(h.app.platform), adapters: h.providers.integrations, now: () => Date.now() };
+    expect(await runBookJob(d as never, bw.tenantId, { assignmentId: (await assignmentOf(h, l.id))!.id, offerId: o!.id })).toBe('REFUSED:CONFIRMATION_TOO_LATE');
+    expect((await offerOf(l.id))!.refusal_code).toBe('CONFIRMATION_TOO_LATE');
+    expect((await h.su.query(`SELECT 1 FROM appointments WHERE contact_id = $1`, [l.id])).rows).toHaveLength(0);
+  });
+
   it('R-ISA-13 E529: "ok" to the offer gets one clarification (never a booking); "1" then books', async () => {
     const { l } = await offered();
     const before = (await aiMessages(h, l.id)).length;

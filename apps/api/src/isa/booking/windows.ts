@@ -4,8 +4,10 @@
 //                  with no opt-in windows, routing hours Monday–Friday. computeOffer then keeps 08:00–20:00 in every
 //                  client zone. VERIFY (the defaults are engineering choices, one constant each).
 //   capsClearAt    the first instant the person's rolling 24 h AI and automated counts are below the caps.
-//   nextSendAt     the latest of: the reply window opening, the caps clearing, the last AI outbound + the minimum
-//                  gap. confirmationInTime (core) compares it with the slot's notice time (§4.6 item 3).
+//   nextSendAt     the first instant at which the caps have cleared, the minimum gap since the last AI outbound has
+//                  passed AND the send window is open (checked at that instant, not at `now`: caps that clear at
+//                  20:30 wait for 08:00; batch 13 audit ISA2B-02). confirmationInTime (core) compares it with the slot's
+//                  notice time (§4.6 item 3).
 import type { Instant } from '@realty/core/foundation';
 import type { AvailabilityWindow } from '../coreSeam.js';
 
@@ -47,22 +49,28 @@ export function capsClearAt(sentAt: readonly Instant[], cap: number, now: Instan
 
 export interface NextSendInput {
   now: Instant;
-  /** aiIsaSendWindow for a reply at `now` (null: no window ever) */
-  windowStart: Instant | null;
+  /** The send window's first instant at or after `at` (aiIsaSendWindow for the confirmation, a reply); null: never. */
+  windowAt: (at: Instant) => Instant | null;
   aiSentAt: readonly Instant[];
   automatedSentAt: readonly Instant[];
   caps: { ai24h: number; automated24h: number; minGapSeconds: number };
   lastAiOutboundAt: Instant | null;
 }
 
-/** When a confirmation queued now could go out (null when never). Pure. */
+/**
+ * When a confirmation queued now could go out (null when never). Pure. The window is evaluated at the instant the
+ * caps clear and the gap has passed, and the caps again at the window's opening, until both hold at one instant
+ * (counts only fall as time passes, so this settles in two rounds; a value that does not settle is treated as never,
+ * the conservative side: CONFIRMATION_TOO_LATE).
+ */
 export function nextSendAt(i: NextSendInput): Instant | null {
-  if (i.windowStart === null) return null;
-  const candidates = [
-    i.windowStart,
-    capsClearAt(i.aiSentAt, i.caps.ai24h, i.now),
-    capsClearAt(i.automatedSentAt, i.caps.automated24h, i.now),
-    i.lastAiOutboundAt === null ? i.now : ((i.lastAiOutboundAt + i.caps.minGapSeconds * 1000) as Instant),
-  ];
-  return Math.max(...candidates) as Instant;
+  let t = Math.max(i.now, i.lastAiOutboundAt === null ? i.now : i.lastAiOutboundAt + i.caps.minGapSeconds * 1000) as Instant;
+  for (let k = 0; k < 8; k += 1) {
+    const clear = Math.max(t, capsClearAt(i.aiSentAt, i.caps.ai24h, t), capsClearAt(i.automatedSentAt, i.caps.automated24h, t)) as Instant;
+    const open = i.windowAt(clear);
+    if (open === null) return null;
+    if (open === clear) return open;
+    t = open;
+  }
+  return null;
 }

@@ -90,9 +90,10 @@ export async function openAppointmentOf(tx: Tx, contactId: string): Promise<{ id
 }
 
 /**
- * When a confirmation queued now could be dispatched (confirmationInTime's nextSendAt): the latest of the reply window
- * over the zone set, the instant the person's rolling AI and automated 24 h counts fall below the caps, and the last
- * AI outbound plus the minimum gap (R-ISA-13: caps in confirmationInTime; an ISA-1 follow-up for core).
+ * When a confirmation queued now could be dispatched (confirmationInTime's nextSendAt): the first instant at which the
+ * person's rolling AI and automated 24 h counts are below the caps, the minimum gap since the last AI outbound has
+ * passed, and the reply window is open over the zone set at that very instant (R-ISA-13: caps in
+ * confirmationInTime; an ISA-1 follow-up for core; batch 13 audit ISA2B-02: not the window at `now`).
  */
 export async function nextSendAtInTx(tx: Tx, i: { contactId: string; zones: readonly IanaZone[]; content: AiIsaContent; now: Instant }): Promise<Instant | null> {
   const r = await sql<{ at: Date; ai: boolean }>`SELECT m.dispatched_at AS at,
@@ -106,9 +107,10 @@ export async function nextSendAtInTx(tx: Tx, i: { contactId: string; zones: read
   const last = (await sql<{ at: Date | null }>`SELECT max(dispatched_at) AS at FROM messages WHERE tenant_id = app.tenant_id()
     AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${i.contactId}::uuid)) AND initiator = 'assistant'
     AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line')`.execute(tx)).rows[0]?.at ?? null;
-  const windowStart = aiIsaSendWindow({ at: i.now, zones: i.zones, startSec: i.content.window.startSec, endSec: i.content.window.endSec, initiated: false,
+  // the confirmation is a reply (initiated false); the window is read at whatever instant the caps and the gap allow
+  const windowAt = (at: Instant) => aiIsaSendWindow({ at, zones: i.zones, startSec: i.content.window.startSec, endSec: i.content.window.endSec, initiated: false,
     initiatedDays: i.content.initiatedDays, noInitiatedOnHolidays: i.content.noInitiatedOnHolidays });
-  return nextSendAt({ now: i.now, windowStart, aiSentAt: ai, automatedSentAt: auto, caps: i.content.caps, lastAiOutboundAt: last ? instantFromDate(last) : null });
+  return nextSendAt({ now: i.now, windowAt, aiSentAt: ai, automatedSentAt: auto, caps: i.content.caps, lastAiOutboundAt: last ? instantFromDate(last) : null });
 }
 
 /** The accepting UPDATE of the `book` action (in TX-A or TX-B, under locks 2–4, on an `offered` row only). */
