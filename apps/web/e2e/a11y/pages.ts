@@ -118,6 +118,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/gbp', roles: ALL, url: at('/gbp') },
   // module 55 (phase3-staff): Likely to move (the sweep world has no approved model: the no_model sentence)
   { path: '/likely', roles: NOT_TC, url: at('/likely') },
+  // module 55 (phase3-staff): Coaching trends (the sweep world shows whatever state its settings give: a state sentence or counts)
+  { path: '/coaching/trends', roles: NOT_TC, url: at('/coaching/trends') },
 ];
 
 /** Screens outside the app frame (signed out). */
