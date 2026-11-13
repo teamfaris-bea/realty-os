@@ -2,10 +2,27 @@
 // (the request transaction's actor): contact detail visibility decides what each child row set holds,
 // and the DB guards (contact_points_immutable, contacts_stage_guard, notes_edit_guard, the relationship
 // and collaborator policies) refuse what the API never attempts. Nothing here widens what anyone sees.
+import { ianaZone } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 
 // ---- contacts --------------------------------------------------------------------------------------
+
+/**
+ * b12 recheck R25: the name a written contact zone is stored by. Core ianaZone's canonical name when the database's
+ * zone data knows it: the AI ISA turn stores that name, and 0081's send check compares the stored zone with it, so a
+ * zone stored in another spelling ('US/Eastern', 'etc/gmt+5', 'Etc/UTC') refused every AI send ISA_ZONE_UNRESOLVED.
+ * ICU and the database's tzdata disagree on a few links (ICU's America/Indianapolis is America/Indiana/Indianapolis
+ * in tzdata, and a database built without the backward links does not know the former): then the database's own
+ * spelling of the written name is kept, so every AT TIME ZONE on the contact still works; with neither known, the
+ * canonical name.
+ */
+export async function storedZoneName(tx: Tx, written: string): Promise<string> {
+  const canonical: string = ianaZone(written) ?? written;
+  const r = await sql<{ name: string }>`SELECT name FROM pg_timezone_names WHERE lower(name) IN (lower(${canonical}), lower(${written}))
+    ORDER BY name = ${canonical} DESC, lower(name) = lower(${canonical}) DESC, name LIMIT 1`.execute(tx);
+  return r.rows[0]?.name ?? canonical;
+}
 
 export interface EditRow {
   id: string;

@@ -952,3 +952,46 @@ describe('b12 recheck R12: every AI text counts once toward the 40-message limit
     });
   });
 });
+
+describe('b12 recheck R25: a person\'s zone written through the API is stored by its canonical name, so the send check reads the zone the turn resolved (R-ISA-10)', () => {
+  const stored = async (contactId: string) => (await h.su.query<{ tz: string | null; src: string | null }>(`SELECT timezone AS tz, timezone_source AS src FROM contacts WHERE id = $1`, [contactId])).rows[0]!;
+  async function patchZone(as: TestClient, contactId: string, timezone: string) {
+    const rv = (await h.su.query<{ rv: number }>(`SELECT row_version AS rv FROM contacts WHERE id = $1`, [contactId])).rows[0]!.rv;
+    return call<{ contact: { timezone: string | null } }>(as, 'PATCH', `/contacts/${contactId}`, { rowVersion: rv, timezone });
+  }
+
+  it('R-ISA-10: a zone written in another spelling (lower case) is stored canonical, and the AI reply to the person is sent, never refused ISA_ZONE_UNRESOLVED', async () => {
+    const { inboundSms } = await import('../comms/testing.js');
+    const { aiMessages, openZone } = await import('./testing.js');
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    const zone = openZone();
+    const p = await patchZone(agent, l.id, zone.toLowerCase());
+    expect(p.status, JSON.stringify(p.body)).toBe(200);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    await inboundSms(h, l.phone, w.mainNumber, 'Hi, we are looking for a place soon');
+    await runIsa(h, w.tenantId);
+    const msgs = await aiMessages(h, l.id);
+    expect(msgs.map((m) => m.status_reason)).not.toContain('ISA_ZONE_UNRESOLVED');
+    expect(msgs.filter((m) => m.status === 'sent').length, JSON.stringify(msgs.map((m) => [m.status, m.status_reason]))).toBeGreaterThanOrEqual(1);
+    // what the PATCH answered is what is stored, by its canonical name
+    expect(p.body.contact.timezone).toBe(zone);
+    expect(await stored(l.id)).toEqual({ tz: zone, src: 'explicit' });
+  });
+
+  it('R-ISA-10: an alias is stored by its canonical name (US/Eastern is America/New_York); a zone whose canonical name the database does not know keeps a spelling it knows', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await patchZone(agent, l.id, 'US/Eastern')).body.contact.timezone).toBe('America/New_York');
+    expect(await stored(l.id)).toEqual({ tz: 'America/New_York', src: 'explicit' });
+    expect((await patchZone(agent, l.id, 'etc/gmt+5')).body.contact.timezone).toBe('Etc/GMT+5');
+    // ICU calls it America/Indianapolis, a name the database's zone data may not hold: every AT TIME ZONE on the
+    // contact must still work, so the database's own name is kept
+    const pgKnows = async (z: string) => (await h.su.query<{ ok: boolean }>(`SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = $1) AS ok`, [z])).rows[0]!.ok;
+    const r = await patchZone(agent, l.id, 'America/Indiana/Indianapolis');
+    expect(r.status).toBe(200);
+    expect(await pgKnows(r.body.contact.timezone!)).toBe(true);
+    expect((await h.su.query<{ ok: boolean }>(`SELECT (now() AT TIME ZONE timezone) IS NOT NULL AS ok FROM contacts WHERE id = $1`, [l.id])).rows[0]!.ok).toBe(true);
+  });
+});

@@ -138,7 +138,8 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
         if (p.contactType !== undefined) cols.contact_type = p.contactType;
         if (p.intent !== undefined) cols.intent = p.intent;
         if (p.timezone !== undefined) {
-          cols.timezone = p.timezone;
+          // b12 recheck R25: stored by its canonical name (the AI ISA send check compares it with the turn's zones)
+          cols.timezone = p.timezone === null ? null : await repo.storedZoneName(tx, p.timezone);
           cols.timezone_source = p.timezone === null ? null : 'explicit';
         }
         if (p.stage !== undefined) cols.stage = p.stage;
