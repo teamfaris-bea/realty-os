@@ -142,7 +142,8 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
 }
 
 async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string, attempt: number, pinnedSeq: number, event: IsaEvent, now: Instant, aw: { repair: boolean; initiated: boolean } | null): Promise<Prepared> {
-  // R-ISA-20: the last 20 messages to and from bound points only; inbound as client own text; team text not quotable
+  // R-ISA-20: the last 20 messages to and from bound points only; inbound as client own text; team text not quotable;
+  // never a portal sign-in link (module 45, b14 audit F1: flagged edit, defence in depth behind its sealed URL)
   const bound = Object.values(a.boundPoints).map((p) => p!.point_id);
   const msgs = await sql<{ id: string; direction: 'inbound' | 'outbound'; channel: 'sms' | 'email'; body: string; created_at: Date }>`
     SELECT m.id, m.direction, m.channel, m.body, m.created_at FROM messages m
@@ -150,7 +151,7 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
        AND ((m.direction = 'inbound' AND NOT m.is_auto_reply AND (m.channel = 'sms' OR m.email_dkim_aligned IS TRUE)
              AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = m.tenant_id AND p.id = ANY (${bound}::uuid[]) AND p.address = m.from_address)
              AND NOT EXISTS (SELECT 1 FROM message_text_parts tp WHERE tp.tenant_id = m.tenant_id AND tp.message_id = m.id))
-         OR (m.direction = 'outbound' AND m.status IN ('sent','delivered')
+         OR (m.direction = 'outbound' AND m.status IN ('sent','delivered') AND m.action_category <> 'portal_login_link'
              AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = m.tenant_id AND p.id = ANY (${bound}::uuid[]) AND p.address = m.to_address)))
      ORDER BY m.created_at DESC LIMIT 20`.execute(tx);
   const caps = capabilitiesInEffect(ctx.content, (await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx)).rows[0]?.c ?? ['converse']);

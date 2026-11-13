@@ -73,6 +73,7 @@ export async function readReactionInTx(
          AND direction = 'outbound' AND NOT imported
          AND channel IN ('sms','mms') AND to_address = ${i.from} AND phone_number_id = ${i.phoneNumberId}
          AND status IN ('dispatching','sent','delivered','dispatch_unknown')
+         AND action_category <> 'portal_login_link' -- module 45 (b14 audit F1): a reaction never links to or quotes a sign-in link
          AND occurred_at >= ${at}::timestamptz - make_interval(days => ${REACTION_WINDOW_DAYS}) AND dispatched_at <= ${at}::timestamptz
        ORDER BY occurred_at DESC, id DESC LIMIT ${REACTION_MAX_CANDIDATES}`.execute(tx)
   ).rows;

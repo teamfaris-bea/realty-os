@@ -128,12 +128,14 @@ export async function contactBundle(tx: Tx, c: ContactCore, o: { calls?: readonl
   }
   const inq = await latestInquiry(tx, c.id);
   // D5b (R-REACT-7): a linked reaction carries its reaction (never read as the client's words) and its target, which
-  // joins the bundle when it is older than the loaded messages (it is on the same contact)
+  // joins the bundle when it is older than the loaded messages (it is on the same contact). Module 45 (b14 audit F1,
+  // flagged edit): a portal sign-in link never joins the bundle, as a message or as a reaction's target
   type MsgRow = { id: string; contact_id: string; direction: 'inbound' | 'outbound'; channel: string; occurred_at: Date; body: string; initiator: string; rx_action: ReactionAction | null; rx_reaction: ReactionName | null; rx_emoji: string | null; rx_target: string | null };
   const loaded = await sql<MsgRow>`
     SELECT m.*, mr.action AS rx_action, mr.reaction AS rx_reaction, mr.emoji AS rx_emoji, mr.target_message_id AS rx_target FROM (
       SELECT id, contact_id, direction, channel, occurred_at, body, initiator FROM messages
        WHERE tenant_id = app.tenant_id() AND contact_id = ${c.id} AND status NOT IN ('canceled','blocked') AND length(btrim(body)) > 0
+         AND action_category <> 'portal_login_link'
        ORDER BY occurred_at DESC, id DESC LIMIT ${o.messageLimit ?? 30}) m
       LEFT JOIN message_reactions mr ON mr.tenant_id = app.tenant_id() AND mr.message_id = m.id
      ORDER BY m.occurred_at, m.id`.execute(tx);
@@ -141,7 +143,7 @@ export async function contactBundle(tx: Tx, c: ContactCore, o: { calls?: readonl
   const missing = [...new Set(loaded.rows.map((m) => m.rx_target).filter((t): t is string => t !== null && !have.has(t)))];
   const targets = missing.length === 0 ? { rows: [] as MsgRow[] } : await sql<MsgRow>`
     SELECT id, contact_id, direction, channel, occurred_at, body, initiator, NULL AS rx_action, NULL AS rx_reaction, NULL AS rx_emoji, NULL AS rx_target
-      FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${c.id} AND id = ANY (${missing}::uuid[])`.execute(tx);
+      FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${c.id} AND id = ANY (${missing}::uuid[]) AND action_category <> 'portal_login_link'`.execute(tx);
   const msgs = { rows: [...targets.rows, ...loaded.rows].sort((x, y) => x.occurred_at.getTime() - y.occurred_at.getTime() || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)) };
   const notes = await sql<{ id: string; contact_id: string; created_at: Date; body: string }>`
     SELECT id, contact_id, created_at, body FROM notes WHERE tenant_id = app.tenant_id() AND contact_id = ${c.id}
