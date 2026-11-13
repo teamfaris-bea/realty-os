@@ -213,6 +213,20 @@ describe('Seller update card (module 38)', () => {
     expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1);
   });
 
+  it('b13 audit V2B-7 E630 R-CMA-10: before the tap the card says, in the API\'s words, that sellers who get the update by text won\'t see the value range', async () => {
+    const note = 'Sellers who get this by text won’t see the value range.';
+    app(update({ valueNote: note } as Partial<SellerUpdateView>));
+    const c = await card();
+    expect(within(c).getByText(note)).toBeInTheDocument();
+  });
+
+  it('b13 audit V2B-7 E629 R-SELL-4: the stale banner names the value range among what can change; with no note from the API the card says nothing about texts', async () => {
+    app(update({ stale: true }));
+    const c = await card();
+    expect(within(c).getByText(/Showings, feedback, marketing, competing listings or the value range changed after /)).toBeInTheDocument();
+    expect(within(c).queryByText(/won’t see the value range/)).toBeNull();
+  });
+
   it('review fix: a failed refresh says why instead of leaving the agent stuck', async () => {
     app(update({ stale: true }), (f) => f.on(`POST /seller-updates/${UPDATE}/reassemble`, err(409, 'DRAFT_INVALIDATED')));
     const c = await card();

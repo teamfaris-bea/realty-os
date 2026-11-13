@@ -58,6 +58,8 @@ export interface SellerUpdateView {
   excludedFeedbackIds: string[];
   recipients: SellerUpdateRecipient[];
   preview: { channel: 'email' | 'sms'; subject: string; body: string };
+  /** lane V2-B (E630; b13 audit V2B-7): the API's sentence when a seller who gets this by text will not see the value range */
+  valueNote?: string | null;
   sentAt: string | null;
   /** after the tap: each seller's message as it stands (null before); reason: why a send was blocked before it was queued (E632) */
   delivery: { contactId: string; name: string | null; channel: 'email' | 'sms'; status: string; reason?: string | null }[] | null;
@@ -289,7 +291,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
 
       {!sent && update.stale ? (
         <Notice tone="warn" title="New data since this was put together">
-          <p>Showings, feedback, marketing or competing listings changed after {formatDateTime(update.assembledThrough)}. Refresh it before you send.</p>
+          <p>Showings, feedback, marketing, competing listings or the value range changed after {formatDateTime(update.assembledThrough)}. Refresh it before you send.</p>
           {update.canSend ? (
             <Button variant="secondary" className="mt-2" pending={reassemble.pending} pendingLabel="Refreshing" onClick={() => void doReassemble()}>
               Refresh the update
@@ -300,6 +302,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
       {!sent && update.stale && error ? <Notice tone="error">{error}</Notice> : null}
 
       {!sent ? <Recipients recipients={update.recipients} /> : null}
+      {!sent && update.valueNote ? <p className="text-[14px] text-ink-muted">{update.valueNote}</p> : null}
 
       {update.sections.map((s) => (
         <SectionBlock key={s.kind} s={{ ...s, lines: s.lines.map((l) => (l.feedback ? { ...l, feedback: { ...l.feedback, excluded: excluded.includes(l.feedback.feedbackId) } } : l)) }} asOf={update.assembledThrough} canEdit={update.canSend && !sent} busy={patch.pending} onToggle={(id, ex) => void toggle(id, ex)} />
