@@ -10,7 +10,7 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { syncConnection } from '../mls/sync.js';
 import { makeDue, mlsDeps, pagedFeed } from '../mls/testing.js';
 import { SPARK_FIELD_MAPPING } from '../providers/integrations/spark.js';
-import { type CmaWorld, address, cmaWorld, contact, daysAgo, oneTap, saleReso } from './testing.js';
+import { type CmaBody, type CmaWorld, address, call, cmaWorld, codes, contact, daysAgo, localSales, oneTap, saleReso } from './testing.js';
 
 let h: ApiHarness;
 let w: CmaWorld;
@@ -86,3 +86,42 @@ describe('R-MLS-7: a CMA over MLS records without a confirmed size field', () =>
     expect(stored.result.sentences[1]).toMatch(/size not available from the MLS/);
   });
 });
+
+describe('E612 R-MLS-7 R-CMA-8: a stored CMA built on a size that is not finished living area', () => {
+  let v: CmaWorld;
+  beforeAll(async () => {
+    v = await cmaWorld(h);
+    await localSales(v, 12); // the RESO default size field (LivingArea): a CMA with a value
+  }, 180_000);
+
+  it('E612 R-MLS-7 R-CMA-8: a CMA stored with BuildingAreaTotal sizes (before migration 0078) is never shown as finished living area: the view leads with why, readiness blocks it, the stored record is unchanged', async () => {
+    const c = await contact(v.agents[0]!);
+    await address(h, v.tenantId, c, { kind: 'property', line1: '710 Sample Avenue' });
+    const made = await oneTap(v.agents[0]!, c, { facts: { sqft: 1500, propertyType: 'single_family' } });
+    expect(made.status).toBe(201);
+    const id = made.body.cma.id;
+    expect(made.body.cma.result.available).toBe(true);
+    expect(codes(made.body)).not.toContain('SIZE_NOT_LIVING_AREA');
+    // as a live Spark sync would have stored it before R-MLS-7 (a fixture: the draft's stored sizes named the total area)
+    await h.su.query(
+      `UPDATE cma_reports SET subject = jsonb_set(subject, '{resolved,sizeSource}', '"BuildingAreaTotal"'),
+              result = jsonb_set(result, '{comps}', (SELECT jsonb_agg(jsonb_set(x, '{sale,sizeSource}', '"BuildingAreaTotal"')) FROM jsonb_array_elements(result->'comps') x))
+        WHERE id = $1`,
+      [id],
+    );
+    const stored = (await h.su.query<{ result: { sentences: string[] } }>('SELECT result FROM cma_reports WHERE id = $1', [id])).rows[0]!;
+    const r = await call<CmaBody>(v.agents[0]!, 'GET', `/cma/${id}`);
+    expect(r.status).toBe(200);
+    const warn = 'This CMA was prepared from a size that is not finished living area (total, unfinished or below-grade area), so its sizes, size adjustments and price per sq ft do not hold. Prepare a new CMA.';
+    expect(r.body.cma.result.sentence).toBe(warn);
+    expect(r.body.cma.result.sentences).toEqual([warn, ...stored.result.sentences]);
+    expect(r.body.cma.clientShare.ready).toBe(false);
+    expect(r.body.cma.clientShare.blockers.find((b) => b.code === 'SIZE_NOT_LIVING_AREA')?.sentence).toBe(warn);
+    // the stored record (R-CMA-8) is what it was: the view adds the warning, nothing rewrites it
+    expect((await h.su.query<{ result: { sentences: string[] } }>('SELECT result FROM cma_reports WHERE id = $1', [id])).rows[0]!.result.sentences).toEqual(stored.result.sentences);
+    // only the subject's size source is enough
+    await h.su.query(`UPDATE cma_reports SET result = jsonb_set(result, '{comps}', (SELECT jsonb_agg(jsonb_set(x, '{sale,sizeSource}', '"LivingArea"')) FROM jsonb_array_elements(result->'comps') x)) WHERE id = $1`, [id]);
+    expect(codes((await call<CmaBody>(v.agents[0]!, 'GET', `/cma/${id}`)).body)).toContain('SIZE_NOT_LIVING_AREA');
+  });
+});
+

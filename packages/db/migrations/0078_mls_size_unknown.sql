@@ -32,8 +32,9 @@
 --
 -- Stored CMAs (cma_reports.subject / result) are not rewritten: they are records of what an agent was shown (R-CMA-8;
 -- a shared or superseded one never changes), and each names the field its sizes came from. No live Spark sync has run
--- (MLS_LIVE_CALLS has been false; the one read-only live check stored no listing, docs/SECURITY.md §5.3), so none can
--- hold a Spark size.
+-- (MLS_LIVE_CALLS has been false; the one read-only live check stored no listing, docs/SECURITY.md §5.3), so none should
+-- hold a Spark size; if one does, its view leads with "not finished living area ... Prepare a new CMA." and readiness
+-- blocks it (SIZE_NOT_LIVING_AREA, apps/api cma/gates.ts; E612).
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4): one data UPDATE on listings as the migration owner, and one CHECK constraint.
 -- No table, column, policy, grant, trigger or function is added or changed.
