@@ -255,6 +255,32 @@ describe('Erase a contact', () => {
     expect(screen.queryByRole('button', { name: /^Erase/ })).toBeNull();
   });
 
+  // b11 ownership-data/F2 (the part left open): a merge moves a record's calls, but their recordings stay on it; the
+  // merged-away branch said what moved and what goes, and left out the recordings
+  it('R-DATA-4 R-DATA-7 R-OWN-24 (b11 ownership-data/F2): a merged-away record says, by count, that the recordings of its moved calls, its documents and its CMA reports stayed on it and are deleted with it', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedInto: SURVIVOR, erasedWith: { callRecordings: 3, documents: 2, cmaReports: 1 } } }), PATH, 'owner');
+    expect(await screen.findByText('Its calls moved there too, but the recordings and transcripts of 3 calls stayed on this record. Erasing it deletes them; those calls stay on the record it was merged into, without a recording.')).toBeInTheDocument();
+    expect(screen.getByText('2 documents and 1 CMA report stayed on this record: a merge moves neither, though the people who see the record it was merged into can read them. Erasing this record deletes them.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
+  });
+
+  it('R-DATA-4 R-OWN-24 (b11 ownership-data/F2): a merged-away record with nothing of that kind left on it says no call recording stayed, and says nothing about documents', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedInto: SURVIVOR, erasedWith: { callRecordings: 0, documents: 0, cmaReports: 0 } } }), PATH, 'owner');
+    expect(await screen.findByText('Its calls moved there too, and no call recording stayed on this record.')).toBeInTheDocument();
+    expect(screen.queryByText(/a merge moves neither/)).toBeNull();
+  });
+
+  it('R-DATA-4 R-OWN-24 (b11 ownership-data/F2): without counts (an older server) the merged-away record still says a moved call\'s recording stays on it and is deleted with it', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedInto: SURVIVOR } }), PATH, 'owner');
+    expect(await screen.findByText("Its calls moved there too, but a call's recording and transcript stay on this record: erasing it deletes them, and the call stays on the record it was merged into without them.")).toBeInTheDocument();
+  });
+
+  it('R-DATA-4 (b11 ownership-data/F2): a person who was never merged away gets no sentence about moved calls', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, erasedWith: { callRecordings: 2, documents: 1, cmaReports: 0 } } }), PATH, 'owner');
+    expect(await screen.findByText(/This deletes Rosa Diaz and what Realty OS holds about them, such as messages and call recordings/)).toBeInTheDocument();
+    expect(screen.queryByText(/Its calls moved there too/)).toBeNull();
+  });
+
   it('R-DATA-7: a seller\'s listing documents are said to stay after the erasure, by listing', async () => {
     leadAdminApp(erasureFake({ preview: { ...free, listingDocuments: [{ listingId: LISTING, address: '12 Harbor Rd', documents: 2 }] } }), PATH, 'admin');
     expect(await screen.findByText(/Rosa Diaz is a seller on a listing with documents, such as a listing agreement\. Those documents belong to the listing's records and stay after the erasure, readable by the people who work on that listing; they may name Rosa Diaz\./)).toBeInTheDocument();

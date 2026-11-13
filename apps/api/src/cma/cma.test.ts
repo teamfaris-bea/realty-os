@@ -574,4 +574,24 @@ describe('erasure and merge (R-CMA-8)', () => {
     // the CMA did not move, and a merged-away record takes no new CMA (cma_reports_insert still needs its own detail)
     expect((await h.su.query('SELECT contact_id FROM cma_reports WHERE id = $1', [id])).rows[0].contact_id).toBe(loser);
   });
+
+  // b11 ownership-data/F2 (the part left open): the survivor lists the merged-away record's CMA, but it stayed on that
+  // record, so erasing the record deletes it; the erasure preview says how many before the tap
+  it('R-CMA-8 R-DATA-4 (b11 ownership-data/F2): a merged-away record\'s erasure preview counts the CMA report the survivor lists, and erasing the record deletes it', async () => {
+    const { command, freshReauth } = await import('../leads/testing.js');
+    const survivor = await contact(w.agents[0]!, 'Pat Survivor');
+    const { c: loser } = await seller();
+    const cma = await oneTap(w.agents[0]!, loser);
+    expect(cma.status).toBe(201);
+    expect((await command(w.owner, survivor, 'merge', { loserId: loser, ownerChoice: w.agents[0]!.userId })).status).toBe(200);
+    await freshReauth(h, w.owner);
+    const p = await call<{ mergedInto: string | null; erasedWith: { callRecordings: number; documents: number; cmaReports: number } }>(w.owner, 'GET', `/contacts/${loser}/erasure`);
+    expect(p.status).toBe(200);
+    expect(p.body).toMatchObject({ mergedInto: survivor, erasedWith: { callRecordings: 0, documents: 0, cmaReports: 1 } });
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'POST', `/contacts/${loser}/erase`, { reason: 'DUPLICATE_RECORD' })).status).toBe(200);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM cma_reports WHERE id = $1', [cma.body.cma.id])).rows[0].n).toBe(0);
+    const list = await call<{ cmas: { id: string }[] }>(w.owner, 'GET', `/contacts/${survivor}/cmas`);
+    expect(list.body.cmas.some((x) => x.id === cma.body.cma.id)).toBe(false);
+  });
 });

@@ -5,8 +5,10 @@
 //                                                      how many merged records go with them, the contact documents
 //                                                      on legal hold or inside retention that block it (module 42,
 //                                                      R-DOC-4; ids, dates, kind, name and version), the record a
-//                                                      merged-away record was merged into, and the documents of the
-//                                                      listings the person sells that stay (batch 11 review)
+//                                                      merged-away record was merged into, how many call recordings,
+//                                                      documents and CMA reports the erasure deletes, and the
+//                                                      documents of the listings the person sells that stay
+//                                                      (batch 11 review)
 //   POST /contacts/:id/erase          { reason }       app.erase_contact; refused CONTACT_ON_DEAL (409) while    contact.erase (Owner/Admin 🔒)
 //                                                      the person is on any deal, details = the deal ids/stages;
 //                                                      DOCUMENT_RETAINED (409) while a document blocks it,
@@ -57,6 +59,7 @@ const RetainedDocument = z.object({
   versionNo: z.number().int().min(1),
   uploadedAt: z.string(),
 });
+const ErasedWith = z.object({ callRecordings: z.number().int().min(0), documents: z.number().int().min(0), cmaReports: z.number().int().min(0) });
 const ListingDocuments = z.object({ listingId: z.uuid(), address: z.string(), documents: z.number().int().min(1) });
 /**
  * mergedRecords: the duplicate records merged into the person, erased with them (0 for most people).
@@ -64,6 +67,9 @@ const ListingDocuments = z.object({ listingId: z.uuid(), address: z.string(), do
  *   database refuses the erasure while one exists (DOCUMENT_RETAINED), so `erasable` is false (b11 db-public/F2,
  *   ownership-data/F4, api-ui/F3). Each carries its kind, name, version and upload time, so the Owner can tell two of
  *   them apart and find the one to release (the preview is Owner/Admin only; the 409's details stay ids and dates).
+ * erasedWith: how many call recordings (with their transcripts), documents and CMA reports of those records the
+ *   erasure deletes. On a merged-away record these are what the merge left on it: its calls moved to the survivor,
+ *   their recordings did not (b11 ownership-data/F2).
  * mergedInto: this record was merged away; the person lives on that record now (its messages, notes, tasks and
  *   appointments moved there, its phones and emails were copied). Erasing this record alone stays possible
  *   (b11 ownership-data/F2).
@@ -76,6 +82,7 @@ const ErasurePreview = z.object({
   mergedRecords: z.number().int().min(0),
   retainedDocuments: z.array(RetainedDocument),
   mergedInto: z.uuid().nullable(),
+  erasedWith: ErasedWith,
   listingDocuments: z.array(ListingDocuments),
 });
 
@@ -112,6 +119,7 @@ async function register(app: FastifyInstance): Promise<void> {
       const deals = (await repo.dealLinks(tx, records)).map((d) => ({ id: d.id, name: d.name, stage: d.stage, link: linkOf(d), closed: CLOSED.has(d.stage) }));
       const retainedDocuments = (await repo.retainedDocuments(tx, records)).map(retainedView);
       const listingDocuments = (await repo.listingDocuments(tx, records)).map((l) => ({ listingId: l.listing_id, address: l.address_line1, documents: l.documents }));
+      const erased = await repo.erasedWith(tx, records);
       return {
         contactId: req.params.id,
         erasable: deals.length === 0 && retainedDocuments.length === 0,
@@ -119,6 +127,7 @@ async function register(app: FastifyInstance): Promise<void> {
         mergedRecords: records.length - 1,
         retainedDocuments,
         mergedInto: await repo.mergedIntoRoot(tx, req.params.id),
+        erasedWith: { callRecordings: erased.call_recordings, documents: erased.documents, cmaReports: erased.cma_reports },
         listingDocuments,
       };
     }),

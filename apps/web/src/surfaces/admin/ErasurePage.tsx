@@ -17,8 +17,10 @@
 //   period blocks the erasure (the database refuses: DOCUMENT_RETAINED). The preview lists them (no erase step is
 //   offered), each by its name, kind, version, upload date, the record it is on and its id (ownership-data/F4: there is
 //   no documents page yet, so the id is what a hold is lifted by), and the refusal is worded. A merged-away record says
-//   the person lives on the record it was merged into (what moved stays there) and links to it. A seller's listing
-//   documents stay with the listing, and the page says so.
+//   the person lives on the record it was merged into (what moved stays there) and links to it; it also says, by count,
+//   what the merge left on it and its erasure deletes: the recordings of its calls (the calls moved, the recordings did
+//   not), its documents and its CMA reports (ownership-data/F2). A seller's listing documents stay with the listing,
+//   and the page says so.
 // - Deep link: /admin/erasure?contact=<id> (e.g. from a contact page). Without it, a search field
 //   finds the contact (GET /search, read-only reuse of the search surface's endpoint).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -52,6 +54,8 @@ export interface ErasurePreview {
   retainedDocuments?: ErasureRetainedDocument[];
   /** this record was merged into that one, where the person lives now (absent from older servers) */
   mergedInto?: string | null;
+  /** what the erasure deletes of these records: call recordings (and transcripts), documents, CMA reports (absent from older servers) */
+  erasedWith?: ErasedWith;
   /** listings the person sells whose documents stay after the erasure (absent from older servers) */
   listingDocuments?: { listingId: string; address: string; documents: number }[];
 }
@@ -66,7 +70,11 @@ export interface ErasureRetainedDocument {
   versionNo?: number;
   uploadedAt?: string;
 }
-
+export interface ErasedWith {
+  callRecordings: number;
+  documents: number;
+  cmaReports: number;
+}
 
 const REASONS: readonly { value: ErasureReason; label: string }[] = [
   { value: 'PRIVACY_REQUEST', label: 'The person asked to be erased' },
@@ -251,6 +259,7 @@ function ContactErasure({ contactId, onPickAnother, onErased, announce }: { cont
               reason={reason}
               mergedRecords={p.mergedRecords ?? 0}
               mergedInto={p.mergedInto ?? null}
+              erasedWith={p.erasedWith ?? null}
               listingDocuments={p.listingDocuments ?? []}
               onErased={() => onErased(name)}
               onRefused={setRefusal}
@@ -386,12 +395,43 @@ function RetainedDocument({ contactId, name, document: d }: { contactId: string;
   );
 }
 
+/** What a merge left on a merged-away record that its erasure deletes (b11 ownership-data/F2). */
+function LeftOnMergedRecord({ erasedWith, mergedRecords }: { erasedWith: ErasedWith | null; mergedRecords: number }) {
+  const where = mergedRecords > 0 ? 'this record and the records merged into it' : 'this record';
+  if (!erasedWith) {
+    return (
+      <p className="text-[15px] text-ink">
+        Its calls moved there too, but a call's recording and transcript stay on this record: erasing it deletes them, and the call stays on the record it was merged into without them.
+      </p>
+    );
+  }
+  const one = erasedWith.documents + erasedWith.cmaReports === 1;
+  const kept = [erasedWith.documents > 0 ? plural(erasedWith.documents, 'document') : null, erasedWith.cmaReports > 0 ? plural(erasedWith.cmaReports, 'CMA report') : null].filter(
+    (x): x is string => x !== null,
+  );
+  return (
+    <>
+      <p className="text-[15px] text-ink">
+        {erasedWith.callRecordings > 0
+          ? `Its calls moved there too, but the recordings and transcripts of ${plural(erasedWith.callRecordings, 'call')} stayed on ${where}. Erasing it deletes them; those calls stay on the record it was merged into, without a recording.`
+          : `Its calls moved there too, and no call recording stayed on ${where}.`}
+      </p>
+      {kept.length > 0 ? (
+        <p className="text-[15px] text-ink">
+          {`${kept.join(' and ')} stayed on ${where}: a merge moves neither, though the people who see the record it was merged into can read ${one ? 'it' : 'them'}. Erasing this record deletes ${one ? 'it' : 'them'}.`}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 function EraseStep({
   contactId,
   name,
   reason,
   mergedRecords,
   mergedInto,
+  erasedWith,
   listingDocuments,
   onErased,
   onRefused,
@@ -401,6 +441,7 @@ function EraseStep({
   reason: ErasureReason;
   mergedRecords: number;
   mergedInto: string | null;
+  erasedWith: ErasedWith | null;
   listingDocuments: NonNullable<ErasurePreview['listingDocuments']>;
   onErased(): void;
   onRefused(message: string): void;
@@ -427,6 +468,7 @@ function EraseStep({
             record leaves all of those in place. It deletes only what stayed on this record, such as documents uploaded to it. An opt-out given on one of its phones or emails, or a request not to be
             contacted, is kept without their details. The audit log notes that an erasure happened and why. To erase the person, erase the record it was merged into.
           </p>
+          <LeftOnMergedRecord erasedWith={erasedWith} mergedRecords={mergedRecords} />
           <ButtonLink variant="secondary" to={`/admin/erasure?contact=${mergedInto}`} className="self-start">
             Open the record it was merged into
           </ButtonLink>
