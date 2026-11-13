@@ -163,7 +163,10 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     enabled: draftId !== null,
     staleTime: 60_000,
   });
-  const draft = draftId !== null && draftQ.data?.action.status === 'proposed' ? draftQ.data.action : null;
+  // batch 13 isa-4: an AI handoff (an old link to the feed's "Review") is never a draft: the generic approve refuses it,
+  // so taking it as one made the agent's first Send fail (b12 recheck R11)
+  const handoff = draftQ.data?.action.kind === 'ai_isa_handoff';
+  const draft = draftId !== null && draftQ.data?.action.status === 'proposed' && !handoff ? draftQ.data.action : null;
 
   // prefill once per draft
   useEffect(() => {
@@ -176,7 +179,10 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       setChannel(keepChat.current ? 'web_chat' : a.draft.channel);
     }
     keepChat.current = false;
-    if (a.status !== 'proposed') setNotice({ tone: 'warn', text: 'This draft was already handled. You can still send your own message.' });
+    if (a.kind === 'ai_isa_handoff') {
+      setDraftId(null);
+      setNotice({ tone: 'warn', text: "This is the assistant's handoff, not a draft. Send sends your own message." });
+    } else if (a.status !== 'proposed') setNotice({ tone: 'warn', text: 'This draft was already handled. You can still send your own message.' });
   }, [draftQ.data]);
 
   useEffect(() => {

@@ -482,6 +482,10 @@ export function foreignActions(r: ForeignRow): { primaryAction: OneTapAction; al
         return { primaryAction: { kind: 'open_contact', label: 'Open contact', contactId: (r.contact_id ?? key.contactId) as never }, alternatives: [] };
     }
   }
+  // batch 13 isa-4 (b12 recheck R11 follow-up): an AI handoff card is no draft (the generic approve refuses its action
+  // with AI_ISA_HANDOFF_USE_ACK, so "Review" made the agent's first Send fail): its tap opens the thread with the compose
+  // box and no draft=; "Got it" and the next steps are the web's AI care card (module 76)
+  if (r.item_type === 'ai_isa_handoff' && r.contact_id) return { primaryAction: { kind: 'text', label: 'Open thread', contactId: r.contact_id as never }, alternatives: open };
   if (r.assistant_action_id) return { primaryAction: { kind: 'edit_draft', label: 'Review', actionId: r.assistant_action_id as never }, alternatives: open };
   if (r.subject_type === 'task') return { primaryAction: { kind: 'open_task', label: 'Open task', taskId: r.subject_id as never }, alternatives: open };
   if (open[0]) return { primaryAction: open[0], alternatives: [] };

@@ -118,6 +118,17 @@ describe('Phase 2/3 cards: the key-family extension point', () => {
     const c = randomUUID();
     expect(foreignActions({ item_type: 'likely_to_move', dedupe_key: `likely:${c}`, contact_id: c, subject_type: 'contact', subject_id: c, assistant_action_id: null }).primaryAction).toEqual({ kind: 'open_contact', label: 'Open', contactId: c });
   });
+
+  it('batch 13 isa-4 (b12 recheck R11 follow-up): an AI handoff card is no draft: its tap opens the thread with no draft=, never edit_draft "Review"', () => {
+    const c = randomUUID();
+    const action = randomUUID();
+    const a = foreignActions({ item_type: 'ai_isa_handoff', dedupe_key: `ai_isa_handoff:${randomUUID()}`, contact_id: c, subject_type: 'ai_isa_handoff', subject_id: randomUUID(), assistant_action_id: action });
+    expect(a.primaryAction).toEqual({ kind: 'text', label: 'Open thread', contactId: c });
+    expect(JSON.stringify(a)).not.toContain(action);
+    expect(a.alternatives).toEqual([{ kind: 'open_contact', label: 'Open', contactId: c }]);
+    // any other card with an assistant action keeps the Phase 1 Review
+    expect(foreignActions({ item_type: 'assistant_draft', dedupe_key: `x:${c}`, contact_id: c, subject_type: 'contact', subject_id: c, assistant_action_id: action }).primaryAction).toEqual({ kind: 'edit_draft', label: 'Review', actionId: action });
+  });
 });
 
 describe('R-PRED-5 likely_to_move (card read path)', () => {
