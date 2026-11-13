@@ -398,6 +398,21 @@ describe('E601 E602 stale between preview and tap', () => {
       await nothingStored(old);
     });
   });
+
+  // Audit cma-v2a F10: the brief's share transaction checks the MLS data date (step 10) before the sales (step 11).
+  it('E602 R-MLS-3: a draft both outside the freshness window and with a corrected sale is DATA_OLD first (the brief\'s order), at preview and at share; nothing stored', async () => {
+    await withPlatformCmaCleared(h, async () => {
+      const d = await draftFor();
+      const pv = await preview(d.id);
+      await h.su.query("UPDATE cma_reports SET mls_data_as_of = now() - interval '3 days' WHERE id = $1", [d.id]);
+      await h.su.query('UPDATE listings SET close_price_cents = close_price_cents + 100000 WHERE id = $1', [d.view.comps[0]!.saleListingId]);
+      const p2 = await preview(d.id);
+      expect([p2.stale, p2.canShare, p2.sentence]).toEqual(['DATA_OLD', false, 'Prepare it again to use the latest sales.']);
+      const r = await shareFrom(agent(), { ...pv, reportSha256: p2.reportSha256 });
+      expect([r.status, errorOf(r).code, errorOf(r).details]).toEqual([409, 'CMA_STALE', { reason: 'DATA_OLD' }]);
+      await nothingStored(d);
+    });
+  });
 });
 
 describe('E609 E610 never shared', () => {

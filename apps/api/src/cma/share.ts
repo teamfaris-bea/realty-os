@@ -152,9 +152,9 @@ export interface BuiltReport {
 const same = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
 
 /**
- * The client report of a stored CMA as it renders for clients now (report.ts), and the stale checks: a comp's live
- * close price, close date, beds, baths or size differing from the stored sale (SALE_CHANGED), or the stored MLS data
- * date outside the freshness window of a connection in the set (DATA_OLD). Under the caller's RLS.
+ * The client report of a stored CMA as it renders for clients now (report.ts), and the stale checks in the brief's
+ * order: the stored MLS data date outside the freshness window of a connection in the set (DATA_OLD), else a comp's
+ * live close price, close date, beds, baths or size differing from the stored sale (SALE_CHANGED). Under the caller's RLS.
  */
 export async function reportOf(tx: Tx, now: number, row: CmaRow, rd: Readiness): Promise<BuiltReport> {
   const s = row.subject as unknown as StoredSubject;
@@ -163,22 +163,22 @@ export async function reportOf(tx: Tx, now: number, row: CmaRow, rd: Readiness):
   const rows = await listingRows(tx, compListingIds(rd.input));
   const byId = new Map(rows.map((x) => [x.id, x]));
   const connectionIds = readinessConnectionIds(rd.input, rows);
-  let stale: StaleReason | null = null;
+  // the brief's order (share steps 10 and 11): the stored MLS data date first, then the sales (audit cma-v2a F10)
+  const conns = connectionIds.map((id) => e.connections.find((x) => x.id === id)).filter((x) => x !== undefined);
+  const asOf = row.mls_data_as_of === null ? null : row.mls_data_as_of.getTime();
+  let stale: StaleReason | null = conns.some((c) => feedStale(asOf as never, now as never, c.pack)) ? 'DATA_OLD' : null;
   const comps: ReportComp[] = [];
   for (const c of r.comps) {
     const l = listingOf(r, c.ref.identity);
     const sale = byId.get(l.saleListingId);
     const team = l.teamListingId === null ? undefined : byId.get(l.teamListingId);
-    if (sale !== undefined) {
+    if (stale === null && sale !== undefined) {
       const live = saleOfRow(sale, team ?? null);
       if (!(same(live.closePriceCents, c.sale.closePriceCents) && same(live.closeDate, c.sale.closeDate) && same(live.beds, c.sale.beds) && same(live.bathsX10, c.sale.bathsX10) && same(live.sqft, c.sale.sqft))) stale = 'SALE_CHANGED';
     }
     const rendering: DisplayListing | null = clientSale(e, sale, team);
     if (rendering !== null) comps.push({ rendering, distanceM: c.distanceM, tier: c.tier, adjustedPriceCents: c.adjustedPriceCents, adjustments: c.adjustments.map((a) => ({ feature: a.feature, amountCents: a.amountCents })) });
   }
-  const conns = connectionIds.map((id) => e.connections.find((x) => x.id === id)).filter((x) => x !== undefined);
-  const asOf = row.mls_data_as_of === null ? null : row.mls_data_as_of.getTime();
-  if (stale === null && conns.some((c) => feedStale(asOf as never, now as never, c.pack))) stale = 'DATA_OLD';
   if (row.low_cents === null || row.high_cents === null) return { report: null, stale, connectionIds };
   const statements = conns.flatMap((c) => valuationStatement(c.pack, s.resolved.state) ?? []);
   const a = s.resolved.address;
