@@ -53,8 +53,11 @@ export async function deferralFor(tx: Tx, m: IsaMessageRef, reasons: readonly st
   if (reasons.length === 0 || refusalClass(reasons) !== 'deferrable') return null;
   if (reasons.every((r) => r === 'ISA_MIN_GAP')) return (now + ISA_DEFAULT_CAPS.minGapSeconds * 1000) as Instant;
   if (reasons.includes('ISA_QUIET_HOURS') || reasons.includes('ISA_ZONE_UNRESOLVED')) {
-    const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null; steps: unknown }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we,
-        t.message_kind AS kind, v.steps
+    // batch 13 audit ISA2B-05: a message carrying shared facts is initiated whatever its turn planned (the guard's
+    // has_facts derived tier, 0080/0083; TX1's consent tier), so it is deferred to an initiated window, never a reply's
+    const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null; steps: unknown; has_facts: boolean }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we,
+        t.message_kind AS kind, v.steps,
+        EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = t.tenant_id AND f.message_id = t.message_id) AS has_facts
       FROM ai_isa_turns t JOIN ai_isa_assignments a ON a.tenant_id = t.tenant_id AND a.id = t.assignment_id
       LEFT JOIN playbook_versions v ON v.tenant_id = a.tenant_id AND v.id = a.playbook_version_id
      WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${m.id}`.execute(tx);
@@ -63,7 +66,7 @@ export async function deferralFor(tx: Tx, m: IsaMessageRef, reasons: readonly st
       const sec = (s: string) => { const [h, mi] = s.split(':').map(Number); return h! * 3600 + mi! * 60; };
       // R-ISA-10: the policy content's initiated days and holidays, so core, TX1, this deferral and the guard (0081, 0083) agree
       const content = parseAiIsaContent(r.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
-      const next = aiIsaSendWindow({ at: (now + 60_000) as Instant, zones: r.zones as IanaZone[], startSec: sec(r.ws), endSec: sec(r.we), initiated: r.kind === 'initiated',
+      const next = aiIsaSendWindow({ at: (now + 60_000) as Instant, zones: r.zones as IanaZone[], startSec: sec(r.ws), endSec: sec(r.we), initiated: r.kind === 'initiated' || r.has_facts,
         initiatedDays: content.initiatedDays, noInitiatedOnHolidays: content.noInitiatedOnHolidays });
       if (next !== null) return next;
     }

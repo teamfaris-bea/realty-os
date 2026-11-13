@@ -308,6 +308,67 @@ describe('R-ISA-17: an as-of change alone never cancels a fact (batch 13 audit I
   });
 });
 
+// batch 13 audit ISA2B-05 (the R-ISA-10 edge case): core, TX1, the deferral and the guard agree on a holiday. There is
+// no fake clock: TX1's facts and the deferral take `now` as an argument, the guard's holiday function is read by date.
+describe('R-ISA-10: an initiated facts message on Thanksgiving or an observed Christmas is deferred alike by core, TX1, the deferral and the guard', () => {
+  it('R-ISA-10: Thanksgiving 2026 and the observed Christmas of 2027 (Friday Dec 24): TX1 marks it initiated with the holiday, the deferral is core\'s next initiated window, the guard calls the day a holiday; a reply-kind message with facts (the guard\'s derived tier) is deferred the same', async () => {
+    const { withTenantTx } = await import('@realty/db');
+    const { systemActor } = await import('../worker/systemActor.js');
+    const { depsFromPlatform } = await import('../comms/runtime.js');
+    const { aiIsaGateFacts, deferralFor } = await import('./send.js');
+    const { aiIsaSendWindow, DEFAULT_AI_ISA_CONTENT } = await import('./coreSeam.js');
+    const city = 'Fairfield';
+    await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 530000 });
+    const l = await buyer({ city });
+    share(['L1']);
+    const hold = async () => { await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 day' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [w.tenantId]); };
+    await age(l.id);
+    await h.su.query(`SET session_replication_role = replica; UPDATE ai_isa_assignments SET started_at = started_at - interval '2 hours' WHERE contact_id = '${l.id}'; SET session_replication_role = origin`);
+    await inboundSms(h, l.phone, w.mainNumber, 'Can you send me some homes?');
+    await runIsa(h, w.tenantId, 4, { beforeTick: hold });
+    const m = (await h.su.query<{ id: string; conversation_id: string; channel: string; assistant_action_id: string; turn: string; kind: string }>(
+      `SELECT m.id, m.conversation_id, m.channel, m.assistant_action_id, t.id AS turn, t.message_kind AS kind FROM messages m JOIN ai_isa_turns t ON t.message_id = m.id
+        WHERE m.contact_id = $1 AND m.body LIKE 'Here are homes%'`, [l.id])).rows[0]!;
+    expect(m.kind).toBe('initiated');
+    // the person and the turn live in New York (the case's dates are New York dates)
+    const ny = 'America/New_York';
+    await h.su.query(`UPDATE contacts SET timezone = $2, timezone_source = 'explicit' WHERE id = $1`, [l.id, ny]);
+    await h.su.query(`UPDATE ai_isa_turns SET zones = ARRAY[$2]::text[] WHERE id = $1`, [m.turn, ny]);
+    const ref = { id: m.id, contactId: l.id, conversationId: m.conversation_id, channel: m.channel, assistantActionId: m.assistant_action_id };
+    const actor = systemActor(w.tenantId as never, 'worker');
+    const deps = depsFromPlatform(h.app.platform);
+    const c = DEFAULT_AI_ISA_CONTENT;
+    const coreNext = (at: number) => aiIsaSendWindow({ at: (at + 60_000) as never, zones: [ny as never], startSec: c.window.startSec, endSec: c.window.endSec, initiated: true,
+      initiatedDays: c.initiatedDays, noInitiatedOnHolidays: c.noInitiatedOnHolidays });
+    const cases = [
+      { label: 'Thanksgiving', day: '2026-11-26', now: Date.parse('2026-11-26T15:00:00Z') }, // 10:00 in New York, a Thursday
+      { label: 'observed Christmas', day: '2027-12-24', now: Date.parse('2027-12-24T15:00:00Z') }, // Friday before a Saturday Dec 25
+    ];
+    const run = () => withTenantTx(actor, async (tx) => {
+      const out: { label: string; initiated: boolean; holiday: boolean; zones: readonly string[]; deferral: number | null; core: number | null }[] = [];
+      for (const k of cases) {
+        const tx1 = await aiIsaGateFacts(tx, deps as never, ref, '', k.now as never);
+        out.push({ label: k.label, initiated: tx1.facts.initiated, holiday: tx1.facts.holidays.includes(k.day), zones: tx1.facts.zones,
+          deferral: await deferralFor(tx, ref, ['ISA_QUIET_HOURS'], k.now as never), core: coreNext(k.now) });
+      }
+      return out;
+    }, { db: h.database });
+    const guard = (await h.su.query<{ a: boolean; b: boolean }>(`SELECT app.ai_isa_us_federal_holiday('2026-11-26') AS a, app.ai_isa_us_federal_holiday('2027-12-24') AS b`)).rows[0]!;
+    expect(guard).toEqual({ a: true, b: true });
+    const localDay = (t: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ny, year: 'numeric', month: '2-digit', day: '2-digit' }).format(t);
+    for (const kind of ['initiated', 'reply'] as const) {
+      // 'reply': a turn planned as a reply whose message carries listing facts; the guard derives the initiated tier
+      // from its facts (has_facts), as TX1 does, so the deferral must too
+      await h.su.query(`UPDATE ai_isa_turns SET message_kind = $2 WHERE id = $1`, [m.turn, kind]);
+      for (const r of await run()) {
+        expect({ kind, label: r.label, initiated: r.initiated, holiday: r.holiday, zones: r.zones }).toEqual({ kind, label: r.label, initiated: true, holiday: true, zones: [ny] });
+        expect({ kind, label: r.label, deferral: r.deferral }).toEqual({ kind, label: r.label, deferral: r.core });
+        expect(localDay(r.deferral!)).not.toBe(cases.find((x) => x.label === r.label)!.day);
+      }
+    }
+  });
+});
+
 describe('R-ISA-17 R-AST-10: the AI-origin saved search', () => {
   it('R-ISA-17 R-AST-10: origin ai_isa, proposed; activated by a human, no alert while care is live; paused at the handoff (review_saved_search)', async () => {
     const l = await buyer({ city: 'Piedmont' });
