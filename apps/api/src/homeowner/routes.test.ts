@@ -130,11 +130,15 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-7)', () => {
     const inquiry = (type: string, at: string) => h.su.query(
       `INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome) VALUES ($1, $2, $3, $4, $5, $6, $7, 'attached')`,
       [w.tenantId, randomUUID(), c.id, w.sourceId, at, type, `fp-${randomUUID()}`]);
+    // The test team's zone is picked so its local hour is 10-16 when the test runs (zoneWithLocalHour), anywhere from
+    // UTC-12 to UTC+14, so the expected day is the instant's date in that zone, not its UTC date.
+    const tz = (await h.su.query<{ tz: string }>(`SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId])).rows[0]!.tz;
+    const teamDay = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
     await inquiry('value', '2019-04-02T16:00:00Z');
-    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2019-04-02' }]);
+    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: teamDay('2019-04-02T16:00:00Z') }]);
     await inquiry('sell', '2022-08-09T16:00:00Z');
     await inquiry('buy', '2024-01-05T16:00:00Z');
-    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2022-08-09' }]);
+    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: teamDay('2022-08-09T16:00:00Z') }]);
   });
 
   // b11 reconciliation homeowner-4: the panel listed only home and property rows, so a past buyer's K2 mailing subject
