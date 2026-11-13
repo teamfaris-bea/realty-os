@@ -3,7 +3,8 @@
 // which address (a chooser only when there is a choice), the send-time check's answer in words, the report exactly as
 // it will be emailed, what won't print, the wording to check, and every reason the Email button is off. "Email to
 // {first name}" is on only when the preview says it can be shared, and one tap is one request (POST /cma/:id/share
-// with the hashes the preview showed). A report that changed since the preview (CMA_STALE) is fetched again and says
+// with the hashes the preview showed). The email is shown as it will be sent, open (never behind a tap), and the phone's
+// sticky bar names the recipient, the address and the send-time check beside the button (ShareRecipient; audit F7). A report that changed since the preview (CMA_STALE) is fetched again and says
 // so. Nothing here offers another way to send the report.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
@@ -97,6 +98,38 @@ export function ShareButton({ s, describedBy }: { s: ShareState; describedBy?: s
     <Button block disabled={!can} pending={s.pending} pendingLabel={W.sending} aria-describedby={describedBy} onClick={() => void s.send()}>
       {s.firstName ? W.emailTo(s.firstName) : W.emailOff}
     </Button>
+  );
+}
+
+/** The send-time check's answer now, in words (D1): its explanation, or that it allows the email; null when there is none. */
+export function decisionLine(p: SharePreview | null): string | null {
+  const d = p?.decision ?? null;
+  if (d === null) return null;
+  if (d.explanation) return `${W.sendCheck}: ${d.explanation}`;
+  return d.outcome === 'allow' ? W.sendCheckAllows : null;
+}
+
+/**
+ * Who receives it and where, and the send-time check's answer, beside the phone's sticky Email button (R-CMA-9, D1: the
+ * tap is made on a screen already showing the recipient's decision; audit cma-v2a F7). The answer is left out when the
+ * bar's own sentence already says it (a deny), so it is said once.
+ */
+export function ShareRecipient({ s }: { s: ShareState }) {
+  const p = s.preview;
+  const recipient = p?.recipients.find((r) => r.contactId === p.recipientContactId) ?? null;
+  if (!p || !recipient) return null;
+  const email = recipient.emails.find((e) => e.id === p.toPointId) ?? null;
+  const line = decisionLine(p);
+  const said = line !== null && p.decision?.explanation ? (p.sentence ?? '').includes(p.decision.explanation) : false;
+  return (
+    <div className="flex flex-col gap-0.5 text-[14px] text-ink">
+      <p className="[overflow-wrap:anywhere]">
+        <span className="text-ink-muted">{W.to}: </span>
+        <span className="font-medium">{recipient.name}</span>
+        {email ? <span> · {email.address}</span> : null}
+      </p>
+      {line !== null && !said ? <p>{line}</p> : null}
+    </div>
   );
 }
 
@@ -224,14 +257,15 @@ export function SharePanel({ s, withButton, sentenceId }: { s: ShareState; withB
               ...(p.tooLong?.parts ?? []).map((x) => W.tooLong(ROLE_WORDS[x.role], x.chars)),
             ]}
           />
-          {p.reportText ? (
-            <details className="rounded-xl border border-line">
-              <summary className="flex min-h-tap cursor-pointer items-center px-3.5 text-[15px] font-medium text-accent">{W.reportHeading}</summary>
-              <div className="flex flex-col gap-2 border-t border-line px-3.5 py-3">
-                {p.subject ? <p className="text-[15px] font-medium text-ink">{W.subjectLine(p.subject)}</p> : null}
-                <pre className="whitespace-pre-wrap break-words font-sans text-[15px] text-ink">{p.reportText}</pre>
-              </div>
-            </details>
+          {(p.body ?? p.reportText) ? (
+            // shown, never behind a tap (R-CMA-9, D1: the tap is made on a screen already showing the report; audit
+            // cma-v2a F7): the email exactly as comms renders it (signature, footer, the unsubscribe line when
+            // marketing), or the report alone while there is no address to render it for
+            <div className="flex flex-col gap-2 rounded-xl border border-line px-3.5 py-3">
+              <h3 className="text-[15px] font-medium text-ink">{W.reportHeading}</h3>
+              {p.subject ? <p className="text-[15px] font-medium text-ink">{W.subjectLine(p.subject)}</p> : null}
+              <pre className="whitespace-pre-wrap break-words font-sans text-[15px] text-ink">{p.body ?? p.reportText}</pre>
+            </div>
           ) : null}
         </>
       ) : null}

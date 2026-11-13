@@ -136,6 +136,34 @@ describe('Share panel', () => {
     expect(await screen.findByRole('button', { name: 'Email to Lee' })).toBeEnabled();
   });
 
+  // Audit cma-v2a F7: R-CMA-9 and D1 say the tap is made "on a screen already showing the report, the recipient's D1
+  // decision and every blocker". The report was behind a closed <details> and the final body (signature, footer) never
+  // shown; on phones the sticky bar showed the button with neither the address nor the send-time check's answer.
+  it('R-CMA-9 D1: the email exactly as it will be sent (the final body, signature included) is shown open, never behind a tap; the phone\'s sticky bar names the recipient, the address and the send-time check next to the button', async () => {
+    app(preview());
+    const p = within(await panel());
+    await p.findByText('The send-time check allows this email now.');
+    expect(p.getByText('The report as it will be emailed')).toBeVisible();
+    expect(p.getByText('Subject: Your home’s estimated value range')).toBeVisible();
+    const body = p.getByText(/Ava Agent/);
+    expect(body).toBeVisible();
+    expect(body.textContent).toBe(preview().body);
+    const bar = within(document.querySelector<HTMLElement>('[data-sticky]')!);
+    expect(bar.getByText('Jane Doe')).toBeVisible();
+    expect(bar.getByText('jane@example.test', { exact: false })).toBeVisible();
+    expect(bar.getByText('The send-time check allows this email now.')).toBeVisible();
+    expect(bar.getByRole('button', { name: 'Email to Jane' })).toBeEnabled();
+  });
+
+  it('D1: a send-time deny is said in the phone\'s sticky bar beside the recipient and the address, once', async () => {
+    app(preview({ canShare: false, sentence: 'The send-time check would block this email now. Jane replied STOP to email.', decision: { id: null, outcome: 'deny', reasons: ['CONSENT_REVOKED'], explanation: 'Jane replied STOP to email.', phase: 'preview' } }));
+    await within(await panel()).findByText('Jane replied STOP to email.');
+    const bar = within(document.querySelector<HTMLElement>('[data-sticky]')!);
+    expect(bar.getByText('Jane Doe')).toBeVisible();
+    expect(bar.getAllByText(/Jane replied STOP to email\./)).toHaveLength(1);
+    expect(bar.getByRole('button', { name: 'Email to Jane' })).toBeDisabled();
+  });
+
   it('one recipient with one address shows no chooser', async () => {
     app(preview());
     const p = within(await panel());

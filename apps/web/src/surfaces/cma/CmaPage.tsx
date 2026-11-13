@@ -1,6 +1,7 @@
 // The agent's CMA screen, /cma/:cmaId (module 72, web/cma; D9 V2-A; R-CMA-2…9, R-AVM-1; E369, E370, E373, E376, E377).
 //
-// Phones: one column, and for a draft the creator may share, a sticky bottom bar with the one Email button. From
+// Phones: one column, and for a draft the creator may share, a sticky bottom bar with the one Email button, the
+// recipient, the address and the send-time check's answer beside it (R-CMA-9, D1; audit cma-v2a F7). From
 // 1024 px: two columns, the range and the comparable sales on the left, the home, the purpose and the share on the
 // right. What it shows, honestly:
 //   - the estimated range (low to high) and its middle, "an estimate, not an appraisal", the source "MLS sales"; or,
@@ -22,7 +23,7 @@ import { type ApiError, useApi, usePageTitle } from '../../shell/index.js';
 import { CompCard } from './CompCard.js';
 import { NotUsed } from './NotUsed.js';
 import { Purpose } from './Purpose.js';
-import { SharePanel, ShareButton, ShareOutcome, useShare } from './SharePanel.js';
+import { SharePanel, ShareButton, ShareOutcome, ShareRecipient, useShare } from './SharePanel.js';
 import { SubjectFacts } from './SubjectFacts.js';
 import { type CmaView, type PatchBody, cmaKey, cmaMessage, day, fetchCma, money, neverShared, pdfHref, streetLine, useCall, useWide } from './lib.js';
 import { LISTING_STATUS_WORDS, W } from './words.js';
@@ -228,6 +229,7 @@ function CmaScreen({ view, bar }: { view: CmaView; bar: RefCallback<HTMLDivEleme
       {shareBar ? (
         <div ref={bar} data-sticky className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-10 -mx-4 flex flex-col gap-2 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 [@media(max-height:559.98px)]:static">
           <ShareOutcome s={s} />
+          <ShareRecipient s={s} />
           {s.preview?.sentence ? (
             <p id={`${sentenceId}-bar`} className="text-[14px] text-ink">
               {s.preview.sentence}
