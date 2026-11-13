@@ -8,6 +8,7 @@ import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
 import { daysAgo, feedLastSyncedAt, mlsSale, saleReso, syncSales, teamListing } from '../../cma/testing.js';
 import { depsFromPlatform } from '../../comms/runtime.js';
 import { call } from '../testing.js';
+import { compsForSubjectInTx } from './cmaSeam.js';
 import { buildCompsInTx, serverTextBanned } from './comps.js';
 import { COUNT_SHARE_ENABLED } from './counts.js';
 import { SELLER_RUNTIME, factPlaceholdersInTx, onEscalationInTx, sellerBundleInTx, sellerFactsCurrentInTx, sellerStartRefusalInTx, COMPS_PLACEHOLDER } from './index.js';
@@ -105,14 +106,29 @@ describe('E536 R-ISA-18: the complete engine set or nothing, by email', () => {
   it('E536 R-ISA-18: with both packs, the licence and a printable statement the email holds result.comps exactly, in order, with the client lines verbatim and no value', async () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
-    const r = await withSellerPacksCleared(h, () => build(l));
-    expect(r.ok).toBe(true);
+    // the email and the pipeline's own run, in one transaction (the pipeline is read-only)
+    const { r, engine } = await withSellerPacksCleared(h, () => asSystem(h, w, l, async (tx, a, actor) => ({
+      r: await buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS),
+      engine: await compsForSubjectInTx(tx, actor, nowInstant(), { kind: 'contact_address', contactAddressId: l.addressId }, { contactId: l.id, onBehalfOf: { userId: a.ownerUserId } }),
+    })));
+    expect([r.ok, engine.ok]).toEqual([true, true]);
     const ok = r as Extract<typeof r, { ok: true }>;
+    const res = (engine as Extract<typeof engine, { ok: true }>).result;
     expect(ok.channel).toBe('email');
     expect(ok.count).toBeGreaterThanOrEqual(3);
-    expect(ok.pendingFacts).toHaveLength(ok.count);
+    // exactly result.comps, in the engine's order: one line per comp, numbered in order, each its own sale's price and date
+    expect(ok.count).toBe(res.comps.length);
+    const saleIds = res.comps.map((c) => res.listings[c.ref.identity]!.saleListingId);
+    expect(ok.pendingFacts.map((f) => f.listingId)).toEqual(saleIds);
+    const sales = new Map((await h.su.query<{ id: string; p: string; d: string }>(`SELECT id, close_price_cents::text AS p, to_char(close_date, 'YYYY-MM-DD') AS d FROM listings WHERE id = ANY ($1::uuid[])`, [saleIds])).rows.map((x) => [x.id, x]));
     const lines = ok.body.split('\n\n');
-    for (let k = 1; k <= ok.count; k++) expect(lines.some((x) => x.startsWith(`${k}. Sold for $`))).toBe(true);
+    const compLines = lines.filter((x) => /^\d+\. Sold for \$/.test(x));
+    expect(compLines).toHaveLength(res.comps.length);
+    const label = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    saleIds.forEach((id, k) => {
+      const sale = sales.get(id)!;
+      expect(compLines[k]!.startsWith(`${k + 1}. Sold for $${(Number(sale.p) / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })} on ${label(sale.d)} (sale price)`), compLines[k]).toBe(true);
+    });
     for (const t of ['These are sales records, not an appraisal or a price for your home.', "Condition and updates aren't in the MLS record.", 'Prices are as recorded in the MLS and may include seller concessions.', 'Only sales the MLS allows us to show are included.']) expect(lines).toContain(t);
     // labels: sold vs asking, the source; never a value, weight, adjustment, valuation date or hidden count
     expect(ok.body).toMatch(/\(sale price\)/);
@@ -232,21 +248,38 @@ describe('E535 R-ISA-18: freshness', () => {
     const l = await sellerLead(h, w2);
     await mlsSale({ h, tenantId: w2.tenantId, mls: w2.mls }, { status: 'active', line1: '301 Rival St', beds: 3, sqft: 1500 });
     await confirm(w2, l);
+    const comps = () => withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)));
+    // a fresh feed whose sold rows were last seen 90 days ago (the incremental feed never re-sends a closed sale): comps are built
+    await h.su.query(`UPDATE listings SET last_seen_in_feed_at = now() - interval '90 days' WHERE tenant_id = $1 AND status = 'sold'`, [w2.tenantId]);
+    expect((await comps()).ok).toBe(true);
+    // the feed itself goes stale: the code says so (FEED_STALE), and no competition handle is offered
     await feedLastSyncedAt({ h, mls: w2.mls }, new Date(Date.now() - 3 * 86_400_000));
-    const r = await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)));
-    expect((r as { codes: string[] }).codes).toEqual(expect.arrayContaining(['MLS_CLIENT_DISPLAY_OFF']));
+    expect(await comps()).toEqual({ ok: false, codes: ['FEED_STALE'] });
     const b = await asSystem(h, w2, l, (tx, a, actor) => sellerBundleInTx(tx, actor, a, nowInstant()));
-    expect(b.handles).toEqual([]);
+    expect([b.handles, b.unavailable]).toEqual([[], ['competition_unavailable: FEED_STALE', 'sold_comps_unavailable: FEED_STALE']]);
   });
 
   it('E535: a row unseen for 3 days in a fresh feed is never offered as a handle; each fact keeps its own as-of', async () => {
     const w2 = await sellerWorld(h);
     const l = await sellerLead(h, w2);
     const id = await mlsSale({ h, tenantId: w2.tenantId, mls: w2.mls }, { status: 'active', line1: '302 Rival St', beds: 3, sqft: 1500 });
+    const id2 = await mlsSale({ h, tenantId: w2.tenantId, mls: w2.mls }, { status: 'active', line1: '303 Rival St', beds: 3, sqft: 1500 });
     await confirm(w2, l);
+    // each fact keeps its own as-of: min(the row's last_seen_in_feed_at, its feed's last sync), here the row's own
+    await h.su.query(`UPDATE listings SET last_seen_in_feed_at = now() - interval '2 hours' WHERE id = $1`, [id]);
+    await h.su.query(`UPDATE listings SET last_seen_in_feed_at = now() - interval '5 hours' WHERE id = $1`, [id2]);
     const before = await asSystem(h, w2, l, (tx, a, actor) => sellerBundleInTx(tx, actor, a, nowInstant()));
-    expect(before.handles).toHaveLength(1);
-    await h.su.query(`UPDATE listings SET last_seen_in_feed_at = now() - interval '3 days' WHERE id = $1`, [id]);
+    expect(before.handles).toHaveLength(2);
+    const msg = await asSystem(h, w2, l, async (tx, a, actor) => {
+      const now = nowInstant();
+      const ctx = await contextFor(tx, a, now);
+      return queueIsaMessageInTx({ tx, deps: deps(), actor, ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq },
+        { kind: 'queue_message', messageKind: 'facts', purpose: 'marketing', channel: 'email', lines: [], text: null, handles: ['C1', 'C2'], offerId: null, slotIndex: null, initiated: true }, a.machine);
+    });
+    const asOf = (await h.su.query<{ same: boolean; listing_id: string }>(`SELECT f.listing_id, f.as_of = date_trunc('milliseconds', l.last_seen_in_feed_at) AS same FROM ai_isa_shared_facts f JOIN listings l ON l.id = f.listing_id
+      WHERE f.message_id = $1 ORDER BY f.listing_id`, [msg])).rows;
+    expect(asOf).toEqual([id, id2].sort().map((x) => ({ listing_id: x, same: true })));
+    await h.su.query(`UPDATE listings SET last_seen_in_feed_at = now() - interval '3 days' WHERE id = ANY ($1::uuid[])`, [[id, id2]]);
     const after = await asSystem(h, w2, l, (tx, a, actor) => sellerBundleInTx(tx, actor, a, nowInstant()));
     expect(after.handles).toEqual([]);
   });
@@ -334,9 +367,12 @@ describe('E538 R-ISA-26: the seller home link', () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
     expect((await panel(w.agents[0]!, l.id)).body.subject.confirmed).toBe(true);
-    await h.su.query(`UPDATE contact_addresses SET line1 = $2 WHERE id = $1`, [l.addressId, l.line1.replace('Ct', 'Court')]);
+    // the Team Lead edits the address through the people API, as themselves (RLS and the trigger run as the editor)
+    const edit = await call(w.teamLead!, 'PATCH', `/contacts/${l.id}/addresses/${l.addressId}`, { kind: 'property', line1: l.line1.replace('Ct', 'Court'), line2: null, city: 'Oakland', region: 'CA', postalCode: '94110' });
+    expect(edit.status).toBe(200);
     const p = await panel(w.agents[0]!, l.id);
-    expect(p.body.subject.confirmed).toBe(false);
+    expect([p.body.subject.confirmed, (p.body.subject as unknown as { clearedReason: string | null }).clearedReason]).toEqual([false, 'address_changed']);
+    expect(((await build(l)) as { codes: string[] }).codes).toContain('SUBJECT_UNCONFIRMED');
     const tl = await call(w.teamLead!, 'POST', `/contacts/${l.id}/ai-isa/confirm-subject`, { contactAddressId: l.addressId, recordListingId: l.recordId, factsSha256: 'a'.repeat(64) });
     expect([403, 404]).toContain(tl.status);
   });

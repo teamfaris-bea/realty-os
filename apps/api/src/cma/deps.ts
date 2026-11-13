@@ -23,6 +23,7 @@ export {
   type MlsEligibility,
   clientSoldView,
   clientView,
+  connectionClientEligible,
   factsOfRow,
   mlsEligibility,
   valuationEligible,

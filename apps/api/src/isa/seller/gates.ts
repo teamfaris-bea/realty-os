@@ -10,7 +10,7 @@
 import { type Instant, type Role, type SystemActor, type UserActor, can, canAsRole, isRole } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { type ListingRow, LISTING_COLS, addressKey, defaultAddress, liveNearMatches, mlsEligibility, mlsRowsAtAddress, nearMatches, streetOfKey } from './cmaSeam.js';
+import { type ListingRow, LISTING_COLS, addressKey, connectionClientEligible, defaultAddress, liveNearMatches, mlsEligibility, mlsRowsAtAddress, nearMatches, streetOfKey } from './cmaSeam.js';
 import { type AssignmentRow, capabilitySet, contextFor } from './isa2Seam.js';
 import { type SellerSubject, type WatchRow, confirmationCodes, currentSubjectInTx, watchOf } from './subject.js';
 
@@ -83,7 +83,8 @@ export async function sellerGatesInTx(tx: Tx, actor: SystemActor | UserActor, a:
   codes.push(...confirmationCodes(watch, subject));
   if (!(await ownerHoldsCmaPrepare(tx, a))) codes.push('CMA_SCOPE_LOST');
   const e = await mlsEligibility(tx, now);
-  if (e.clientIds.length === 0) codes.push('MLS_CLIENT_DISPLAY_OFF');
+  // E535: a feed that is client-eligible but for its age is FEED_STALE (the feed's age decides), not "display off"
+  if (e.clientIds.length === 0) codes.push(e.connections.some((c) => c.lastSyncedAt !== null && e.staleIds.includes(c.id) && connectionClientEligible(c, c.lastSyncedAt)) ? 'FEED_STALE' : 'MLS_CLIENT_DISPLAY_OFF');
   if (kind === 'comps') {
     if (await compsSuspendedNowInTx(tx, actor, a, watch)) codes.push('COMPS_SUSPENDED');
     if (a.boundPoints.email === undefined) codes.push('NO_BOUND_EMAIL');

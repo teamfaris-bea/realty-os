@@ -21,6 +21,7 @@ export {
   type MlsConnectionFacts,
   type MlsEligibility,
   addressKey,
+  connectionClientEligible,
   factsOfRow,
   liveNearMatches,
   mlsEligibility,

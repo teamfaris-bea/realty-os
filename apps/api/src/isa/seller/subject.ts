@@ -14,7 +14,7 @@ import { type ListingRow, addressKey, clientRendering, connectionSizeField, defa
 /** Owner question 6 default: a newest record older than this is SUBJECT_RECORD_OLD. VERIFY. */
 export const SUBJECT_RECORD_MAX_YEARS = 10;
 
-export type SubjectState = 'ok' | 'no_address' | 'no_mls_connection' | 'not_in_mls' | 'incomplete' | 'type_not_supported' | 'record_old' | 'not_displayable' | 'changed';
+export type SubjectState = 'ok' | 'no_address' | 'no_mls_connection' | 'not_in_mls' | 'incomplete' | 'type_not_supported' | 'record_old' | 'feed_stale' | 'not_displayable' | 'changed';
 
 export const SUBJECT_SENTENCES: Readonly<Record<SubjectState, { code: string | null; sentence: string; nextStep: string | null }>> = Object.freeze({
   ok: { code: null, sentence: 'The home’s MLS record was found.', nextStep: 'Confirm this is the home they’re selling' },
@@ -24,6 +24,7 @@ export const SUBJECT_SENTENCES: Readonly<Record<SubjectState, { code: string | n
   incomplete: { code: 'SUBJECT_INCOMPLETE', sentence: 'The home’s MLS record lacks its property type, bedrooms or size, so the assistant shares no recent sales.', nextStep: 'Prepare a CMA (enter type and size)' },
   type_not_supported: { code: 'CMA_SUBJECT_TYPE_NOT_SUPPORTED', sentence: 'Land and other property types are not compared yet.', nextStep: null },
   record_old: { code: 'SUBJECT_RECORD_OLD', sentence: `The home’s newest MLS record is more than ${SUBJECT_RECORD_MAX_YEARS} years old, so the assistant shares no recent sales.`, nextStep: 'Prepare a CMA (enter type and size)' },
+  feed_stale: { code: 'FEED_STALE', sentence: 'The MLS feed has not synced recently, so the home’s record cannot be checked now. It is checked again after the next sync.', nextStep: null },
   not_displayable: { code: 'SUBJECT_INCOMPLETE', sentence: 'The home’s bedrooms or size cannot be shown to clients under your MLS licence, so the assistant shares no recent sales.', nextStep: 'Prepare a CMA (enter type and size)' },
   changed: { code: 'SUBJECT_CHANGED', sentence: 'The home’s MLS record changed since it was looked up. Confirm it again.', nextStep: 'Confirm this is the home they’re selling' },
 });
@@ -93,8 +94,10 @@ export async function currentSubjectInTx(tx: Tx, contactId: string, now: Instant
   if (resolved.connectionId !== rec.mls_connection_id || f.sqft.value !== rec.sqft || f.beds.value !== rec.beds) return of('changed', { ...base, record });
   if (f.beds.value === null || f.sqft.value === null || f.propertyType.value === null) return of('incomplete', { ...base, record });
   if (record.modifiedAt === null || now - record.modifiedAt > ms(SUBJECT_RECORD_MAX_YEARS)) return of('record_old', { ...base, record });
-  // R-ISA-18: shown only through the client rendering (a sold mirror with its team row, cmaSeam.ts clientRendering)
+  // R-ISA-18: shown only through the client rendering (a sold mirror with its team row, cmaSeam.ts clientRendering). A
+  // stale feed renders nothing to clients: that is FEED_STALE (E535), never "cannot be shown under your licence"
   const e = await mlsEligibility(tx, now);
+  if (e.staleIds.includes(rec.mls_connection_id!)) return of('feed_stale', { ...base, record });
   const team = rec.team_listing_id !== null && rec.status === 'sold' ? ((await listingRows(tx, [rec.team_listing_id]))[0] ?? null) : null;
   const d = clientRendering(e, rec, team);
   if (d === null || d.beds === undefined || d.beds === null || d.sqft === undefined || d.sqft === null) return of('not_displayable', { ...base, record });
