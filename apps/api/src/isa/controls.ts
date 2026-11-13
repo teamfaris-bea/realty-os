@@ -18,6 +18,7 @@ const NOFACTS = {} as IsaFacts;
 import { skipText } from '../nurture/decide.js';
 import { backstopInTx } from './backstop.js';
 import { applyActionsInTx, cancelForAssignmentInTx, chainEnvOf, contextFor, control, type IsaDeps, pauseCardInTx } from './effects.js';
+import { closeHandoffInTx } from './handoff.js';
 import { type AssignmentRow, activeBlock, assignmentById, evaluateChain, exclusivity, inFlightIsaMessages, liveAssignmentOf, lockForTurn, personIds, tenantIsaFacts } from './repo.js';
 
 export const UNDO_MS = 10_000;
@@ -143,7 +144,13 @@ export async function startCare(actor: UserActor, deps: IsaDeps, contactId: stri
   // the system part: stop the live playbook enrollment, supersede every proposed draft and handback of the contact
   // (b12 review B12X-4, R-ISA-2: also the automated messages already built, which dispatch then refuses as
   // ASSISTANT_ACTION_WITHDRAWN, and the module 26 trigger firings still scheduled, skipped visibly)
-  const sys = await asSystem(deps, actor.tenantId, async (tx) => {
+  const sys = await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
+    // b12 recheck R13: AI care restarting on the person ends their earlier handoffs (the new assignment hands off on its
+    // own): each card closes and its action is executed, so its deadline never alerts while the AI cares for them again
+    const prior = await sql<{ id: string; action_id: string }>`SELECT h.id, h.assistant_action_id AS action_id FROM ai_isa_handoffs h
+        JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
+      WHERE h.tenant_id = app.tenant_id() AND x.contact_id = ${contactId} AND x.kind = 'ai_isa_handoff' AND x.status = 'proposed' AND h.assignment_id <> ${assignmentId}`.execute(tx);
+    for (const p of prior.rows) await closeHandoffInTx(tx, sa, { id: p.id, actionId: p.action_id }, 'care_restarted', now);
     const e = await sql<{ id: string }>`UPDATE playbook_enrollments SET state = 'stopped', stop_reason = 'ai_isa_started', ended_at = now(), pause_reason = NULL, paused_at = NULL
       WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state IN ('active','paused') RETURNING id`.execute(tx);
     const d = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}

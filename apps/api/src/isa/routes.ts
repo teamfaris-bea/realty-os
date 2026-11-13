@@ -11,9 +11,11 @@ import { AppError } from '../errors.js';
 import { detailFacts, liveDetailFacts } from '../people/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
+import { systemActor } from '../worker/systemActor.js';
 import { actorOf, platformOf } from '../workspace/common.js';
 import { continueCare, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
+import { closeHandoffInTx } from './handoff.js';
 import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf } from './repo.js';
 import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
@@ -59,7 +61,9 @@ async function panel(req: FastifyRequest, contactId: string) {
       WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND status = 'sent' ORDER BY created_at`.execute(tx);
     const sent = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching') AND dispatched_at > now() - interval '24 hours'`.execute(tx);
-    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status
+    // b12 recheck R13: a handoff whose action the system executed is done (its card closed): never overdue
+    const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; done: boolean }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status,
+        EXISTS (SELECT 1 FROM assistant_actions x WHERE x.tenant_id = ai_isa_handoffs.tenant_id AND x.id = ai_isa_handoffs.assistant_action_id AND x.status = 'executed') AS done
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
     const last = turn.rows[0];
     const capsOn = new Set(opt.rows[0]?.c ?? []);
@@ -89,7 +93,7 @@ async function panel(req: FastifyRequest, contactId: string) {
       factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString() })),
       openOffer: null,
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
-      handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status } : null,
+      handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && !hd.done && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status } : null,
     };
   }, { db: deps.db });
 }
@@ -144,7 +148,8 @@ async function register(app: FastifyInstance): Promise<void> {
     return withTenantTx(actor, async (tx) => {
       const rows = await sql<{ id: string; contact_id: string; name: string | null; side: string; owner_user_id: string; owner_name: string | null; release: Date | null; overdue: boolean; next: Date | null; ended_at: Date | null }>`
         SELECT a.id, a.contact_id, c.display_name AS name, a.side, a.owner_user_id, u.display_name AS owner_name, c.inactivity_release_at AS release, a.next_follow_up_at AS next, a.ended_at,
-               EXISTS (SELECT 1 FROM ai_isa_handoffs h WHERE h.tenant_id = a.tenant_id AND h.assignment_id = a.id AND h.sla_class <> 'none' AND h.sla_met_at IS NULL AND h.sla_due_at < now()) AS overdue
+               EXISTS (SELECT 1 FROM ai_isa_handoffs h WHERE h.tenant_id = a.tenant_id AND h.assignment_id = a.id AND h.sla_class <> 'none' AND h.sla_met_at IS NULL AND h.sla_due_at < now()
+                         AND NOT EXISTS (SELECT 1 FROM assistant_actions x WHERE x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id AND x.status = 'executed')) AS overdue
           FROM ai_isa_assignments a JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id LEFT JOIN users u ON u.id = a.owner_user_id
          WHERE a.tenant_id = app.tenant_id()
            ${q.scope === 'mine' ? sql`AND a.owner_user_id = ${actor.userId}` : sql``}
@@ -198,15 +203,25 @@ async function register(app: FastifyInstance): Promise<void> {
   };
   r.post('/ai-isa/handoffs/:id/ack', { config: { auth: 'ai_isa.handoff' }, preHandler: authorize('ai_isa.handoff', handoffFacts), schema: { params: S.IdParams, body: S.EmptyBody, response: { 200: S.AckResult } } }, async (req) => {
     const actor = actorOf(req);
-    return withTenantTx(actor, async (tx, now) => {
-      const u = await sql<{ id: string; at: Date; met: Date | null; cs: string }>`UPDATE ai_isa_handoffs SET acknowledged_at = COALESCE(acknowledged_at, ${new Date(now)}),
+    const db = platformOf(req).db;
+    const out = await withTenantTx(actor, async (tx, now) => {
+      const u = await sql<{ id: string; at: Date; met: Date | null; cs: string; cls: string; action_id: string }>`UPDATE ai_isa_handoffs SET acknowledged_at = COALESCE(acknowledged_at, ${new Date(now)}),
           acknowledged_by_user_id = COALESCE(acknowledged_by_user_id, ${actor.userId})
-        WHERE tenant_id = app.tenant_id() AND id = ${req.params.id} RETURNING id, acknowledged_at AS at, sla_met_at AS met, confirmation_status AS cs`.execute(tx);
+        WHERE tenant_id = app.tenant_id() AND id = ${req.params.id} RETURNING id, acknowledged_at AS at, sla_met_at AS met, confirmation_status AS cs, sla_class AS cls, assistant_action_id AS action_id`.execute(tx);
       const h = u.rows[0];
       if (!h) throw new AppError('NOT_FOUND');
       await audit(tx, actor, { action: 'ai_isa.handoff_acknowledged', entity: { type: 'ai_isa_handoff', id: h.id } });
-      return { handoffId: h.id, acknowledgedAt: h.at.toISOString(), slaMet: h.met !== null, confirmationStatus: h.cs };
-    }, { db: platformOf(req).db });
+      return { body: { handoffId: h.id, acknowledgedAt: h.at.toISOString(), slaMet: h.met !== null, confirmationStatus: h.cs }, close: h.cls === 'none' ? { id: h.id, actionId: h.action_id } : null };
+    }, { db });
+    // b12 recheck R13: a handoff no touch can ever meet (no deadline) is done once acknowledged: the system closes every
+    // card of it (the Team Lead's and each Owner/Admin's too, which the caller's RLS would not reach) and executes its
+    // action, right after the acknowledgement commits; a repeat "Got it" retries it. A handoff with a deadline stays open
+    // until a human touch meets it (the sweep).
+    if (out.close !== null) {
+      const sys = systemActor(actor.tenantId, 'assistant');
+      await withTenantTx(sys, (tx, now) => closeHandoffInTx(tx, sys, out.close!, 'acknowledged', now), { db });
+    }
+    return out.body;
   });
   r.post('/ai-isa/escalations/:id/resolve', { config: { auth: 'ai_isa.handoff' }, preHandler: authorize('ai_isa.handoff', async (req) => {
     const p = platformOf(req);

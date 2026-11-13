@@ -386,6 +386,7 @@ export const AUDIT_ACTIONS = [
   'ai_isa.booking_refused', // module 75 (D12 proposed): codes only, never content
   'ai_isa.handoff_created', // module 75 (D12 proposed): codes only, never content
   'ai_isa.handoff_acknowledged', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.handoff_closed', // module 75 (D12 proposed, b12 recheck R13): the system closed a done handoff's card (the reason code only)
   'ai_isa.system_paused', // module 75 (D12 proposed): codes only, never content
   'ai_isa.system_ended', // module 75 (D12 proposed): codes only, never content
   'ai_isa.block_lifted', // module 75 (D12 proposed): codes only, never content

@@ -39,7 +39,8 @@ async function ageAndSweep(handoffId: string) {
     await h.su.query(`SET session_replication_role = origin`);
   }
   const deps = depsFromPlatform(h.app.platform);
-  return withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => slaSweepInTx(tx, deps.ids, now), { db: h.database });
+  const actor = systemActor(w.tenantId, 'assistant');
+  return withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor), { db: h.database });
 }
 const touch = (contactId: string) => h.su.query(`UPDATE contacts SET last_human_touch_at = now() WHERE id = $1`, [contactId]);
 
@@ -514,6 +515,145 @@ describe('b12 recheck R11: an AI handoff card is decided on its own path, never 
     await touch(l.id);
     expect((await ageAndSweep(ho!.id)).met).toBeGreaterThanOrEqual(1);
     expect((await handoffs([l.id]))[0]!.sla_met_at).not.toBeNull();
+  });
+});
+
+describe('b12 recheck R13: a handoff that is done closes its pinned card and its action is decided, as the system (R-ISA-30; E521, E525)', () => {
+  const cardRows = async (contactId: string) => (await h.su.query<{ user_id: string; state: string; resolved_by: string | null }>(
+    `SELECT user_id, state, resolved_by FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff' ORDER BY created_at, id`, [contactId])).rows;
+  const actionOf = async (handoffId: string) => (await h.su.query<{ id: string; status: string; decided_by_user_id: string | null }>(
+    `SELECT x.id, x.status, x.decided_by_user_id FROM ai_isa_handoffs h JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id WHERE h.id = $1`, [handoffId])).rows[0]!;
+  const closedAudit = async (handoffId: string) => (await h.su.query<{ reason: string; actor_kind: string }>(
+    `SELECT reason, actor_kind FROM audit_log WHERE action = 'ai_isa.handoff_closed' AND entity_id = $1 ORDER BY seq`, [handoffId])).rows;
+  const overdueOf = async (contactId: string) => (await h.su.query(`SELECT 1 FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = $1`, [contactId])).rows.length;
+  /** Care on a0's lead ends owner_change when the lead moves to a1: a handoff to a1 with a deadline, its card open. */
+  async function handedToA1() {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: a1.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids })).ok).toBe(true);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId, sla_met_at: null });
+    expect(ho!.sla_class).not.toBe('none');
+    expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'open', resolved_by: null }]);
+    expect(await actionOf(ho!.id)).toMatchObject({ status: 'proposed' });
+    return { l, ho: ho!, a1 };
+  }
+
+  it('R-ISA-30: "Got it" on a handoff with a deadline leaves its card open, even past the deadline; a human touch and the sweep meet it, close the card and execute the action in the same transaction', async () => {
+    const { l, ho, a1 } = await handedToA1();
+    const actionId = (await actionOf(ho.id)).id;
+    const ack = await call<{ slaMet: boolean }>(a1, 'POST', `/ai-isa/handoffs/${ho.id}/ack`, {});
+    expect([ack.status, ack.body.slaMet]).toEqual([200, false]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'open', resolved_by: null }]);
+    // overdue and not touched: the sweep escalates and leaves the card and the action as they are
+    await ageAndSweep(ho.id);
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+    expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'open', resolved_by: null }]);
+    expect(await actionOf(ho.id)).toMatchObject({ status: 'proposed' });
+    expect(await closedAudit(ho.id)).toEqual([]);
+    // the human touch meets it: the card closes (condition), the system executes the action, the deadline is met
+    await touch(l.id);
+    await ageAndSweep(ho.id);
+    expect((await handoffs([l.id]))[0]!.sla_met_at).not.toBeNull();
+    expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await actionOf(ho.id)).toEqual({ id: actionId, status: 'executed', decided_by_user_id: null });
+    expect(await closedAudit(ho.id)).toEqual([{ reason: 'deadline_met', actor_kind: 'system' }]);
+    const feed = await call<{ pinned: { assistantActionId: string | null }[] }>(a1, 'GET', '/feed');
+    expect(feed.status).toBe(200);
+    expect(feed.body.pinned.map((c) => c.assistantActionId)).not.toContain(actionId);
+  });
+
+  it('R-ISA-30 E521: "Got it" on a handoff with no deadline (D1 leaves no channel) closes its card and executes its action', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ sla_class: 'none', recipient_user_id: agent.userId });
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
+    const ack = await call<{ slaMet: boolean }>(agent, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {});
+    expect([ack.status, ack.body.slaMet]).toEqual([200, false]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
+    expect(await closedAudit(ho!.id)).toEqual([{ reason: 'acknowledged', actor_kind: 'system' }]);
+    // a repeat ack changes nothing more
+    expect((await call(agent, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {})).status).toBe(200);
+    expect(await closedAudit(ho!.id)).toHaveLength(1);
+  });
+
+  it('R-ISA-30 E521: on a closed lead, the Owner\'s "Got it" on the no-deadline handoff closes every card of it (the Team Lead\'s and each Owner/Admin\'s)', async () => {
+    const a0 = w.agents[0]!;
+    const l = await isaLead(h, a0);
+    expect((await startCare(a0, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await command(a0, l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho).toMatchObject({ sla_class: 'none', recipient_user_id: null });
+    const before = await cardRows(l.id);
+    expect(before.map((c) => c.user_id)).toEqual(expect.arrayContaining([w.teamLead!.userId, w.owner.userId]));
+    expect(before.every((c) => c.state === 'open')).toBe(true);
+    expect((await call(w.owner, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {})).status).toBe(200);
+    const after = await cardRows(l.id);
+    expect(after).toHaveLength(before.length);
+    expect(after.every((c) => c.state === 'done' && c.resolved_by === 'condition')).toBe(true);
+    expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed' });
+  });
+
+  it('R-ISA-30 E521: a lead closed while its handoff has a deadline: the sweep closes the card and executes the action, never sends an overdue alert, and the deadline is not recorded as met', async () => {
+    const { l, ho, a1 } = await handedToA1();
+    expect((await command(a1, l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
+    await runIsa(h, w.tenantId, 1);
+    expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).toBe('closed');
+    // the pending card followed the lead to the previous owner's Team Lead (rehomeHandbacks) and is still open
+    expect(await cardRows(l.id)).toEqual([{ user_id: w.teamLead!.userId, state: 'open', resolved_by: null }]);
+    await ageAndSweep(ho.id);
+    expect(await cardRows(l.id)).toEqual([{ user_id: w.teamLead!.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await actionOf(ho.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 0 });
+    expect(await closedAudit(ho.id)).toEqual([{ reason: 'lead_closed', actor_kind: 'system' }]);
+    // done: later sweeps never alert, and the panel does not call it overdue
+    await ageAndSweep(ho.id);
+    expect(await overdueOf(l.id)).toBe(0);
+    const panel = await call<{ handoff: { id: string; overdue: boolean } | null }>(w.owner, 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(panel.status).toBe(200);
+    expect(panel.body.handoff).toMatchObject({ id: ho.id, overdue: false });
+  });
+
+  it('R-ISA-30: a restart of AI care closes the previous handoff\'s card and executes its action; its deadline then never alerts', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/ai-isa/end`, {})).status).toBe(200);
+    await h.su.query(`UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1 AND finalize_at IS NOT NULL`, [l.id]);
+    await runIsa(h, w.tenantId);
+    const [ho] = await handoffs([l.id]);
+    expect(ho!.sla_class).not.toBe('none');
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
+    expect(await closedAudit(ho!.id)).toEqual([{ reason: 'care_restarted', actor_kind: 'system' }]);
+    await ageAndSweep(ho!.id);
+    expect(await overdueOf(l.id)).toBe(0);
+    expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 0 });
+  });
+
+  it('R-ISA-30: erasing the person leaves no handoff card behind (the card, the action and the handoff cascade from the contact)', async () => {
+    const { freshReauth } = await import('./testing.js');
+    const { l } = await handedToA1();
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'POST', `/contacts/${l.id}/erase`, { reason: 'PRIVACY_REQUEST' })).status).toBe(200);
+    expect(await cardRows(l.id)).toEqual([]);
+    expect(await actions([l.id])).toEqual([]);
+    expect(await handoffs([l.id])).toEqual([]);
   });
 });
 

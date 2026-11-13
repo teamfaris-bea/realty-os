@@ -1,11 +1,13 @@
 // The handoff (R-ISA-14, R-ISA-30; docs/AI_ISA.md §4.7): exactly one per assignment, its package frozen (ids, codes
 // and verified client quotes only; the hash is computed by Postgres over the stored jsonb so the CHECK holds), a
-// pinned card and a notification, and a response deadline in business minutes that only a human touch clears.
+// pinned card and a notification, and a response deadline in business minutes that only a human touch clears. Once
+// the handoff is done, the system closes its card and executes its action (b12 recheck R13, closeHandoffInTx).
 import { pointBlocks } from '@realty/core/compliance';
 import type { IdGenerator, Instant, UserId } from '@realty/core/foundation';
 import { phoneCallbackAllowed } from '@realty/core/voice';
 import { type Tx, loadPeople, unownedHandbackTarget } from '@realty/db';
 import { sql } from 'kysely';
+import { resolveFeedFor } from '../assistant/repos/actions.js';
 import { audit } from '../audit.js';
 import { adminUserIds, contactLabel, notifyUser, upsertFeedItem } from '../comms/repos/notify.js';
 import { teamLeadOf } from '../leads/repos/members.js';
@@ -150,6 +152,27 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   return handoffId;
 }
 
+/** Why a handoff is done (b12 recheck R13): the audit reason of closeHandoffInTx. */
+export type HandoffCloseReason = 'deadline_met' | 'acknowledged' | 'lead_closed' | 'care_restarted';
+
+/**
+ * b12 recheck R13: a handoff that is done closes. Its pinned card closes (every open card of its action, whoever holds
+ * it; resolved_by 'condition') and its still-proposed action is executed, by the system (a person decides an action
+ * only as themselves, 0018; `executed` is what an internal action takes once handled). Done means: a human touch met
+ * the deadline (the sweep, in its transaction), "Got it" on a handoff no touch can ever meet (sla_class 'none'), the
+ * lead was closed (the sweep: a closed lead takes no touch), or AI care restarted on the person (startCare). An
+ * executed action marks the handoff done for the sweep, the panel, the list and the Admin count, so its deadline never
+ * alerts afterwards. Idempotent: a second call changes nothing and writes no second audit row.
+ */
+export async function closeHandoffInTx(tx: Tx, actor: SystemActor, h: { id: string; actionId: string }, reason: HandoffCloseReason, now: Instant): Promise<boolean> {
+  const x = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'executed', updated_at = now()
+    WHERE tenant_id = app.tenant_id() AND id = ${h.actionId} AND kind = 'ai_isa_handoff' AND status = 'proposed' RETURNING id`.execute(tx);
+  await resolveFeedFor(tx, h.actionId, now, 'condition');
+  if (x.rows.length === 0) return false;
+  await audit(tx, actor, { action: 'ai_isa.handoff_closed', entity: { type: 'ai_isa_handoff', id: h.id }, reason });
+  return true;
+}
+
 /** The next-step codes (§4.7). `call_now` only when a phone callback is allowed (E112; b12 review B12X-2). */
 function nextStepsFor(h: Handoff, callbackAllowed: boolean): string[] {
   const out: string[] = [];
@@ -188,19 +211,23 @@ async function overdueTargets(tx: Tx, r: { owner: string | null; holder: string 
 
 /**
  * The deadline job (R-ISA-30): a human touch since the handoff (R-OWN-14's touch, contacts.last_human_touch_at)
- * clears it; "Got it" never does. A breach notifies the team lead (level 1), then Owner/Admin (level 2).
+ * clears it; "Got it" never does. A breach notifies the team lead (level 1), then Owner/Admin (level 2). b12 recheck
+ * R13: a met deadline closes the handoff's card and executes its action in this transaction; so does a lead closed
+ * since (no touch can meet it any more), without recording the deadline as met; a handoff already done (its action
+ * executed) is not read again.
  */
-export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Promise<{ met: number; escalated: number }> {
+export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor: SystemActor): Promise<{ met: number; escalated: number; closed: number }> {
   let met = 0;
   let escalated = 0;
+  let closed = 0;
   // b12 review B12X-3: the touch is read on the record the person lives on now (a merged-away record takes none).
   // b12 recheck R2: the escalation follows that record's current owner, as the pending card does (rehomeHandbacks, the
   // merge). b12 recheck R8: an unowned record follows whoever holds the card now (the handoff action's owner, which
   // rehomeHandbacks and the merge keep current while it is proposed). b12 recheck R10: a decided card has no holder;
   // the record's last owner on the ownership ledger stands in, and only with none does it fall back to the frozen
   // recipient, then the assignment's owner
-  const rows = await sql<{ id: string; contact_id: string; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null }>`
-    SELECT h.id, c.id AS contact_id, h.created_at, h.sla_due_at, h.sla_escalation_level,
+  const rows = await sql<{ id: string; action_id: string; contact_id: string; lead_closed: boolean; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null }>`
+    SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level,
            CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
            CASE WHEN x.status = 'proposed' THEN x.owner_user_id END AS holder_user_id,
            CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
@@ -209,11 +236,19 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
       FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
       JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
       LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
-     WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' ORDER BY h.sla_due_at LIMIT 200`.execute(tx);
+     WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' AND x.status IS DISTINCT FROM 'executed'
+     ORDER BY h.sla_due_at LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
     if (r.touched !== null && r.touched.getTime() >= r.created_at.getTime()) {
       await sql`UPDATE ai_isa_handoffs SET sla_met_at = ${r.touched} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
+      await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'deadline_met', now);
       met += 1;
+      continue;
+    }
+    // b12 recheck R13: a touch is recorded only on an owned lead, so a closed lead's deadline can never be met: the
+    // handoff is done (its card closes, its action is executed), and nothing alerts; the deadline is not recorded as met
+    if (r.lead_closed) {
+      if (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'lead_closed', now)) closed += 1;
       continue;
     }
     if (now < r.sla_due_at.getTime() || r.sla_escalation_level >= 2) continue;
@@ -230,5 +265,5 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
     await sql`UPDATE ai_isa_handoffs SET sla_escalated_at = ${new Date(now)}, sla_escalation_level = ${level} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
     escalated += 1;
   }
-  return { met, escalated };
+  return { met, escalated, closed };
 }

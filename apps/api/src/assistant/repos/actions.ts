@@ -162,7 +162,8 @@ export async function actionByDedupeKey(tx: Tx, key: string): Promise<ActionRow 
  * An AI ISA handoff (module 75) is acknowledged on POST /ai-isa/handoffs/:id/ack and its deadline is met only by a
  * human touch (R-ISA-30): the generic approve ("Got it") invalidated it as a stale draft and the generic reject
  * ("Dismiss") decided it, and either closed its pinned card while the deadline stayed open; both refuse it (b12
- * recheck R11).
+ * recheck R11). The system closes its card and executes it once the handoff is done (isa/handoff.ts closeHandoffInTx,
+ * b12 recheck R13).
  */
 export const OWN_DECISION_PATH_KINDS: readonly string[] = ['contract_extraction', 'ai_isa_handoff'];
 
@@ -290,9 +291,13 @@ export async function upsertFeed(tx: Tx, ids: IdGenerator, f: FeedSpec): Promise
       reasons = EXCLUDED.reasons, subject_id = EXCLUDED.subject_id, assistant_action_id = EXCLUDED.assistant_action_id, updated_at = now()`.execute(tx);
 }
 
-/** Closes the caller's open feed items about an action (approve / reject / dismiss). */
-export async function resolveFeedFor(tx: Tx, actionId: string, now: Instant): Promise<void> {
+/**
+ * Closes the caller's open feed items about an action (approve / reject / dismiss). `resolvedBy` 'condition' records
+ * that the card's condition stopped holding rather than a module deciding its subject (an AI ISA handoff that is done,
+ * b12 recheck R13); the default leaves resolved_by NULL as before.
+ */
+export async function resolveFeedFor(tx: Tx, actionId: string, now: Instant, resolvedBy: 'condition' | null = null): Promise<void> {
   await sql`
-    UPDATE priority_feed_items SET state = 'done', resolved_at = ${toIso(now)}::timestamptz, snoozed_until = NULL, updated_at = now()
+    UPDATE priority_feed_items SET state = 'done', resolved_at = ${toIso(now)}::timestamptz, resolved_by = ${resolvedBy}, snoozed_until = NULL, updated_at = now()
      WHERE tenant_id = app.tenant_id() AND assistant_action_id = ${actionId} AND state IN ('open','snoozed')`.execute(tx);
 }

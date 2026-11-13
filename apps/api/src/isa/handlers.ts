@@ -201,7 +201,7 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
       await applyActionsInTx({ tx: t, deps: d, actor: a, ctx, now, turnId: null, pinnedSeq: asg.lastInboundSeq }, r);
     }),
     tx('ai_isa.saved_search', AssignmentPayload, async () => undefined, 'default'),
-    { ...tx('ai_isa.sla', Empty, (t, d, _a, _p, now) => slaSweepInTx(t, d.ids, now), 'default'), every: { ms: AI_ISA_SLA_EVERY_MS, offsetMs: 20_000 }, periodicPayload: {} } as JobHandler<unknown>,
+    { ...tx('ai_isa.sla', Empty, (t, d, a, _p, now) => slaSweepInTx(t, d.ids, now, a), 'default'), every: { ms: AI_ISA_SLA_EVERY_MS, offsetMs: 20_000 }, periodicPayload: {} } as JobHandler<unknown>,
     { ...tx('ai_isa.sweep', Empty, (t, d, a, _p, now) => sweepInTx(t, d, a, now), 'default'), every: { ms: AI_ISA_SWEEP_EVERY_MS, offsetMs: 40_000 }, periodicPayload: {} } as JobHandler<unknown>,
   ] as JobHandler<unknown>[];
 }
