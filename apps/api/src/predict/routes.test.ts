@@ -54,11 +54,12 @@ describe('GET /likely (module 55; R-STAFF-7)', () => {
     expect(ids).not.toContain(otherTenant.id);
     const row = v.items.find((i) => i.contactId === mine.id)!;
     expect(row.modelVersion).toBe(def.version);
-    expect(row.bandWords).toMatch(/\S/);
+    // R-STAFF-3: the band in this page's own words, with no "score" in them (the feed card keeps module 50's line)
+    expect(row.bandWords).toBe({ likely_90d: 'May move in the next 90 days', watch: 'Worth keeping an eye on' }[row.band]);
     expect(row.reasons).toContain('Saved 3 listings recently');
     // the band line and the back-test line are not repeated on the row
     expect(row.reasons.some((r) => /back-test|Scorecard band/.test(r))).toBe(false);
-    expect(JSON.stringify(v)).not.toMatch(/points|probabilit|confidence|likelihood|percent|"score"|%/i);
+    expect(JSON.stringify(v)).not.toMatch(/points|probabilit|confidence|likelihood|percent|score|rank|grade|%/i);
     // the same band orders by name, never by hidden points
     const sameBand = v.items.filter((i) => i.band === row.band).map((i) => i.contactName.toLowerCase());
     expect(sameBand).toEqual([...sameBand].sort());

@@ -18,7 +18,8 @@ const C3 = '01900000-0000-7000-8000-00000000c003';
 
 const NO_MODEL_SENTENCE = 'No likely-to-move model is approved on this deployment. A model is used only after counsel has reviewed it and it carries a platform back-test.';
 const READY_SENTENCE = 'People you own whom an approved model flags as likely to move. Each line says why. Open a contact to decide what to do.';
-const BAND = { likely_90d: 'Scorecard band: may move in the next 90 days', watch: 'Scorecard band: worth keeping an eye on' } as const;
+/** apps/api/src/predict/routes.ts LIKELY_BAND_WORDS (the page's own band words; the feed card keeps module 50's) */
+const BAND = { likely_90d: 'May move in the next 90 days', watch: 'Worth keeping an eye on' } as const;
 
 const noModel = (): LikelyView => ({ state: 'no_model', sentence: NO_MODEL_SENTENCE, models: [], items: [], more: false });
 
@@ -133,13 +134,13 @@ describe('the Likely to move page', () => {
     expect(await screen.findByText('Showing the first 200.')).toBeInTheDocument();
   });
 
-  it('R-STAFF-3 R-PRED-3: no "%", raw code or ISO time in the rendered text; every back-test figure carries its denominator', async () => {
+  it('R-STAFF-3 R-PRED-3: no "%", score word ("Scorecard" included), raw code or ISO time in the rendered text; every back-test figure carries its denominator', async () => {
     app(new StaffFake().on('GET /likely', { status: 200, body: ready({ more: true }) }));
     await screen.findByText(READY_SENTENCE);
     const text = screen.getByRole('main').textContent ?? '';
     expect(text).not.toContain('%');
     expect(text).not.toMatch(RAW);
-    expect(text).not.toMatch(/confidence|probab|score\b|points|percent|grade|rank/i);
+    expect(text).not.toMatch(/confidence|probab|score|points|percent|grade|rank/i);
     expect(text).not.toMatch(/likely_90d|scorecard-a|scorecard-b/);
     for (const m of text.matchAll(/(\d+) transacted/g)) expect(text).toMatch(new RegExp(`Of \\d+ (people|person) flagged in the back-test, ${m[1]} transacted within \\d+ days`));
   });

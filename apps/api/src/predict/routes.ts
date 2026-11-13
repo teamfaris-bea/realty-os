@@ -17,7 +17,6 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { actorOf } from '../admin/common.js';
 import type { RouteModule } from '../routes.js';
-import { BAND_WORDS } from './settings.js';
 
 export const LIKELY_LIMIT = 200;
 export const NO_MODEL_SENTENCE = 'No likely-to-move model is approved on this deployment. A model is used only after counsel has reviewed it and it carries a platform back-test.';
@@ -34,6 +33,15 @@ export const LikelyResponse = z.object({
   more: z.boolean(),
 }).strict();
 export type LikelyView = z.infer<typeof LikelyResponse>;
+
+/**
+ * The band in this page's own words (R-STAFF-3: no score word in any module 55 text, "Scorecard" included). The feed
+ * card keeps module 50's first line (settings.ts BAND_WORDS, "Scorecard band: …"), which this list skips below.
+ */
+export const LIKELY_BAND_WORDS = Object.freeze({
+  likely_90d: 'May move in the next 90 days',
+  watch: 'Worth keeping an eye on',
+} as const);
 
 /** The card's own lines without its band line and its back-test line (the page shows those once). */
 const SKIP_CODES = new Set(['LIKELY_BAND_90D', 'LIKELY_BAND_WATCH', 'LIKELY_BACKTEST']);
@@ -67,7 +75,7 @@ export async function likelyList(actor: UserActor): Promise<LikelyView> {
       contactName: r.name === '' ? 'Unnamed contact' : r.name,
       modelVersion: r.model_version,
       band: r.band,
-      bandWords: BAND_WORDS[r.band],
+      bandWords: LIKELY_BAND_WORDS[r.band],
       reasons: (Array.isArray(r.reasons) ? r.reasons : []).filter((x) => typeof x?.label === 'string' && !SKIP_CODES.has(String(x.code))).map((x) => x.label as string),
     }));
     return {

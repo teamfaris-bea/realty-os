@@ -97,8 +97,8 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
     expect([...code.matchAll(/\bapp\.([a-z_]+)\s*\(/g)].map((m) => m[1])).toEqual(['tenant_id']);
     // the routes it registers: exactly one, the GET of /likely
     expect([...code.matchAll(/\b(?:r|app)\.(get|post|put|patch|delete|head|options|all|route)\s*\(\s*(['"`][^'"`]*['"`])?/g)].map((m) => `${m[1]} ${m[2] ?? ''}`)).toEqual(["get '/likely'"]);
-    // and its own relative imports cannot reach a writer: the actor helper, the RouteModule type and the band words
-    expect(importsOf(file).filter((s) => s.startsWith('.')).sort()).toEqual(['../admin/common.js', '../routes.js', './settings.js']);
+    // and its own relative imports cannot reach a writer: the actor helper and the RouteModule type
+    expect(importsOf(file).filter((s) => s.startsWith('.')).sort()).toEqual(['../admin/common.js', '../routes.js']);
   });
 
   it('R-PRED-4: no SQL outside predict/** names contact_predictions or property_records, except the feed read (workspace/feed.ts)', () => {
