@@ -10,6 +10,8 @@
 // notice returns its decision; the invite stands. A repeat invite (no new account or grant, no resend) answers from
 // what became of the grant's earlier notes (b14 audit F7): sent ⇒ "already invited"; still on its way ⇒ says so; none
 // sent by this inviter yet (an invite while the portal was off) ⇒ the note goes now; else ⇒ none reached them, Resend.
+// A note this request did not send itself (the other of two taps at once, an unknown outcome) is answered from its
+// status, never "not sent" while it is being sent (noticeFromNote; b14 F7 regression).
 // VERIFY WITH COUNSEL (Q-PORTAL-7).
 import type { ContactId, UserActor } from '@realty/core/foundation';
 import { type Tx, lockContact } from '@realty/db';
@@ -151,6 +153,23 @@ export interface InviteResult {
   notice: { sent: boolean; text: string; channel: 'sms' | 'email' | null; decision: { outcome: string; reasons: string[]; explanation: string } | null };
 }
 
+type NoticeDecision = InviteResult['notice']['decision'];
+
+/**
+ * The answer when this request did not send the note itself (b14 F7 regression). Mostly the second of two taps at once:
+ * it read priorNotices before the first tap's note existed, and compose returned that note (same key, result noop).
+ * Also a note whose own send ended unknown or failed. It answers from the note's status: sent or delivered ⇒ already
+ * invited, nothing more sent; queued, scheduled, dispatching or dispatch_unknown ⇒ still on its way; blocked with its
+ * stored decision ⇒ not sent, with the reason; anything else (failed, undelivered, bounced, canceled, a block with no
+ * stored decision) ⇒ none reached them, Resend. Never "not sent" while the note is being sent.
+ */
+export function noticeFromNote(first: string, channel: 'sms' | 'email', status: string, decision: NoticeDecision): InviteResult['notice'] {
+  if (status === 'sent' || status === 'delivered') return { sent: false, text: inviteNoNotice(first), channel: null, decision: null };
+  if (['queued', 'scheduled', 'dispatching', 'dispatch_unknown'].includes(status)) return { sent: false, text: inviteNoteInFlight(first), channel: null, decision: null };
+  if (status === 'blocked' && decision !== null) return { sent: false, text: inviteBlocked(first), channel, decision };
+  return { sent: false, text: inviteNoteNotReached(first), channel: null, decision: null };
+}
+
 /**
  * What became of the invite notes of a grant (b14 audit F7), read as the system (statuses only, any inviter's): a repeat
  * invite says a note was sent only when one was; a note still on its way is said to be; a grant none of whose notes
@@ -194,9 +213,13 @@ export async function invite(req: FastifyRequest, scope: Scope, input: InviteInp
         idempotencyKey: input.resend === true ? `portal_invite:${r.grantId}:${input.idempotencyKey}` : `portal_invite:${r.grantId}`,
         toPointId: r.pointId,
       }, deps);
-      const ok = sent.result === 'sent' || (sent.result === 'noop' && (sent.message?.status === 'sent' || sent.message?.status === 'delivered'));
       const d = sent.decision;
-      notice = { sent: ok, text: ok ? inviteSent(r.first, r.pointKind) : inviteBlocked(r.first), channel, decision: d && !ok ? { outcome: d.outcome, reasons: d.reasons, explanation: d.explanation } : null };
+      const decision: NoticeDecision = d ? { outcome: d.outcome, reasons: d.reasons, explanation: d.explanation } : null;
+      if (sent.result === 'sent') notice = { sent: true, text: inviteSent(r.first, r.pointKind), channel, decision: null };
+      // b14 F7 regression: the note as it stands answers (another tap's note under the same key, a send whose outcome
+      // is unknown, a block with its decision), never "not sent" while it is being sent
+      else if (sent.message) notice = noticeFromNote(r.first, channel, sent.message.status, decision);
+      else notice = { sent: false, text: inviteBlocked(r.first), channel, decision };   // refused before a note was made
     } catch (e) {
       const code = e instanceof AppError ? e.code : 'INTERNAL_ERROR';
       if (!(e instanceof AppError)) req.log.error({ code: 'PORTAL_INVITE_NOTICE' }, 'portal: the invite notice failed');

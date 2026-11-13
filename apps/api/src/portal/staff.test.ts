@@ -7,6 +7,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { systemActor } from '../worker/systemActor.js';
+import { noticeFromNote } from './staff/invite.js';
 import { portalSyncInTx } from './sync/sync.js';
 import { PortalClient, call, client, deal, invite, json, milestone, portalWorld, publish, setPortalCleared, sharedDocument, signIn, slugOf, type PortalWorld } from './testing.js';
 
@@ -85,6 +86,39 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     expect(h.providers.email.sent.filter((m) => m.to === c.email).length - before).toBe(2);
     const counts = await h.su.query<{ a: string; g: string }>(`SELECT (SELECT count(*) FROM portal_accounts WHERE contact_id = $1) AS a, (SELECT count(*) FROM portal_grants g JOIN portal_accounts x ON x.id = g.portal_account_id WHERE x.contact_id = $1) AS g`, [c.id]);
     expect(counts.rows[0]).toEqual({ a: '1', g: '1' });
+  });
+
+  it('E692 (b14 F7 regression): two taps at once: the first tap sends the note, the other answers from that note\'s status and never says it was not sent', async () => {
+    const IN_FLIGHT = (first: string) => `A note to ${first} is still being sent. Check the conversation before you resend.`;
+    const ALREADY = (first: string) => `${first} was already invited; no second note was sent.`;
+    for (const first of ['Tapa', 'Tapb', 'Tapc']) {
+      const c = await client(agent(), { firstName: first });
+      const d = await deal(agent(), c.id);
+      const [a, b] = await Promise.all([invite(agent(), d, c.id), invite(agent(), d, c.id)]);
+      const [creator, other] = a.body.created.grant ? [a, b] : [b, a];
+      expect(creator.body.notice).toEqual({ sent: true, text: `${first} was sent a note by email with how to sign in.`, channel: 'email', decision: null });
+      // the other tap found the grant: whether it saw the first note before or after it went, it says it is on its way
+      // or was already sent, never "was not sent; the reason is below" with no reason
+      expect(other.body.created).toEqual({ account: false, grant: false });
+      expect(other.body.notice.sent).toBe(false);
+      expect(other.body.notice.decision).toBeNull();
+      expect([IN_FLIGHT(first), ALREADY(first)]).toContain(other.body.notice.text);
+      expect(h.providers.email.sent.filter((m) => m.to === c.email).length).toBe(1);
+    }
+  });
+
+  it('E692 (b14 F7 regression): a note this request did not send itself is answered from its status, for every status', () => {
+    const decision = { outcome: 'block', reasons: ['CONSENT_REVOKED'], explanation: 'x' };
+    const text = (status: string, d: typeof decision | null = null) => noticeFromNote('Ivy', 'email', status, d);
+    for (const s of ['sent', 'delivered']) expect(text(s)).toEqual({ sent: false, text: 'Ivy was already invited; no second note was sent.', channel: null, decision: null });
+    for (const s of ['queued', 'scheduled', 'dispatching', 'dispatch_unknown']) {
+      expect(text(s, decision)).toEqual({ sent: false, text: 'A note to Ivy is still being sent. Check the conversation before you resend.', channel: null, decision: null });
+    }
+    expect(text('blocked', decision)).toEqual({ sent: false, text: 'The note to Ivy was not sent; the reason is below. The invite stands.', channel: 'email', decision });
+    // never "the reason is below" with no reason
+    for (const s of ['blocked', 'failed', 'undelivered', 'bounced', 'canceled']) {
+      expect(text(s)).toEqual({ sent: false, text: 'No note has reached Ivy yet. Tap Resend to try again.', channel: null, decision: null });
+    }
   });
 
   it('E692 E693 (b14 F7): invited while the portal was off (no note), then again once it is on: the note goes now, and only a later invite says one was already sent', async () => {
