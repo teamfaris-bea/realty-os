@@ -25,6 +25,7 @@ import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/type
 import { ContactSearches } from './SavedSearchReview.js';
 import { MarketingApprovals } from './MarketingApprovals.js';
 import { SellerUpdateApproval } from './SellerUpdateApproval.js';
+import { AiApprovalExtras, withoutAiActions } from '../aiCare/Compose.js'; // module 76 (flagged edit)
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -33,6 +34,8 @@ export function useInbox() {
   return useQuery<{ items: ActionView[] }, ApiError>({
     queryKey: INBOX_KEY,
     queryFn: ({ signal }) => api.get<{ items: ActionView[] }>('/assistant/inbox', { signal }),
+    // module 76 (V1): AI ISA actions never reach an inbox consumer (approving one would withdraw it or close its handoff)
+    select: withoutAiActions,
     refetchInterval: 30_000,
   });
 }
@@ -203,6 +206,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       ) : sendable && check.decision?.outcome === 'deny' ? (
         <GateBadge decision={check.decision} />
       ) : null}
+      <AiApprovalExtras action={action} />
       <div className="flex flex-wrap gap-2">
         {action.kind === 'saved_search_proposal' && action.contactId ? (
           <Button aria-expanded={searchOpen} onClick={() => setSearchOpen((o) => !o)}>

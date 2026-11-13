@@ -40,6 +40,8 @@ import { firstName, formatDateTime } from '../feed/lib/format.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ComposeResponse, ContactFullView, MessageView, TimelineItem, TimelineResponse } from '../feed/lib/types.js';
+import { AiLabelsProvider, AiThreadBanner, useAiLabel } from '../aiCare/Thread.js'; // module 76 (flagged edit)
+import { useUndoOpen } from '../aiCare/undoStore.js';
 
 /** A web-chat message newer than this keeps the thread refreshing quickly (a visitor may still be on the page). */
 export const LIVE_CHAT_MS = 30 * 60_000;
@@ -95,6 +97,8 @@ function Thread() {
   // 200 % zoom: a 390 × 844 phone becomes 195 × 422) it would cover half the conversation, so there it
   // scrolls with the page instead, at the end of the conversation where the page opens.
   const composeBar = useStickyBottom<HTMLDivElement>();
+  // module 76: the Undo toast of a Take over holds the box's focus until it closes (E496)
+  const aiUndoOpen = useUndoOpen();
 
   if (c.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
   if (c.isError || !c.data) return <Notice tone="error">{c.error ? messageFor(c.error, AGENT_ERROR_MESSAGES) : null}</Notice>;
@@ -121,9 +125,12 @@ function Thread() {
     <div className="mx-auto flex w-full max-w-2xl md:mx-0 flex-col gap-3">
       <ThreadHeader contact={full} />
       <MailCoverage data={mail.data} />
+      <AiThreadBanner contact={full} />
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {t.data && mailSettled && items.length === 0 && mailItems.length === 0 ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
-      <Messages items={items} mail={mailItems} contact={{ id: full.id, name: full.displayName }} firstContactOpen={firstContactOpen} />
+      <AiLabelsProvider contact={full}>
+        <Messages items={items} mail={mailItems} contact={{ id: full.id, name: full.displayName }} firstContactOpen={firstContactOpen} />
+      </AiLabelsProvider>
       {/* review F7: nothing can be sent to a merged-away record (CONTACT_MERGED); say where the person went instead */}
       {isMergedAway(full) ? (
         <MergedAwayNotice to={full.mergedIntoContactId} />
@@ -136,7 +143,7 @@ function Thread() {
           initialChannel={compose === 'email' ? 'email' : compose === 'sms' ? 'sms' : compose === 'web_chat' ? 'web_chat' : undefined}
           lastInboundChannel={t.data ? lastInboundAcross(newest, mailItems, full.emails.length > 0) : null}
           draftActionId={draft}
-          autoFocus={compose !== null}
+          autoFocus={compose !== null && !aiUndoOpen}
           ready={(t.data !== undefined || t.isError) && mailSettled}
           liveChat={liveChat(newest)}
           templatePicker={({ channel, insert }) => <TemplatePicker contactId={full.id} channel={channel} onInsert={insert} />}
@@ -226,6 +233,8 @@ export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusR
 }
 
 export function MessageRow({ item, contact, loaded }: { item: TimelineItem; contact?: { id: string; name: string }; loaded?: ReadonlySet<string> }) {
+  // module 76 (R-ISA-7): an AI message the turns route covers says the AI assistant's, with a verb its status supports
+  const ai = useAiLabel(item);
   if (item.reaction) return <ReactionLine item={{ ...item, reaction: item.reaction }} contact={contact} loaded={loaded} />;
   const { channel, direction } = parseDetail(item.detail);
   const imported = item.provenance === 'imported';
@@ -240,7 +249,7 @@ export function MessageRow({ item, contact, loaded }: { item: TimelineItem; cont
     );
   }
   const outbound = direction === 'outbound';
-  const by = outbound ? (item.actor?.displayName ?? 'Sent automatically') : null;
+  const by = outbound ? (ai?.label ?? item.actor?.displayName ?? 'Sent automatically') : null;
   const st = outbound ? outboundStatusLabel(item, contact?.name ?? '') : null;
   const bubble = !outbound ? 'bg-surface text-ink border border-line' : st?.failed ? 'border border-dashed border-danger bg-surface text-ink-muted' : st?.held ? 'border border-dashed border-warn bg-surface text-ink' : 'bg-accent-soft text-ink';
   return (
@@ -258,6 +267,7 @@ export function MessageRow({ item, contact, loaded }: { item: TimelineItem; cont
           {imported ? ' · Imported' : ''}
         </span>
       </p>
+      {outbound && ai ? ai.why : null}
       {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : st.held ? 'text-warn' : 'text-ink-muted'}`}>{st.text}</p> : null}
       {st?.held && contact ? <HeldActions item={item} contact={contact} /> : null}
     </li>

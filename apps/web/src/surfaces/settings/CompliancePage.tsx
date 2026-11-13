@@ -18,6 +18,7 @@ import { Link } from 'react-router-dom';
 import { Button, Card, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useSession } from '../../shell/index.js';
 import { formatDate, formatStamp } from '../admin/lib/format.js';
+import { AiIsaComplianceNotice } from '../aiCare/Policy.js'; // module 76 (flagged edit)
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import { AUTONOMOUS_CATEGORIES, type PoliciesResponse, type PolicyCreated, type PolicyValues, type PolicyVersion, type Settings } from '../admin/lib/types.js';
@@ -107,9 +108,10 @@ function SendRules() {
           <Fact label="Also blocked">Payment or wire instructions in a message, numbers marked wrong or not working, texts to landlines, and sending without a registered number or verified email.</Fact>
         </dl>
       </Card>
-      <Notice tone="warn" title="Not checked: consent level, Do Not Call registry, quiet hours, frequency limits">
-        Your team decided that every lead has consented through the source it came from, so sends are not held back for missing consent, a national Do Not Call registry listing, the time of day, or how many messages a contact got. Some state laws (for example in Florida, Oklahoma and Maryland) may still limit the hours for sales calls and texts and how often a person can be contacted, even when they consented. Have your counsel check this before you rely on it. Turning those limits back on is a policy change, not a rebuild.
+      <Notice tone="warn" title="Not checked for your team's own messages: consent level, Do Not Call registry, quiet hours, frequency limits">
+        Your team decided that every lead has consented through the source it came from, so your team's own messages, playbooks and alerts are not held back for missing consent, a national Do Not Call registry listing, the time of day, or how many messages a contact got. Some state laws (for example in Florida, Oklahoma and Maryland) may still limit the hours for sales calls and texts and how often a person can be contacted, even when they consented. Have your counsel check this before you rely on it. Turning those limits back on is a policy change, not a rebuild.
       </Notice>
+      <AiIsaComplianceNotice />
     </Section>
   );
 }

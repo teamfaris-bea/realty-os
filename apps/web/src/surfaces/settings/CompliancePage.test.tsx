@@ -42,7 +42,8 @@ describe('Compliance policy', () => {
     expect(screen.getByText(/STOP, STOPALL, UNSUBSCRIBE/)).toBeInTheDocument();
     expect(await screen.findByText('Harbor Realty LLC')).toBeInTheDocument();
     expect(screen.getByText(/the postal address is missing, so marketing email is on hold/)).toBeInTheDocument();
-    expect(screen.getByText('Not checked: consent level, Do Not Call registry, quiet hours, frequency limits')).toBeInTheDocument();
+    expect(screen.getByText("Not checked for your team's own messages: consent level, Do Not Call registry, quiet hours, frequency limits")).toBeInTheDocument();
+    expect(screen.getByText(/so your team's own messages, playbooks and alerts are not held back/)).toBeInTheDocument();
     expect(screen.getByText(/Have your counsel check this before you rely on it/)).toBeInTheDocument();
   });
 

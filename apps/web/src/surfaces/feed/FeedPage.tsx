@@ -26,6 +26,7 @@ import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } 
 import { useMutate, useNow } from './lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
 import type { FeedCard, FeedResponse } from './lib/types.js';
+import { AiFeedItem } from '../aiCare/Feed.js'; // module 76 (flagged edit)
 
 export const FEED_KEY = ['feed'] as const;
 
@@ -108,7 +109,7 @@ function Band({ title, cards, pinned }: { title: string; cards: FeedCard[]; pinn
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {cards.map((c) => (
           <li key={c.id}>
-            <FeedCardView card={c} pinned={pinned} />
+            <AiFeedItem card={c} render={(card) => <FeedCardView card={card} pinned={pinned} />} />
           </li>
         ))}
       </ul>

@@ -24,6 +24,7 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from '../admin/lib/ui.js';
 import { LEAD_STAGE_LABEL } from '../people/api.js';
+import { AiPolicyNotice, isAiIsaPlaybook } from '../aiCare/Policy.js'; // module 76 (flagged edit)
 import { ALERTS_HEADING, type AutoEnrollSetting, type DelayUnit, KIND_LABEL, READ_ONLY_ALERTS, isReadOnlyPlaybook, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
 
 const PLAYBOOKS_KEY = ['assistant', 'playbooks'] as const;
@@ -40,7 +41,7 @@ export function PlaybooksPage() {
   const allowed = TEMPLATES.filter((t) => t.scope === 'agent' || role === 'owner' || role === 'admin');
   const [pick, setPick] = useState(allowed[0]?.key ?? '');
   const list = q.data?.playbooks ?? [];
-  const team = list.filter((p) => p.scope === 'team' && !isReadOnlyPlaybook(p));
+  const team = list.filter((p) => p.scope === 'team' && !isReadOnlyPlaybook(p) && !isAiIsaPlaybook(p));
   const mine = list.filter((p) => p.scope === 'agent' && !isReadOnlyPlaybook(p));
   const alerts = list.filter(isReadOnlyPlaybook); // module 26 (review ui/F2): read-only here
   return (
@@ -51,6 +52,7 @@ export function PlaybooksPage() {
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
       {q.data && list.length === 0 ? <EmptyState icon="checklist" title="No playbooks yet" /> : null}
+      {list.some(isAiIsaPlaybook) ? <AiPolicyNotice /> : null}
       {team.length > 0 ? <PlaybookList title="Team playbooks" items={team} /> : null}
       {mine.length > 0 ? <PlaybookList title={role === 'owner' || role === 'admin' ? 'Personal playbooks' : 'Your playbooks'} items={mine} /> : null}
       {alerts.length > 0 ? <PlaybookList title={ALERTS_HEADING} description={READ_ONLY_ALERTS} items={alerts} /> : null}
@@ -122,7 +124,7 @@ export function PlaybookPage() {
       <StatusLine text={status} />
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
-      {p ? (
+      {p && isAiIsaPlaybook(p) ? <AiPolicyNotice /> : p ? (
         <>
           <div>
             <h2 className="text-[22px] font-semibold text-ink">{p.name}</h2>

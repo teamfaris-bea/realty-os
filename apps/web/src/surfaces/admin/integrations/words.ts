@@ -21,6 +21,9 @@ const PACK_NAMES: Record<string, string> = {
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
   'platform:cma': 'Client CMAs and seller value ranges (a later version)',
+  // module 76 (flagged edit): the AI ISA packs ISA-2/2b gate on (catalog.ts PACK_GATES)
+  'platform:ai_isa': 'ISA messages from the assistant',
+  'platform:ai_isa_seller_data': 'Recent-sales emails from the assistant',
 };
 
 export function packName(key: string): string {
