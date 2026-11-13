@@ -184,6 +184,7 @@ export const SearchSchema = z.object({
   prefill: Criteria,
   alertChannel: z.string(),
   alertFrequency: z.string(),
+  origin: z.enum(['standard', 'ai_isa']), // ISA-2b (flagged)
   matches: z.array(ListingSchema),
 });
 export const SearchResponse = z.object({ search: SearchSchema });

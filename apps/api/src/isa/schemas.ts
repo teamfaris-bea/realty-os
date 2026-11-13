@@ -139,7 +139,7 @@ export const PanelResponse = z.object({
   nextAllowedSendAt: Iso.nullable(),
   capsSentence: z.string(),
   lastDecision: z.object({ status: z.string(), codes: z.array(z.string()), at: Iso, sentence: z.string() }).nullable(),
-  factsSent: z.array(z.object({ factKind: z.string(), listingId: z.uuid().nullable(), sentAt: Iso })),
+  factsSent: z.array(z.object({ factKind: z.string(), listingId: z.uuid().nullable(), sentAt: Iso, source: z.string().nullable(), asOf: Iso.nullable() })),
   openOffer: z.object({ id: z.uuid(), status: z.string(), slots: z.array(z.object({ startsAt: Iso, endsAt: Iso })), expiresAt: Iso }).nullable(),
   heldTopics: z.array(z.object({ class: z.string(), since: Iso, sentence: z.string() })),
   handoff: z.object({ id: z.uuid(), reason: z.string(), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string() }).nullable(),

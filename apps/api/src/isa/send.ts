@@ -11,6 +11,7 @@ import { sql } from 'kysely';
 import { type AiIsaContent, aiIsaSendWindow, DEFAULT_AI_ISA_CONTENT, fromDisplayName, parseAiIsaContent, holidaysAround, icuOffsetMinutes, ISA_DEFAULT_CAPS, isaReasonClass, refusalClass } from './coreSeam.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
 import { assignmentById, evaluateChain, exclusivity, stopSignalSince } from './repo.js';
+import { factChangedAtSendInTx } from './buyer/facts.js';
 
 export const AI_ISA_CATEGORIES = new Set(['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']);
 export const isAiIsaMessage = (category: string | null | undefined): boolean => category !== null && category !== undefined && AI_ISA_CATEGORIES.has(category);
@@ -132,6 +133,8 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
   // the offset agreement check (E514): core's ICU offset at now against Postgres's tzdata
   const pg = await sql<{ z: string; off: number }>`SELECT z, (EXTRACT(EPOCH FROM ((now() AT TIME ZONE z) - (now() AT TIME ZONE 'UTC'))) / 60)::int AS off FROM unnest(${zones}::text[]) z`.execute(tx);
   const extra = pg.rows.some((x) => icuOffsetMinutes(x.z as IanaZone, now) !== x.off) ? ['ISA_OFFSET_MISMATCH'] : [];
+  // item 11 (R-ISA-17): every pending listing fact re-checked; a status or price change (or any failed rule) replans
+  if (await factChangedAtSendInTx(tx, m.id, ctx.who.teamName, now)) extra.push('FACT_CHANGED');
   const consent = await consentFacts(tx, a, m, ch, r.sold || (await sql<{ f: boolean }>`SELECT EXISTS (SELECT 1 FROM ai_isa_shared_facts WHERE tenant_id = app.tenant_id() AND message_id = ${m.id}) AS f`.execute(tx)).rows[0]!.f);
   const counts = await countFacts(tx, a.contactId, m.id);
   const ex = await exclusivity(tx, a.contactId);
@@ -164,6 +167,17 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
     },
   };
   void recipientHmac;
+}
+
+/**
+ * The initiated tier on channel `ch` without a message (the bundle and the saved-search proposal, items 10 and 12):
+ * the same grant, DNC freshness and revoke checks consentFacts runs at TX1 (send.ts; the guard re-derives them).
+ */
+export async function initiatedTierPassesInTx(tx: Tx, a: NonNullable<Awaited<ReturnType<typeof assignmentById>>>, ch: 'sms' | 'email'): Promise<boolean> {
+  if (!a.boundPoints[ch]) return false;
+  const none = '00000000-0000-4000-8000-000000000000';
+  const r = await consentFacts(tx, a, { id: none, contactId: a.contactId, conversationId: none, channel: ch, assistantActionId: null }, ch, true);
+  return r.tier === 'initiated' && r.missing.length === 0;
 }
 
 async function consentFacts(tx: Tx, a: NonNullable<Awaited<ReturnType<typeof assignmentById>>>, m: IsaMessageRef, ch: 'sms' | 'email', hasFacts: boolean): Promise<{ tier: 'reply' | 'initiated'; missing: ('evidence' | 'reply_window' | 'dnc')[] }> {

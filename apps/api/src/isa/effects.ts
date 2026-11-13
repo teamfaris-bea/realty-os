@@ -18,6 +18,9 @@ import {
 import { writeHandoffInTx } from './handoff.js';
 import { emitIsaSendResultsInTx } from './sendResult.js';
 import { markAcceptingInTx, reconcileOfferRowsInTx } from './booking/rows.js';
+import type { BuyerBundle } from './buyer/bundle.js';
+import { pauseAiSearchesAtHandoffInTx } from './buyer/savedSearch.js';
+import { insertPendingFactsInTx, type PlannedFacts, planFactsMessageInTx } from './buyer/facts.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
@@ -102,6 +105,8 @@ export interface ApplyEnv {
   pinnedSeq: number;
   /** TX-C: the booking's appointment detail and notes for the handoff package (codes, ids, times, the verified quote) */
   handoffExtra?: { appointmentDetail?: Record<string, unknown>; notes?: string[] } | undefined;
+  /** TX-B: this turn's buyer bundle (item 10); a facts message renders only from it */
+  bundle?: BuyerBundle | undefined;
 }
 
 export interface ApplyOutcome {
@@ -255,8 +260,7 @@ export async function cancelForAssignmentInTx(tx: Tx, a: Pick<AssignmentRow, 'id
 
 /** R-ISA-17: at the handoff an AI-origin saved search is paused for review (alerts follow D1 again after re-approval). */
 export async function pauseSavedSearchesInTx(tx: Tx, contactId: string): Promise<void> {
-  await sql`UPDATE saved_searches SET status = 'paused' WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
-    AND origin = 'ai_isa' AND status = 'active'`.execute(tx);
+  await pauseAiSearchesAtHandoffInTx(tx, contactId);
 }
 
 async function owners(tx: Tx, a: AssignmentRow): Promise<string[]> {
@@ -298,6 +302,22 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
   if (channel === undefined) return null;
   const point = ctx.a.boundPoints[channel];
   if (!point) return null;
+  // item 11: a facts message is server text only, re-checked and planned (channel, whole lines) from the bundle
+  let channelFinal: 'sms' | 'email' = channel;
+  let factsPlan: PlannedFacts | null = null;
+  if (q.messageKind === 'facts') {
+    if (!env.bundle || q.handles.length === 0 || q.handles.some((h) => h === 'comps')) return null; // seller kinds: ISA-3
+    const prior0 = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${ctx.a.contactId} AND initiator = 'assistant'
+      AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching')`.execute(tx);
+    const p = await planFactsMessageInTx(tx, ctx, { bundle: env.bundle, handles: q.handles, preferred: channel, now,
+      compose: (core, ch) => composeMessage({ body: core, who: ctx.who, firstInThread: prior0.rows[0]!.n === 0, optOutHint: true, channel: ch }) });
+    if (!p.ok) {
+      if (env.turnId) await sql`UPDATE ai_isa_turns SET decision = decision || ${JSON.stringify({ facts: p.code.replace(/[^A-Za-z0-9_:.@-]/g, '_').slice(0, 64) })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${env.turnId}`.execute(tx);
+      return null;
+    }
+    factsPlan = p.plan;
+    channelFinal = p.plan.channel;
+  }
   const parts: string[] = q.lines.map((l) => fillLine(l, ctx.who));
   const offer = s.offer;
   if (q.messageKind === 'offer' && offer !== null) parts.push(renderOffer({ slots: offer.slots, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
@@ -306,14 +326,14 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
     parts.unshift(renderConfirmation({ slot: offer.slots[q.slotIndex]!, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
   }
   if (q.text !== null && q.text.trim() !== '') parts.push(q.text.trim());
-  const bodyCore = parts.join(channel === 'email' ? '\n\n' : ' ').trim();
+  const bodyCore = factsPlan ? 'facts' : parts.join(channel === 'email' ? '\n\n' : ' ').trim();
   if (bodyCore === '') return null;
   const prior = await sql<{ n: number; last: Date | null }>`SELECT count(*)::int AS n, max(dispatched_at) AS last FROM messages WHERE tenant_id = app.tenant_id()
     AND contact_id = ${ctx.a.contactId} AND initiator = 'assistant' AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line')
     AND status IN ('sent','delivered','dispatching')`.execute(tx);
   const first = prior.rows[0]!.n === 0;
   const silent7d = prior.rows[0]!.last !== null && now - prior.rows[0]!.last.getTime() > 7 * 86_400_000;
-  const body = composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, optOutHint: first || (q.initiated && silent7d), channel });
+  const body = factsPlan ? factsPlan.body : composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, optOutHint: first || (q.initiated && silent7d), channel });
   const initiated = q.initiated || q.messageKind === 'facts';
   const notBefore = aiIsaSendWindow({ at: now, zones: ctx.zones, startSec: ctx.content.window.startSec, endSec: ctx.content.window.endSec, initiated,
     initiatedDays: ctx.content.initiatedDays, noInitiatedOnHolidays: ctx.content.noInitiatedOnHolidays });
@@ -340,20 +360,21 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
       ${`AI assistant ${q.messageKind}`}, ${JSON.stringify({ assignmentId: ctx.a.id, messageKind: q.messageKind, lines: q.lines, handles: q.handles, offerId: q.offerId })}::jsonb,
       ${env.pinnedSeq}, ${ctx.a.boundOwnershipSeq}, ${turn}, ${ctx.a.epoch}, ${`ai_isa_msg:${turn}:${q.messageKind}`})`.execute(tx);
   const res = await queueOutboundInTx(tx, deps, {
-    contactId: ctx.a.contactId, channel, body, subject: channel === 'email' ? `A note from ${ctx.who.agentFirstName}'s AI assistant` : undefined,
-    initiator: 'assistant', purpose: 'marketing', category, idempotencyKey: `ai_isa:${actionId}`, assistantActionId: actionId, toPointId: point.point_id,
+    contactId: ctx.a.contactId, channel: channelFinal, body, subject: channelFinal === 'email' ? `A note from ${ctx.who.agentFirstName}'s AI assistant` : undefined,
+    initiator: 'assistant', purpose: 'marketing', category, idempotencyKey: `ai_isa:${actionId}`, assistantActionId: actionId, toPointId: ctx.a.boundPoints[channelFinal]!.point_id,
     scheduleAt: notBefore > now ? notBefore : undefined,
   } as Parameters<typeof queueOutboundInTx>[2], now);
   if (!res.ok) {
     await sql`UPDATE assistant_actions SET status = 'blocked' WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx);
     return null;
   }
-  await sql`UPDATE ai_isa_turns SET assistant_action_id = ${actionId}, message_id = ${res.messageId}, channel = ${channel}, message_kind = ${initiated ? 'initiated' : 'reply'},
+  await sql`UPDATE ai_isa_turns SET assistant_action_id = ${actionId}, message_id = ${res.messageId}, channel = ${channelFinal}, message_kind = ${initiated ? 'initiated' : 'reply'},
       zones = ${ctx.zones}::text[], zone_source = ${ctx.zoneSource}, window_start = ${secToTime(ctx.content.window.startSec)}::time,
       window_end = ${secToTime(ctx.content.window.endSec)}::time, not_before = ${notBefore > now ? toIso(notBefore) : null}::timestamptz,
       body_sha256 = ${sha256(body)}, icu_tz_version = ${process.versions.tz ?? null}, pg_tzdata_version = current_setting('server_version'),
       status = 'sending', state_after = ${s.ended !== null ? 'ended' : s.phase}
     WHERE tenant_id = app.tenant_id() AND id = ${turn} AND message_id IS NULL`.execute(tx);
+  if (factsPlan) await insertPendingFactsInTx(tx, deps.ids as never, ctx, turn, res.messageId, factsPlan.facts, 'display/1');
   return res.messageId;
 }
 

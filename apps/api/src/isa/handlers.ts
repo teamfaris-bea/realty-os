@@ -17,6 +17,7 @@ import { applyActionsInTx, cancelForAssignmentInTx, contextFor, type IsaDeps, pa
 import { confirmationNotSentInTx, slaSweepInTx } from './handoff.js';
 import { runBookJob } from './booking/book.js';
 import { runOfferJob } from './booking/offer.js';
+import { proposeAiSavedSearchInTx } from './buyer/savedSearch.js';
 import { emitIsaSendResultsInTx } from './sendResult.js';
 import { type AssignmentRow, assignmentById, lockForTurn } from './repo.js';
 import { HOLD_CODES } from './send.js';
@@ -240,7 +241,11 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
     // booking (§4.6): standalone jobs; the live calendar read holds no ISA lock (offer) or only lock 5 (book)
     offer as JobHandler<unknown>,
     book as JobHandler<unknown>,
-    tx('ai_isa.saved_search', AssignmentPayload, async () => undefined, 'default'),
+    tx('ai_isa.saved_search', AssignmentPayload, async (t, d, _a, p, now) => {
+      const asg = await locked(t, p.assignmentId);
+      if (asg === null) return;
+      await proposeAiSavedSearchInTx(t, d, await contextFor(t, asg, now), now);
+    }, 'default'),
     { ...tx('ai_isa.sla', Empty, (t, d, _a, _p, now) => slaSweepInTx(t, d.ids, now), 'default'), every: { ms: AI_ISA_SLA_EVERY_MS, offsetMs: 20_000 }, periodicPayload: {} } as JobHandler<unknown>,
     { ...tx('ai_isa.sweep', Empty, (t, d, a, _p, now) => sweepInTx(t, d, a, now), 'default'), every: { ms: AI_ISA_SWEEP_EVERY_MS, offsetMs: 40_000 }, periodicPayload: {} } as JobHandler<unknown>,
   ] as JobHandler<unknown>[];

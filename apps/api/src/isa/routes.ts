@@ -54,8 +54,9 @@ async function panel(req: FastifyRequest, contactId: string) {
     const turn = await sql<{ status: string; decision: Record<string, unknown>; denied: unknown[]; created_at: Date; not_before: Date | null }>`SELECT status, decision, denied, created_at, not_before
       FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} ORDER BY created_at DESC LIMIT 1`.execute(tx);
     const offerRow = await liveOfferOf(tx, a.id);
-    const facts = await sql<{ fact_kind: string; listing_id: string | null; created_at: Date }>`SELECT fact_kind, listing_id, created_at FROM ai_isa_shared_facts
-      WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND status = 'sent' ORDER BY created_at`.execute(tx);
+    const facts = await sql<{ fact_kind: string; listing_id: string | null; created_at: Date; source: string | null; as_of: Date | null }>`SELECT f.fact_kind, f.listing_id, f.created_at,
+        ic.display_name AS source, f.as_of FROM ai_isa_shared_facts f LEFT JOIN integration_connections ic ON ic.tenant_id = f.tenant_id AND ic.id = f.mls_connection_id
+      WHERE f.tenant_id = app.tenant_id() AND f.assignment_id = ${a.id} AND f.status = 'sent' ORDER BY f.created_at`.execute(tx);
     const sent = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching') AND dispatched_at > now() - interval '24 hours'`.execute(tx);
     const h = await sql<{ id: string; reason: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string }>`SELECT id, reason, sla_due_at, sla_met_at, confirmation_status
@@ -84,7 +85,7 @@ async function panel(req: FastifyRequest, contactId: string) {
       nextAllowedSendAt: last?.not_before?.toISOString() ?? null,
       capsSentence: `${sent.rows[0]!.n} of ${ctx.content.caps.ai24h} today`,
       lastDecision: last ? { status: last.status, codes: (last.denied as string[]).slice(0, 10), at: last.created_at.toISOString(), sentence: `Last turn: ${last.status.replace(/_/g, ' ')}.` } : null,
-      factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString() })),
+      factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString(), source: f.source, asOf: f.as_of?.toISOString() ?? null })),
       openOffer: offerRow ? { id: offerRow.id, status: offerRow.status, slots: offerRow.slots.map((x) => ({ startsAt: new Date(x.startsAt).toISOString(), endsAt: new Date(x.endsAt).toISOString() })), expiresAt: new Date(offerRow.expiresAt).toISOString() } : null,
       heldTopics: a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
       handoff: hd ? { id: hd.id, reason: hd.reason, slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_met_at === null && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status } : null,

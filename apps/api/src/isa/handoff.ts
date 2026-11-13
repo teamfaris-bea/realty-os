@@ -86,7 +86,11 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
       AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.tenant_id = m.tenant_id AND o.conversation_id = m.conversation_id AND o.direction = 'outbound'
                         AND o.status IN ('sent','delivered') AND o.created_at > m.created_at)
     ORDER BY m.created_at`.execute(tx);
-  const nextSteps = i.nextSteps ?? nextStepsFor(h);
+  // item 12: the AI-origin saved search (the end action paused an active one before this handoff)
+  const ss = (await sql<{ id: string; status: string }>`SELECT id, status FROM saved_searches WHERE tenant_id = app.tenant_id() AND origin = 'ai_isa'
+    AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid)) AND status IN ('proposed','approved','active','paused')
+    ORDER BY created_at DESC LIMIT 1`.execute(tx)).rows[0] ?? null;
+  const nextSteps = [...(i.nextSteps ?? nextStepsFor(h)), ...(ss ? [ss.status === 'proposed' ? 'approve_saved_search' : 'review_saved_search'] : [])];
   // R-ISA-16: the stored inactivity deadline (R-OWN-23) and the team zone, for the package and the card sentence
   const inact = await sql<{ release: Date | null; tz: string }>`SELECT c.inactivity_release_at AS release, s.default_timezone AS tz FROM contacts c
     JOIN tenant_settings s ON s.tenant_id = c.tenant_id WHERE c.tenant_id = app.tenant_id() AND c.id = ${a.contactId}`.execute(tx);
@@ -115,6 +119,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     startedAt: a.startedAt,
     epoch: a.epoch,
     inactivityReleaseAt: releaseAt?.toISOString() ?? null,
+    savedSearch: ss,
     recipientUserId: rec.primary,
     endedByUserId: rec.endedByUserId,
   };

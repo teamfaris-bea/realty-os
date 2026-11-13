@@ -62,6 +62,8 @@ export {
 } from '@realty/core/isa';
 export type {
   AiIsaContent,
+  HandleLabel,
+  UsableQualClaim,
   AvailabilityWindow,
   IsaOffer,
   ConsentBasis,

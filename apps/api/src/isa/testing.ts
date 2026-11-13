@@ -158,3 +158,65 @@ export async function handoffOf(h: ApiHarness, contactId: string) {
   return (await h.su.query<{ id: string; reason: string; sla_class: string; package: Record<string, unknown>; pending_message_id: string | null; confirmation_status: string }>(
     `SELECT id, reason, sla_class, package, pending_message_id, confirmation_status FROM ai_isa_handoffs WHERE contact_id = $1`, [contactId])).rows;
 }
+
+// ---- buyer fixtures (ISA-2b items 10–12; synthetic data only, VERIFY fixtures) -----------------------------------
+
+/** The person's own-form express_written grant (scope stated, naming the brokerage) and a fake "not listed" DNC result. */
+export async function grantInitiated(h: ApiHarness, tenantId: string, lead: IsaLead): Promise<void> {
+  const { createHash } = await import('node:crypto');
+  const hmacHex = async (addr: string) => {
+    const deps = depsFromPlatform(h.app.platform);
+    const { withTenantTx } = await import('@realty/db');
+    const { systemActor } = await import('../worker/systemActor.js');
+    return withTenantTx(systemActor(tenantId as never, 'worker'), async (tx) => Buffer.from(await deps.envelope.inTx(tx, tenantId as never).hmacAddress(tenantId as never, addr)).toString('hex'), { db: h.database });
+  };
+  await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('d12_effective_at', (now() - interval '30 days')::text) WHERE key = 'platform:ai_isa'`);
+  const ts = (await h.su.query<{ b: string }>(`SELECT brokerage_legal_name AS b FROM tenant_settings WHERE tenant_id = $1`, [tenantId])).rows[0]!;
+  const disc = randomUUID();
+  const src = randomUUID();
+  const body = `By submitting you agree that ${ts.b} may text and email you about homes (${disc}).`;
+  await h.su.query(`INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'website')`, [tenantId, src, `Own form (test) ${src.slice(0, 8)}`]);
+  await h.su.query(`INSERT INTO consent_disclosures (tenant_id, id, channel_scope, purpose_scope, body, body_sha256, names_seller, source_kind, scope_stated)
+    VALUES ($1, $2, ARRAY['sms','email'], ARRAY['marketing','informational'], $3, $4, $5, 'own_form', true)`, [tenantId, disc, body, createHash('sha256').update(body).digest('hex'), ts.b]);
+  await h.su.query(`INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome, consent_disclosure_id)
+    VALUES ($1, gen_random_uuid(), $2, $3, now(), 'buy', 'fp-' || gen_random_uuid(), 'new_contact', $4)`, [tenantId, lead.id, src, disc]);
+  for (const [kind, ch, addr] of [['phone', 'sms', lead.phone], ['email', 'email', lead.email]] as const) {
+    await h.su.query(`INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level, source,
+        occurred_at, recorded_at, contact_id, actor_kind, disclosure_id, evidence, imported)
+      VALUES ($1, gen_random_uuid(), $2, decode($3, 'hex'), '•••', $4, 'marketing', 'grant', 'express_written', 'web_form', now(), now(), $5, 'system', $6, '{}'::jsonb, false)`,
+      [tenantId, kind, await hmacHex(addr), ch, lead.id, disc]);
+  }
+  await h.su.query(`INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+    VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [tenantId, await hmacHex(lead.phone)]);
+}
+
+export interface FakeListing {
+  id: string;
+}
+
+/** An MLS (or team) listing row written as the sync would (fixtures bypass the system-only triggers). */
+export async function buyerListing(h: ApiHarness, tenantId: string, o: { connectionId?: string | null; source?: 'mls' | 'team'; status?: string; price?: number; city?: string;
+  beds?: number; lease?: boolean; version?: number; seenHoursAgo?: number; offMarket?: boolean; teamListingId?: string | null; description?: string; agentUserId?: string; displayAllowed?: boolean } = {}): Promise<string> {
+  const id = randomUUID();
+  const src = o.source ?? 'mls';
+  await h.su.query(`SET session_replication_role = replica`);
+  try {
+    await h.su.query(`INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft, property_type,
+        description, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, team_listing_id, last_seen_in_feed_at, off_market_at, is_lease, mls_normalize_version, listing_agent_user_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'CA', '94110', $8, $9, 20, 1400, 'single_family', $10, $11, now(), $12, $13, $14, $15, $16, $17, $18, $19)`,
+      [tenantId, id, src, src === 'mls' ? `M${id.slice(0, 8)}` : null, o.status ?? 'active', `${10 + Math.floor(Math.random() * 900)} Sample Ave`, o.city ?? 'Oakland', (o.price ?? 500000) * 100,
+        o.beds ?? 3, o.description ?? 'Bright home near the park.', src === 'mls' ? (o.connectionId ?? null) : null, src === 'mls' ? 'Other Brokerage (test)' : null, o.displayAllowed ?? true,
+        o.teamListingId ?? null, src === 'mls' ? new Date(Date.now() - (o.seenHoursAgo ?? 1) * 3_600_000) : null, o.offMarket ? new Date() : null, o.lease ?? false, o.version ?? 2,
+        src === 'team' ? (o.agentUserId ?? null) : null]);
+  } finally {
+    await h.su.query(`SET session_replication_role = origin`);
+  }
+  return id;
+}
+
+/** Seeds usable qualification claims onto the machine (the bundle tests; J1 qualifies through the fake model). */
+export async function seedClaims(h: ApiHarness, contactId: string, claims: { field: string; value: unknown; quote: string }[]): Promise<void> {
+  const m = (await h.su.query<{ id: string }>(`SELECT id FROM messages WHERE contact_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, [contactId])).rows[0]!;
+  const rows = claims.map((c, k) => ({ claimId: randomUUID(), field: c.field, value: c.value, quote: c.quote, messageId: m.id, saidAt: Date.now() - 60_000 + k }));
+  await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(machine, '{claims}', $2::jsonb) WHERE contact_id = $1 AND ended_at IS NULL`, [contactId, JSON.stringify(rows)]);
+}

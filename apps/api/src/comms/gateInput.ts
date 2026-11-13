@@ -145,6 +145,7 @@ export const DISPATCH_DENY_SENTENCES = {
   // 0190 (D12 proposed): the AI ISA's own refusals (isa/send.ts ISA_GUARD_REASONS and the TX1 checks); codes only in the row
   AI_ISA_LIVE_OFF: 'AI assistant sending is off on this deployment.',
   ISA_OFFSET_MISMATCH: 'The time-zone data disagreed, so the AI assistant waited.',
+  FACT_CHANGED: 'A listing changed (status or price) before it went out, so the AI assistant did not send the old facts.', // ISA-2b (flagged, R-ISA-17)
   ISA_NOT_AUTHORIZED: 'The AI assistant is not authorized for this person right now, so it did not send this.',
   ISA_PURPOSE_MISMATCH: 'AI assistant messages are sent as marketing only.',
   ISA_CHANNEL_NOT_ALLOWED: 'The AI assistant texts and emails only, with no media.',
