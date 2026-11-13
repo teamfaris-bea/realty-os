@@ -30,8 +30,8 @@ const directives: Record<string, readonly string[]> = {
 /** Directives a <meta http-equiv="Content-Security-Policy"> cannot carry (browsers ignore them there). */
 const HEADER_ONLY = new Set(['frame-ancestors', 'report-uri', 'sandbox']);
 
-function serialize(names: readonly string[]): string {
-  return names.map((n) => `${n} ${directives[n]!.join(' ')}`).join('; ');
+function serialize(names: readonly string[], from: Record<string, readonly string[]> = directives): string {
+  return names.map((n) => `${n} ${from[n]!.join(' ')}`).join('; ');
 }
 
 /** The full policy, for the Content-Security-Policy response header. */
@@ -63,6 +63,34 @@ export const webSecurityHeaders: Readonly<Record<string, string>> = {
 export const widgetScriptHeaders: Readonly<Record<string, string>> = {
   ...webSecurityHeaders,
   'Cross-Origin-Resource-Policy': 'cross-origin',
+};
+
+// module 46 (web/portal, R-PORTALWEB-2): the client portal, /portal.html, is a separate entry with its own, stricter
+// policy: the staff directives except no blob: images, no workers, media or manifest, form-action 'none' (a no-JS
+// submit never puts an address into a URL), and Trusted Types with no policy at all (the portal never writes HTML).
+// Referrer-Policy same-origin: no Referer leaves the origin, and same-origin POSTs keep their Origin header, which the
+// API's Origin allowlist checks (no-referrer would make a browser send Origin: null, SECURITY.md §2.1).
+const portalDirectives: Record<string, readonly string[]> = {
+  ...directives,
+  'img-src': ["'self'", 'data:'],
+  'manifest-src': ["'none'"],
+  'worker-src': ["'none'"],
+  'media-src': ["'none'"],
+  'form-action': ["'none'"],
+  'require-trusted-types-for': ["'script'"],
+  'trusted-types': ["'none'"],
+};
+
+/** module 46: the portal's full policy (header). */
+export const portalContentSecurityPolicy: string = serialize(Object.keys(portalDirectives), portalDirectives);
+/** module 46: the portal's policy without header-only directives (the <meta> tag in the built portal.html). */
+export const portalMetaContentSecurityPolicy: string = serialize(Object.keys(portalDirectives).filter((n) => !HEADER_ONLY.has(n)), portalDirectives);
+
+/** module 46: every security header a server sends with /portal.html (never with any other path). */
+export const portalSecurityHeaders: Readonly<Record<string, string>> = {
+  ...webSecurityHeaders,
+  'Content-Security-Policy': portalContentSecurityPolicy,
+  'Referrer-Policy': 'same-origin',
 };
 
 /** `add_header` lines for a header set (with `always`, so error pages carry them too), after a header comment. */
@@ -99,7 +127,22 @@ export function nginxWidgetHeadersConf(): string {
   ]);
 }
 
+/** module 46: deploy/portal-security-headers.conf, included by the `= /portal.html` location only. */
+export function nginxPortalHeadersConf(): string {
+  return nginxHeaders(portalSecurityHeaders, [
+    '# GENERATED from apps/web/security-headers.ts (portalSecurityHeaders) by `node deploy/render-security-headers.mjs`.',
+    '# Do not edit: apps/web/src/security-headers.nginx.test.ts fails when this file drifts from that policy.',
+    '# Included only by the = /portal.html location of deploy/nginx.conf: the client portal (module 46), a separate',
+    '# entry with its own CSP and Referrer-Policy: same-origin; every other location sends webSecurityHeaders.',
+  ]);
+}
+
 /** The <meta> tag the build injects at the top of <head>, before any script or stylesheet. */
 export function cspMetaTag(): string {
   return `<meta http-equiv="Content-Security-Policy" content="${metaContentSecurityPolicy}" />`;
+}
+
+/** module 46: the portal's <meta> tag (portal.html only). */
+export function portalCspMetaTag(): string {
+  return `<meta http-equiv="Content-Security-Policy" content="${portalMetaContentSecurityPolicy}" />`;
 }

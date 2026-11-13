@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- module 46: the client portal, a separate entry and bundle with its own policy (security-headers.ts) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <!-- the same Referrer-Policy the server sends (dev has no headers): no Referer leaves the origin -->
+    <meta name="referrer" content="same-origin" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Your client portal</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Your client portal needs JavaScript. Turn it on in your browser, then open this page again.</noscript>
+    <script type="module" src="/src/portal/main.tsx"></script>
+  </body>
+</html>
