@@ -1,7 +1,8 @@
 // Read-only Spark RESO adapter against a mock Spark server only (R-INT-1). A network tripwire fails any
 // real outbound call. Nothing here talks to Spark.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { SPARK_PATHS, SparkConfigError, SparkError, SparkResoClient, SparkResoMlsFeed, type SparkOptions, checkSparkBaseUrl, decodeCursor, mediaOf, permissionGrantsRead, sanitizeRecord, toResoListing } from './spark.js';
+import { type ListingFacts, type MlsConnectionId, normalizeMlsListing } from '@realty/core/listings';
+import { SPARK_FIELD_MAPPING, SPARK_PATHS, SPARK_SIZE_FIELD_CANDIDATE, SparkConfigError, SparkError, SparkResoClient, SparkResoMlsFeed, type SparkOptions, checkSparkBaseUrl, decodeCursor, mediaOf, permissionGrantsRead, sanitizeRecord, toResoListing } from './spark.js';
 import { CANARY_KEY_ID, CANARY_TOKEN, type MockSpark, REPLICATION_HOST, type Tripwire, installNetworkTripwire, liveProperty, liveSpark, mockSpark, property } from './spark.testing.js';
 
 let wire: Tripwire;
@@ -257,7 +258,7 @@ describe('Spark adapter: paging and the ModificationTimestamp cursor', () => {
       postalCode: '00000',
       bedroomsTotal: 3,
       bathroomsTotalX10: 20,
-      livingAreaSqft: 1500,
+      livingAreaSqft: null, // R-MLS-7: no Spark field is confirmed as finished living area (BuildingAreaTotal never is)
       propertyType: 'Residential',
       listOfficeName: 'Example Brokerage',
       modificationTimestamp: '2026-11-01T00:00:07.000Z',
@@ -385,10 +386,29 @@ describe('Spark adapter: the live shape (findings 1-9, against a mock that repro
     for (const v of ['None', 'Write', '', null, 1, {}, ['None'], 'read']) expect(permissionGrantsRead(v), JSON.stringify(v)).toBe(false);
   });
 
-  it('finding 5: there is no LivingArea; the size is BuildingAreaTotal; an empty AboveGradeFinishedArea is not used', () => {
-    const l = toResoListing(liveProperty(3, { BuildingAreaTotal: 2100 }))!;
-    expect(l.livingAreaSqft).toBe(2100);
-    expect(toResoListing(liveProperty(3, { BuildingAreaTotal: null, LivingArea: 999 }))!.livingAreaSqft).toBeNull();
+  it('R-MLS-7 E598 finding 5: a Spark record with BuildingAreaTotal (and LivingArea, an empty AboveGradeFinishedArea) has an unknown size: no Spark field is confirmed as finished living area', () => {
+    // the explicit, reviewable choice: no size field until the MLS confirms one; the candidate is named, never read
+    expect(SPARK_FIELD_MAPPING).toEqual({ sqft: null });
+    expect(Object.isFrozen(SPARK_FIELD_MAPPING)).toBe(true);
+    expect(SPARK_SIZE_FIELD_CANDIDATE).toEqual({ field: 'LivingArea', confirmed: false });
+    const shapes: Record<string, unknown>[] = [
+      { BuildingAreaTotal: 2100 },
+      { BuildingAreaTotal: 2100, LivingArea: 1850 },
+      { LivingArea: 1850 },
+      { BuildingAreaTotal: 2100, AboveGradeFinishedArea: 1700, BelowGradeFinishedArea: 400 },
+    ];
+    for (const o of shapes) {
+      expect(toResoListing(liveProperty(3, o))!.livingAreaSqft).toBeNull();
+      // the path the sync takes: the sanitized record through core normalize with the Spark mapping
+      const f = normalizeMlsListing(sanitizeRecord(liveProperty(3, o)), { connectionId: 'conn' as MlsConnectionId, fields: SPARK_FIELD_MAPPING });
+      expect(Array.isArray(f)).toBe(false);
+      expect([(f as ListingFacts).sqft, (f as ListingFacts).valuation.sizeSource, (f as ListingFacts).beds]).toEqual([null, null, 3]);
+    }
+  });
+
+  it('E606: PostalCode is kept as sent (ZIP+4 or ZIP5), never normalized (VERIFY WITH MLS)', () => {
+    expect(toResoListing(property(8, { PostalCode: '29401-1234' }))!.postalCode).toBe('29401-1234');
+    expect(toResoListing(property(8, { PostalCode: '29401' }))!.postalCode).toBe('29401');
   });
 
   it('finding 6: StandardStatus is free text from the Lookup resource; known values map, unknown ones are skipped; YN flags are JSON booleans', () => {

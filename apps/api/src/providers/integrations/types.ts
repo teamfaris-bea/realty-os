@@ -134,6 +134,7 @@ export interface ResoListing {
   postalCode: string;
   bedroomsTotal: number | null;
   bathroomsTotalX10: number | null;
+  /** finished living area, sq ft; null when the MLS has not confirmed the field that carries it (R-MLS-7: Spark) */
   livingAreaSqft: number | null;
   propertyType: string;
   listOfficeName: string;

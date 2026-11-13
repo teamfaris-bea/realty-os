@@ -1,12 +1,12 @@
 // The record source the MLS sync reads (module 24). Two implementations, one shape:
 //   - Spark (MLS_PROVIDER=spark): the read-only adapter's sanitized RESO records, Media expanded, with the
-//     Spark field mapping (BuildingAreaTotal for the size). Opened only for a live connection, the key
-//     decrypted by the system actor (mls/spark/service.ts openSparkFeed, R-INT-4).
+//     Spark field mapping (no size field: the size is unknown until the MLS confirms one, R-MLS-7). Opened only
+//     for a live connection, the key decrypted by the system actor (mls/spark/service.ts openSparkFeed, R-INT-4).
 //   - any other MlsFeed adapter (the deterministic fake in dev and tests; UnlicensedMls, which throws
 //     NEEDS_MLS_LICENSE, in a real deployment without Spark): its ResoListing rows as RESO-shaped records.
 // Nothing here talks to a network itself: Spark's kill switch (MLS_LIVE_CALLS) and allow-list are the
 // adapter's.
-import type { FactField, ResoLike } from '@realty/core/listings';
+import type { FieldOverrides, ResoLike } from '@realty/core/listings';
 import type { Tx } from '@realty/db';
 import type { TenantId } from '@realty/core/foundation';
 import { SPARK_FIELD_MAPPING, SparkError } from '../providers/integrations/spark.js';
@@ -24,8 +24,8 @@ export interface MlsRecordPage {
 }
 
 export interface MlsRecordFeed {
-  /** per-MLS overrides for core normalizeMlsListing */
-  readonly fields: Readonly<Partial<Record<FactField, string>>>;
+  /** per-MLS overrides for core normalizeMlsListing (sqft null: no size field, R-MLS-7) */
+  readonly fields: FieldOverrides;
   records(cursor: string | null, limit: number): Promise<MlsRecordPage>;
 }
 
