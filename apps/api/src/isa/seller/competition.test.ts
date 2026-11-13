@@ -3,10 +3,11 @@
 // sent (AI_ISA_LIVE_SENDS, TELEPHONY_LIVE_REQUESTS and MLS_LIVE_CALLS stay false).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
-import { cmaPack, feedLastSyncedAt, localSales, mlsSale } from '../../cma/testing.js';
+import { cmaPack, feedLastSyncedAt, localSales, mlsSale, saleReso, syncSales } from '../../cma/testing.js';
 import { TEST_ATTRIBUTION, TEST_DISCLAIMER } from '../../mls/testing.js';
 import { buildCompsInTx } from './comps.js';
 import { smsFits } from './competition.js';
+import { sellerFactsCurrentInTx, sellerRerenderInTx } from './index.js';
 import { PRINTABLE_STATEMENTS, asSystem, confirm, nowInstant, policyChannels, queueFactsAs, secondFeed, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 
 let h: ApiHarness;
@@ -111,5 +112,50 @@ describe('R-ISA-17 E536 (ISA-3 audit F5): the channel of a seller facts message'
     // the same lead with email allowed again: both build (the refusal above was the policy's)
     await policyChannels(h, w, ['sms', 'email']);
     expect(await queueFactsAs(h, w, l, ['C1'], 'email')).not.toBeNull();
+  });
+});
+
+describe('E537 (ISA-3 audit F6): the model-free re-render after a fact changed between build and send', () => {
+  const rerenderJobs = async (tenantId: string) => (await h.su.query<{ payload: { assignmentId: string; messageId: string } }>(`SELECT payload FROM jobs WHERE tenant_id = $1 AND kind = 'ai_isa.seller_rerender' ORDER BY created_at`, [tenantId])).rows;
+
+  it('E537 R-ISA-17: a competitor gone pending is re-rendered once from the message\'s own facts, as competition ("Now pending (not yet sold)"), never as a comps email', async () => {
+    const w = await sellerWorld(h);
+    const l = await sellerLead(h, w);
+    const rec = saleReso({ status: 'active', line1: '360 Rival St', beds: 3, sqft: 1500, listPriceCents: 51_000_000 });
+    const [listingId] = await syncSales({ h, tenantId: w.tenantId, mls: w.mls }, [rec]);
+    expect((await confirm(w, l)).status).toBe(200);
+    const id = (await queueFactsAs(h, w, l, ['C1'], 'email'))!;
+    await syncSales({ h, tenantId: w.tenantId, mls: w.mls }, [{ ...rec, StandardStatus: 'Pending', ModificationTimestamp: new Date().toISOString() }]);
+    expect((await asSystem(h, w, l, (tx, _a, actor) => sellerFactsCurrentInTx(tx, actor, id, nowInstant()))).codes).toEqual(['FACT_CHANGED']);
+    const jobs = await rerenderJobs(w.tenantId);
+    expect(jobs.map((j) => j.payload)).toEqual([{ assignmentId: l.assignmentId, messageId: id }]);
+    const r = await asSystem(h, w, l, (tx, a, actor) => sellerRerenderInTx(tx, actor, a, id, nowInstant()));
+    expect([r.kind, r.codes, r.dropped, r.delivered]).toEqual(['competition', [], [], false]); // delivered: false until ISA-2 builds queueFactsMessageInTx
+    expect(r.facts).toMatchObject({ ok: true, channel: 'email' });
+    const f = r.facts as Extract<typeof r.facts, { ok: true }>;
+    expect(f.body).toContain('Now pending (not yet sold)');
+    expect(f.body).not.toContain('recent sales');
+    expect(f.pendingFacts.map((x) => [x.factKind, x.listingId, x.statusAtBuild, x.priceKind])).toEqual([['competitor', listingId, 'pending', 'asking']]);
+  });
+
+  it('E537 R-ISA-17: a fact no longer shown is dropped (sent without it); with none left the re-render is data_unavailable; a re-render\'s own change never re-renders again', async () => {
+    const w = await sellerWorld(h);
+    const l = await sellerLead(h, w);
+    const recs = [saleReso({ status: 'active', line1: '370 Rival St', beds: 3, sqft: 1500 }), saleReso({ status: 'active', line1: '371 Rival St', beds: 3, sqft: 1500 })];
+    const ids = await syncSales({ h, tenantId: w.tenantId, mls: w.mls }, recs);
+    expect((await confirm(w, l)).status).toBe(200);
+    const id = (await queueFactsAs(h, w, l, ['C1', 'C2'], 'email'))!;
+    await h.su.query(`UPDATE listings SET display_allowed = false WHERE id = $1`, [ids[0]]);
+    let r = await asSystem(h, w, l, (tx, a, actor) => sellerRerenderInTx(tx, actor, a, id, nowInstant()));
+    expect([r.kind, r.codes, r.dropped]).toEqual(['competition', [], [ids[0]]]);
+    expect((r.facts as Extract<typeof r.facts, { ok: true }>).pendingFacts.map((x) => x.listingId)).toEqual([ids[1]]);
+    await h.su.query(`UPDATE listings SET display_allowed = false WHERE id = $1`, [ids[1]]);
+    r = await asSystem(h, w, l, (tx, a, actor) => sellerRerenderInTx(tx, actor, a, id, nowInstant()));
+    expect([r.kind, r.codes, r.delivered]).toEqual(['competition', ['DATA_UNAVAILABLE'], false]);
+    // a message that is itself a re-render (ISA-2's queueFactsMessageInTx marks it rerenderOf) and changes again is
+    // refused with no second re-render: it never loops
+    await h.su.query(`UPDATE assistant_actions SET payload = payload || jsonb_build_object('rerenderOf', $2::text) WHERE id = (SELECT assistant_action_id FROM messages WHERE id = $1)`, [id, id]);
+    expect((await asSystem(h, w, l, (tx, _a, actor) => sellerFactsCurrentInTx(tx, actor, id, nowInstant()))).codes).toEqual(['DATA_UNAVAILABLE', 'FACT_CHANGED']);
+    expect(await rerenderJobs(w.tenantId)).toEqual([]);
   });
 });

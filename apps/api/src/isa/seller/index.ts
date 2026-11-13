@@ -17,8 +17,8 @@ import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from 
 import { type CompsBuild, DEFAULT_SELLER_DEPS, type SellerDeps, buildCompsInTx } from './comps.js';
 import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, smsFits, sourceOf } from './competition.js';
 import { assignmentSubjectLinkInTx, sellerGatesInTx, subjectLinkInTx } from './gates.js';
-import { FACT_INTROS, STATUS_LABEL, factsMessage } from './isa1Seam.js';
-import { type AssignmentRow, type LinkResult, assignmentById } from './isa2Seam.js';
+import { type CompetitorEvent, FACT_INTROS, STATUS_LABEL, composeMessage, factsMessage } from './isa1Seam.js';
+import { type AssignmentRow, type LinkResult, assignmentById, contextFor, queueFactsMessageInTx } from './isa2Seam.js';
 import { currentSubjectInTx, ensureWatchInTx, watchOf } from './subject.js';
 import { displayRulesVersion } from './versions.js';
 
@@ -154,25 +154,87 @@ export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: Assig
   const { map } = await competitionHandlesInTx(tx, a, now);
   const ids = comp.map((h) => map[h]).filter((x): x is string => x !== undefined);
   if (ids.length !== comp.length) return { ok: false, codes: ['FACT_CHANGED'] };
+  return (await competitionFactsInTx(tx, a, now, ids.map((id) => ({ listingId: id, priceAtBuild: null })), plan, false)).facts;
+}
+
+/**
+ * A competition message over `items` (listing ids), each rendered from its client DisplayListing as it is now: pending
+ * as "Now pending (not yet sold)", a changed asking price (against `priceAtBuild`) as a price change, else as new. A
+ * line that no longer renders refuses the message, or, with `dropFailing` (the E537 re-render), is dropped and named in
+ * `dropped`; with nothing left it is FACT_CHANGED. The channel rule is H2's (renderSellerFactsInTx).
+ */
+async function competitionFactsInTx(tx: Tx, a: AssignmentRow, now: Instant, items: readonly { listingId: string; priceAtBuild: string | null }[], plan: SellerChannels, dropFailing: boolean): Promise<{ facts: Exclude<SellerFacts, null>; dropped: string[] }> {
+  const allowed = (ch: 'sms' | 'email') => plan.channels.includes(ch) && a.boundPoints[ch] !== undefined;
   const e = await mlsEligibility(tx, now);
   const team = (await sql<{ t: string }>`SELECT COALESCE(team_name, brokerage_legal_name) AS t FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]!.t;
-  const rows = new Map((await listingRows(tx, ids)).map((r) => [r.id, r]));
+  const rows = new Map((await listingRows(tx, items.map((x) => x.listingId))).map((r) => [r.id, r]));
   const lines: string[] = [];
   const facts: PendingAny[] = [];
-  for (const id of ids) {
-    const r = rows.get(id)!;
-    const line = competitorLine(e, r, r.status === 'pending' ? 'competitor_pending' : 'new_competitor', team, now);
-    if (!line.ok) return { ok: false, codes: [line.refusal] };
+  const dropped: string[] = [];
+  for (const it of items) {
+    const r = rows.get(it.listingId);
+    const event: CompetitorEvent = r?.status === 'pending' ? 'competitor_pending' : it.priceAtBuild !== null && r !== undefined && storedPriceOf(r, 'asking') !== it.priceAtBuild ? 'competitor_price_change' : 'new_competitor';
+    const line = r === undefined ? ({ ok: false, refusal: 'FACT_CHANGED' } as const) : competitorLine(e, r, event, team, now);
+    if (!line.ok || r === undefined) {
+      if (!dropFailing) return { facts: { ok: false, codes: [line.ok ? 'FACT_CHANGED' : line.refusal] }, dropped };
+      dropped.push(it.listingId);
+      continue;
+    }
     lines.push(line.line);
     const conn = e.connections.find((c) => c.id === r.mls_connection_id)!;
     facts.push({ factKind: 'competitor', listingId: r.id, connectionId: conn.id, priceKind: 'asking', priceCents: Number(r.list_price_cents), statusAtBuild: r.status, asOf: sourceOf(e, r, team, now)!.asOf, displayRulesVersion: displayRulesVersion(conn), methodVersion: null, valuationDate: null, tier: null, compSetHash: null, lineSha256: '' });
   }
+  if (facts.length === 0) return { facts: { ok: false, codes: ['FACT_CHANGED'] }, dropped };
   const bodyOf = (ch: 'sms' | 'email') => factsMessage({ intro: FACT_INTROS.competition, lines, attribution: footerOfFeeds(e, facts.map((f) => f.connectionId), ch), disclaimer: null, channel: ch });
   const channel: 'sms' | 'email' | null = allowed('sms') && smsFits(plan.compose(bodyOf('sms'), 'sms')) ? 'sms' : allowed('email') ? 'email' : null;
-  if (channel === null) return { ok: false, codes: [plan.channels.some((ch) => a.boundPoints[ch] !== undefined) ? 'FACTS_DO_NOT_FIT' : 'CHANNEL_NOT_ALLOWED'] };
+  if (channel === null) return { facts: { ok: false, codes: [plan.channels.some((ch) => a.boundPoints[ch] !== undefined) ? 'FACTS_DO_NOT_FIT' : 'CHANNEL_NOT_ALLOWED'] }, dropped };
   const body = bodyOf(channel);
   const { sha256Hex } = await import('@realty/core/compliance');
-  return { ok: true, channel, body, pendingFacts: facts.map((f, k) => ({ ...f, lineSha256: sha256Hex(lines[k]!) })) };
+  return { facts: { ok: true, channel, body, pendingFacts: facts.map((f, k) => ({ ...f, lineSha256: sha256Hex(lines[k]!) })) }, dropped };
+}
+
+export interface SellerRerender {
+  /** the kind the original message carried (its own facts decide: sold comps, else competition) */
+  kind: 'comps' | 'competition' | null;
+  /** empty when there is something to send; DATA_UNAVAILABLE when nothing renders any more */
+  codes: string[];
+  /** listing ids of the original facts left out because they no longer render (sent without them) */
+  dropped: string[];
+  facts: SellerFacts;
+  /** false until ISA-2 builds queueFactsMessageInTx (STUB) */
+  delivered: boolean;
+}
+
+/**
+ * The E537 re-render (ai_isa.seller_rerender, once per turn, model-free): the original message's own facts decide the
+ * kind. Sold comps are rebuilt whole (the complete set or nothing). Competition is rebuilt over the same listings as
+ * they are now ("Now pending (not yet sold)", a price change), each fact that no longer renders dropped; with nothing
+ * left, or comps refused, it is DATA_UNAVAILABLE. The result goes to STUB(ISA-2) queueFactsMessageInTx with the
+ * original message and turn, so the re-render binds to that turn and a change of the re-render itself is refused
+ * without another re-render (sellerFactsCurrentInTx: it never loops). VERIFY (ISA-2): DATA_UNAVAILABLE becomes a
+ * data_unavailable escalation once ISA-2 builds the queue function; until then nothing is delivered.
+ */
+export async function sellerRerenderInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, messageId: string, now: Instant): Promise<SellerRerender> {
+  const orig = (await sql<{ fact_kind: string; listing_id: string | null; price_cents: string | null; turn_id: string | null }>`SELECT fact_kind, listing_id, price_cents::text AS price_cents, turn_id
+      FROM ai_isa_shared_facts WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND assignment_id = ${a.id} AND fact_kind IN ('sold_comp_set','competitor')
+      ORDER BY created_at, id`.execute(tx)).rows;
+  const kind = orig.some((f) => f.fact_kind === 'sold_comp_set') ? 'comps' : orig.length > 0 ? 'competition' : null;
+  if (kind === null || a.endedAt !== null || !seller(a)) return { kind, codes: ['DATA_UNAVAILABLE'], dropped: [], facts: null, delivered: false };
+  const c = await contextFor(tx, a, now);
+  const plan: SellerChannels = { channels: c.channels, compose: (core, ch) => composeMessage({ body: core, who: c.who, firstInThread: true, optOutHint: true, channel: ch }) };
+  let facts: SellerFacts;
+  let dropped: string[] = [];
+  if (kind === 'comps') facts = await renderSellerFactsInTx(tx, actor, a, now, { messageKind: 'facts', handles: ['comps'] }, plan);
+  else {
+    const g = await sellerGatesInTx(tx, actor, a, now, 'competition');
+    const items = [...new Map(orig.filter((f) => f.listing_id !== null).map((f) => [f.listing_id!, { listingId: f.listing_id!, priceAtBuild: f.price_cents }])).values()];
+    const out = g.codes.length > 0 ? { facts: { ok: false as const, codes: g.codes }, dropped: [] } : await competitionFactsInTx(tx, a, now, items, plan, true);
+    facts = out.facts;
+    dropped = out.dropped;
+  }
+  if (facts === null || !facts.ok) return { kind, codes: ['DATA_UNAVAILABLE'], dropped, facts, delivered: false };
+  const sent = await queueFactsMessageInTx(tx, { assignmentId: a.id, rerenderOf: messageId, turnId: orig[0]?.turn_id ?? null, channel: facts.channel, body: facts.body, pendingFacts: facts.pendingFacts });
+  return { kind, codes: [], dropped, facts, delivered: sent.delivered };
 }
 
 /**
@@ -237,8 +299,15 @@ export async function sellerFactsCurrentInTx(tx: Tx, actor: SystemActor, message
     }
   }
   if (codes.has('FACT_CHANGED')) {
-    const turn = seller[0]!.turn_id ?? messageId;
-    await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.seller_rerender', payload: { assignmentId: seller[0]!.assignment_id, messageId }, dedupeKey: `ai_isa.seller_rerender:${turn}` });
+    // E537 (ISA-3 audit F6): one re-render per turn; a message that is itself a re-render (ISA-2's queue function marks
+    // its action rerenderOf) is refused with no second one, so a fact that keeps changing never loops
+    const again = (await sql<{ r: boolean }>`SELECT (aa.payload ->> 'rerenderOf') IS NOT NULL AS r FROM messages m JOIN assistant_actions aa ON aa.tenant_id = m.tenant_id AND aa.id = m.assistant_action_id
+        WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}`.execute(tx)).rows[0]?.r ?? false;
+    if (again) codes.add('DATA_UNAVAILABLE');
+    else {
+      const turn = seller[0]!.turn_id ?? messageId;
+      await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.seller_rerender', payload: { assignmentId: seller[0]!.assignment_id, messageId }, dedupeKey: `ai_isa.seller_rerender:${turn}` });
+    }
   }
   return { codes: [...codes].sort(), licenceOk };
 }

@@ -6,6 +6,7 @@
 //   queueFactsMessageInTx   a model-free facts message (the E537 re-render), queued under ISA-2's checks
 //   enqueueListingEventInTx a listing_event turn for a competition change (ISA-2's TurnPayload has no listing_event)
 import type { Tx } from '@realty/db';
+import type { PendingAny } from './index.js';
 
 export { type AssignmentRow, type LinkResult, assignmentById, liveAssignmentOf, lockForTurn } from '../repo.js';
 export { type ApplyEnv, type IsaContext, type IsaDeps, contextFor, queueIsaMessageInTx, sha256 } from '../effects.js';
@@ -13,8 +14,16 @@ export { capabilitySet, systemEndInTx, systemPauseInTx } from '../controls.js';
 
 export type StubOutcome = { delivered: false; code: 'NOT_BUILT'; sentence: string };
 
-/** STUB(ISA-2): refuses; the re-render is reported to the agent as not delivered. */
-export async function queueFactsMessageInTx(_tx: Tx, _i: { assignmentId: string; channel: 'email' | 'sms'; body: string }): Promise<StubOutcome> {
+/**
+ * STUB(ISA-2): refuses; the re-render is reported to the agent as not delivered. The real function queues `body` under
+ * ISA-2's checks with `pendingFacts` written against its message (writeSellerFactsInTx), binds it to `turnId`, and marks
+ * its assistant action `rerenderOf` (the original message), so a change of the re-render is refused without another
+ * one (E537: it never loops).
+ */
+export async function queueFactsMessageInTx(
+  _tx: Tx,
+  _i: { assignmentId: string; rerenderOf: string; turnId: string | null; channel: 'email' | 'sms'; body: string; pendingFacts: readonly PendingAny[] },
+): Promise<StubOutcome> {
   return { delivered: false, code: 'NOT_BUILT', sentence: 'Not delivered: the assistant cannot re-send updated facts yet (not built yet).' };
 }
 

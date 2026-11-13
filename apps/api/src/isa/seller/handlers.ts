@@ -2,8 +2,9 @@
 // 'assistant' (ai_isa.seller_facts).
 //   ai_isa.seller_watch       hourly: enqueues one ai_isa.seller_watch_one per live seller assignment and local day
 //   ai_isa.seller_watch_one   one assignment's watch run (watch.ts), in its own transaction
-//   ai_isa.seller_rerender    after TX1 found a fact changed (H3, E537): one model-free re-render per turn, through
-//                             STUB(ISA-2) queueFactsMessageInTx (not delivered until ISA-2 builds it)
+//   ai_isa.seller_rerender    after TX1 found a fact changed (H3, E537): one model-free re-render per turn of the
+//                             original message's own kind (index.ts sellerRerenderInTx), through STUB(ISA-2)
+//                             queueFactsMessageInTx (not delivered until ISA-2 builds it)
 import type { Instant } from '@realty/core/foundation';
 import { enqueueJob } from '@realty/db';
 import { z } from 'zod';
@@ -11,9 +12,8 @@ import { commsRuntime } from '../../comms/runtime.js';
 import type { CommsDeps } from '../../comms/types.js';
 import type { Providers } from '../../providers/index.js';
 import type { JobHandler, TxJobHandler } from '../../worker/types.js';
-import { composeMessage } from './isa1Seam.js';
-import { type IsaDeps, assignmentById, contextFor, queueFactsMessageInTx } from './isa2Seam.js';
-import { renderSellerFactsInTx } from './index.js';
+import { type IsaDeps, assignmentById } from './isa2Seam.js';
+import { sellerRerenderInTx } from './index.js';
 import { runSellerWatchInTx, sellerWatchSweepInTx } from './watch.js';
 
 export const SELLER_WATCH_EVERY_MS = 60 * 60_000;
@@ -44,11 +44,8 @@ export function makeSellerHandlers(depsFor: DepsFor = defaultDeps): JobHandler<u
     async run(ctx, p) {
       const a = await assignmentById(ctx.tx, p.assignmentId);
       if (a === null || a.endedAt !== null) return;
-      const c = await contextFor(ctx.tx, a, ctx.now as Instant);
-      const f = await renderSellerFactsInTx(ctx.tx, ctx.actor, a, ctx.now as Instant, { messageKind: 'facts', handles: ['comps'] }, {
-        channels: c.channels, compose: (core, ch) => composeMessage({ body: core, who: c.who, firstInThread: true, optOutHint: true, channel: ch }),
-      });
-      if (f !== null && f.ok) await queueFactsMessageInTx(ctx.tx, { assignmentId: a.id, channel: f.channel, body: f.body });
+      // the original message's own facts decide what is rebuilt (comps, or the same competitors as they are now)
+      await sellerRerenderInTx(ctx.tx, ctx.actor, a, p.messageId, ctx.now as Instant);
     },
   };
   return [{ ...sweep, every: { ms: SELLER_WATCH_EVERY_MS, offsetMs: 50_000 }, periodicPayload: {} } as JobHandler<unknown>, one as JobHandler<unknown>, rerender as JobHandler<unknown>];
