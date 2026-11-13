@@ -276,6 +276,66 @@ describe('b12 recheck R1: one carrier failure counts once (R-ISA-14; E518)', () 
   });
 });
 
+describe('b12 recheck R7: a provider "sent" is no proof of reach, so 2 undelivered in a row end care in the normal order (R-ISA-11, R-ISA-14; E518)', () => {
+  /** Live care on a fresh lead. Its start is moved an hour back: runIsa ages each inbound by 3 minutes (there is no fake
+   *  clock) and a turn reads only inbounds since the start once one was consumed. */
+  async function caredLead() {
+    const l = await isaLead(h, w.agents[0]!);
+    expect((await startCare(w.agents[0]!, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE ai_isa_assignments SET started_at = started_at - interval '1 hour' WHERE contact_id = $1`, [l.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    return l;
+  }
+  /** One AI reply to a fresh inbound, sent and its sent job run first (the worker is not behind); its dispatch is aged
+   *  past the 2-minute gap so the next reply is not deferred. */
+  async function aiReply(l: { id: string; phone: string }, text: string): Promise<string> {
+    const { inboundSms } = await import('../comms/testing.js');
+    const { aiMessages } = await import('./testing.js');
+    await inboundSms(h, l.phone, w.mainNumber, text);
+    await runIsa(h, w.tenantId);
+    const sent = (await aiMessages(h, l.id)).filter((m) => m.status === 'sent').at(-1);
+    expect(sent, 'an AI reply reached sent').toBeTruthy();
+    const jobs = await h.su.query<{ s: string; st: string }>(`SELECT payload->>'status' AS s, status AS st FROM jobs WHERE kind = 'ai_isa.send_result' AND payload->>'messageId' = $1`, [sent!.id]);
+    expect(jobs.rows).toEqual([{ s: 'sent', st: 'succeeded' }]);
+    await h.su.query(`UPDATE messages SET dispatched_at = dispatched_at - interval '3 minutes' WHERE id = $1`, [sent!.id]);
+    return sent!.id;
+  }
+  /** The carrier's later status of that text (status callback), and the worker runs its send_result job. */
+  async function carrier(id: string, status: 'undelivered' | 'delivered') {
+    const { applyMessageStatus } = await import('../comms/status.js');
+    const r = await applyMessageStatus(systemActor(w.tenantId, 'provider'), { providerEventRef: `evt-r7-${status}-${id}`, message: { id }, providerStatus: status, mapped: status, errorCode: status === 'undelivered' ? '30003' : null, occurredAt: Date.now() as never }, depsFromPlatform(h.app.platform));
+    expect(r.kind).toBe('applied');
+    await runIsa(h, w.tenantId, 2);
+  }
+  const care = async (contactId: string) => (await h.su.query<{ n: number; sent: number; end_reason: string | null }>(`SELECT undelivered_streak AS n, messages_sent AS sent, end_reason FROM ai_isa_assignments WHERE contact_id = $1`, [contactId])).rows[0]!;
+
+  it('R-ISA-11 E518: two AI texts are sent and their sent jobs run first; both come back undelivered: care ends delivery_problem with a handoff', async () => {
+    const l = await caredLead();
+    await carrier(await aiReply(l, 'Hi, we are looking for a place soon'), 'undelivered');
+    expect(await care(l.id)).toEqual({ n: 1, sent: 1, end_reason: null });
+    const b = await aiReply(l, 'Sorry, did you get my text?');
+    expect(await care(l.id)).toEqual({ n: 1, sent: 2, end_reason: null });
+    await carrier(b, 'undelivered');
+    expect((await care(l.id)).end_reason).toBe('delivery_problem');
+    expect((await handoffs([l.id])).map((x) => x.reason)).toEqual(['delivery_problem']);
+  });
+
+  it('R-ISA-11 E518: undelivered, then a text sent and delivered, then undelivered: the delivery reset the streak and care goes on', async () => {
+    const l = await caredLead();
+    await carrier(await aiReply(l, 'Hi, we are looking for a place soon'), 'undelivered');
+    expect(await care(l.id)).toMatchObject({ n: 1, end_reason: null });
+    await carrier(await aiReply(l, 'Sorry, did you get my text?'), 'delivered');
+    expect(await care(l.id)).toMatchObject({ n: 0, end_reason: null });
+    await carrier(await aiReply(l, 'Still looking, any news?'), 'undelivered');
+    expect(await care(l.id)).toEqual({ n: 1, sent: 3, end_reason: null });
+  });
+});
+
 describe('b12 recheck R2: the overdue escalation follows the lead\'s current owner, like the card (R-ISA-30; E525)', () => {
   it('R-ISA-30 E525: a handoff to a1 whose lead moves on to a0 escalates, when overdue, to a0\'s Team Lead, not a1\'s', async () => {
     const { runOwnershipCommand } = await import('../leads/ownership.js');

@@ -222,7 +222,7 @@ A turn may compose and a message may send only while every link holds. Every lin
 | Link 3 `ai_isa_enabled` false; link 5 revoked; link 6 owner changed, merged, owner inactive or bound point removed; link 7; link 8; a confirmed listing at the subject (team → `active_client`, other brokerage → `listed_elsewhere`) | **End** with one handoff | A new start only |
 
 Delivery failures are handled separately:
-- Undelivered twice in a row ends care with `delivery_problem` and a handoff. Deferring would loop; ending is final and visible.
+- Undelivered twice in a row ends care with `delivery_problem` and a handoff. Deferring would loop; ending is final and visible. Only a carrier `delivered` breaks the run; a provider `sent` does not (b12 recheck R7).
 - SENDER_NOT_VERIFIED is a hold (the lane's sender block).
 
 ### 3.2 The team policy (playbook kind `ai_isa`)
@@ -1182,7 +1182,7 @@ The lane briefs are in <lane_briefs>.
 | E515 | A 4th AI message in 24 h; a bulk email already sent today; two sends racing at the cap; a timer, a buyer watch and a seller watch all queue for 09:00 | ISA_CAP_REACHED is deferred. The AI yields to bulk. Exactly one send passes under the sorted address locks. Only one open message (a newer turn supersedes). The 120 s gap holds. | R-ISA-11 |
 | E516 | Start on a lead whose first touch is pending; a new or attempting lead reaches `inactivity_warn_at`; a same-owner reinquiry period | AI_ISA_FIRST_TOUCH_PENDING. A pinned handoff at the warning. A pause `reinquiry`, then owner Continue starts a linked assignment on the new seq. | R-ISA-16 |
 | E517 | The kill switch is off on the real adapter; the tenant AI cap and the telephony cap are reached | The lane's failure sentence, no request made, no retry. A hold (no pause, no per-lead card), a banner, and automatic continuation when it clears. | R-ISA-25, -11 |
-| E518 | 3, then 6, unanswered initiated messages; 2 undelivered in a row | Slow cadence, then `dormant` with a low-priority handoff. `delivery_problem` ends care with a handoff. | R-ISA-11 |
+| E518 | 3, then 6, unanswered initiated messages; 2 undelivered in a row | Slow cadence, then `dormant` with a low-priority handoff. `delivery_problem` ends care with a handoff. "In a row": each `failed` or `undelivered` counts, and only a carrier `delivered` resets the run; the provider's `sent` (accepted) proves nothing and leaves it (b12 recheck R7). | R-ISA-11 |
 | E519 | An initiated SMS where the only grant is: an inquiry-level grant; imported; recorded before D12; a defaulted scope; the source's fallback disclosure; a disclosure whose namesSeller names the team but whose body does not; or no fresh DNC result | Refused (ISA_CONSENT_EVIDENCE_MISSING or ISA_DNC_UNVERIFIED). Email only if its own basis passes. Otherwise nothing, and the panel says why. | R-ISA-9 |
 | E520 | J1: first response, then the lead replies (no inbound_first_contact grant exists) | Reply-tier SMS from their own bound inbound within 24 h. Listing shares and follow-ups are refused without the initiated tier. | R-ISA-9 |
 | E521 | A critical handoff is not touched within 15 business minutes; a handoff for a lead returned to the pond | `ai_isa_handoff_overdue` to the team leads, then Owner/Admin. "Got it" does not clear it. Ownerless: to the previous owner's TLs and Owner/Admin. | R-ISA-30 |

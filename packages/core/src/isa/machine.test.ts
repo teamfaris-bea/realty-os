@@ -369,6 +369,23 @@ describe('R-ISA-11 E518 limits, timers and send results', () => {
     s = step(s, { type: 'send_result', at: NOW, messageId: 'c', messageKind: 'conversation', status: 'failed' }, F).state;
     expect(step(s, { type: 'send_result', at: NOW, messageId: 'd', messageKind: 'conversation', status: 'undelivered' }, F).state.ended).toMatchObject({ reason: 'delivery_problem' });
   });
+  it('E518 (b12 recheck R7): a provider "sent" is no proof of reach: each text sent, then reported undelivered, counts, and the second ends delivery_problem', () => {
+    const r = (s: ReturnType<typeof start>, messageId: string, status: 'sent' | 'delivered' | 'undelivered') => step(s, { type: 'send_result', at: NOW, messageId, messageKind: 'conversation', status }, F).state;
+    let s = r(start(), 'a', 'sent');
+    s = r(s, 'a', 'undelivered');
+    expect(s.counters).toMatchObject({ undeliveredStreak: 1, messagesSent: 1 });
+    s = r(s, 'b', 'sent');
+    expect(s.counters).toMatchObject({ undeliveredStreak: 1, messagesSent: 2 });
+    expect(s.ended).toBeNull();
+    expect(r(s, 'b', 'undelivered').ended).toMatchObject({ reason: 'delivery_problem' });
+    // a delivery between them resets the streak: sent, undelivered, sent, delivered, sent, undelivered goes on
+    let d = r(r(start(), 'a', 'sent'), 'a', 'undelivered');
+    d = r(r(d, 'b', 'sent'), 'b', 'delivered');
+    expect(d.counters.undeliveredStreak).toBe(0);
+    d = r(r(d, 'c', 'sent'), 'c', 'undelivered');
+    expect(d.ended).toBeNull();
+    expect(d.counters).toMatchObject({ undeliveredStreak: 1, messagesSent: 3 });
+  });
   it('the 40th sent message ends limit_reached', () => {
     const s = { ...start(), counters: { ...start().counters, messagesSent: 39 } };
     expect(step(s, { type: 'send_result', at: NOW, messageId: 'x', messageKind: 'conversation', status: 'sent' }, F).state.ended).toMatchObject({ reason: 'limit_reached', escalation: 'limit' });

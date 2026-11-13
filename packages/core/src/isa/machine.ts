@@ -456,7 +456,10 @@ function onSendResult(s: IsaState, e: Extract<IsaEvent, { type: 'send_result' }>
   if (s.ended !== null) return { state: s, actions: [] };
   const c = s.counters;
   if (e.status === 'sent' || e.status === 'delivered') {
-    let st: IsaState = { ...s, counters: { ...c, undeliveredStreak: 0, messagesSent: e.status === 'sent' ? c.messagesSent + 1 : c.messagesSent }, inboundUnanswered: false };
+    // E518 (b12 recheck R7): only the carrier's 'delivered' proves reach and resets the undelivered streak; the
+    // provider's 'sent' (accepted, which TX2 reports for every text) leaves it as it is
+    const streak = e.status === 'delivered' ? 0 : c.undeliveredStreak;
+    let st: IsaState = { ...s, counters: { ...c, undeliveredStreak: streak, messagesSent: e.status === 'sent' ? c.messagesSent + 1 : c.messagesSent }, inboundUnanswered: false };
     const actions: IsaAction[] = [];
     if (e.messageKind === 'offer' && st.offer !== null && st.offer.status === 'pending_delivery') {
       st = { ...st, phase: 'scheduling', offer: { ...st.offer, status: 'offered', deliveredAt: e.at } };
