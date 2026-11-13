@@ -82,17 +82,67 @@ describe('Listing agent control (b11 review api-ui/F8)', () => {
     expect(await within(s).findByText("That person can't be a listing agent now (not active, or a TC). Choose someone else.")).toBeInTheDocument();
   });
 
-  it('R-OWN-22 R-SELL-1 (web; b11 review api-ui/F8, API side): a 500 from the change says the agent was not changed and nothing was saved, never that it changed; the page still names the agent the listing has', async () => {
+  // b11 merge review F1: a 500 does not say whether the change was saved. The route's invariant 500 writes nothing, but
+  // the review-card sync runs as the system after the change committed and can fail after it, and a proxy 5xx can come
+  // after a commit too. So the control never says "nothing was saved"; it asks the person to check the agent the page
+  // shows (the mutation refetches the listing), and never says the agent changed.
+  const NOT_CONFIRMED = 'We could not confirm the change. Check the listing agent shown above before trying again.';
+  const currentAgent = (s: HTMLElement, name: string) => within(s).findByText(name, { selector: 'p > span' });
+
+  it('R-OWN-22 R-SELL-1 (web; b11 review api-ui/F8, API side): a 500 from the change never says that it changed, nor that nothing was saved; the page still names the agent the listing has', async () => {
     const fake = app('owner', listing(), (f) => f.on(`PATCH /listings/${LISTING}/agent`, err(500, 'INTERNAL_ERROR')));
     const s = await agentSection();
     await within(s).findByText('Sam Seller');
     await user().selectOptions(within(s).getByLabelText('New listing agent'), RIO);
     await user().click(within(s).getByRole('button', { name: 'Change listing agent' }));
-    expect(await within(s).findByText('The listing agent was not changed, and nothing was saved. If it happens again, this listing’s record needs a fix on our side.')).toBeInTheDocument();
+    expect(await within(s).findByText(NOT_CONFIRMED)).toBeInTheDocument();
     expect(within(s).queryByText(/Listing agent changed/)).toBeNull();
+    expect(within(s).queryByText(/nothing was saved/)).toBeNull();
     expect(within(s).queryByText(/Try again in a moment/)).toBeNull();
-    expect(within(s).getByText('Sam Seller')).toBeInTheDocument();
+    expect(await currentAgent(s, 'Sam Seller')).toBeInTheDocument();
     // one request: a 500 is not retried behind the person's back
     expect(fake.callsTo(`PATCH /listings/${LISTING}/agent`).map((c) => c.body)).toEqual([{ listingAgentUserId: RIO }]);
+  });
+
+  it('R-OWN-22 R-SELL-1 (web; b11 merge review F1): a 500 that came after the change committed: the refetched listing names the new agent right above the notice, which never says the agent was not changed or that nothing was saved', async () => {
+    let committed = false;
+    const fake = app('owner', listing(), (f) =>
+      f
+        .on(`GET /listings/${LISTING}`, () => ({ status: 200, body: { listing: listing(committed ? { listingAgentUserId: RIO } : {}) } }))
+        .on(`PATCH /listings/${LISTING}/agent`, () => {
+          committed = true; // the change and its audit committed; the step after it failed
+          return err(500, 'INTERNAL_ERROR');
+        }),
+    );
+    const s = await agentSection();
+    expect(await currentAgent(s, 'Sam Seller')).toBeInTheDocument();
+    await user().selectOptions(within(s).getByLabelText('New listing agent'), RIO);
+    await user().click(within(s).getByRole('button', { name: 'Change listing agent' }));
+    expect(await within(s).findByText(NOT_CONFIRMED)).toBeInTheDocument();
+    expect(await currentAgent(s, 'Rio Reyes')).toBeInTheDocument();
+    expect(fake.callsTo(`GET /listings/${LISTING}`).length).toBeGreaterThanOrEqual(2);
+    expect(within(s).queryByText(/was not changed/)).toBeNull();
+    expect(within(s).queryByText(/nothing was saved/)).toBeNull();
+    expect(within(s).queryByText(/Listing agent changed/)).toBeNull();
+    expect(fake.callsTo(`PATCH /listings/${LISTING}/agent`).map((c) => c.body)).toEqual([{ listingAgentUserId: RIO }]);
+  });
+
+  it('R-OWN-22 (web; b11 merge review F1): a proxy 502 with no JSON body (it can come after the API committed) reads the same: not confirmed, never "nothing was saved"', async () => {
+    let committed = false;
+    app('owner', listing(), (f) =>
+      f
+        .on(`GET /listings/${LISTING}`, () => ({ status: 200, body: { listing: listing(committed ? { listingAgentUserId: RIO } : {}) } }))
+        .on(`PATCH /listings/${LISTING}/agent`, () => {
+          committed = true;
+          return { status: 502 };
+        }),
+    );
+    const s = await agentSection();
+    await currentAgent(s, 'Sam Seller');
+    await user().selectOptions(within(s).getByLabelText('New listing agent'), RIO);
+    await user().click(within(s).getByRole('button', { name: 'Change listing agent' }));
+    expect(await within(s).findByText(NOT_CONFIRMED)).toBeInTheDocument();
+    expect(await currentAgent(s, 'Rio Reyes')).toBeInTheDocument();
+    expect(within(s).queryByText(/nothing was saved/)).toBeNull();
   });
 });

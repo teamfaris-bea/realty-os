@@ -166,6 +166,30 @@ describe('b11 review api-ui/F8: PATCH /listings/:id/agent never answers 200 for 
     expect(await agentOf(l)).toBe(a1.userId);
     expect(await audits(l)).toHaveLength(1);
   });
+
+  // b11 merge review F1: the converse does not hold. The change and its audit commit in the caller's transaction; the
+  // new agent's review cards are written after it, as the system, in a transaction of their own. A failure there still
+  // answers 500, with the change saved, so a 500 does not say "nothing was saved" (the web says it could not confirm the
+  // change and shows the refetched agent: apps/web ListingAgent.test.tsx).
+  it('R-OWN-22 b11 merge review F1: a 500 can come after the change committed (the review-card sync after it failed): the listing has the new agent and one audit, so a 500 is not "nothing was saved"', async () => {
+    const w = await assistantWorld(h, { agents: 2, push: false });
+    const [a0, a1] = w.agents as [TestClient, TestClient];
+    const l = await teamListing(a0, {});
+    // this file's own database only (createTestDb): make the system's card sync, which runs after the commit, fail
+    await h.su.query('REVOKE SELECT ON marketing_pieces FROM app_user');
+    let r: Awaited<ReturnType<typeof call>>;
+    try {
+      r = await call(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: a1.userId });
+    } finally {
+      await h.su.query('GRANT SELECT ON marketing_pieces TO app_user');
+    }
+    expect([r.status, r.code]).toEqual([500, 'INTERNAL_ERROR']);
+    expect(await agentOf(l)).toBe(a1.userId);
+    expect(await audits(l)).toHaveLength(1);
+    // the same change again is the 200 no-op (nothing more audited); the card sync runs again with it
+    expect((await call(w.owner, 'PATCH', `/listings/${l}/agent`, { listingAgentUserId: a1.userId })).status).toBe(200);
+    expect(await audits(l)).toHaveLength(1);
+  });
 });
 
 describe('R-MKT-4 b7 ownership-data/F2: marketing review on a listing whose agent was removed', () => {

@@ -190,6 +190,8 @@ export async function updateListing(tx: Tx, id: string, b: z.infer<typeof Update
  * A team listing always has an agent (listings_check: `source = 'mls' OR listing_agent_user_id IS NOT NULL`), so there
  * is no first agent to set, and the row is locked here, so the fenced writer cannot miss; if either ever happens the
  * invariant broke, and the route fails (500) rather than answer 200 for a write that did not happen (b11 api-ui/F8).
+ * The converse does not hold: the route's review-card sync runs after this commits, so its 500 can follow a saved
+ * change (b11 merge review F1).
  */
 export async function changeListingAgent(tx: Tx, actor: UserActor, listingId: string, agentUserId: string): Promise<void> {
   const cur = await sql<{ source: string; agent: string | null }>`

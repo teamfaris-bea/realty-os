@@ -152,14 +152,17 @@ export function ListingPage() {
 const MEMBER_STATUS_WORD: Record<string, string> = { invited: 'invited', suspended: 'suspended', deactivating: 'being removed', removed: 'removed' };
 
 /**
- * The control's refusals in listing words. A 500 from PATCH /listings/:id/agent means nothing was written or audited:
- * the API answers 200 only after the write and its audit (or when the listing already has that agent), and a team
- * listing without an agent, or a write that missed the row it held locked, is 500 INTERNAL_ERROR (b11 review api-ui/F8).
- * So the page says the agent was not changed, and never "try again in a moment" alone: that case fails the same way.
+ * The control's refusals in listing words. PATCH /listings/:id/agent answers 200 only after the write and its audit (or
+ * when the listing already has that agent; b11 review api-ui/F8), but a 500 does not say whether the change was saved:
+ * the route's own invariant 500 (a team listing without an agent, or a write that missed the row it held locked) writes
+ * nothing, yet the review-card sync runs as the system after the change committed and can fail after it, and a proxy
+ * 5xx (any non-JSON 5xx reads as INTERNAL_ERROR) can come after a commit too (b11 merge review F1). So the page never
+ * says "nothing was saved" nor that the agent changed: it asks the person to check the agent shown above, which the
+ * mutation refetches (useMutate invalidates the listing whatever the answer), before trying again.
  */
 const LISTING_AGENT_ERRORS: Record<string, string> = {
   ASSIGNEE_NOT_ELIGIBLE: "That person can't be a listing agent now (not active, or a TC). Choose someone else.",
-  INTERNAL_ERROR: 'The listing agent was not changed, and nothing was saved. If it happens again, this listing’s record needs a fix on our side.',
+  INTERNAL_ERROR: 'We could not confirm the change. Check the listing agent shown above before trying again.',
 };
 
 /**
