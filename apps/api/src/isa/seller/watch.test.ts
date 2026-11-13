@@ -5,7 +5,7 @@ import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
 import { feedLastSyncedAt, saleReso, syncSales } from '../../cma/testing.js';
 import { depsFromPlatform } from '../../comms/runtime.js';
 import { mlsEligibility } from './cmaSeam.js';
-import { competitorLine, smsFits } from './competition.js';
+import { COMPETITION_READ_LIMIT, competitorLine, smsFits } from './competition.js';
 import { fitsSms } from './isa1Seam.js';
 import type { IsaDeps } from './isa2Seam.js';
 import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, sellerLead, sellerWorld } from './testing.js';
@@ -91,5 +91,43 @@ describe('ai_isa.seller_watch (E535, E537)', () => {
     const body = Array.from({ length: 20 }, (_, i) => `Item ${i} · listed`).join(' ');
     expect(fitsSms(body)).toBe(true);
     expect(smsFits(body)).toBe(false);
+  });
+});
+
+describe('ai_isa.seller_watch: rank and the read bound (ISA-3 audit F9)', () => {
+  it('E537: a rank change is no event: a rival leaving the set and another\'s newer record with the same status and asking price say nothing', async () => {
+    const w2 = await sellerWorld(h);
+    const l2 = await sellerLead(h, w2);
+    expect((await confirm(w2, l2)).status).toBe(200);
+    const fw2 = { h, tenantId: w2.tenantId, mls: w2.mls };
+    const recs = [0, 1, 2].map((k) => saleReso({ status: 'active', line1: `${410 + k} Rival St`, beds: 3, sqft: 1500, listPriceCents: 52_000_000 + k * 100_000 }));
+    const ids = await syncSales(fw2, recs);
+    const run2 = () => asSystem(h, w2, l2, (tx, _a, actor) => runSellerWatchInTx(tx, deps(), actor, l2.assignmentId, nowInstant()));
+    const back = () => h.su.query(`UPDATE ai_isa_seller_watch SET last_run_at = now() - interval '2 days' WHERE assignment_id = $1`, [l2.assignmentId]);
+    expect((await run2()).code).toBe('VERSION_RESET');
+    // the first rival leaves the competing set (display withdrawn): the others move up a rank, and nothing is said
+    await h.su.query(`UPDATE listings SET display_allowed = false WHERE id = $1`, [ids[0]]);
+    // the third changes its size in a newer record, same status and asking price: its rank may move, nothing is said
+    await syncSales(fw2, [{ ...recs[2]!, LivingArea: 1560, ModificationTimestamp: new Date().toISOString() }]);
+    await back();
+    expect(await run2()).toEqual({ code: 'RAN', events: [] });
+  });
+
+  it('E535: more than 5,000 rows in the ZIP skips the run (WATCH_LIMIT_REACHED) and keeps the snapshot: never a partial picture', async () => {
+    const w2 = await sellerWorld(h);
+    const l2 = await sellerLead(h, w2);
+    expect((await confirm(w2, l2)).status).toBe(200);
+    const [seed] = await syncSales({ h, tenantId: w2.tenantId, mls: w2.mls }, [saleReso({ status: 'active', line1: '420 Rival St', beds: 3, sqft: 1500 })]);
+    const run2 = () => asSystem(h, w2, l2, (tx, _a, actor) => runSellerWatchInTx(tx, deps(), actor, l2.assignmentId, nowInstant()));
+    expect((await run2()).code).toBe('VERSION_RESET');
+    const snap = async () => (await h.su.query<{ s: unknown }>(`SELECT last_snapshot AS s FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l2.assignmentId])).rows[0]!.s;
+    const before = await snap();
+    // 5,000 more live rows in the same ZIP (copies of the seed with their own ids and MLS numbers; a fixture, not a sync)
+    const cols = (await h.su.query<{ c: string }>(`SELECT quote_ident(column_name) AS c FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'listings' AND is_generated = 'NEVER' ORDER BY ordinal_position`)).rows.map((x) => x.c).join(', ');
+    await h.su.query(`INSERT INTO listings (${cols}) SELECT ${cols} FROM (SELECT (jsonb_populate_record(NULL::listings, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'mls_number', 'WL-' || g::text))).*
+      FROM listings l, generate_series(1, ${COMPETITION_READ_LIMIT}) g WHERE l.id = $1) x`, [seed]);
+    await h.su.query(`UPDATE ai_isa_seller_watch SET last_run_at = now() - interval '2 days' WHERE assignment_id = $1`, [l2.assignmentId]);
+    expect(await run2()).toEqual({ code: 'WATCH_LIMIT_REACHED', events: [] });
+    expect(await snap()).toEqual(before);
   });
 });
