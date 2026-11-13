@@ -22,8 +22,8 @@ const PACK_NAMES: Record<string, string> = {
   'platform:gmail': 'Gmail inbox sync',
   'platform:cma': 'Client CMAs and seller value ranges (a later version)',
   // ISA-2b (merge with batch 10; the API catalog's names, D12 proposed)
-  'platform:ai_isa': 'AI assistant (ISA) messages',
-  'platform:ai_isa_seller_data': 'AI assistant recent-sales emails',
+  'platform:ai_isa': 'Assistant (ISA) messages',
+  'platform:ai_isa_seller_data': 'Assistant recent-sales emails',
 };
 
 export function packName(key: string): string {
