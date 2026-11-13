@@ -16,7 +16,10 @@
 //   pack's attribution and disclaimer. Eligibility is re-read at queue time (stale data is never sent) and
 //   the MLS compliance sweep cancels queued alerts whose MLS data stopped being eligible
 //   (cancelIneligibleMlsAlertsInTx). The Owner's search_alert switch is the gate's, unchanged.
-import { type Claim, CRITERION_KEYS, type CriterionKey, type ListingFacts, type SearchCriteria, SEARCH_ALERT, SearchCriteriaSchema, applySearchReview, formatPriceCents, hasCriteria, matchListing, proposeSearch, signOffFor } from '@realty/core/assistant';
+// - R-MLS-7: an MLS listing without a size (Spark: no field is confirmed as finished living area) never meets a size
+//   criterion, so while the MLS listings a search could match lack sizes the assistant's size criteria are held for the
+//   agent's check (prefilled, unchecked) and the view says why (`sizeNote`), never silently matching team listings only.
+import { type Claim, CRITERION_KEYS, type CriterionKey, type ListingFacts, SIZE_CRITERION_KEYS, type SearchCriteria, SEARCH_ALERT, SearchCriteriaSchema, applySearchReview, formatPriceCents, hasCriteria, holdSizeCriteria, matchListing, proposeSearch, signOffFor, sizeCriterionNote } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import type { DisplayListing } from '@realty/core/listings';
@@ -72,7 +75,10 @@ export async function proposeSavedSearchInTx(tx: Tx, deps: AssistantDeps, tenant
   const owner = i.contact.ownerUserId;
   if (!owner) return null;
   const withCriteria = i.claims.filter((c) => c.structured?.criterion !== undefined);
-  const p = proposeSearch(withCriteria);
+  const proposed = proposeSearch(withCriteria);
+  // R-MLS-7: a size criterion would keep every MLS listing without a size out of the search: the agent checks it first
+  const sizes = hasSizeCriterion(proposed.criteria, {}) ? await mlsSizes(tx, await mlsEligibility(tx, i.now)) : null;
+  const p = sizes === 'none' || sizes === 'some' ? holdSizeCriteria(proposed) : proposed;
   if (!hasCriteria(p.criteria) && p.unchecked.length === 0) return null;
   const actionId = deps.ids.next<'AssistantActionId'>();
   const searchId = deps.ids.next<'SavedSearchId'>();
@@ -135,6 +141,8 @@ export interface SearchView {
   alertChannel: string;
   alertFrequency: string;
   matches: ListingView[];
+  /** R-MLS-7: why a size criterion (checked or prefilled) matches no MLS listing, or some none; null: nothing to say */
+  sizeNote: string | null;
 }
 
 type RawListing = ListingRow;
@@ -195,6 +203,23 @@ async function matchingListings(tx: Tx, c: SearchCriteria, limit: number, e: Mls
   return [...team.rows, ...mls.rows].filter((l) => matchListing(c, facts(l)) && mlsMatchable(e, l)).slice(0, limit);
 }
 
+const hasSizeCriterion = (c: Partial<SearchCriteria>, prefill: Record<string, unknown>): boolean => SIZE_CRITERION_KEYS.some((k) => c[k] !== undefined || prefill[k] !== undefined);
+
+/**
+ * R-MLS-7: whether the MLS listings a search could match (live, client-eligible, active or coming soon) carry a size:
+ * 'none', 'some' or 'all', from a sample of up to 500 of them (no ORDER BY, so the read stops there), or null when there
+ * are none. Read only for a search with a size criterion.
+ */
+async function mlsSizes(tx: Tx, e: MlsEligibility): Promise<'none' | 'some' | 'all' | null> {
+  if (e.clientIds.length === 0) return null;
+  const r = await sql<{ n: number; sized: number }>`
+    SELECT count(*)::int AS n, count(*) FILTER (WHERE x.sqft > 0)::int AS sized FROM (
+      SELECT l.sqft FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.status IN ('active','coming_soon')
+         AND ${mlsEligibleSql(e)} LIMIT 500) x`.execute(tx);
+  const { n, sized } = r.rows[0] ?? { n: 0, sized: 0 };
+  return n === 0 ? null : sized === 0 ? 'none' : sized < n ? 'some' : 'all';
+}
+
 async function proposalPrefill(tx: Tx, s: SearchRow): Promise<{ unchecked: string[]; prefill: Record<string, unknown> }> {
   if (!s.proposedByActionId) return { unchecked: [], prefill: {} };
   const a = await A.actionById(tx, s.proposedByActionId);
@@ -207,7 +232,9 @@ export async function previewSearch(actor: UserActor, searchId: string, deps: As
     const s = await searchById(tx, searchId);
     if (!s) throw new AppError('NOT_FOUND');
     const p = s.status === 'proposed' ? await proposalPrefill(tx, s) : { unchecked: [], prefill: {} };
-    return { id: s.id, contactId: s.contactId, name: s.name, status: s.status, criteria: s.criteria, criterionEvidence: s.criterionEvidence, unchecked: p.unchecked, prefill: p.prefill, alertChannel: s.alertChannel, alertFrequency: s.alertFrequency, matches: (await matchingListings(tx, s.criteria, 20, await mlsEligibility(tx, now))).map(listingView) };
+    const e = await mlsEligibility(tx, now);
+    const sizeNote = hasSizeCriterion(s.criteria, p.prefill) ? sizeCriterionNote(s.criteria, p.prefill as Partial<SearchCriteria>, await mlsSizes(tx, e)) : null;
+    return { id: s.id, contactId: s.contactId, name: s.name, status: s.status, criteria: s.criteria, criterionEvidence: s.criterionEvidence, unchecked: p.unchecked, prefill: p.prefill, alertChannel: s.alertChannel, alertFrequency: s.alertFrequency, matches: (await matchingListings(tx, s.criteria, 20, e)).map(listingView), sizeNote };
   });
 }
 

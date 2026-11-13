@@ -4,6 +4,8 @@
 // used only if the agent checks them (R-AST-5: needs-review claims never enter search criteria on
 // their own). Approve is the agent's own decision (a human acting as themselves; DB trigger), and
 // alerts start only on a separate "Turn on alerts" tap: alerts are marketing and are gated at send.
+// R-MLS-7: while the MLS gives no size, a size criterion matches only team listings: the API's sizeNote says so, and
+// a size criterion the API held for the agent's check says that is why (never "the assistant wasn't sure").
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button, ClaimLine, Notice } from '../../design/index.js';
@@ -64,6 +66,8 @@ export function SavedSearchReview({ search, claims = [], onDone }: { search: Sav
   const approve = useMutate<Record<string, unknown>, { search: SavedSearchView }>('POST', { invalidate: [['searches', search.contactId], ['inbox'], ['feed']] });
   const activate = useMutate<Record<string, unknown>, { search: SavedSearchView }>('POST', { invalidate: [['searches', search.contactId], ['feed']] });
   const byId = new Map(claims.map((c) => [c.id, c]));
+  const sizeNote = search.sizeNote ?? null;
+  const why = (k: string) => (sizeNote !== null && k.startsWith('sqft') ? 'check this: size not available from the MLS' : "check this: the assistant wasn't sure");
 
   const toggle = (set: Set<string>, k: string, update: (s: Set<string>) => void) => {
     const n = new Set(set);
@@ -110,7 +114,7 @@ export function SavedSearchReview({ search, claims = [], onDone }: { search: Sav
                 <label className="flex min-h-tap items-center gap-3 text-[16px] text-ink">
                   <input type="checkbox" className="h-5 w-5" checked={checked.has(k)} onChange={() => toggle(checked, k, setChecked)} />
                   <span>
-                    <span className="font-medium">{criterionName(k)}:</span> {criterionText(k, search.prefill[k])} <span className="text-ink-muted">(check this: the assistant wasn't sure)</span>
+                    <span className="font-medium">{criterionName(k)}:</span> {criterionText(k, search.prefill[k])} <span className="text-ink-muted">({why(k)})</span>
                   </span>
                 </label>
                 {evidenceFor(k)}
@@ -118,6 +122,7 @@ export function SavedSearchReview({ search, claims = [], onDone }: { search: Sav
             ))
           : null}
       </fieldset>
+      {sizeNote !== null ? <Notice tone="warn">{sizeNote}</Notice> : null}
       <p className="text-[15px] text-ink-muted">
         {search.matches.length === 0
           ? 'No team listings match yet.'

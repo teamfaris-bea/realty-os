@@ -340,6 +340,8 @@ export interface SavedSearchView {
   alertChannel: string;
   alertFrequency: string;
   matches: SavedSearchListing[];
+  /** R-MLS-7: why a size criterion matches no MLS listing (the MLS gives no size), or some none; null: nothing to say */
+  sizeNote?: string | null;
 }
 
 // ---- workspace (tasks, appointments, deals, listings, search) -----------------------------------
