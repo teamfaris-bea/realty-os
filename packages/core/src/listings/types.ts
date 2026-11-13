@@ -330,7 +330,8 @@ export interface LicensePack {
 }
 
 /** Uses of MLS sold data for values (R-CMA-6, R-CMA-7). */
-export type ValuationUse = 'agent_cma' | 'client_cma' | 'automated_notes';
+/** 'ai_isa_comps' (module 75 seller part, ISA-3): sold comps in an automated email to a seller lead (R-ISA-18). */
+export type ValuationUse = 'agent_cma' | 'client_cma' | 'automated_notes' | 'ai_isa_comps';
 
 /**
  * `license_pack.valuation`: what the MLS agreement allows for valuations, entered by the Owner/Admin from the
@@ -344,6 +345,11 @@ export interface ValuationLicence {
   readonly clientCma: boolean;
   /** Automated home-value notes may carry values built from the sold data. */
   readonly automatedNotes: boolean;
+  /**
+   * The AI ISA may email sold comps to seller leads (R-ISA-18; its own stored key `ai_isa_comps`, strict default false).
+   * VERIFY WITH MLS: whether the licence allows sold data in automated email to seller leads.
+   */
+  readonly aiIsaComps: boolean;
   /** Where InternetAutomatedValuationDisplayYN = N on the subject's live listing withholds values (V6). */
   readonly avmFlagScope: 'all_client_outputs' | 'internet_display_only';
   /** The required valuation statement per state (USPS code), from counsel. None is shipped. */

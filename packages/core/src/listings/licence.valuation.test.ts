@@ -14,7 +14,7 @@ describe('licence pack: valuation section (strictest defaults)', () => {
     const stored = { reviewed_by_counsel_at: '2026-10-15T09:00:00Z', attribution_text: 'A', disclaimer_text: 'D' };
     const p = parseLicensePack(stored);
     expect(p.valuation).toEqual(STRICTEST_VALUATION_LICENCE);
-    expect(STRICTEST_VALUATION_LICENCE).toEqual({ agentCma: false, clientCma: false, automatedNotes: false, avmFlagScope: 'all_client_outputs', statements: {}, reviewedByCounselAt: null });
+    expect(STRICTEST_VALUATION_LICENCE).toEqual({ agentCma: false, clientCma: false, automatedNotes: false, aiIsaComps: false, avmFlagScope: 'all_client_outputs', statements: {}, reviewedByCounselAt: null });
     expect([p.reviewedByCounselAt, packReviewed(p)]).toEqual(['2026-10-15T09:00:00Z', true]);
     // adding a reviewed section never changes the display stamp, and vice versa
     expect(parseLicensePack({ ...stored, valuation: section() }).reviewedByCounselAt).toBe('2026-10-15T09:00:00Z');
@@ -23,7 +23,7 @@ describe('licence pack: valuation section (strictest defaults)', () => {
   });
 
   it('R-CMA-6 E371: strictest per key; one bad key never loosens another', () => {
-    expect(parseLicensePack({ valuation: section() }).valuation).toEqual({ agentCma: true, clientCma: true, automatedNotes: true, avmFlagScope: 'all_client_outputs', statements: { SC: { text: STATEMENT.text, minPointSize: 12 } }, reviewedByCounselAt: '2026-11-01T00:00:00Z' });
+    expect(parseLicensePack({ valuation: section() }).valuation).toEqual({ agentCma: true, clientCma: true, automatedNotes: true, aiIsaComps: false, avmFlagScope: 'all_client_outputs', statements: { SC: { text: STATEMENT.text, minPointSize: 12 } }, reviewedByCounselAt: '2026-11-01T00:00:00Z' });
     const bad = parseLicensePack({ valuation: section({ agent_cma: 'yes', avm_flag_scope: 'none', reviewed_by_counsel_at: 'last week' }) }).valuation;
     expect(bad).toMatchObject({ agentCma: false, clientCma: true, automatedNotes: true, avmFlagScope: 'all_client_outputs', reviewedByCounselAt: null });
     expect(parseLicensePack({ valuation: section({ avm_flag_scope: 'internet_display_only' }) }).valuation.avmFlagScope).toBe('internet_display_only');
@@ -79,5 +79,19 @@ describe('sold display fields (R-MLS-2)', () => {
     expect(applyDisplayRules(sold, { ...REVIEWED_PACK, audiences: { ...REVIEWED_PACK.audiences, client: { fields: REVIEWED_PACK.audiences.client.fields, statuses: ['active'] } } }, 'client')).toBeNull();
     // unknown names in a stored pack are ignored
     expect(parseLicensePack({ audiences: { client: { fields: ['closePrice', 'closingCosts'], statuses: ['sold'] } } }).audiences.client.fields).toEqual(['closePrice']);
+  });
+});
+
+describe('valuationUse ai_isa_comps (ISA-3, R-ISA-18)', () => {
+  const pack = (o: Record<string, unknown> = {}) => parseLicensePack({ valuation: section(o) });
+  it('E534 R-ISA-18: automated_notes true with ai_isa_comps absent gives PACK_DOES_NOT_ALLOW; the use reads only its own key', () => {
+    expect(valuationUse(pack(), 'ai_isa_comps', 'SC')).toEqual({ ok: false, reason: 'PACK_DOES_NOT_ALLOW' });
+    expect(pack().valuation.aiIsaComps).toBe(false);
+    expect(valuationUse(pack({ ai_isa_comps: true, automated_notes: false, client_cma: false }), 'ai_isa_comps', 'SC')).toEqual({ ok: true });
+    expect(valuationUse(pack({ ai_isa_comps: true, reviewed_by_counsel_at: null }), 'ai_isa_comps', 'SC')).toEqual({ ok: false, reason: 'VALUATION_NOT_REVIEWED' });
+    expect(valuationUse(pack({ ai_isa_comps: 'yes' }), 'ai_isa_comps', 'SC')).toEqual({ ok: false, reason: 'PACK_DOES_NOT_ALLOW' });
+    expect(valuationUse(pack({ ai_isa_comps: true }), 'automated_notes', 'SC')).toEqual({ ok: true });
+    expect(valuationUse(pack({ ai_isa_comps: true, automated_notes: false }), 'automated_notes', 'SC')).toEqual({ ok: false, reason: 'PACK_DOES_NOT_ALLOW' });
+    expect(() => valuationUse(pack(), 'unknown' as never, 'SC')).toThrow(/unknown valuation use/);
   });
 });
