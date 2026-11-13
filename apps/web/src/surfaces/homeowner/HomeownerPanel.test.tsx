@@ -88,8 +88,13 @@ describe('the homeowner panel (R-HOME-4, R-HOME-5, R-HOME-7)', () => {
     expect(screen.getByText(T.MERGED_RECORDS)).toBeTruthy();
     expect(T.MERGED_RECORDS).toBe('A record was merged into this one. Its addresses, inquiries and seller intent stay on that record, so this profile uses only this record\'s own; its tags and deals moved here.');
     a.unmount();
-    mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }]));
+    const b = mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }]));
     await panel();
+    expect(screen.queryByText(T.MERGED_RECORDS)).toBeNull();
+    b.unmount();
+    // an unrecognised survivor shows no panel, merged records or not: recognition does not carry over (R-HOME-1, E569)
+    const c = mount(view([], { reasons: [], mergedRecords: true }));
+    await waitFor(() => expect(c.container.querySelector('main')!.childElementCount).toBe(0));
     expect(screen.queryByText(T.MERGED_RECORDS)).toBeNull();
   });
 
