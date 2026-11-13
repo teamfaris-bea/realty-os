@@ -17,7 +17,7 @@ import { runSellerWatchInTx, sellerWatchSweepInTx } from './watch.js';
 
 export const SELLER_WATCH_EVERY_MS = 60 * 60_000;
 
-const Empty = z.object({}).passthrough();
+const Empty = z.strictObject({});
 const One = z.strictObject({ assignmentId: z.uuid(), day: z.string().optional() });
 const Rerender = z.strictObject({ assignmentId: z.uuid(), messageId: z.uuid() });
 

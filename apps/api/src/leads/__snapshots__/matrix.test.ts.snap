@@ -2607,5 +2607,11 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/contacts/:id/ai-isa/undo → ai_isa.control",
   "POST /api/contacts/:id/ai-isa/continue → ai_isa.start",
   "POST /api/contacts/:id/ai-isa/lift-block → ai_isa.start",
+  "GET /api/contacts/:id/ai-isa/seller → ai_isa.view",
+  "HEAD /api/contacts/:id/ai-isa/seller → ai_isa.view",
+  "POST /api/contacts/:id/ai-isa/confirm-subject → ai_isa.subject_confirm",
+  "POST /api/contacts/:id/ai-isa/seller/subject-disputed → ai_isa.pause",
+  "POST /api/contacts/:id/ai-isa/seller/near-match-different → ai_isa.subject_confirm",
+  "POST /api/contacts/:id/ai-isa/seller/resume-comps → ai_isa.subject_confirm",
 ]
 `;

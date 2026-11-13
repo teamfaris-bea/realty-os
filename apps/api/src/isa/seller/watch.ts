@@ -7,6 +7,7 @@
 // through STUB(ISA-2) enqueueListingEventInTx (not built yet: ISA-2 has no listing_event turn). Each run re-checks
 // link 10 (H5): a listing at the home ends or pauses care.
 import { type Instant, type SystemActor, localDateOf, ianaZone, type IanaZone } from '@realty/core/foundation';
+import { canonicalJson } from '@realty/core/compliance';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { type ListingRow, listingRows, mlsEligibility } from './cmaSeam.js';
@@ -93,7 +94,7 @@ export async function runSellerWatchInTx(tx: Tx, deps: IsaDeps, actor: SystemAct
   }
   const prevVersions = w.snapshot_versions as typeof versions | Record<string, never>;
   const snapshot = (w.last_snapshot ?? {}) as Snapshot;
-  if (JSON.stringify(prevVersions) !== JSON.stringify(versions)) {
+  if (canonicalJson(prevVersions) !== canonicalJson(versions)) {
     // a new display-rules or rule version: reset silently (no event from the reset)
     const fresh: Snapshot = Object.fromEntries(c.rows.map((r) => [r.id, entryOf(r)]));
     await ran(sql`, last_snapshot = ${JSON.stringify(fresh)}::jsonb, snapshot_versions = ${JSON.stringify(versions)}::jsonb`);

@@ -205,7 +205,8 @@ export async function sellerFactsCurrentInTx(tx: Tx, actor: SystemActor, message
     if (a === null) codes.add('FACT_CHANGED');
     else {
       const b = await buildCompsInTx(tx, actor, a, now, SELLER_RUNTIME.deps);
-      if (!b.ok) for (const c of b.codes) codes.add(c === 'PLATFORM_NOT_CLEARED' || c === 'CLIENT_USE_NOT_ALLOWED' ? c : 'FACT_CHANGED');
+      // a refusal stays its own code (terminal in the core gate); FACT_CHANGED means the facts moved under the message
+      if (!b.ok) for (const c of b.codes) codes.add(c === 'SUBJECT_CHANGED' || c === 'COMPS_HIDDEN' || c === 'COMPS_TOO_FEW' || c === 'NO_VALUE' ? 'FACT_CHANGED' : c);
       else if (b.compSetHash !== seller.find((f) => f.fact_kind === 'sold_comp_set')!.comp_set_hash) codes.add('FACT_CHANGED');
     }
   }
