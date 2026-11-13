@@ -26,7 +26,7 @@ const PACK_NAMES: Record<string, string> = {
   'platform:gbp': 'Google Business Profile',
   // the AI ISA packs (D12 proposed): staff copy calls it "the assistant", never "AI" (leadAdmin.test.ts copy lint)
   'platform:ai_isa': "The assistant's ISA texts and emails",
-  'platform:ai_isa_seller_data': "The assistant's recent-sales emails",
+  'platform:ai_isa_seller_data': "The assistant's recent-sales emails (a later version)", // not built (b12 review ui-2)
 };
 
 export function packName(key: string): string {

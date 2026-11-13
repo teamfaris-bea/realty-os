@@ -131,6 +131,9 @@ export const NEVER_CLEARED_PACKS: readonly string[] = ['platform:meta'];
  */
 export const NOT_BUILT_PACKS: Readonly<Record<string, string>> = {
   'platform:cma': 'nothing built from MLS sales reaches a client',
+  // b12 review ui-pack-isa-1/ui-2 (D12 proposed): the assistant's recent-sales emails are ISA-3's; nothing in this
+  // version writes a shared sold fact, and the guard also needs platform:cma (0080 ISA_SELLER_DATA_NOT_CLEARED)
+  'platform:ai_isa_seller_data': 'no recent sales are emailed to a seller',
 };
 
 /** platform:* pack → what waits on it, in words (R-INT-6). The web mirrors the keys in words.ts PACK_NAMES (words.test.ts). */
@@ -146,8 +149,10 @@ export const PACK_GATES: Record<string, string> = {
   'platform:cma': 'Client CMAs and seller value ranges', // module 71 (D9, F8): platform:avm keeps gating home-value notes
   'platform:ads': 'Changing Google Ads budgets',
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
-  'platform:ai_isa': 'AI assistant (ISA) messages',
-  'platform:ai_isa_seller_data': 'AI assistant recent-sales emails',
+  // the AI ISA packs (D12 proposed; b12 review ui-1): the page prints this line under the web name, so it names "the
+  // assistant" the same way (staff copy never calls it "AI"; words.test.ts)
+  'platform:ai_isa': "The assistant's ISA texts and emails",
+  'platform:ai_isa_seller_data': "The assistant's recent-sales emails",
   'platform:gbp': 'Google Business Profile',
 };
 

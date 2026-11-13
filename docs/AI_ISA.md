@@ -1063,7 +1063,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
    - Admin sees overdue handoffs.
 2. **Per-lead panel and thread banner.**
    - "AI assistant is handling this conversation".
-   - **What it may do,** in plain words after intersecting the policy, the opt-in, the packs and the gates. For example: "Can share recent sales: no — waiting for counsel review (platform:cma) and the seller-data pack."
+   - **What it may do,** in plain words after intersecting the policy, the opt-in, the packs and the gates. For example: "Can share recent sales: no — not built in this version." (it would also wait for counsel review of platform:cma and the seller-data pack; b12 review ui-2)
    - The consent basis per channel; the quiet hours and their zone source; the last decision and why; the facts sent; the open offer; held topics and their deadline.
    - **Seller:** "Confirm this is the home they're selling" (owner, one tap, with the MLS record and its date).
    - Buttons: **Pause** (one tap); **Take over** (one tap, an immediate pause, then a 10 s Undo toast that says what was in flight); **End AI care** in the overflow menu, with the same Undo. **Resume** is shown only to the owner.

@@ -74,7 +74,7 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);
-      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : p.key === 'platform:cma' ? /would also wait for counsel review \(pack \S+, not yet reviewed\)\.$/ : / stays off: awaiting counsel review/);
+      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : p.key === 'platform:cma' || p.key === 'platform:ai_isa_seller_data' ? /would also wait for counsel review \(pack \S+, not yet reviewed\)\.$/ : / stays off: awaiting counsel review/);
     }
     // module 71 (D9, F8): the platform:cma pack names what waits on it; b10 review api-ui/F3: and says that V1 has none
     // of it, so neither its review state nor a later clearance reads as client CMAs being available
@@ -89,6 +89,21 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       expect(p.sentence).not.toMatch(/cleared/);
     } finally {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma' AND status = 'published'");
+    }
+  });
+
+  it('b12 review ui-pack-isa-1, ui-2, ui-1 (R-INT-6): the recent-sales emails pack says they are not built, before and after a counsel review; the AI ISA pack lines name "the assistant", never "AI"', async () => {
+    const before = (await list()).platformPacks;
+    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe("The assistant's recent-sales emails: not built in this version, so no recent sales are emailed to a seller; they would also wait for counsel review (pack 2026.11.0, not yet reviewed).");
+    expect(before.find((x) => x.key === 'platform:ai_isa')!.sentence).toBe("The assistant's ISA texts and emails stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed).");
+    for (const p of before) expect(p.sentence, p.key).not.toMatch(/\bAI\b/);
+    try {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-01T00:00:00Z' WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
+      const p = (await list()).platformPacks.find((x) => x.key === 'platform:ai_isa_seller_data')!;
+      expect(p).toMatchObject({ reviewed: true, sentence: "The assistant's recent-sales emails: not built in this version, so no recent sales are emailed to a seller; counsel reviewed the pack on 2026-12-01 (pack 2026.11.0)." });
+      expect(p.sentence).not.toMatch(/cleared/);
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
     }
   });
 

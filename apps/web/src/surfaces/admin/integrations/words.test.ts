@@ -42,6 +42,16 @@ describe('pack names (R-INT-6)', () => {
     expect(packName('platform:not_a_pack')).toBe('Another feature');
   });
 
+  it('b12 review ui-1, ui-pack-isa-1: the API catalog\'s pack lines the page prints under each name never call the assistant "AI"; the recent-sales emails pack says it is a later version', () => {
+    const start = catalog.indexOf('export const PACK_GATES');
+    const body = catalog.slice(start, catalog.indexOf('};', start));
+    const lines = [...body.matchAll(/^\s*'platform:[a-z_]+': (['"])(.*)\1,/gm)].map((m) => m[2]!);
+    expect(lines.length).toBe(apiPackKeys().length);
+    expect(lines.filter((l) => /\bAI\b/.test(l))).toEqual([]);
+    expect(keysOf('NOT_BUILT_PACKS')).toContain('platform:ai_isa_seller_data');
+    expect(packName('platform:ai_isa_seller_data')).toBe("The assistant's recent-sales emails (a later version)");
+  });
+
   it('D9: platform:cma is named for what waits on it, and says it is not in this version (V1 shares nothing)', () => {
     expect(packName('platform:cma')).toBe('Client CMAs and seller value ranges (a later version)');
   });

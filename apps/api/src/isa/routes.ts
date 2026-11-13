@@ -76,7 +76,7 @@ async function panel(req: FastifyRequest, contactId: string) {
       chain: chain.links.map((l) => ({ link: l.link, name: l.name, effect: l.effect, code: l.code, sentence: l.sentence })),
       capabilities: ctx === null ? [] : (['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const).map((cap) => {
         const allowed = ctx.content.capabilities.includes(cap) && capsOn.has(cap) && (cap === 'converse');
-        return { capability: cap, allowed, sentence: allowed ? 'Allowed.' : cap === 'seller_sold_comps' ? 'Can share recent sales: no — waiting for counsel review (platform:cma) and the seller-data pack.' : cap === 'converse' ? 'Not in your opt-in.' : 'Not available yet on this deployment.' };
+        return { capability: cap, allowed, sentence: allowed ? 'Allowed.' : cap === 'seller_sold_comps' ? 'Can share recent sales: no — not built in this version.' : cap === 'converse' ? 'Not in your opt-in.' : 'Not available yet on this deployment.' };
       }),
       consent: (ctx?.channels ?? []).map((ch) => ({ channel: ch, sentence: ch === 'sms'
         ? "Texts: OK for replies within 24 h of their text. Listings and follow-ups need written consent naming the team, from their own form, plus a fresh Do Not Call check."

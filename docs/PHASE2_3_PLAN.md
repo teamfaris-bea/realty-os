@@ -89,6 +89,8 @@ Phase 1 stays in force and is never weakened: FORCE RLS with composite `(tenant_
 
 *Orchestrator note (not the owner's words): D11 does not cover `platform:gbp` (module 53); it stays unreviewed until its own counsel review (C15) is recorded.*
 
+*Orchestrator note (not the owner's words; batch 12 review ui-2): D11 does not cover `platform:ai_isa` or `platform:ai_isa_seller_data` (the AI ISA, D12 PROPOSED); they stay unreviewed until their own counsel review is recorded, and are never added to the D11 command.*
+
 **Needed (defaults in force until decided).**
 
 | Id | Question | Default shipped |
