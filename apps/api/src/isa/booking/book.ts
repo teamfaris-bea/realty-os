@@ -17,8 +17,9 @@
 //        (booking_unavailable), the honest code kept on the row and the turn. Booked and live: end appointment_booked,
 //        the confirmation the handoff's pending message (E528). Booked but paused after step 2 (E523): end with no
 //        confirmation, notes BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT. Booked after care ended: the handoff is
-//        frozen, so a separate critical card. Booked but the machine did not end: a system pause (check_this) and
-//        the same card. AI care is never live after a booking.
+//        frozen, so a separate critical card. Booked but the machine did not hold the offer as accepting, or held it
+//        and did not end on the result: a system pause (check_this) and the same card. AI care is never live after a
+//        booking.
 import type { Instant, SystemActor, TenantId } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -154,13 +155,17 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
     const pausedNotes = a.pausedAt !== null ? ['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT'] : [];
     const env = { tx, deps, actor: actorOf(tenantId), ctx, now, turnId: turn.id, pinnedSeq: a.lastInboundSeq,
       handoffExtra: booked ? { appointmentDetail: appointmentDetail(o, read, ctx.content.booking.minNoticeHours), notes: pausedNotes } : undefined };
+    // AI care is never live after a booking (item 9): a system pause (check_this) that cancels anything queued, unless
+    // care is already paused or ended
+    const pauseAfterBooking = async (machine: typeof a.machine): Promise<void> => {
+      if (machine.paused !== null || machine.ended !== null) return;
+      const r = step(machine, { type: 'authorization_lost', at: now, effect: 'pause', pauseReason: 'check_this' }, ctx.facts);
+      await applyActionsInTx(env, { state: r.state, actions: [{ kind: 'pause', reason: 'check_this' }, { kind: 'cancel_messages' }] });
+    };
     if (!machineAccepting) {
       if (!booked) return 'STALE_RESULT';
       // the machine did not hold this offer as accepting: care must not stay live after a booking
-      if (a.pausedAt === null) {
-        const r = step(a.machine, { type: 'authorization_lost', at: now, effect: 'pause', pauseReason: 'check_this' }, ctx.facts);
-        await applyActionsInTx(env, { state: r.state, actions: [{ kind: 'pause', reason: 'check_this' }, { kind: 'cancel_messages' }] });
-      }
+      if (a.pausedAt === null) await pauseAfterBooking(a.machine);
       await bookedCardInTx(tx, deps, a, o, 'AI_ISA_BOOKED_NOT_HANDED_BACK', now);
       return 'BOOKED_PAUSED_CARD';
     }
@@ -170,7 +175,9 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
       : step(a.machine, { type: 'booking_result', at: now, ok: false, code: (CORE_CODES.has(code) ? code : 'CALENDAR_UNAVAILABLE') as 'CALENDAR_UNAVAILABLE' }, ctx.facts);
     const out = await applyActionsInTx(env, r);
     if (booked && !out.ended) {
-      // never live after a booking (defence in depth; core ends on an accepting offer)
+      // never live after a booking (defence in depth; core ends on an accepting offer): the same system pause as above,
+      // then the card (batch 13 audit ISA2B-13: before, this branch wrote the card and left care live)
+      await pauseAfterBooking(r.state);
       await bookedCardInTx(tx, deps, a, o, 'AI_ISA_BOOKED_NOT_HANDED_BACK', now);
       return 'BOOKED_NOT_ENDED';
     }

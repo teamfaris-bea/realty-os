@@ -2,7 +2,7 @@
 // Real Postgres via the API harness; the fake ISA model, the fake calendar, telephony and email; nothing real.
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { calendarDeps } from '../calendar/routes.js';
 import { type BookInput, bookSlotInTx, busyForBooking } from '../calendar/service.js';
@@ -17,6 +17,16 @@ import { aiMessages, assignmentOf, call, handoffOf, isaLead, isaWorld, type IsaW
 let h: ApiHarness;
 let w: IsaWorld;
 const google = () => h.providers.integrations.calendar.google;
+
+// batch 13 audit ISA2B-13: a stand-in for a core regression where a successful booking_result does not end care (core
+// ends on an accepting offer today, so the TX-C branch that guards it is otherwise unreachable). Off by default: every
+// other case runs core's step unchanged.
+const coreStub = vi.hoisted(() => ({ bookingDoesNotEnd: false }));
+vi.mock('./coreSeam.js', async (importOriginal) => {
+  const m = await importOriginal<typeof import('./coreSeam.js')>();
+  const step: typeof m.step = (s, e, f) => (coreStub.bookingDoesNotEnd && e.type === 'booking_result' && e.ok ? { state: { ...s, offer: null }, actions: [] } : m.step(s, e, f));
+  return { ...m, step };
+});
 
 beforeAll(async () => {
   h = await createApiHarness();
@@ -325,6 +335,24 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(ho.pending_message_id).toBeNull();
     expect(ho.sla_class).toBe('critical');
     expect(ho.package['notes']).toEqual(expect.arrayContaining(['BOOKED_WHILE_PAUSED', 'CONFIRMATION_NOT_SENT']));
+  });
+
+  it('R-ISA-13 R-ISA-15 (batch 13 audit ISA2B-13): booked but the machine did not end care (a core regression, stubbed) → care is paused check_this, never live, and the card says to confirm or cancel it', async () => {
+    const { l, o } = await offered();
+    coreStub.bookingDoesNotEnd = true;
+    try {
+      await reply(l, '2');
+    } finally {
+      coreStub.bookingDoesNotEnd = false;
+    }
+    expect((await offerOf(l.id))!.status).toBe('accepted');
+    const a = (await assignmentOf(h, l.id))!;
+    expect({ ended: a.ended_at, paused: a.paused_at !== null, reason: a.pause_reason }).toEqual({ ended: null, paused: true, reason: 'check_this' });
+    const card = await h.su.query<{ reasons: { code: string; text: string }[]; score: number }>(`SELECT reasons, score FROM priority_feed_items WHERE contact_id = $1 AND dedupe_key = $2`, [l.id, `ai_isa_booked:${o!.id}`]);
+    expect(card.rows.map((r) => [r.score, r.reasons[0]!.code])).toEqual([[98, 'AI_ISA_BOOKED_NOT_HANDED_BACK']]);
+    expect(card.rows[0]!.reasons[0]!.text).toMatch(/confirm or cancel it yourself/);
+    // no AI confirmation was queued for a booking care did not hand back
+    expect((await aiMessages(h, l.id)).some((m) => m.action_category === 'ai_isa_confirmation')).toBe(false);
   });
 
   it('R-ISA-15 E523: a pause before tx#1\'s read → CARE_PAUSED, nothing booked', async () => {
