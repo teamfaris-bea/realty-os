@@ -169,10 +169,12 @@ function nextStepsFor(h: Handoff, callbackAllowed: boolean): string[] {
 export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Promise<{ met: number; escalated: number }> {
   let met = 0;
   let escalated = 0;
-  // b12 review B12X-3: the touch is read on the record the person lives on now (a merged-away record takes none), and
-  // the escalation follows the handoff's recipient when it went to a new owner
+  // b12 review B12X-3: the touch is read on the record the person lives on now (a merged-away record takes none).
+  // b12 recheck R2: the escalation follows that record's current owner, as the pending card does (rehomeHandbacks, the
+  // merge); only an unowned record falls back to the frozen recipient, then the assignment's owner
   const rows = await sql<{ id: string; contact_id: string; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string; touched: Date | null }>`
-    SELECT h.id, c.id AS contact_id, h.created_at, h.sla_due_at, h.sla_escalation_level, COALESCE(h.recipient_user_id, a.owner_user_id) AS owner_user_id,
+    SELECT h.id, c.id AS contact_id, h.created_at, h.sla_due_at, h.sla_escalation_level,
+           COALESCE(CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END, h.recipient_user_id, a.owner_user_id) AS owner_user_id,
            c.last_human_touch_at AS touched
       FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
       JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)

@@ -275,3 +275,39 @@ describe('b12 recheck R1: one carrier failure counts once (R-ISA-14; E518)', () 
     expect(a).toEqual({ n: 1, end_reason: null });
   });
 });
+
+describe('b12 recheck R2: the overdue escalation follows the lead\'s current owner, like the card (R-ISA-30; E525)', () => {
+  it('R-ISA-30 E525: a handoff to a1 whose lead moves on to a0 escalates, when overdue, to a0\'s Team Lead, not a1\'s', async () => {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const [u0, u1] = [a0.userId!, a1.userId!];
+    // a1 leads with a Team Lead of their own (Team B); a0 stays on Team A under w.teamLead
+    const tl2 = await h.invite(w.owner, 'team_lead');
+    const teamB = await call<{ team: { id: string } }>(w.owner, 'POST', '/teams', { name: 'Team B' });
+    expect(teamB.status).toBe(201);
+    const teamA = (members: string[]) => call(w.owner, 'PUT', `/teams/${w.teamId}/members`, { members: [...members.map((userId) => ({ userId, isLead: false })), { userId: w.teamLead!.userId!, isLead: true }] });
+    expect((await teamA([u0])).status).toBe(200);
+    expect((await call(w.owner, 'PUT', `/teams/${teamB.body.team.id}/members`, { members: [{ userId: u1, isLead: false }, { userId: tl2.userId!, isLead: true }] })).status).toBe(200);
+    try {
+      const l = await isaLead(h, a0);
+      expect((await startCare(a0, l.id)).status).toBe(200);
+      await runIsa(h, w.tenantId);
+      const ids = depsFromPlatform(h.app.platform).ids;
+      const move = (to: string) => runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: to as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids });
+      expect((await move(u1)).ok).toBe(true);
+      await runIsa(h, w.tenantId);
+      const [ho] = await handoffs([l.id]);
+      expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
+      expect(ho!.sla_class).not.toBe('none');
+      expect((await move(u0)).ok).toBe(true);
+      await runIsa(h, w.tenantId, 1);
+      expect(await cards([l.id])).toEqual([expect.objectContaining({ user_id: a0.userId, state: 'open' })]);
+      expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 0, escalated: 1 });
+      const to = (await h.su.query<{ user_id: string }>(`SELECT user_id FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = $1`, [l.id])).rows.map((r) => r.user_id);
+      expect(to).toEqual([w.teamLead!.userId]);
+    } finally {
+      await call(w.owner, 'PUT', `/teams/${teamB.body.team.id}/members`, { members: [] });
+      await teamA([u0, u1]);
+    }
+  });
+});
