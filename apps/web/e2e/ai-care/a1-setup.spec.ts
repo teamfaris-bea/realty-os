@@ -48,14 +48,15 @@ test('R-ISA-32 Q8: the Owner turns it on with the confirmation and the password;
   await expectNoCode(page);
 });
 
-test('R-ISA-32: an Admin cannot raise the cap: "Only the account owner can turn this on."', async ({ page }) => {
+test('R-ISA-32: an Admin cannot raise the cap: "Only the account owner can raise the limit."', async ({ page }) => {
   test.setTimeout(180_000);
   await signInAs(page, stack, admin);
   await page.goto(`${stack.webUrl}/settings/ai-assistant/team`);
   const cap = page.getByLabel(/Most AI messages a day/);
   await cap.fill('500');
   await press(page, page.getByRole('button', { name: 'Save limit' }));
-  await expect(page.getByTestId('ai-team-line')).toHaveText('Only the account owner can turn this on.');
+  // batch 13 isa-4 F13: the cap's own sentence (an Admin raising the limit turns nothing on)
+  await expect(page.getByTestId('ai-team-line')).toHaveText('Only the account owner can raise the limit.');
   const r = await stack.sql<{ cap: number }>(`SELECT ai_isa_daily_cap AS cap FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId]);
   expect(r[0]!.cap).toBe(100);
 });

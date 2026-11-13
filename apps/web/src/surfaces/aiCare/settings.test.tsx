@@ -109,18 +109,19 @@ describe('AI assistant (ISA) (/settings/ai-assistant/team)', () => {
     expect(fake.callsTo('PUT /admin/ai-isa')[0]!.body).toEqual({ enabled: true, dailyCap: 100, attestation: ON_ATTESTATION });
   });
 
-  it('R-ISA-32: an Admin turning on or raising the cap reads the local OWNER_REQUIRED sentence', async () => {
+  it('R-ISA-32 (batch 13 isa-4 F13): an Admin gets no Turn on (off only) and reads why; raising the cap reads the cap\'s own OWNER_REQUIRED sentence', async () => {
     const fake = new FakeFetch().on('GET /admin/ai-isa', { status: 200, body: adminView({ enabled: false }) }).on('PUT /admin/ai-isa', err(403, 'OWNER_REQUIRED')).on('GET /playbooks', { status: 200, body: { playbooks: [] } }).on('GET /me/ai-isa', { status: 200, body: meView() });
     isaApp(fake, '/settings/ai-assistant/team', 'admin');
     const u = userEvent.setup();
-    await u.click(await screen.findByRole('button', { name: 'Turn on' }));
-    await waitFor(() => expect(screen.getByTestId('ai-team-line').textContent).toBe('Only the account owner can turn this on.'));
+    expect(await screen.findByText('Only the account owner can turn this on.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
     const cap = screen.getByLabelText(/Most AI messages a day/);
     await u.clear(cap);
     await u.type(cap, '200');
     await u.click(screen.getByRole('button', { name: 'Save limit' }));
-    await waitFor(() => expect(fake.callsTo('PUT /admin/ai-isa')).toHaveLength(2));
-    expect(fake.callsTo('PUT /admin/ai-isa')[1]!.body).toEqual({ enabled: false, dailyCap: 200 });
+    await waitFor(() => expect(screen.getByTestId('ai-team-line').textContent).toBe('Only the account owner can raise the limit.'));
+    expect(fake.callsTo('PUT /admin/ai-isa')).toHaveLength(1);
+    expect(fake.callsTo('PUT /admin/ai-isa')[0]!.body).toEqual({ enabled: false, dailyCap: 200 });
   });
 
   it('R-ISA-32 E522: the Owner raising the cap ticks its own sentence; off confirms with the count', async () => {

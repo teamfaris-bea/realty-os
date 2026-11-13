@@ -12,6 +12,7 @@ import { isaContract } from './testing.js';
 import { escalationOf } from './Feed.js';
 import {
   ALWAYS_HUMAN,
+  CAP_PAGE_MESSAGES,
   CARE_STATE_WORDS,
   CLOSED_REASON_WORDS,
   SLA_HAS_DEADLINE,
@@ -73,7 +74,7 @@ const all = (): string[] => [
   ...Object.values(END_WORDS), ...Object.values(PAUSE_WORDS), ...Object.values(ESCALATION_WORDS).flatMap((e) => [e.topic, e.sentence]), ...Object.values(BLOCK_WORDS),
   ...Object.values(TRIGGER_WORDS), ...Object.values(STATUS_WORDS), ...Object.values(DECISION_CODE_WORDS), ...Object.values(CHAIN_CODE_WORDS), ...Object.values(NEXT_STEP_WORDS),
   ...Object.values(NOTE_WORDS), ...Object.values(CONFIRMATION_WORDS), ...Object.values(ISA_ERROR_MESSAGES), ...Object.values(TEAM_PAGE_MESSAGES),
-  ...Object.values(CARE_STATE_WORDS), ...(['booked_after_end', 'booked_not_handed_back'] as const).flatMap((t) => [bookedWords(t, null), bookedWords(t, 'Tue Nov 17, 3:00–3:30 PM ET')]),
+  ...Object.values(CARE_STATE_WORDS), ...Object.values(CAP_PAGE_MESSAGES), ...(['booked_after_end', 'booked_not_handed_back'] as const).flatMap((t) => [bookedWords(t, null), bookedWords(t, 'Tue Nov 17, 3:00–3:30 PM ET')]),
 ];
 
 describe('R-ISA-22 words (module 76)', () => {

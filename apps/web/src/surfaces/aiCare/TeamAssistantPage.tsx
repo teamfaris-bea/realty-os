@@ -16,7 +16,7 @@ import { type ApiError, useApi, useRequestReauth } from '../../shell/index.js';
 import type { Playbook } from '../admin/lib/types.js';
 import { type AdminPutBody, type AdminView, useAdmin, useIsaVisible, useMe } from './api.js';
 import { useViewer } from './Controls.js';
-import { CAPABILITY_WORDS, TEAM_PAGE_MESSAGES, isaMessage } from './words.js';
+import { CAPABILITY_WORDS, CAP_PAGE_MESSAGES, TEAM_PAGE_MESSAGES, isaMessage } from './words.js';
 
 /** Q2: what the Owner confirms (sent verbatim as the attestation; the server hashes it into the audit). */
 export const ON_ATTESTATION = 'I turn on the AI assistant for my team. Its consent, quiet-hours and frequency limits are engineering defaults that counsel has not reviewed, and I accept responsibility for that.';
@@ -52,7 +52,7 @@ function Team({ v }: { v: AdminView }) {
   const [pending, setPending] = useState(false);
   const reauth = useRequestReauth();
   const qc = useQueryClient();
-  const put = async (body: AdminPutBody, ok: string) => {
+  const put = async (body: AdminPutBody, ok: string, local: Readonly<Record<string, string>> = TEAM_PAGE_MESSAGES) => {
     if (pending) return;
     setPending(true);
     try {
@@ -65,7 +65,7 @@ function Team({ v }: { v: AdminView }) {
         } catch (e) {
           const err = e as ApiError;
           if (err.code === 'REAUTH_REQUIRED' && tries === 0 && (await reauth())) continue;
-          const t = isaMessage(err, TEAM_PAGE_MESSAGES);
+          const t = isaMessage(err, local);
           setLine(t);
           announce(t);
           break;
@@ -121,12 +121,15 @@ function Team({ v }: { v: AdminView }) {
               Turn off
             </Button>
           </div>
-        ) : (
+        ) : owner ? (
           <div>
-            <Button variant="primary" pending={pending} onClick={() => (owner ? setConfirmOn(true) : void put({ enabled: true, dailyCap: v.dailyCap }, 'Turned on.'))}>
+            <Button variant="primary" pending={pending} onClick={() => setConfirmOn(true)}>
               Turn on
             </Button>
           </div>
+        ) : (
+          // batch 13 isa-4 F13: an Admin may turn it off only (R-ISA-32): no button that always fails
+          <p className="text-[15px] text-ink-muted">{TEAM_PAGE_MESSAGES.OWNER_REQUIRED}</p>
         )}
       </Card>
       <Card className="flex flex-col gap-3" aria-labelledby="ai-cap">
@@ -150,7 +153,7 @@ function Team({ v }: { v: AdminView }) {
             variant="secondary"
             pending={pending}
             disabled={!capValid || capN === v.dailyCap || (raising && owner && !capTick)}
-            onClick={() => void put({ enabled: v.enabled, dailyCap: capN, ...(raising && owner ? { attestation: capAttestation(capN) } : {}) }, `Daily limit set to ${capN}.`)}
+            onClick={() => void put({ enabled: v.enabled, dailyCap: capN, ...(raising && owner ? { attestation: capAttestation(capN) } : {}) }, `Daily limit set to ${capN}.`, CAP_PAGE_MESSAGES)}
           >
             Save limit
           </Button>

@@ -512,6 +512,11 @@ export const TEAM_PAGE_MESSAGES: Record<string, string> = {
   OWNER_REQUIRED: 'Only the account owner can turn this on.',
   ATTESTATION_REQUIRED: 'Tick the confirmation first: turning this on needs your written confirmation.',
 };
+/** The daily limit's own variants (batch 13 isa-4 F13: an Admin raising the limit turns nothing on). */
+export const CAP_PAGE_MESSAGES: Record<string, string> = {
+  OWNER_REQUIRED: 'Only the account owner can raise the limit.',
+  ATTESTATION_REQUIRED: 'Tick the confirmation first: raising the limit needs your written confirmation.',
+};
 
 /** A sentence for an ISA error: the page's local map, then module 75's, then the shell's (never a code). */
 export function isaMessage(err: { code: string; details?: Record<string, unknown> | null } | string, local?: Readonly<Record<string, string>>): string {
