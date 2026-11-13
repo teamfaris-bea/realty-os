@@ -16,7 +16,7 @@ import { FakeIsaAi } from '../providers/fake/isaAi.js';
 import { silentLogger } from '../worker/observability.js';
 import { createWorker } from '../worker/loop.js';
 import { HandlerRegistry } from '../worker/registry.js';
-import { DEFAULT_AI_ISA_CONTENT } from './coreSeam.js';
+import { DEFAULT_AI_ISA_CONTENT, holidaysAround, setIsaHolidayTestCalendar } from './coreSeam.js';
 import { makeIsaHandlers } from './handlers.js';
 import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
 import { dispatchStaleHandler } from '../worker/handlers/dispatchStale.js';
@@ -84,7 +84,125 @@ export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: bool
   if (o.optIn ?? true) await optInAgent(h, w.agents[0]!, versionId);
   const ai = new FakeIsaAi();
   (h.providers as { ai: AiProvider }).ai = ai;
+  await forceRefusedToday(h);
   return { ...w, versionId, versionSha, ai };
+}
+
+// ---- the initiated tier and the calendar (b13 integration) -----------------------------------------------------------
+
+interface Today {
+  /** the local date (YYYY-MM-DD) and ISO weekday in the zone, at the database's now() */
+  d: string;
+  dow: number;
+  /** the database's now(), as an instant */
+  now: Instant;
+}
+async function todayIn(h: ApiHarness, zone: string): Promise<Today> {
+  const r = await h.su.query<{ d: string; dow: number; now: Date }>(`SELECT to_char((now() AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS d,
+    extract(isodow FROM now() AT TIME ZONE $1)::int AS dow, now() AS now`, [zone]);
+  const t = r.rows[0]!;
+  return { d: t.d, dow: t.dow, now: t.now.getTime() as Instant };
+}
+
+type Steps = { initiatedDays?: number[]; aiIsa?: { initiatedDays?: number[] } };
+const daysOf = (s: Steps | null): number[] | null => (Array.isArray(s?.initiatedDays) ? s.initiatedDays : Array.isArray(s?.aiIsa?.initiatedDays) ? s.aiIsa.initiatedDays : null);
+const withDays = (s: Steps, days: number[]): Steps => (Array.isArray(s.initiatedDays) ? { ...s, initiatedDays: days } : { ...s, aiIsa: { ...s.aiIsa, initiatedDays: days } });
+
+/** Rewrites approved policy versions' steps (frozen by playbook_versions_guard, so with replication triggers off). */
+async function writeSteps(h: ApiHarness, rows: readonly { id: string; steps: Steps }[]): Promise<void> {
+  if (rows.length === 0) return;
+  const c = await h.su.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query('SET LOCAL session_replication_role = replica');
+    for (const r of rows) await c.query('UPDATE playbook_versions SET steps = $2::jsonb WHERE id = $1', [r.id, JSON.stringify(r.steps)]);
+    await c.query('COMMIT');
+  } catch (e) {
+    await c.query('ROLLBACK');
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/** The tenant's AI ISA policy versions with their steps. */
+async function isaVersions(h: ApiHarness, tenantId: string): Promise<{ id: string; steps: Steps }[]> {
+  return (await h.su.query<{ id: string; steps: Steps }>(`SELECT v.id, v.steps FROM playbook_versions v
+    JOIN playbooks pb ON pb.tenant_id = v.tenant_id AND pb.id = v.playbook_id WHERE v.tenant_id = $1 AND pb.kind = 'ai_isa'`, [tenantId])).rows;
+}
+
+/**
+ * There is no fake clock: the guard (0081, 0083), core's gate and the send window all read the database's now(). A case
+ * whose AI message must go out at the initiated tier (a facts message, a follow-up) runs `fn` with today, in `zone`, a
+ * permitted initiated day, and everything is put back after: the API twin of packages/db/test's initiatedDayNow. On a
+ * Monday–Saturday that is not a US federal holiday it changes nothing. On a day outside the initiated days (a Sunday) it
+ * adds that ISO weekday to the platform:ai_isa pack's initiated_days (the guard) and to the tenant's AI ISA policy
+ * versions (core's gate and the send window read the policy's initiatedDays). On a federal holiday it swaps
+ * app.ai_isa_us_federal_holiday for one that excepts that date (the guard) and excepts it in the API's holiday calendar
+ * (coreSeam.holidaysAround: the gate's facts and the send window). The case still proves what it is about.
+ */
+export async function initiatedDayNow<T>(h: ApiHarness, tenantId: string, zone: string, fn: () => Promise<T>): Promise<T> {
+  const t = await todayIn(h, zone);
+  const p = (await h.su.query<{ rules: Record<string, unknown>; holiday: boolean; def: string }>(`SELECT j.rules, app.ai_isa_us_federal_holiday($1::date) AS holiday,
+      pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def FROM jurisdiction_packs j WHERE j.key = 'platform:ai_isa'`, [t.d])).rows[0]!;
+  const packDays = (p.rules.initiated_days as number[] | undefined) ?? [1, 2, 3, 4, 5, 6];
+  const addPackDay = !packDays.includes(t.dow);
+  const versions = (await isaVersions(h, tenantId)).filter((v) => { const d = daysOf(v.steps); return d !== null && !d.includes(t.dow); });
+  const tsHoliday = holidaysAround(t.now).includes(t.d);
+  if (addPackDay) await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('initiated_days', $1::jsonb) WHERE key = 'platform:ai_isa'`, [JSON.stringify([...packDays, t.dow])]);
+  await writeSteps(h, versions.map((v) => ({ id: v.id, steps: withDays(v.steps, [...daysOf(v.steps)!, t.dow]) })));
+  if (p.holiday) {
+    await h.su.query(p.def.replace('CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday', 'CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday_api_orig'));
+    await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE
+      SET search_path = pg_catalog AS $$ SELECT d <> DATE '${t.d}' AND app.ai_isa_us_federal_holiday_api_orig(d) $$`);
+  }
+  const calendar = tsHoliday ? setIsaHolidayTestCalendar({ add: [], except: [] }) : null;
+  if (calendar !== null) setIsaHolidayTestCalendar({ add: calendar.add, except: [...calendar.except, t.d] });
+  try {
+    return await fn();
+  } finally {
+    if (calendar !== null) setIsaHolidayTestCalendar(calendar);
+    if (p.holiday) {
+      await h.su.query(p.def);
+      await h.su.query(`DROP FUNCTION app.ai_isa_us_federal_holiday_api_orig(date)`);
+    }
+    await writeSteps(h, versions);
+    if (addPackDay) await h.su.query(`UPDATE jurisdiction_packs SET rules = $1::jsonb WHERE key = 'platform:ai_isa'`, [JSON.stringify(p.rules)]);
+  }
+}
+
+/**
+ * Makes today, in the zone it is 10:00-17:59 in now (openZone()), a day the initiated tier refuses, as a real Sunday or US
+ * federal holiday would, for this test file's database and process: 'sunday' takes today's ISO weekday out of the pack's
+ * initiated_days and the tenant's policy versions; 'holiday' adds today to app.ai_isa_us_federal_holiday and to the API's
+ * holiday calendar. isaWorld() applies ISA_TEST_REFUSED_TODAY (unset in CI) so a suite can be run as if it were one
+ * (b13 integration: the proof of initiatedDayNow). Nothing is put back: the whole file runs on that day.
+ */
+export async function forceRefusedToday(h: ApiHarness, day: string | undefined = process.env.ISA_TEST_REFUSED_TODAY, tenantId?: string): Promise<void> {
+  if (day === undefined || day === '') return;
+  const t = await todayIn(h, openZone());
+  if (day === 'sunday') {
+    const p = (await h.su.query<{ rules: Record<string, unknown> }>(`SELECT rules FROM jurisdiction_packs WHERE key = 'platform:ai_isa'`)).rows[0]!;
+    const packDays = (p.rules.initiated_days as number[] | undefined) ?? [1, 2, 3, 4, 5, 6];
+    await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('initiated_days', $1::jsonb) WHERE key = 'platform:ai_isa'`, [JSON.stringify(packDays.filter((d) => d !== t.dow))]);
+    const versions = tenantId === undefined ? (await h.su.query<{ id: string; steps: Steps }>(`SELECT v.id, v.steps FROM playbook_versions v JOIN playbooks pb ON pb.tenant_id = v.tenant_id AND pb.id = v.playbook_id
+      WHERE pb.kind = 'ai_isa'`)).rows : await isaVersions(h, tenantId);
+    await writeSteps(h, versions.filter((v) => daysOf(v.steps) !== null).map((v) => ({ id: v.id, steps: withDays(v.steps, daysOf(v.steps)!.filter((d) => d !== t.dow)) })));
+    return;
+  }
+  if (day === 'holiday') {
+    const f = (await h.su.query<{ forced: boolean; def: string }>(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'ai_isa_us_federal_holiday_forced') AS forced,
+      pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def`)).rows[0]!;
+    if (!f.forced) {
+      await h.su.query(f.def.replace('CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday', 'CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday_forced'));
+      await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE
+        SET search_path = pg_catalog AS $$ SELECT d = DATE '${t.d}' OR app.ai_isa_us_federal_holiday_forced(d) $$`);
+    }
+    const cal = setIsaHolidayTestCalendar({});
+    setIsaHolidayTestCalendar({ add: [...new Set([...cal.add, t.d])], except: cal.except });
+    return;
+  }
+  throw new Error(`ISA_TEST_REFUSED_TODAY: expected 'sunday' or 'holiday', got '${day}'`);
 }
 
 export async function optInAgent(h: ApiHarness, agent: TestClient, versionId: string, capabilities: string[] = ['converse'],

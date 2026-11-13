@@ -7,7 +7,7 @@ import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
 import { inboundSms } from '../../comms/testing.js';
 import { HostileIsaAi } from '../../providers/fake/hostileIsaAi.js';
 import type { AiProvider } from '../../providers/types.js';
-import { aiMessages, grantInitiated, runIsa } from '../testing.js';
+import { aiMessages, grantInitiated, initiatedDayNow, openZone, runIsa } from '../testing.js';
 import { buildCompsInTx } from './comps.js';
 import { COMPS_PLACEHOLDER, SELLER_RUNTIME } from './index.js';
 import { PRINTABLE_STATEMENTS, type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, queueFactsAs, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
@@ -92,7 +92,7 @@ describe('E536 nearby sales: refusal only', () => {
 });
 
 describe('R-ISA-20: the prompt after a comps email', () => {
-  it('R-ISA-20 E509: after a comps email the next turn\'s prompt holds the fixed placeholder, never a price, address or brokerage', async () => {
+  it('R-ISA-20 E509: after a comps email the next turn\'s prompt holds the fixed placeholder, never a price, address or brokerage', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const l = await liveSeller();
     const sent = await sentCompsEmail(l);
     expect(sent.body).toMatch(/Sold for \$/);
@@ -105,9 +105,9 @@ describe('R-ISA-20: the prompt after a comps email', () => {
       expect(p).toContain(COMPS_PLACEHOLDER);
       expect(p).not.toMatch(/\$\s?\d|Sold for|sale price|Other Brokerage \(test\)|Sample Ave/);
     }
-  });
+  }));
 
-  it('R-ISA-20: the UNSAFE screen applies to non-facts text only: the comps email states sale prices, every other AI text passes it', async () => {
+  it('R-ISA-20: the UNSAFE screen applies to non-facts text only: the comps email states sale prices, every other AI text passes it', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const UNSAFE = [/\$\s?\d/, /worth/i, /appraisal/i, /guarantee/i, /promise/i, /real person/i, /seller's market/i, /prices are rising/i, /better value/i, /commission/i];
     const l = await liveSeller();
     const sent = await sentCompsEmail(l);
@@ -122,5 +122,5 @@ describe('R-ISA-20: the prompt after a comps email', () => {
     const others = (await aiMessages(h, l.id)).filter((m) => !facts.has(m.id));
     expect(others.length).toBeGreaterThan(0);
     for (const m of others) for (const re of UNSAFE) expect(m.body, String(re)).not.toMatch(re);
-  });
+  }));
 });

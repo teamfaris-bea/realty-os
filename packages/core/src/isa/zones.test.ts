@@ -113,6 +113,16 @@ describe('R-ISA-10 the send window', () => {
     // without the holiday rule the holiday is allowed
     expect(aiIsaSendWindow({ ...W, initiated: true, noInitiatedOnHolidays: false, at: at('2026-11-26T15:00:00Z'), zones: [zone('America/New_York')] })).toBe(at('2026-11-26T15:00:00Z'));
   });
+  it('the caller can pass the holiday calendar (the API passes its own, b13 integration); without one it is holidaysAround', () => {
+    const ny = [zone('America/New_York')];
+    // Thanksgiving excepted by the caller's calendar: the holiday is allowed; any other calendar date is refused instead
+    expect(aiIsaSendWindow({ ...W, initiated: true, holidays: holidaysAround(at('2026-11-26T15:00:00Z')).filter((d) => d !== '2026-11-26'), at: at('2026-11-26T15:00:00Z'), zones: ny })).toBe(at('2026-11-26T15:00:00Z'));
+    expect(aiIsaSendWindow({ ...W, initiated: true, holidays: ['2026-11-18'], at: at('2026-11-18T15:00:00Z'), zones: ny })).toBe(at('2026-11-19T14:00:00Z'));
+    expect(aiIsaSendWindow({ ...W, initiated: true, holidays: [], at: at('2026-11-26T15:00:00Z'), zones: ny })).toBe(at('2026-11-26T15:00:00Z'));
+    // a reply never reads it, and noInitiatedOnHolidays false ignores it
+    expect(aiIsaSendWindow({ ...W, holidays: ['2026-11-18'], at: at('2026-11-18T15:00:00Z'), zones: ny })).toBe(at('2026-11-18T15:00:00Z'));
+    expect(aiIsaSendWindow({ ...W, initiated: true, noInitiatedOnHolidays: false, holidays: ['2026-11-18'], at: at('2026-11-18T15:00:00Z'), zones: ny })).toBe(at('2026-11-18T15:00:00Z'));
+  });
   it('US federal holidays with observed days', () => {
     const h = usFederalHolidays(2026);
     expect(h).toEqual(expect.arrayContaining(['2026-01-01', '2026-01-19', '2026-02-16', '2026-05-25', '2026-06-19', '2026-07-03', '2026-07-04', '2026-09-07', '2026-10-12', '2026-11-11', '2026-11-26', '2026-12-25']));

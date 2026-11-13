@@ -14,7 +14,7 @@ import { inboundSms, sendText } from '../comms/testing.js';
 import { defaultIsaOutput } from '../providers/fake/isaAi.js';
 import { mlsConnection, REVIEWED_PACK } from '../mls/testing.js';
 import type * as CoreSeam from './coreSeam.js';
-import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, seedClaims, startCare } from './testing.js';
+import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, seedClaims, startCare } from './testing.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -776,7 +776,7 @@ describe('E506 E508 R-ISA-17: the hostile model against a live bundle and a deli
     return l;
   }
 
-  it('E506 E508: unoffered_slot, unverified_quote, team_text_quote, quoted_email_slot and listing_not_in_bundle book nothing and share nothing more; a handle outside the live bundle is HANDLE_UNKNOWN; "$" appears only in server-rendered facts messages', async () => {
+  it('E506 E508: unoffered_slot, unverified_quote, team_text_quote, quoted_email_slot and listing_not_in_bundle book nothing and share nothing more; a handle outside the live bundle is HANDLE_UNKNOWN; "$" appears only in server-rendered facts messages', () => initiatedDayNow(h, hw.tenantId, hzone, async () => {
     const { HostileIsaAi } = await import('../providers/fake/hostileIsaAi.js');
     for (const attack of ['unoffered_slot', 'unverified_quote', 'team_text_quote', 'quoted_email_slot', 'listing_not_in_bundle'] as const) {
       const l = await armed();
@@ -806,5 +806,5 @@ describe('E506 E508 R-ISA-17: the hostile model against a live bundle and a deli
       expect([attack, dollar.length >= 1]).toEqual([attack, true]);
       for (const m of dollar) expect([attack, withFacts.has(m.id), /Here are homes/.test(m.body)]).toEqual([attack, true, true]);
     }
-  });
+  }));
 });

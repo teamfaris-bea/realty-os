@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms, ownedContact, randomPhone } from '../comms/testing.js';
-import { aiMessages, assignmentOf, call, closedZone, feedItems, freshReauth, handbacksOf, handoffOf, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
+import { aiMessages, assignmentOf, call, closedZone, feedItems, freshReauth, handbacksOf, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, runIsa, startCare } from './testing.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -99,7 +99,7 @@ describe('a reply under live care (R-ISA-3, R-ISA-28, R-ISA-29)', () => {
 });
 
 describe('non-turn inbounds pause care (R-ISA-3, R-ISA-14; E497)', () => {
-  it('R-ISA-3 E497: an MMS reply and a call from the person each run the R-AST-9 path and pause care (media, call); nothing reaches a prompt', async () => {
+  it('R-ISA-3 E497: an MMS reply and a call from the person each run the R-AST-9 path and pause care (media, call); nothing reaches a prompt', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const { ingestInbound } = await import('../comms/inbound.js');
     const { depsFromPlatform } = await import('../comms/runtime.js');
     const { systemActor } = await import('../worker/systemActor.js');
@@ -118,7 +118,7 @@ describe('non-turn inbounds pause care (R-ISA-3, R-ISA-14; E497)', () => {
     expect((await assignmentOf(h, l2.id))!.pause_reason).toBe('call');
     await runIsa(h, w.tenantId);
     expect(w.ai.calls.slice(calls).some((c) => c.user.includes('look at this house'))).toBe(false);
-  });
+  }));
 });
 
 describe('ownership (R-ISA-16)', () => {

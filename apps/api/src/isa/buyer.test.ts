@@ -6,7 +6,7 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms } from '../comms/testing.js';
 import { mlsConnection, REVIEWED_PACK } from '../mls/testing.js';
 import { defaultIsaOutput } from '../providers/fake/isaAi.js';
-import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, isaLead, isaWorld, type IsaWorld, runIsa, seedClaims, startCare } from './testing.js';
+import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, runIsa, seedClaims, startCare } from './testing.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -74,7 +74,7 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     for (const bad of ['812,345', '812345', '$', 'Sample Ave', 'Other Brokerage', 'IGNORE PREVIOUS', '555-0100']) expect(prompts).not.toContain(bad);
   });
 
-  it('R-ISA-17: each line has "(asking price)", "Listed by", its own as-of and source; facts are sent only after TX2 (R-ISA-21)', async () => {
+  it('R-ISA-17: each line has "(asking price)", "Listed by", its own as-of and source; facts are sent only after TX2 (R-ISA-21)', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const l = await buyer();
     const id = await buyerListing(h, w.tenantId, { connectionId: conn, price: 654321 });
     share((labels) => labels.slice(0, 1));
@@ -91,7 +91,7 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     expect(f.length).toBeGreaterThanOrEqual(1);
     expect(f.every((x) => x.status === 'sent' && x.price_kind === 'asking')).toBe(true);
     void id;
-  });
+  }));
 
   it('R-ISA-17 Q7: a facts text too long for 3 SMS segments goes by email (whole lines, never the "I can email you" pointer)', async () => {
     const city = 'Emeryville';
@@ -107,7 +107,7 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
   });
 
   // batch 13 audit ISA2B-06 (6) and (9): the 90-day repeat rule, and the handoff's factsSent lists only sent facts
-  it('R-ISA-17 R-ISA-14: a home sent to them is skipped for 90 days (NO_MATCH next turn); the handoff lists only the sent fact, not one canceled with its message', async () => {
+  it('R-ISA-17 R-ISA-14: a home sent to them is skipped for 90 days (NO_MATCH next turn); the handoff lists only the sent fact, not one canceled with its message', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const city = 'Danville';
     const x = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 610000 });
     const l = await buyer({ city });
@@ -134,7 +134,7 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     expect((await facts(l.id)).map((f) => [f.listing_id, f.status])).toEqual([[x, 'sent'], [y, 'canceled']]);
     const ho = (await handoffOf(h, l.id))[0]!;
     expect((ho.package['factsSent'] as { listingId: string | null }[]).map((f) => f.listingId)).toEqual([x]);
-  });
+  }));
 
   // batch 13 audit ISA2B-06 (7): Q7 on a person bound by SMS only
   it('R-ISA-17 Q7: SMS only, a facts text too long for 3 segments drops whole listing lines from the end (attribution kept, never a cut line, never the email pointer)', async () => {
@@ -268,7 +268,7 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     (h.providers as { ai: unknown }).ai = w.ai;
   });
 
-  it('R-ISA-17: a price change before dispatch → FACT_CHANGED at TX1, facts canceled; an as-of change alone does not cancel', async () => {
+  it('R-ISA-17: a price change before dispatch → FACT_CHANGED at TX1, facts canceled; an as-of change alone does not cancel', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const city = 'Hayward';
     const id = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 600000 });
     const l = await buyer({ city });
@@ -284,11 +284,11 @@ describe('R-ISA-17: the buyer bundle and the prompt', () => {
     await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [w.tenantId]);
     await runIsa(h, w.tenantId, 3);
     expect((await facts(l.id))[0]!.status).toBe('canceled');
-  });
+  }));
 });
 
 describe('R-ISA-17: an as-of change alone never cancels a fact (batch 13 audit ISA2B-07)', () => {
-  it('R-ISA-17: a sync that only moves last_seen_in_feed_at (status and price the same) keeps the fact pending, and it is sent', async () => {
+  it('R-ISA-17: a sync that only moves last_seen_in_feed_at (status and price the same) keeps the fact pending, and it is sent', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const city = 'Castro Valley';
     const id = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 640000, seenHoursAgo: 3 });
     const l = await buyer({ city });
@@ -305,7 +305,7 @@ describe('R-ISA-17: an as-of change alone never cancels a fact (batch 13 audit I
     await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND kind = 'comms.dispatch'`, [w.tenantId]);
     await runIsa(h, w.tenantId, 3);
     expect((await facts(l.id)).map((x) => [x.listing_id, x.status])).toEqual([[id, 'sent']]);
-  });
+  }));
 });
 
 // batch 13 audit ISA2B-05 (the R-ISA-10 edge case): core, TX1, the deferral and the guard agree on a holiday. There is
@@ -404,7 +404,7 @@ describe('R-ISA-17 R-AST-10: the AI-origin saved search', () => {
   });
 
   // batch 13 audit ISA2B-06 (8): after the handoff, a re-activated AI search alerts only homes the AI did not send
-  it('R-ISA-17 R-AST-10: re-activated after the handoff, the alert omits the home the AI already sent (its match was marked alerted with the facts message)', async () => {
+  it('R-ISA-17 R-AST-10: re-activated after the handoff, the alert omits the home the AI already sent (its match was marked alerted with the facts message)', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const city = 'Lafayette';
     const sentHome = await buyerListing(h, w.tenantId, { connectionId: conn, city, price: 630000 });
     const l = await buyer({ city });
@@ -435,5 +435,5 @@ describe('R-ISA-17 R-AST-10: the AI-origin saved search', () => {
     const alerts = (await h.su.query<{ id: string }>(`SELECT id FROM messages WHERE contact_id = $1 AND action_category = 'search_alert'`, [l.id])).rows;
     expect(alerts).toHaveLength(1);
     expect(Object.fromEntries((await matches()).map((m) => [m.listing_id, m.alerted_message_id]))).toEqual({ [sentHome]: f[0]!.message_id, [newHome]: alerts[0]!.id });
-  });
+  }));
 });

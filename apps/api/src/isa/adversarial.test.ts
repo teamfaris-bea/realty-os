@@ -10,7 +10,7 @@ import { inboundSms } from '../comms/testing.js';
 import type { AiProvider } from '../providers/types.js';
 import { HOSTILE_EMAIL, HOSTILE_HOST, HOSTILE_PHONE } from '../providers/fake/hostileAi.js';
 import { HOSTILE_ISA_ATTACKS, HostileIsaAi } from '../providers/fake/hostileIsaAi.js';
-import { aiMessages, assignmentOf, call, feedItems, handbacksOf, handoffOf, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
+import { aiMessages, assignmentOf, call, feedItems, handbacksOf, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, runIsa, startCare } from './testing.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -189,14 +189,14 @@ describe('the backstop, holds and deadlines (R-ISA-29, R-ISA-25, R-ISA-30)', () 
     expect(after.rows[0]!.sla_met_at).toBeNull();
   });
 
-  it('R-ISA-9 E520: the first outreach is initiated: refused without the initiated tier (no D12 date, no grant): never sent', async () => {
+  it('R-ISA-9 E520: the first outreach is initiated: refused without the initiated tier (no D12 date, no grant): never sent', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
     const l = await isaLead(h, w.agents[0]!);
     await startCare(w.agents[0]!, l.id);
     await runIsa(h, w.tenantId);
     const msgs = await aiMessages(h, l.id);
     expect(msgs.some((m) => m.status === 'sent')).toBe(false);
     expect(msgs.some((m) => m.status === 'blocked' && /ISA_CONSENT_EVIDENCE_MISSING|ISA_DNC_UNVERIFIED/.test(m.status_reason ?? ''))).toBe(true);
-  });
+  }));
 });
 
 describe('architecture barriers (R-GMAIL-14, R-PRED-4)', () => {

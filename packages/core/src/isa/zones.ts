@@ -158,6 +158,9 @@ export interface SendWindowInput {
   initiated: boolean;
   initiatedDays: readonly number[];
   noInitiatedOnHolidays: boolean;
+  /** The holiday dates (local YYYY-MM-DD) refused when noInitiatedOnHolidays; default holidaysAround(at). The API passes
+   *  its one calendar here (apps/api isa/coreSeam.ts), so the window and the gate's facts read the same dates. */
+  holidays?: readonly string[];
 }
 
 function dayAllowed(t: Instant, zones: readonly IanaZone[], days: readonly number[], holidays: ReadonlySet<string> | null): IanaZone | null {
@@ -175,7 +178,7 @@ function dayAllowed(t: Instant, zones: readonly IanaZone[], days: readonly numbe
  */
 export function aiIsaSendWindow(i: SendWindowInput): Instant | null {
   if (i.zones.length === 0) return null;
-  const holidays = i.initiated && i.noInitiatedOnHolidays ? new Set(holidaysAround(i.at)) : null;
+  const holidays = i.initiated && i.noInitiatedOnHolidays ? new Set(i.holidays ?? holidaysAround(i.at)) : null;
   let cursor = i.at;
   for (let k = 0; k < 60; k++) {
     const t = nextWindowStart(cursor, i.zones, i.startSec as LocalTime, i.endSec as LocalTime);
