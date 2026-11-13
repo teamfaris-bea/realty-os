@@ -46,14 +46,21 @@ export function compsSuspended(w: Pick<WatchRow, 'comps_suspended_at' | 'comps_r
 
 /**
  * E502 and owner question 10: a suspension clears only on the owner's own CMA for the contact created or re-run after
- * it (an unchanged re-tap stores nothing, cma/service.ts oneTap), a CMA shared after it (V2-A), or the owner's
- * resume-comps. A generic resolve does not clear it. The system records the CMA resume; a user's read only computes it.
+ * it, a CMA shared after it (V2-A), or the owner's resume-comps. A generic resolve does not clear it. The system records
+ * the CMA resume; a user's read only computes it.
+ *
+ * A CMA counts only by its own created_at (a new row: the one-tap stores one only when the content changed, and a
+ * prepare always does), never by updated_at (ISA-3 audit F1): an unchanged re-tap refreshes the draft's MLS data date
+ * whenever the feed has synced (cma/service.ts oneTap, touchDataDate), and a supersede or an address relink changes
+ * only status or the link, each moving updated_at through cma_reports_touch_updated_at. An edit of the draft (PATCH)
+ * does not count either: cma_reports keeps no content-change time, so it would be told from a sync only by updated_at.
+ * VERIFY (owner question 10): whether an edited draft should clear it; until then the owner's resume-comps does.
  */
 export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserActor, a: Pick<AssignmentRow, 'id' | 'contactId' | 'ownerUserId'>, w: WatchRow | null): Promise<boolean> {
   if (!compsSuspended(w)) return false;
   const r = (await sql<{ prepared: boolean; shared: boolean }>`SELECT
       EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.created_by_user_id = ${a.ownerUserId}
-                AND GREATEST(c.created_at, c.updated_at) > ${w!.comps_suspended_at}) AS prepared,
+                AND c.created_at > ${w!.comps_suspended_at}) AS prepared,
       EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${w!.comps_suspended_at}) AS shared`.execute(tx)).rows[0]!;
   const reason = r.shared ? 'cma_shared' : r.prepared ? 'cma_prepared' : null;
   if (reason === null) return true;

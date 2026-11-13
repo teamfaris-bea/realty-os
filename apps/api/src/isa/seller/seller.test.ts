@@ -349,6 +349,27 @@ describe('E502: a pricing hold suspends comps', () => {
     const r = await withSellerPacksCleared(h, () => build(l));
     expect((r as { codes?: string[] }).codes ?? []).not.toContain('COMPS_SUSPENDED');
   });
+
+  it('E502 (ISA-3 audit F1): an unchanged re-tap after the feed synced, or a supersede of the draft, moves only updated_at and keeps the suspension', async () => {
+    const w2 = await sellerWorld(h);
+    const l = await sellerLead(h, w2);
+    await confirm(w2, l);
+    expect((await call(w2.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
+    await asSystem(h, w2, l, (tx, a) => onEscalationInTx(tx, a, 'pricing_negotiation'));
+    const suspended = async () => ((await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)))) as { codes?: string[] }).codes ?? [];
+    const drafts = async () => (await h.su.query<{ id: string; status: string; moved: boolean }>(`SELECT c.id, c.status, c.updated_at > w.comps_suspended_at AS moved FROM cma_reports c
+      JOIN ai_isa_seller_watch w ON w.contact_id = c.contact_id WHERE c.contact_id = $1 ORDER BY c.created_at`, [l.id])).rows;
+    // the feed syncs (hourly in production): the unchanged re-tap refreshes only the draft's MLS data date
+    await feedLastSyncedAt({ h, mls: w2.mls }, new Date());
+    expect((await call(w2.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(200);
+    const [d] = await drafts();
+    expect([d!.status, d!.moved]).toEqual(['draft', true]); // cma_reports_touch_updated_at moved updated_at past the suspension
+    expect(await suspended()).toContain('COMPS_SUSPENDED');
+    expect((await h.su.query(`SELECT comps_resumed_reason FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0].comps_resumed_reason).toBeNull();
+    // a supersede of the draft (a merge's, or a later tap's) changes its status only
+    await h.su.query(`UPDATE cma_reports SET status = 'superseded' WHERE id = $1`, [d!.id]);
+    expect(await suspended()).toContain('COMPS_SUSPENDED');
+  });
 });
 
 describe('R-ISA-20 R-ISA-19: the prompt and counts', () => {
