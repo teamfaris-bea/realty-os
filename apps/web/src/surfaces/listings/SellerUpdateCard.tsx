@@ -59,13 +59,13 @@ export interface SellerUpdateView {
   recipients: SellerUpdateRecipient[];
   preview: { channel: 'email' | 'sms'; subject: string; body: string };
   sentAt: string | null;
-  /** after the tap: each seller's message as it stands (null before) */
-  delivery: { contactId: string; name: string | null; channel: 'email' | 'sms'; status: string }[] | null;
+  /** after the tap: each seller's message as it stands (null before); reason: why a send was blocked before it was queued (E632) */
+  delivery: { contactId: string; name: string | null; channel: 'email' | 'sms'; status: string; reason?: string | null }[] | null;
 }
 
 interface SendResponse {
   result: string;
-  recipients: { contactId: string; messageId: string | null; result: string }[];
+  recipients: { contactId: string; messageId: string | null; result: string; reason?: string | null }[];
 }
 
 /** R-SELL-3: the shortest recommendation the database accepts (Unicode characters, trimmed). */
@@ -213,10 +213,12 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
   const sent = update.status === 'approved' || update.status === 'executed' || result !== null;
   // per seller, what actually happened: the send's own answer first, else the messages as they stand now
   const outcomes = result
-    ? result.recipients.map((x) => ({ contactId: x.contactId, name: update.recipients.find((r) => r.contactId === x.contactId)?.name ?? null, status: x.result }))
-    : (update.delivery ?? []).map((d) => ({ contactId: d.contactId, name: d.name, status: d.status }));
+    ? result.recipients.map((x) => ({ contactId: x.contactId, name: update.recipients.find((r) => r.contactId === x.contactId)?.name ?? null, status: x.result, reason: x.reason ?? null }))
+    : (update.delivery ?? []).map((d) => ({ contactId: d.contactId, name: d.name, status: d.status, reason: d.reason ?? null }));
   const anyOut = outcomes.some((o) => !NOT_OUT.has(o.status));
-  const retryable = outcomes.some((o) => o.status === 'not_queued');
+  // b13 audit V2B-3 (E632): a send the value-range re-check blocked says why in its own words, and no later tap can send
+  // it (the resume pass and a retry read approved sends only), so only a send with no reason is offered again
+  const retryable = outcomes.some((o) => o.status === 'not_queued' && o.reason === null);
   const blockedReason = !update.canSend ? null : update.stale ? 'Refresh the update first: new data was logged since it was put together.' : reachable.length === 0 ? 'None of the sellers can receive this update.' : !enough ? `Write your recommendation: ${RECOMMENDATION_MIN - length} more character${RECOMMENDATION_MIN - length === 1 ? '' : 's'} needed.` : null;
 
   const save = async () => {
@@ -269,7 +271,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
             <ul>
               {outcomes.map((x) => (
                 <li key={x.contactId}>
-                  {x.name ?? 'Seller'}: {RESULT_WORDS[x.status] ?? x.status}
+                  {x.name ?? 'Seller'}: {x.reason ?? RESULT_WORDS[x.status] ?? x.status}
                 </li>
               ))}
             </ul>

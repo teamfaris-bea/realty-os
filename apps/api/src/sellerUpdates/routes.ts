@@ -65,7 +65,7 @@ export const SellerUpdateSchema = z.object({
   recipients: z.array(Recipient),
   preview: z.object({ channel: z.enum(['email', 'sms']), subject: z.string(), body: z.string() }),
   sentAt: z.string().nullable(),
-  delivery: z.array(z.object({ contactId: z.uuid(), name: z.string().nullable(), channel: z.enum(['email', 'sms']), status: z.string() })).nullable(),
+  delivery: z.array(z.object({ contactId: z.uuid(), name: z.string().nullable(), channel: z.enum(['email', 'sms']), status: z.string(), reason: z.string().nullable() })).nullable(),
 });
 const UpdateResponse = z.object({ update: SellerUpdateSchema });
 const ListingUpdateResponse = z.object({ update: SellerUpdateSchema.nullable(), nextDueAt: z.string().nullable() });
@@ -89,7 +89,8 @@ export const SendResponse = z.object({
   status: z.string(),
   result: Result,
   messageId: z.uuid().nullable(),
-  recipients: z.array(z.object({ contactId: z.uuid(), messageId: z.uuid().nullable(), result: z.enum(['sent', 'queued', 'blocked', 'failed', 'dispatch_unknown', 'noop', 'not_queued']) })),
+  // b13 audit V2B-3: reason says why a 'not_queued' send was blocked before it was queued (E632), else null
+  recipients: z.array(z.object({ contactId: z.uuid(), messageId: z.uuid().nullable(), result: z.enum(['sent', 'queued', 'blocked', 'failed', 'dispatch_unknown', 'noop', 'not_queued']), reason: z.string().nullable() })),
 });
 
 export const SELLER_UPDATE_REQUEST_SCHEMAS = { PatchBody, SendBody } as const;

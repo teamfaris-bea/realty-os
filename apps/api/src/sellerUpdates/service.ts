@@ -95,6 +95,8 @@ export interface DeliveryItem {
   name: string | null;
   channel: 'email' | 'sms';
   status: string;
+  /** b13 audit V2B-3 (E632): why a seller's message was never queued, in the blocked send's own words (else null) */
+  reason: string | null;
 }
 
 export interface SendInput {
@@ -111,6 +113,8 @@ export interface RecipientOutcome {
   contactId: string;
   messageId: string | null;
   result: 'sent' | 'queued' | 'blocked' | 'failed' | 'dispatch_unknown' | 'noop' | 'not_queued';
+  /** b13 audit V2B-3 (E632): a 'not_queued' send that was blocked before it was queued says why (else null) */
+  reason: string | null;
 }
 
 export interface SendResult {
@@ -191,6 +195,23 @@ async function freshHash(deps: AssistantDeps, tenantId: string, payload: SellerU
   return asSystem(deps, tenantId, 'worker', async (tx, now) => (await assemble(tx, payload.listingId, periodOf(payload.period), now)).dataSha256);
 }
 
+/** The generic words for a per-seller send blocked before it was queued whose explanation is not a "Not sent: …" sentence. */
+const HELD_REASON = 'Not sent: it was stopped before it was queued.';
+
+/**
+ * b13 audit V2B-3 (E632, lane V2-B brief E6): each per-seller send of `parentId` that was blocked before any message was
+ * queued (queueApprovedSends' value-range re-check), with its own explanation, by contact. The resume pass and a later
+ * tap never queue these (they read approved or executed sends only), so the card says why instead of "no address".
+ */
+async function heldSendsOf(tx: Tx, parentId: string): Promise<Map<string, string>> {
+  const r = await sql<{ contact_id: string; explanation: string | null }>`
+    SELECT a.contact_id, a.explanation FROM assistant_actions a
+     WHERE a.tenant_id = app.tenant_id() AND a.kind = 'message_draft' AND a.status = 'blocked'
+       AND a.trigger_ref->>'kind' = 'seller_update_send' AND a.trigger_ref->>'actionId' = ${parentId}
+       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = a.tenant_id AND m.idempotency_key = ('seller-update:' || ${parentId} || ':' || a.contact_id::text))`.execute(tx);
+  return new Map(r.rows.map((x) => [x.contact_id, x.explanation !== null && x.explanation.startsWith('Not sent:') ? x.explanation : HELD_REASON]));
+}
+
 /** What happened to each seller's message after the tap: the message's own status (null when none was queued). */
 async function deliveryOf(tx: Tx, a: A.ActionRow): Promise<DeliveryItem[] | null> {
   if (a.status !== 'approved' && a.status !== 'executed') return null;
@@ -201,9 +222,11 @@ async function deliveryOf(tx: Tx, a: A.ActionRow): Promise<DeliveryItem[] | null
     SELECT c.id AS contact_id, m.status, c.display_name FROM contacts c
       LEFT JOIN messages m ON m.tenant_id = c.tenant_id AND m.idempotency_key = ('seller-update:' || ${a.id} || ':' || c.id::text)
      WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${ids}::uuid[])`.execute(tx);
+  const held = await heldSendsOf(tx, a.id);
   return recipients.map((r) => {
     const m = msgs.rows.find((x) => x.contact_id === r.contactId);
-    return { contactId: r.contactId, name: m?.display_name ?? null, channel: r.channel, status: m?.status ?? 'not_queued' };
+    const status = m?.status ?? 'not_queued';
+    return { contactId: r.contactId, name: m?.display_name ?? null, channel: r.channel, status, reason: status === 'not_queued' ? (held.get(r.contactId) ?? null) : null };
   });
 }
 
@@ -362,7 +385,7 @@ async function sendActionFor(tx: Tx, deps: AssistantDeps, actor: UserActor, pare
  * caller's SYSTEM transaction. Each queued message carries its comms.dispatch job, so the worker sends it even
  * if this process stops right after; the reconcile pass calls this again for approvals that never got this far.
  */
-export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'>, parentId: string, now: Instant): Promise<{ contactId: string; messageId: string | null; created: boolean; blocked?: boolean }[]> {
+export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'>, parentId: string, now: Instant): Promise<{ contactId: string; messageId: string | null; created: boolean; blocked?: boolean; reason?: string }[]> {
   const t = await tenantFacts(tx);
   const identity = { brokerageLegalName: t.brokerageLegalName, postalAddress: t.postalAddress };
   const children = await sql<{ id: string; contact_id: string; payload: ChildPayload }>`
@@ -370,7 +393,7 @@ export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'
      WHERE tenant_id = app.tenant_id() AND kind = 'message_draft' AND status IN ('approved','executed')
        AND trigger_ref->>'kind' = 'seller_update_send' AND trigger_ref->>'actionId' = ${parentId}
      ORDER BY contact_id`.execute(tx);
-  const out: { contactId: string; messageId: string | null; created: boolean; blocked?: boolean }[] = [];
+  const out: { contactId: string; messageId: string | null; created: boolean; blocked?: boolean; reason?: string }[] = [];
   // lane V2-B (R-CMA-7, E632): the value range is re-checked once per parent before any child is queued; on a failure
   // nothing is queued and each child not yet queued is blocked with the reason (the resume pass reads approved or
   // executed children only, so it never sends one later)
@@ -386,7 +409,7 @@ export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'
           continue;
         }
         await sql`UPDATE assistant_actions SET status = 'blocked', explanation = ${explanation} WHERE tenant_id = app.tenant_id() AND id = ${c.id}`.execute(tx);
-        out.push({ contactId: c.contact_id, messageId: null, created: false, blocked: true });
+        out.push({ contactId: c.contact_id, messageId: null, created: false, blocked: true, reason: explanation });
       }
       return out;
     }
@@ -489,19 +512,22 @@ export async function sendSellerUpdate(actor: UserActor, actionId: string, input
 }
 
 async function queueAndSend(actor: UserActor, actionId: string, status: string, deps: AssistantDeps): Promise<SendResult> {
-  const queued = await asSystem(deps, actor.tenantId, 'assistant', (tx, now) => queueApprovedSends(tx, deps, actionId, now));
+  const { queued, held } = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => ({ queued: await queueApprovedSends(tx, deps, actionId, now), held: await heldSendsOf(tx, actionId) }));
   const outcomes: RecipientOutcome[] = [];
   for (const q of queued) {
     if (!q.messageId) {
-      outcomes.push({ contactId: q.contactId, messageId: null, result: 'not_queued' });
+      outcomes.push({ contactId: q.contactId, messageId: null, result: 'not_queued', reason: q.reason ?? held.get(q.contactId) ?? null });
       continue;
     }
     const d = await dispatchOutbound(q.messageId, deps, { tenantId: actor.tenantId });
-    outcomes.push({ contactId: q.contactId, messageId: q.messageId, result: d.kind === 'not_due' ? 'queued' : d.kind === 'needs_retap' ? 'blocked' : d.kind });
+    outcomes.push({ contactId: q.contactId, messageId: q.messageId, result: d.kind === 'not_due' ? 'queued' : d.kind === 'needs_retap' ? 'blocked' : d.kind, reason: null });
   }
+  // b13 audit V2B-3 (E632): a send blocked by an earlier tap or the resume pass is no longer read by queueApprovedSends;
+  // a later tap still reports it, with its reason, never an empty 'failed'
+  for (const [contactId, reason] of held) if (!outcomes.some((o) => o.contactId === contactId)) outcomes.push({ contactId, messageId: null, result: 'not_queued', reason });
   const order: SendResult['result'][] = ['sent', 'queued', 'dispatch_unknown', 'noop', 'blocked', 'failed'];
   // lane V2-B (E632): nothing queued because the value range failed its re-check is 'blocked', never 'failed'
-  const best = order.find((k) => outcomes.some((o) => o.result === k)) ?? (queued.length > 0 && queued.every((q) => q.blocked) ? 'blocked' : 'failed');
+  const best = order.find((k) => outcomes.some((o) => o.result === k)) ?? (outcomes.length > 0 && outcomes.every((o) => o.reason !== null) ? 'blocked' : 'failed');
   const first = outcomes.find((o) => o.messageId !== null);
   return { actionId, status, result: best, messageId: first?.messageId ?? null, recipients: outcomes };
 }

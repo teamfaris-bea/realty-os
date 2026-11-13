@@ -190,6 +190,29 @@ describe('Seller update card (module 38)', () => {
     expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ recipientIds: [SAM] });
   });
 
+  it('b13 audit V2B-3 E632 R-CMA-7: a send the value-range re-check blocked before it was queued shows its own reason, never "no address to send to", and offers no "Try sending again" that could not send it', async () => {
+    const why = 'Not sent: the value range can no longer be shown to clients (Value ranges wait for counsel review of in-house values (platform:cma). Nothing is shown to the seller.).';
+    const fake = app(update({ status: 'approved', canSend: false, recommendation: REC, sentAt: iso(-60_000), delivery: [{ contactId: SAM, name: 'Sam Ortiz', channel: 'email', status: 'not_queued', reason: why }] }));
+    const c = await card();
+    expect(within(c).getByText('Not sent yet')).toBeInTheDocument();
+    expect(within(c).getByText(`Sam Ortiz: ${why}`)).toBeInTheDocument();
+    expect(within(c).queryByText(/no address to send to/)).toBeNull();
+    expect(within(c).queryByRole('button', { name: 'Try sending again' })).toBeNull();
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(0);
+  });
+
+  it('b13 audit V2B-3 E632: a retry the re-check blocks shows the reason from the send\'s answer and takes the retry away', async () => {
+    const why = 'Not sent: the value range can no longer be shown to clients (The MLS data is out of date.).';
+    const fake = app(update({ status: 'approved', canSend: false, recommendation: REC, sentAt: iso(-60_000), delivery: [{ contactId: SAM, name: 'Sam Ortiz', channel: 'email', status: 'not_queued', reason: null }] }), (f) =>
+      f.on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'blocked', messageId: null, recipients: [{ contactId: SAM, messageId: null, result: 'not_queued', reason: why }] } }),
+    );
+    const c = await card();
+    await user().click(within(c).getByRole('button', { name: 'Try sending again' }));
+    expect(await within(c).findByText(`Sam Ortiz: ${why}`)).toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: 'Try sending again' })).toBeNull();
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1);
+  });
+
   it('review fix: a failed refresh says why instead of leaving the agent stuck', async () => {
     app(update({ stale: true }), (f) => f.on(`POST /seller-updates/${UPDATE}/reassemble`, err(409, 'DRAFT_INVALIDATED')));
     const c = await card();

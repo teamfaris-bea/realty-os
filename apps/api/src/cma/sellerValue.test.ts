@@ -21,7 +21,7 @@ let h: ApiHarness;
 let w: AssistantWorld;
 let mls: string;
 
-type ValueUpdate = UpdateT & { valueRemoved: boolean; valueNote: string | null; delivery: { contactId: string; status: string }[] | null };
+type ValueUpdate = UpdateT & { valueRemoved: boolean; valueNote: string | null; delivery: { contactId: string; status: string; reason?: string | null }[] | null };
 
 beforeAll(async () => {
   h = await createApiHarness();
@@ -215,13 +215,20 @@ describe('lane V2-B deliverable 5: the seller update\'s value section', () => {
     // platform:cma is not cleared now: the "Try again" tap re-runs D
     const r = await send(u.id);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ result: 'blocked', recipients: [{ contactId: seller, messageId: null, result: 'not_queued' }] });
     expect(await outbound(seller)).toEqual([]);
     const child = (await h.su.query<{ status: string; explanation: string }>('SELECT status, explanation FROM assistant_actions WHERE id = $1', [childId])).rows[0]!;
     expect(child.status).toBe('blocked');
     expect(child.explanation).toMatch(/^Not sent: the value range can no longer be shown to clients \(.+\)\.$/);
+    // b13 audit V2B-3 (E632, brief E6): the tap, the view and every later tap carry the child's own reason (never "no
+    // address to send to"), and a later tap still reports it, never 'failed' with no seller
+    expect(r.body).toEqual({ actionId: u.id, status: 'approved', result: 'blocked', messageId: null, recipients: [{ contactId: seller, messageId: null, result: 'not_queued', reason: child.explanation }] });
+    expect((await view(u.id)).delivery).toEqual([{ contactId: seller, name: expect.any(String), channel: 'email', status: 'not_queued', reason: child.explanation }]);
+    const again = await send(u.id);
+    expect(again.body).toEqual({ actionId: u.id, status: 'approved', result: 'blocked', messageId: null, recipients: [{ contactId: seller, messageId: null, result: 'not_queued', reason: child.explanation }] });
     // the resume pass reads approved or executed children only: never sent later, even once platform:cma is cleared
     await withCmaCleared(() => reconcile(h, w.tenantId));
+    expect(await outbound(seller)).toEqual([]);
+    expect((await withCmaCleared(() => send(u.id))).body).toMatchObject({ result: 'blocked', recipients: [{ contactId: seller, result: 'not_queued', reason: child.explanation }] });
     expect(await outbound(seller)).toEqual([]);
   });
 
