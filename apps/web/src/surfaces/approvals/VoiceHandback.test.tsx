@@ -1,7 +1,8 @@
 // The voice handback card (module 55 item 9) in the Approvals inbox, on the staff contract: the detector, the worded
 // code-built claims (E662), "What the assistant did" from GET /calls/:id/voice with 404, in-progress and recovered
-// (E666), the kept one-tap Send of a confirmation draft (R-VOICE-17), Call back, the opted-out branch (E665), and every
-// other kind (an ai_isa one included) keeping the generic card. No /voice settings route is ever requested from here.
+// (E666), the kept one-tap Send of a confirmation draft (R-VOICE-17), Call back, the opted-out branch (E665), every
+// other kind keeping the generic card, and an ai_isa kind never listed at all (module 76's inbox filter, batch 13). No
+// /voice settings route is ever requested from here.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -204,12 +205,17 @@ describe('R-STAFF-6: other cards and roles', () => {
     expect(within(c).queryByRole('link', { name: 'Call back' })).toBeNull();
   });
 
-  it('an ai_isa kind with a call claim keeps the generic card', async () => {
-    const fake = inbox([voiceHandback('message_taken', { kind: 'ai_isa_handoff' })]);
+  // Batch 14 merge: module 76 (ISA-4, batch 13) drops ai_isa_message and ai_isa_handoff from every inbox consumer
+  // (useInbox's withoutAiActions), so an ai_isa kind with a call claim never reaches a card, voice or generic. The
+  // detector half (isVoiceHandback is false for an ai_isa kind) is the 'anything else is not' test above.
+  it('an ai_isa kind with a call claim is never listed, so it never gets the voice card', async () => {
+    const ai = voiceHandback('message_taken', { id: '01900000-0000-7000-8000-0000000055f1', kind: 'ai_isa_handoff', contactName: 'Sam Sample' });
+    const fake = inbox([ai, voiceHandback('message_taken')]);
     const c = await card(fake);
-    expect(c.textContent).not.toContain(VOICE_HANDBACK_LABEL);
-    expect(within(c).queryByRole('button', { name: 'What the assistant did' })).toBeNull();
-    expect(within(c).getByRole('button', { name: 'Got it' })).toBeInTheDocument();
+    expect(headerOf(c)).toMatch(/^The assistant answered a call · /);
+    expect(screen.queryByRole('heading', { level: 2, name: 'Sam Sample' })).toBeNull();
+    expect(screen.getAllByText(VOICE_HANDBACK_LABEL, { exact: false })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Got it' })).toBeNull();
   });
 
   it.each(['team_lead', 'isa', 'tc', 'owner'] as const)('%s: the card requests no /voice settings route', async (role) => {
