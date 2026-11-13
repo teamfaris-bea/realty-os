@@ -746,7 +746,7 @@ const MATRIX: Record<Action, ActionRule> = {
   'ai_isa.control': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN }, system: ['assistant', 'worker', 'timer'] },
   'ai_isa.handoff': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
   // Module 53 (DATA_MODEL Part 2: gbp_reviews read by members, written by the system): every staff role reads the
-  // reviews; a public reply is the team's voice, so only an Owner or Admin drafts, posts or discards one (owner question 3's default).
+  // reviews; a public reply is the team's voice, so only an Owner or Admin drafts, posts or discards one (owner question 2's default).
   'gbp.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
   'gbp.reply': { roles: { owner: ALL, admin: ALL } },
 };

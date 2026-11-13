@@ -15,8 +15,8 @@ import { type TrendItemView, trendItems } from './aggregate.js';
 import * as R from './repos/trends.js';
 
 export const MAX_MEMBERS = 200;
-/** owner question 5's default: one week against the week before */
-export const DEFAULT_WEEKS = 1;
+/** owner question 5's default lives with the query schema that applies it */
+export { DEFAULT_WEEKS } from './schemas.js';
 
 export type TrendState = 'not_cleared' | 'scoring_off' | 'tl_not_allowed' | 'ready';
 

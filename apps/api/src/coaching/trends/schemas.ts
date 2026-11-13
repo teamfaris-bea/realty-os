@@ -2,7 +2,10 @@
 // metRate, quote, call id, contact id, tenant id or confidence (R-COACH-6, R-COACH-7, R-AST-13, R-TEN-3; snapshot test).
 import { z } from 'zod';
 
-export const TrendsQuery = z.object({ weeks: z.coerce.number().int().min(1).max(4).default(1) }).strict();
+/** owner question 5's default: one week against the week before */
+export const DEFAULT_WEEKS = 1;
+
+export const TrendsQuery = z.object({ weeks: z.coerce.number().int().min(1).max(4).default(DEFAULT_WEEKS) }).strict();
 
 const Counts = z.object({ calls: z.number().int().min(0), scored: z.number().int().min(0), met: z.number().int().min(0).nullable() });
 export const TrendItem = z.object({
