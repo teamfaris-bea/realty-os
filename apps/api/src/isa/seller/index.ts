@@ -9,7 +9,7 @@
 //                                                        sent comps email marks the subject disputed
 //   H8 factPlaceholdersInTx   turn.ts prepare            a sent facts message enters the prompt as a fixed placeholder
 // H7 (sendResultInTx) is not needed: ISA-2 already flips the facts to sent or canceled, and nothing here follows it.
-import { type Instant, type SystemActor, can } from '@realty/core/foundation';
+import { type IdGenerator, type Instant, type SystemActor, can } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
@@ -164,7 +164,7 @@ export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: Assig
 }
 
 /** Writes the pending facts of a queued seller facts message (TX-B; 0191's trigger refuses a sold fact on non-email). */
-export async function writeSellerFactsInTx(tx: Tx, ids: { next<T extends string>(): unknown }, a: Pick<AssignmentRow, 'id' | 'contactId'>, turnId: string | null, messageId: string, facts: readonly PendingAny[]): Promise<void> {
+export async function writeSellerFactsInTx(tx: Tx, ids: IdGenerator, a: Pick<AssignmentRow, 'id' | 'contactId'>, turnId: string | null, messageId: string, facts: readonly PendingAny[]): Promise<void> {
   for (const f of facts) {
     await sql`INSERT INTO ai_isa_shared_facts (tenant_id, id, assignment_id, contact_id, turn_id, message_id, fact_kind, listing_id, mls_connection_id, price_kind, price_cents,
         status_at_build, as_of, display_rules_version, gate, method_version, valuation_date, tier, comp_set_hash, line_sha256)

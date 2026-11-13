@@ -241,13 +241,3 @@ export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRo
   await recordCheck(tx, a.id, [], email.hash, now);
   return { ok: true, channel: 'email', body: email.body, pendingFacts, compSetHash: email.hash, count: views.length, updated: last !== null };
 }
-
-/** Writes the pending sold_comp_set rows of a queued comps email (TX-B; 0191's trigger refuses a non-email message). */
-export async function writePendingFactsInTx(tx: Tx, ids: { next<T extends string>(): unknown }, a: Pick<AssignmentRow, 'id' | 'contactId'>, turnId: string | null, messageId: string, facts: readonly PendingFact[]): Promise<void> {
-  for (const f of facts) {
-    await sql`INSERT INTO ai_isa_shared_facts (tenant_id, id, assignment_id, contact_id, turn_id, message_id, fact_kind, listing_id, mls_connection_id, price_kind, price_cents,
-        status_at_build, as_of, display_rules_version, gate, method_version, valuation_date, tier, comp_set_hash, line_sha256)
-      VALUES (app.tenant_id(), ${ids.next<'X'>() as string}, ${a.id}, ${a.contactId}, ${turnId}, ${messageId}, ${f.factKind}, ${f.listingId}, ${f.connectionId}, ${f.priceKind}, ${f.priceCents},
-        ${f.statusAtBuild}, ${toIso(f.asOf)}::timestamptz, ${f.displayRulesVersion}, '[]'::jsonb, ${f.methodVersion}, ${f.valuationDate}::date, ${f.tier}, ${f.compSetHash}, ${f.lineSha256})`.execute(tx);
-  }
-}

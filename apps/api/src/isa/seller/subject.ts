@@ -2,7 +2,7 @@
 // resolves a contact-address subject: the default address (property, else home, newest; owner question 5), then
 // resolveSubject with no agent facts. The record is the newest MLS row at the address key among the connections the
 // agent gate admits; its connection and facts must be the ones resolveSubject took, else SUBJECT_CHANGED. The record
-// is shown only through the client rendering (clientView, or clientSoldView with the team row for a sold mirror), so
+// is shown only through the client rendering (clientView, or the sold-mirror rendering with the team row; cmaSeam.ts clientRendering), so
 // the display rules cover the seller's own record (VERIFY WITH MLS). Nothing here calls the comps pipeline.
 import { canonicalJson, sha256Hex } from '@realty/core/compliance';
 import { type Instant, instantFromDate } from '@realty/core/foundation';
@@ -90,7 +90,7 @@ export async function currentSubjectInTx(tx: Tx, contactId: string, now: Instant
   if (resolved.connectionId !== rec.mls_connection_id || f.sqft.value !== rec.sqft || f.beds.value !== rec.beds) return of('changed', { ...base, record });
   if (f.beds.value === null || f.sqft.value === null || f.propertyType.value === null) return of('incomplete', { ...base, record });
   if (record.modifiedAt === null || now - record.modifiedAt > ms(SUBJECT_RECORD_MAX_YEARS)) return of('record_old', { ...base, record });
-  // R-ISA-18: shown only through the client rendering (a sold mirror through clientSoldView with its team row)
+  // R-ISA-18: shown only through the client rendering (a sold mirror with its team row, cmaSeam.ts clientRendering)
   const e = await mlsEligibility(tx, now);
   const team = rec.team_listing_id !== null && rec.status === 'sold' ? ((await listingRows(tx, [rec.team_listing_id]))[0] ?? null) : null;
   const d = clientRendering(e, rec, team);

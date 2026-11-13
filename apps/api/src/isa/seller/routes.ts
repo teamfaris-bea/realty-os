@@ -12,6 +12,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { type Instant, type UserActor } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
+import type { z } from 'zod';
 import { audit } from '../../audit.js';
 import { AppError } from '../../errors.js';
 import { detailFacts, liveDetailFacts } from '../../people/common.js';
@@ -40,7 +41,7 @@ async function ownedSeller(tx: Tx, actor: UserActor, contactId: string): Promise
   return a;
 }
 
-export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, now: Instant): Promise<import('zod').infer<typeof S.SellerPanel>> {
+export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, now: Instant): Promise<z.infer<typeof S.SellerPanel>> {
   const a = await liveAssignmentOf(tx, contactId);
   const subject = await currentSubjectInTx(tx, contactId, now);
   const w = sellerSide(a) ? await watchOf(tx, a.id) : null;

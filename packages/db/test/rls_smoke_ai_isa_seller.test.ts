@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Actor } from '@realty/core/foundation';
 import { sql } from 'kysely';
-import pg from 'pg';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runPsqlScript } from '../src/testing/index.js';
 import { withTenantTx } from '../src/tenantTx.js';

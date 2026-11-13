@@ -55,16 +55,20 @@ export interface SellerLead extends IsaLead {
 }
 
 export const HOME_LINE = '100 Sample Ave';
+let homes = 0;
+/** A distinct home address per lead (so leads of one world never share a subject record). */
+export const nextHomeLine = () => `${11 + homes++} Sample Ct`;
 
 /**
  * A seller lead of agent 0 under seller-side care: a property address, the home's own sold MLS record (3 bd, 1,500
  * sq ft, 400 days ago), `comps` comparable local sales, and the watch row (created by the system).
  */
-export async function sellerLead(h: ApiHarness, w: SellerWorld, o: { comps?: number; record?: Parameters<typeof mlsSale>[1]; side?: 'seller' | 'both'; channels?: ('sms' | 'email')[] } = {}): Promise<SellerLead> {
+export async function sellerLead(h: ApiHarness, w: SellerWorld, o: { comps?: number; record?: Parameters<typeof mlsSale>[1] | null; side?: 'seller' | 'both'; channels?: ('sms' | 'email')[]; line1?: string } = {}): Promise<SellerLead & { line1: string }> {
   const l = await isaLead(h, w.agents[0]!);
-  const addressId = await address(h, w.tenantId, l.id, { kind: 'property', line1: HOME_LINE });
+  const line1 = o.line1 ?? nextHomeLine();
+  const addressId = await address(h, w.tenantId, l.id, { kind: 'property', line1 });
   const fw = { h, tenantId: w.tenantId, mls: w.mls };
-  const recordId = await mlsSale(fw, { line1: HOME_LINE, closeDate: daysAgo(400), beds: 3, sqft: 1500, bathsX10: 20, ...o.record });
+  const recordId = o.record === null ? '' : await mlsSale(fw, { line1, closeDate: daysAgo(400), beds: 3, sqft: 1500, bathsX10: 20, ...o.record });
   if ((o.comps ?? 8) > 0) await localSales(fw, o.comps ?? 8);
   const s = await startCare(w.agents[0]!, l.id, { side: o.side ?? 'seller', ...(o.channels ? { channels: o.channels } : {}) });
   if (s.status !== 200) throw new Error(`start: ${s.status} ${JSON.stringify(s.body)}`);
@@ -73,7 +77,7 @@ export async function sellerLead(h: ApiHarness, w: SellerWorld, o: { comps?: num
     const { ensureWatchInTx } = await import('./subject.js');
     await ensureWatchInTx(tx, { id: assignmentId, contactId: l.id });
   }, { db: h.database });
-  return { ...l, addressId, assignmentId, recordId };
+  return { ...l, addressId, assignmentId, recordId, line1 };
 }
 
 /** The panel, as `client` sees it. */
