@@ -170,6 +170,13 @@ export default tseslint.config(
     ignores: TEST_FILES,
     rules: { 'realty/isolated-bundle': ['error', { dir: 'widget' }] },
   },
+  // module 46 (R-PORTALWEB-1): the client portal is a separate bundle too; it may use React and TanStack Query only.
+  // Staff code importing src/portal (only src/portal/view/index.ts is allowed) is policed by src/portal/test/boundary.test.ts.
+  {
+    files: ['apps/web/src/portal/**/*.{ts,tsx}'],
+    ignores: TEST_FILES,
+    rules: { 'realty/isolated-bundle': ['error', { dir: 'portal', allow: ['react', 'react-dom', '@tanstack/react-query'] }] },
+  },
 
   // ---- R-GMAIL-14 (module 68): synced Gmail SQL only in apps/api/src/mailSync/** (plus the flagged ingestSyncedMailInTx);
   //      the assistant and the model provider never import mailSync; mailSync imports no model provider and never sends
