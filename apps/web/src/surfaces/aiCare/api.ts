@@ -208,6 +208,12 @@ export interface HandoffPackage {
   notes?: string[];
   startedAt?: string;
   epoch?: number;
+  // ISA-2b (isa/handoff.ts, isa/booking/book.ts; batch 13 isa-4 F6)
+  appointmentDetail?: { kind?: string; startsAt?: string | null; endsAt?: string | null; organizerUserId?: string | null; acceptedMessageId?: string | null; acceptedQuote?: string | null; zones?: string[]; [k: string]: unknown } | null;
+  inactivityReleaseAt?: string | null;
+  savedSearch?: { id: string; status: string; [k: string]: unknown } | null;
+  recipientUserId?: string | null;
+  endedByUserId?: string | null;
   [k: string]: unknown;
 }
 export interface HandoffView {

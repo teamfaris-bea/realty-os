@@ -110,6 +110,42 @@ describe('AI care feed cards (module 76)', () => {
     expect(c.textContent).not.toMatch(/Another check: not available yet/);
   });
 
+  it('R-ISA-14 (batch 13 isa-4 F6): ISA-2b\'s package fields render: the appointment\'s time, kind, organizer and their words, the saved search with its review link, who got it and the pond date', async () => {
+    const h = handoffView({ reason: 'appointment_booked' });
+    const startsAt = iso(2 * 86_400_000);
+    const pkg = {
+      ...h.package,
+      reason: 'appointment_booked',
+      escalation: null,
+      appointment: { appointmentId: ISA_IDS.optin, kind: 'buyer_consult', confirmationQueued: true },
+      appointmentDetail: { appointmentId: ISA_IDS.optin, kind: 'buyer_consult', startsAt, endsAt: iso(2 * 86_400_000 + 1_800_000), organizerUserId: IDS.me, offerId: ISA_IDS.other, acceptedMessageId: IDS.message, acceptedQuote: 'Tuesday at 3 works', linkId: null, calendarReadAt: iso(-60_000), calendarSentence: 'Your calendar showed this time free at 2026-11-13T10:00:00.000Z', zones: ['America/New_York'], minNoticeHours: 2 },
+      savedSearch: { id: ISA_IDS.turn, status: 'proposed' },
+      recipientUserId: IDS.me,
+      endedByUserId: null,
+      inactivityReleaseAt: iso(10 * 86_400_000),
+    };
+    isaApp(feedOf([handoffCard()], { handoff: { ...h, package: pkg } }), '/', 'agent');
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText(/^A buyer consultation on .+ with you\.$/)).toBeInTheDocument();
+    expect(within(c).getByText(/^Their words: “Tuesday at 3 works”/)).toBeInTheDocument();
+    expect(within(c).getByText('The AI assistant suggested a saved search; it was waiting for approval when AI care ended.')).toBeInTheDocument();
+    expect(within(c).getByRole('link', { name: 'Review the saved search' })).toHaveAttribute('href', `/contacts/${IDS.jane}?review=searches#searches`);
+    expect(within(c).getByText('You got this handoff.')).toBeInTheDocument();
+    expect(within(c).getByText(/^When AI care ended, they were set to return to the pond on .+ unless you reach them\. AI messages don't reset this\.$/)).toBeInTheDocument();
+    // the API's own sentence in the second person and its UTC instant never show
+    expect(c.textContent).not.toMatch(/Your calendar showed|\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('R-ISA-14 (batch 13 isa-4 F6): who ended care renders when the package says, for a team lead reading the owner\'s handoff', async () => {
+    const h = handoffView({ reason: 'ended_by_user', recipientUserId: IDS.me, canAcknowledge: false });
+    const pkg = { ...h.package, reason: 'ended_by_user', escalation: null, recipientUserId: IDS.me, endedByUserId: ISA_IDS.other, savedSearch: null, appointmentDetail: null, inactivityReleaseAt: null };
+    isaApp(feedOf([handoffCard()], { handoff: { ...h, package: pkg } }), '/', 'team_lead', { userId: ISA_IDS.tl });
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('Ava got this handoff.')).toBeInTheDocument();
+    expect(within(c).getByText('Someone else on the team ended AI care.')).toBeInTheDocument();
+    expect(c.textContent).not.toMatch(/return to the pond|saved search/);
+  });
+
   it('V9 Q10: a met deadline reads "Done: Jane was reached at …" and the card stays', async () => {
     isaApp(feedOf([handoffCard()], { handoff: handoffView({ slaMetAt: iso(-60_000) }) }), '/', 'agent');
     const c = await screen.findByTestId('ai-card-ai_isa_handoff');

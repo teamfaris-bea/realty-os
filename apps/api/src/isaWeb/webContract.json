@@ -2910,6 +2910,111 @@
                 "type": "integer",
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991
+              },
+              "appointmentDetail": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "startsAt": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "endsAt": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "organizerUserId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "acceptedMessageId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "acceptedQuote": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "zones": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "inactivityReleaseAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "savedSearch": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "status"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "recipientUserId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "endedByUserId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "additionalProperties": {}

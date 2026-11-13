@@ -19,8 +19,8 @@ import { useNow } from '../feed/lib/hooks.js';
 import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
-import { localTime } from './time.js';
-import { CARE_STATE_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, bookedWhen, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { localDate, localTime } from './time.js';
+import { CARE_STATE_WORDS, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -253,10 +253,15 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
   const agent = viewer.isOwner ? firstOf(session?.user.displayName, 'your agent') : viewer.ownerFirst;
   // batch 13 isa-4 F4: who besides Owner/Admin may mark it seen: the recipient as ISA-2b routes it (Q1), named when known
   const holder = handoffHolder({ recipientUserId: d.recipientUserId, viewerUserId: viewer.userId, ownerUserId, ownerFirst: viewer.ownerFirst, tookOver: d.reason === 'taken_over' });
+  const endedBy = pkg.endedByUserId ? personWho(pkg.endedByUserId, viewer, ownerUserId) : null;
   return (
     <div className="flex flex-col gap-3">
       <Block title="Why">{handoffWhy(d.reason, pkg.escalation ?? null)}</Block>
-      {pkg.appointment ? <Block title="Appointment">An appointment was booked. {pkg.appointment.confirmationQueued ? 'A confirmation was queued.' : 'No confirmation was queued.'}</Block> : null}
+      {pkg.appointment || pkg.appointmentDetail ? (
+        <Block title="Appointment">
+          <AppointmentLines pkg={pkg} viewer={viewer} ownerUserId={ownerUserId} contactId={contactId} />
+        </Block>
+      ) : null}
       {pkg.openOffer && pkg.openOffer.slots.length > 0 ? (
         <Block title="Times offered">
           <ul>
@@ -310,6 +315,14 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
           </div>
         </Block>
       ) : null}
+      {pkg.savedSearch ? (
+        <Block title="Saved search">
+          <p>{savedSearchWords(pkg.savedSearch.status)}</p>
+          <Link to={`/contacts/${contactId}?review=searches#searches`} className="inline-flex min-h-tap items-center font-medium text-accent underline">
+            Review the saved search
+          </Link>
+        </Block>
+      ) : null}
       {(pkg.notes ?? []).length > 0 ? (
         <ul className="flex flex-col gap-0.5 text-[15px]">
           {[...new Set(pkg.notes!.map(noteWords))].map((n) => (
@@ -317,6 +330,16 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
           ))}
         </ul>
       ) : null}
+      <Block title="Who has it">
+        {/* batch 13 isa-4 F6: who got it and who ended care, from the package (ISA-2b), named only where the web knows the name */}
+        <p>{holder === 'you' ? 'You got this handoff.' : holder ? `${cap(holder)} got this handoff.` : NO_RECIPIENT_WORDS}</p>
+        {endedBy ? <p>{cap(endedBy)} ended AI care.</p> : null}
+        {pkg.inactivityReleaseAt ? (
+          <p>
+            When AI care ended, they were set to return to the pond on {localDate(pkg.inactivityReleaseAt)} unless {viewer.isOwner ? 'you reach' : `${viewer.ownerFirst} reaches`} them. AI messages don't reset this.
+          </p>
+        ) : null}
+      </Block>
       <Link to={`/contacts/${contactId}/thread`} className="inline-flex min-h-tap items-center text-[15px] font-medium text-accent underline">
         Read the conversation
       </Link>
@@ -375,6 +398,42 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
         </Dialog>
       ) : null}
     </div>
+  );
+}
+
+/** A person the package names by id: the reader, the owner, or someone else on the team (the web has no other name). */
+function personWho(userId: string, viewer: ViewerInfo, ownerUserId: string | null): string {
+  if (userId === viewer.userId) return 'you';
+  if (ownerUserId && userId === ownerUserId) return viewer.ownerFirst;
+  return 'someone else on the team';
+}
+
+/** ISA-2b's appointmentDetail (batch 13 isa-4 F6): kind, time in the viewer's zone (and theirs when explicit), organizer, their words. */
+function AppointmentLines({ pkg, viewer, ownerUserId, contactId }: { pkg: HandoffView['package']; viewer: ViewerInfo; ownerUserId: string | null; contactId: string }) {
+  const a = pkg.appointmentDetail ?? null;
+  const kind = appointmentKindWords(a?.kind ?? pkg.appointment?.kind);
+  // displayZones (core slots.ts): the organizer's zone, then the person's explicit zone when it differs
+  const theirs = a?.zones && a.zones.length > 1 ? a.zones[1]! : null;
+  const when = a?.startsAt ? ` on ${localTime(a.startsAt)}${theirs ? ` (${localTime(a.startsAt, theirs)}, their time)` : ''}` : '';
+  const withWho = a?.organizerUserId ? ` with ${personWho(a.organizerUserId, viewer, ownerUserId)}` : '';
+  return (
+    <>
+      <p>{a ? `${kind}${when}${withWho}.` : 'An appointment was booked.'}</p>
+      {a?.acceptedQuote ? (
+        <p>
+          Their words: “{a.acceptedQuote}”
+          {a.acceptedMessageId ? (
+            <>
+              {' '}
+              <Link to={`/contacts/${contactId}/thread#${a.acceptedMessageId}`} className="text-accent underline">
+                Their message
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {pkg.appointment ? <p>{pkg.appointment.confirmationQueued ? 'A confirmation was queued.' : 'No confirmation was queued.'}</p> : null}
+    </>
   );
 }
 

@@ -42,6 +42,14 @@ export const HandoffPackage = z.looseObject({
   notes: z.array(z.string()).optional(),
   startedAt: Iso.optional(),
   epoch: z.number().int().optional(),
+  // ISA-2b's keys (isa/handoff.ts, isa/booking/book.ts appointmentDetail), typed so the web's fixtures are checked
+  // against them (batch 13 isa-4 F6); each optional and nullable, so an older package still reads
+  appointmentDetail: z.looseObject({ kind: z.string().optional(), startsAt: Iso.nullable().optional(), endsAt: Iso.nullable().optional(), organizerUserId: z.string().nullable().optional(),
+    acceptedMessageId: z.string().nullable().optional(), acceptedQuote: z.string().nullable().optional(), zones: z.array(z.string()).optional() }).nullable().optional(),
+  inactivityReleaseAt: Iso.nullable().optional(),
+  savedSearch: z.looseObject({ id: z.string(), status: z.string() }).nullable().optional(),
+  recipientUserId: z.string().nullable().optional(),
+  endedByUserId: z.string().nullable().optional(),
 });
 
 export const HandoffView = z.object({

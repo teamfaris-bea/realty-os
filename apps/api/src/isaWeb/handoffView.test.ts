@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms } from '../comms/testing.js';
 import { call, handoffOf, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from '../isa/testing.js';
-import { HandoffView, webPackage } from './routes.js';
+import { HandoffPackage, HandoffView, webPackage } from './routes.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -47,6 +47,10 @@ describe('GET /ai-isa/handoffs/:id (R-ISA-14)', () => {
     expect(conv.length).toBeGreaterThan(0);
     for (const t of conv) expect(Object.keys(t).sort()).toEqual(['messageId', 'seq', 'status']);
     expect(r.body.canAcknowledge).toBe(true);
+    // batch 13 isa-4 F6: ISA-2b's keys arrive in a real package and are typed by the response schema
+    expect(Object.keys(r.body.package)).toEqual(expect.arrayContaining(['appointmentDetail', 'savedSearch', 'recipientUserId', 'endedByUserId', 'inactivityReleaseAt']));
+    expect(r.body.package.recipientUserId).toBe(w.agents[0]!.userId);
+    expect(Object.keys(HandoffPackage.shape)).toEqual(expect.arrayContaining(['appointmentDetail', 'savedSearch', 'recipientUserId', 'endedByUserId', 'inactivityReleaseAt']));
   });
 
   it('R-PERM-5 E539: an outside agent, another tenant and a TC all get 404, and so does a forged id', async () => {

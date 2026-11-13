@@ -28,10 +28,15 @@ describe('the AI ISA web contract (isaWeb/webContract.json)', () => {
       // batch 13 merge (0081): a handoff with no deadline, and one the system closed
       ['GET /ai-isa/handoffs/:id', handoffView({ slaClass: 'none', closedReason: 'acknowledged' })],
       ['GET /contacts/:id/ai-isa', panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'none', slaDueAt: new Date().toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: 'lead_closed' } })],
+      // batch 13 isa-4 F6: ISA-2b's package fields, as handoff.ts and booking/book.ts write them
+      ['GET /ai-isa/handoffs/:id', handoffView({ package: { ...handoffView().package, appointmentDetail: { appointmentId: ISA_IDS.optin, kind: 'buyer_consult', startsAt: new Date().toISOString(), endsAt: new Date().toISOString(), organizerUserId: IDS.me, offerId: ISA_IDS.other, acceptedMessageId: IDS.message, acceptedQuote: 'Tuesday at 3 works', linkId: null, calendarReadAt: new Date().toISOString(), calendarSentence: 'x', zones: ['America/New_York'], minNoticeHours: 2 }, savedSearch: { id: ISA_IDS.turn, status: 'proposed' }, recipientUserId: IDS.me, endedByUserId: null, inactivityReleaseAt: new Date().toISOString() } })],
+      ['GET /ai-isa/handoffs/:id', handoffView({ package: { ...handoffView().package, appointmentDetail: null, savedSearch: null, recipientUserId: null, endedByUserId: ISA_IDS.tl, inactivityReleaseAt: null } })],
     ];
     for (const [key, body] of cases) expect(isaResponseViolations(key, body), key).toEqual([]);
     // and a stray score or confidence key is something the panel can never carry
     expect(isaResponseViolations('GET /ai-isa/handoffs/:id', { ...handoffView(), confidence: 0.9 })).not.toEqual([]);
+    // batch 13 isa-4 F6: the ISA-2b keys are typed in the contract, so a wrong shape is caught
+    expect(isaResponseViolations('GET /ai-isa/handoffs/:id', handoffView({ package: { ...handoffView().package, savedSearch: { id: 1 as unknown as string, status: 'proposed' } } }))).not.toEqual([]);
     expect(isaResponseViolations('GET /contacts/:id/ai-isa', { ...panel(), assignment: { ...panel().assignment!, state: 'nonsense' } })).not.toEqual([]);
   });
 

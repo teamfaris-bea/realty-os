@@ -154,6 +154,19 @@ export function handoffHolder(o: {
 }
 export const NO_RECIPIENT_WORDS = 'The handoff went to the team leads and Owner/Admin.';
 
+// ---- ISA-2b's package fields (isa/handoff.ts, isa/booking/book.ts; batch 13 isa-4 F6) -------------------------------
+
+export const APPOINTMENT_KIND_WORDS: Record<string, string> = { buyer_consult: 'A buyer consultation', listing_appointment: 'A listing appointment', consult: 'A consultation' };
+export const appointmentKindWords = (k: string | null | undefined) => (k ? APPOINTMENT_KIND_WORDS[k] : undefined) ?? 'An appointment';
+/** The AI-origin saved search as it stood when care ended (the package is frozen). */
+export const SAVED_SEARCH_WORDS: Record<string, string> = {
+  proposed: 'The AI assistant suggested a saved search; it was waiting for approval when AI care ended.',
+  approved: 'A saved search the AI assistant suggested was approved but not started when AI care ended.',
+  active: 'A saved search the AI assistant suggested was sending alerts when AI care ended.',
+  paused: 'A saved search the AI assistant suggested was paused when AI care ended.',
+};
+export const savedSearchWords = (s: string) => SAVED_SEARCH_WORDS[s] ?? OTHER_CHECK;
+
 // ---- ISA-2b's booking cards (isa/booking/book.ts bookedCardInTx; batch 13 isa-4 F1) ---------------------------------
 
 /**
