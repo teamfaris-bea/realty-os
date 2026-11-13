@@ -234,7 +234,19 @@ describe('b14 F2: the sign-in URL never enters messages.body (R-PORTAL-11, E684)
     }, links);
     const [m] = await linkRows(c.id);
     expect(m).toMatchObject({ status: 'failed', status_reason: 'PORTAL_LINK_UNAVAILABLE' });
+    expectNoLink(m!.body, links[0]!.token);
     expect(h.providers.email.sent.length).toBe(before);
+  });
+
+  it('F2 R-GATE-14: a blocked link (do-not-contact) never held the link and leaves no seal', async () => {
+    const c = await invited('Bo');
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${c.id}/do-not-contact`, { reason: 'asked_in_writing' })).status).toBe(200);
+    const links = await requestPortalLogin(slug, c.email, { db: h.database });
+    await deliverLinks({ comms: deps(), webOrigin: origin(), log: quiet }, links);
+    const [m] = await linkRows(c.id);
+    expect(m!.status).toBe('blocked');
+    expectNoLink(m!.body, links[0]!.token);
+    expect(await seals(m!.id)).toBe(0);
   });
 
   it('F2: app_user cannot read the side record (no staff role, not the system, not a client); only the system reads the sealed bytes, and only while the message is being sent', async () => {
