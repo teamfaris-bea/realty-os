@@ -4,7 +4,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { CMA_ID, CONTACT, CO_SELLER, FakeFetch, NOT_CLEARED, POINT, POINT2, RSHA, SHA, cmaApp, err, preview, view } from './testing.js';
+import { CMA_ID, CONTACT, CO_SELLER, FakeFetch, ME, NOT_CLEARED, POINT, POINT2, RSHA, SHA, cmaApp, err, preview, view } from './testing.js';
 import type { SharePreview } from './lib.js';
 
 const user = () => userEvent.setup();
@@ -89,6 +89,27 @@ describe('Share panel', () => {
     expect(screen.getByText('Shared on Nov 12, 2026.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Download the PDF (to print or hand over)' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Email/ })).toBeNull();
+  });
+
+  it('R-ISA-3 R-ISA-15 (b13 review F6-ui): under live AI care the screen says before the tap that emailing the CMA pauses AI care, beside the button too; after the share the owner gets the Resume AI care toast and the live list is asked again', async () => {
+    const shared = view({ status: 'shared', canEdit: false, sharedAt: '2026-11-12T11:00:00.000Z', pdfAvailable: true, share: { sharedByUserId: 'me', message: { id: 'm1', status: 'sent', statusReason: null, sentence: 'Sent.' } } });
+    const live = { rows: [{ assignmentId: '01900000-0000-7000-8000-0000000a5501', contactId: CONTACT, name: 'Jane Doe', side: 'seller', chip: { kind: 'active', sentence: 'Active' }, lastAction: null, nextTouchAt: null, capsSentence: '', inactivityReleaseAt: null, ownerUserId: ME, ownerName: 'Ava Agent', handoffOverdue: false }], holdSentence: null };
+    const pausedPanel = { contactId: CONTACT, assignment: { id: '01900000-0000-7000-8000-0000000a5501', side: 'seller', state: 'paused', chip: { kind: 'paused', sentence: 'Paused' }, epoch: 1, startedAt: '2026-11-10T10:00:00.000Z', pausedAt: '2026-11-12T11:00:00.000Z', pauseReason: 'human_contact', pausedSentence: 'Paused', endedAt: null, endReason: null, undoUntil: null, ownerUserId: ME } };
+    const f = app(preview(), (x) =>
+      x
+        .on('GET /ai-isa/assignments?scope=all&state=live', { status: 200, body: live })
+        .on(`GET /contacts/${CONTACT}/ai-isa`, { status: 200, body: pausedPanel })
+        .on(SHARE, { status: 200, body: { cma: shared, message: { id: 'm1', status: 'sent', result: 'sent' } } }),
+    );
+    const p = within(await panel());
+    expect(await p.findByText('Emailing this CMA pauses AI care for Jane.')).toBeInTheDocument();
+    // the phone's sticky bar says it beside the button as well
+    expect(screen.getAllByText(/Emailing this CMA pauses AI care for Jane/).length).toBeGreaterThanOrEqual(2);
+    const before = f.callsTo('GET /ai-isa/assignments?scope=all&state=live').length;
+    await user().click(await screen.findByRole('button', { name: 'Email to Jane' }));
+    expect(await screen.findByTestId('ai-resume-toast')).toHaveTextContent('AI care for Jane is paused because you messaged them.');
+    expect(screen.getByRole('button', { name: 'Resume AI care' })).toBeInTheDocument();
+    await waitFor(() => expect(f.callsTo('GET /ai-isa/assignments?scope=all&state=live').length).toBeGreaterThan(before));
   });
 
   it('E601 E602: CMA_STALE fetches the preview again and says the report changed; DATA_OLD says to prepare it again', async () => {

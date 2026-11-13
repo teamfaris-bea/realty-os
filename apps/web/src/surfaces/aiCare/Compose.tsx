@@ -31,7 +31,11 @@ export function aiCareSent(contactId: string): void {
   for (const l of sentListeners) l(contactId);
 }
 
-export function AiCareComposeNote({ contact }: { contact: { id: string; name: string } }) {
+/**
+ * `verb` names the send; `note={false}` mounts only the toast host (b13 review F6-ui: the CMA screen keeps it mounted
+ * while the share panel goes away on a share). The toast after a send comes from aiCareSent(contactId), whoever sent it.
+ */
+export function AiCareComposeNote({ contact, verb = 'Sending or scheduling this', note = true }: { contact: { id: string; name: string }; verb?: string; note?: boolean }) {
   const row = useLiveRow(contact.id);
   const c = useContact(contact.id);
   const full = c.data?.contact.view === 'full' ? c.data.contact : null;
@@ -66,9 +70,9 @@ export function AiCareComposeNote({ contact }: { contact: { id: string; name: st
   }, [api, qc, contact.id, first, viewer.isOwner]);
   return (
     <>
-      {row ? (
+      {row && note ? (
         <p className="text-[14px] leading-snug text-ink" data-testid="ai-compose-note">
-          Sending or scheduling this pauses AI care for {first} now. {viewer.isOwner ? 'You' : cap(viewer.ownerFirst)} can resume it.
+          {verb} pauses AI care for {first} now. {viewer.isOwner ? 'You' : cap(viewer.ownerFirst)} can resume it.
         </p>
       ) : null}
       {toast ? <ResumeToast contactId={contact.id} first={first} onClose={() => setToast(false)} /> : null}
@@ -120,6 +124,17 @@ export function AiCareActionNote({ action, contact }: { action: OneTapAction; co
     <span className="block basis-full pt-1 text-[13px] leading-snug text-ink" data-testid="ai-action-note">
       {kind === 'call' ? `Calling pauses AI care for ${first}.` : `Sending pauses AI care for ${first}.`}
     </span>
+  );
+}
+
+/** b13 review F6-ui: the CMA share's line beside its Email button (the phone's sticky bar): no listener, the note only. */
+export function AiCareShareNote({ contactId, name }: { contactId: string; name: string }) {
+  const row = useLiveRow(contactId);
+  if (!row) return null;
+  return (
+    <p className="text-[13px] leading-snug text-ink" data-testid="ai-share-note">
+      Emailing this CMA pauses AI care for {firstOf(name, 'them')}.
+    </p>
   );
 }
 

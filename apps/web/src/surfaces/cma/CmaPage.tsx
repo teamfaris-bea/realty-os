@@ -23,6 +23,7 @@ import { type ApiError, useApi, usePageTitle } from '../../shell/index.js';
 import { CompCard } from './CompCard.js';
 import { NotUsed } from './NotUsed.js';
 import { Purpose } from './Purpose.js';
+import { AiCareComposeNote } from '../aiCare/Compose.js';
 import { SharePanel, ShareButton, ShareOutcome, ShareRecipient, useShare } from './SharePanel.js';
 import { SubjectFacts } from './SubjectFacts.js';
 import { type CmaView, type PatchBody, cmaKey, cmaMessage, day, fetchCma, money, neverShared, pdfHref, streetLine, useCall, useWide } from './lib.js';
@@ -66,6 +67,8 @@ function CmaScreen({ view, bar }: { view: CmaView; bar: RefCallback<HTMLDivEleme
   const qc = useQueryClient();
   const wide = useWide();
   const s = useShare(view);
+  const shareRecipient = s.preview?.recipients.find((r) => r.contactId === s.preview?.recipientContactId) ?? null;
+  const shareTo = shareRecipient ? { id: shareRecipient.contactId, name: shareRecipient.name } : null;
   const patch = useCall<PatchBody, { cma: CmaView }>('PATCH');
   const [origin, setOrigin] = useState<Origin | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -223,6 +226,8 @@ function CmaScreen({ view, bar }: { view: CmaView; bar: RefCallback<HTMLDivEleme
           <Purpose view={view} busy={patch.pending && origin === 'purpose'} error={errorFor('purpose')} onSave={(b) => save('purpose', b)} />
 
           {s.applies ? <SharePanel s={s} withButton={wide} sentenceId={sentenceId} /> : view.status === 'draft' && neverShared(view) ? <Notice tone="info">{W.noShareHere}</Notice> : null}
+          {/* b13 review F6-ui: the share took over live AI care (R-ISA-3): the owner's Resume toast, kept mounted after the share */}
+          {shareTo ? <AiCareComposeNote contact={shareTo} note={false} /> : null}
         </div>
       </div>
 

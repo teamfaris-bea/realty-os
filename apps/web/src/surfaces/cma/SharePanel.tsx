@@ -12,6 +12,7 @@ import { useId, useState } from 'react';
 import { Button, Card, Notice } from '../../design/index.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { type CmaView, type ShareResult, type SharePreview, cmaKey, cmaMessage, contactCmasKey, previewKey, previewPath, sharePanelApplies, useCall } from './lib.js';
+import { AiCareShareNote, aiCareSent } from '../aiCare/Compose.js';
 import { DISCLOSURE_WORDS, ROLE_WORDS, W, WHERE_WORDS } from './words.js';
 
 interface Choice {
@@ -57,6 +58,10 @@ export function useShare(view: CmaView): ShareState {
     setNotice(null);
     const r = await call.run(`/cma/${view.id}/share`, { recipientContactId: p.recipientContactId, toPointId: p.toPointId, contentSha256: p.contentSha256, reportSha256: p.reportSha256 });
     if (r.ok) {
+      // b13 review F6-ui: the share email is a human one-to-one message, so it took over live AI care (R-ISA-3, comms
+      // compose.ts takeoverInTx): the owner gets the Resume toast and every AI care read is asked again
+      aiCareSent(p.recipientContactId);
+      void qc.invalidateQueries({ queryKey: ['ai-isa'] });
       qc.setQueryData(cmaKey(view.id), { cma: r.data.cma });
       if (view.contactId) void qc.invalidateQueries({ queryKey: contactCmasKey(view.contactId) });
       const sentence = r.data.cma.share?.message?.sentence;
@@ -130,6 +135,7 @@ export function ShareRecipient({ s }: { s: ShareState }) {
         {email ? <span> · {email.address}</span> : null}
       </p>
       {line !== null && !said ? <p>{line}</p> : null}
+      <AiCareShareNote contactId={recipient.contactId} name={recipient.name} />
     </div>
   );
 }
@@ -216,6 +222,8 @@ export function SharePanel({ s, withButton, sentenceId }: { s: ShareState; withB
               {email ? <span> · {email.address}</span> : null}
             </p>
           ) : null}
+          {/* b13 review F6-ui: before the tap, as compose and dial say it (the Resume toast is the CMA screen's) */}
+          {recipient ? <AiCareShareNote contactId={recipient.contactId} name={recipient.name} /> : null}
           <Chooser s={s} />
           {decision ? (
             <p className="text-[15px] text-ink">
