@@ -102,6 +102,9 @@ describe('ARCHITECTURE §9 check table', () => {
     expectDecision(decide(assistantInput({ automationPausedAt: T(-minutes(5)) })), 'deny', 'AUTOMATION_PAUSED');
     expectDecision(decide(gateInput({ initiator: 'system', category: 'reminder', automationPausedAt: T(-minutes(5)) })), 'deny', 'AUTOMATION_PAUSED');
     expect(decide(gateInput({ automationPausedAt: T(-minutes(5)) })).outcome).toBe('allow');
+    // the one documented exception (module 45, R-PORTAL-11; gate_portal.test.ts): the client's own portal sign-in link,
+    // a system informational sms/email to a contact, is not stopped by the pause (opt-outs still block it)
+    expect(decide(gateInput({ initiator: 'system', category: 'portal_login_link', automationPausedAt: T(-minutes(5)) })).outcome).toBe('allow');
   });
   it('§9 every reason is collected, in check order', () => {
     const d = decide(gateInput({ consent: [revoked()], suppressions: [{ channel: 'all', reason: 'admin_block', liftedAt: null }], rendered: { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: true } }));
@@ -324,8 +327,8 @@ describe('check details', () => {
     expectDecision(decide(gateInput({ ...toAgent, contactPoint: { status: 'invalid', lineType: 'mobile' } })), 'deny', 'CONTACT_POINT_INVALID');
     expectDecision(decide(gateInput({ ...toAgent, tenant: { suspended: true, brokerageNamePresent: true, postalAddressPresent: true } })), 'deny', 'TENANT_SUSPENDED');
   });
-  it('RULES_VERSION is a stable versioned string, bumped to 3.0.0 for the Phase 2 channels and to 3.1.0 for the AI ISA checks 0, 8 and 12 (D12 proposed; sends-gates/F4)', () => {
-    expect(RULES_VERSION).toBe('core-compliance/3.1.0');
+  it('RULES_VERSION is a stable versioned string, bumped to 3.0.0 for the Phase 2 channels, to 3.1.0 for the AI ISA checks 0, 8 and 12 (D12 proposed; sends-gates/F4) and to 3.2.0 for the portal sign-in link clause (module 45)', () => {
+    expect(RULES_VERSION).toBe('core-compliance/3.2.0');
   });
 });
 
