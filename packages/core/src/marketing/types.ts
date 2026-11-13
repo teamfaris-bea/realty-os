@@ -357,7 +357,8 @@ export interface SellerUpdateInputs {
   readonly knownBuyerNames?: readonly string[];
 }
 
-export type SectionKind = 'showings' | 'feedback' | 'marketing' | 'competing';
+/** 'value': the API's seller-update value range (lane V2-B, R-CMA-10); core never assembles it (the API appends it). */
+export type SectionKind = 'showings' | 'feedback' | 'marketing' | 'competing' | 'value';
 
 /** Where a section's data stands. */
 export type SectionState = 'has_data' | 'none_logged' | 'unavailable' | 'stale';

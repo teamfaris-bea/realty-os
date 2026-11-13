@@ -41,7 +41,8 @@ import { tenantFacts } from '../comms/repos/gate.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
 import { senderSignature } from '../templates/repos/signature.js';
-import { assemble, fmtPeriod, listingHead, sellerContacts, sellerText } from './assembly.js';
+import { type SellerValue, sellerRangeGate } from '../cma/sellerValue.js';
+import { assemble, carriesValue, fmtPeriod, listingHead, sellerContacts, sellerText } from './assembly.js';
 import { type RecipientView, recipientsOf } from './recipients.js';
 import { type AgentChoices, type SellerUpdatePayload, payloadOf, periodOf, replaceAssembly } from './store.js';
 
@@ -78,6 +79,10 @@ export interface SellerUpdateView {
   sections: SectionView[];
   recommendation: string;
   excludedFeedbackIds: string[];
+  /** lane V2-B (E631): the agent removed the value section */
+  valueRemoved: boolean;
+  /** lane V2-B (E630): said when a seller who gets this by text will not see the value range shown here */
+  valueNote: string | null;
   recipients: RecipientView[];
   preview: { channel: 'email' | 'sms'; subject: string; body: string };
   sentAt: string | null;
@@ -98,6 +103,8 @@ export interface SendInput {
   excludedFeedbackIds?: string[] | undefined;
   /** the seller contacts the agent was shown as reachable; when given, they must still be exactly those */
   recipientIds?: string[] | undefined;
+  /** lane V2-B: the agent removed the value section (else their stored choice) */
+  valueRemoved?: boolean | undefined;
 }
 
 export interface RecipientOutcome {
@@ -130,8 +137,12 @@ function choicesOf(a: A.ActionRow): AgentChoices {
   return {
     recommendation: typeof e['recommendation'] === 'string' ? (e['recommendation'] as string) : '',
     excludedFeedbackIds: Array.isArray(e['excludedFeedbackIds']) ? (e['excludedFeedbackIds'] as unknown[]).filter((x): x is string => typeof x === 'string') : [],
+    valueRemoved: e['valueRemoved'] === true,
   };
 }
+
+/** E630: the agent is told when a seller reached by text will not get the value range this update shows. */
+export const VALUE_BY_TEXT_NOTE = 'Sellers who get this by text won’t see the value range.';
 
 async function ownDraft(tx: Tx, actor: UserActor, actionId: string, o: { lock?: boolean; mine?: boolean } = {}): Promise<A.ActionRow & { payload: Record<string, unknown> }> {
   const a = await A.actionById(tx, actionId, o.lock ? { lock: true } : {});
@@ -205,7 +216,8 @@ async function viewOf(tx: Tx, actor: UserActor, a: A.ActionRow & { payload: Reco
   const period = periodOf(payload.period);
   const firstSendable = recipients.find((r) => r.sendable);
   const channel = firstSendable?.channel ?? payload.channel;
-  const text = sellerText({ address: head.addressLine1, period, sections: payload.sections, excludedFeedbackIds: choices.excludedFeedbackIds ?? [], recommendation: choices.recommendation || null, agentName: null });
+  const text = sellerText({ address: head.addressLine1, period, sections: payload.sections, excludedFeedbackIds: choices.excludedFeedbackIds ?? [], recommendation: choices.recommendation || null, agentName: null, channel, valueRemoved: choices.valueRemoved });
+  const shown = payload.sections.some((s) => s.kind === 'value' && s.state === 'has_data') && !choices.valueRemoved;
   const sent = a.status === 'approved' || a.status === 'executed' ? await sql<{ at: Date | null }>`SELECT decided_at AS at FROM assistant_actions WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx) : null;
   return {
     id: a.id,
@@ -220,6 +232,8 @@ async function viewOf(tx: Tx, actor: UserActor, a: A.ActionRow & { payload: Reco
     sections: await sectionViews(tx, a, payload, choices.excludedFeedbackIds ?? []),
     recommendation: choices.recommendation ?? '',
     excludedFeedbackIds: choices.excludedFeedbackIds ?? [],
+    valueRemoved: choices.valueRemoved ?? false,
+    valueNote: shown && recipients.some((r) => r.sendable && r.channel === 'sms') ? VALUE_BY_TEXT_NOTE : null,
     recipients,
     preview: { channel, subject: text.subject, body: text.body },
     sentAt: sent?.rows[0]?.at ? sent.rows[0].at.toISOString() : null,
@@ -263,6 +277,7 @@ export async function patchSellerUpdate(actor: UserActor, actionId: string, inpu
     const next: AgentChoices = {
       recommendation: input.recommendation !== undefined ? input.recommendation.trim() : cur.recommendation ?? '',
       excludedFeedbackIds: input.excludedFeedbackIds !== undefined ? [...new Set(input.excludedFeedbackIds)].filter((x) => ids.has(x)) : cur.excludedFeedbackIds ?? [],
+      valueRemoved: input.valueRemoved !== undefined ? input.valueRemoved : cur.valueRemoved ?? false,
     };
     if (input.excludedFeedbackIds?.some((x) => !ids.has(x))) throw new AppError('VALIDATION_FAILED');
     await sql`UPDATE assistant_actions SET edited_payload = ${JSON.stringify(next)}::jsonb, updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx);
@@ -310,6 +325,8 @@ interface ChildPayload {
   subject: string;
   text: string;
   signature: string | null;
+  /** lane V2-B: set when `text` carries the value range (its re-check inputs) */
+  value?: SellerValue;
 }
 
 /** The approved per-recipient send action (created once, in the agent's approval transaction). */
@@ -345,7 +362,7 @@ async function sendActionFor(tx: Tx, deps: AssistantDeps, actor: UserActor, pare
  * caller's SYSTEM transaction. Each queued message carries its comms.dispatch job, so the worker sends it even
  * if this process stops right after; the reconcile pass calls this again for approvals that never got this far.
  */
-export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'>, parentId: string, now: Instant): Promise<{ contactId: string; messageId: string | null; created: boolean }[]> {
+export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'>, parentId: string, now: Instant): Promise<{ contactId: string; messageId: string | null; created: boolean; blocked?: boolean }[]> {
   const t = await tenantFacts(tx);
   const identity = { brokerageLegalName: t.brokerageLegalName, postalAddress: t.postalAddress };
   const children = await sql<{ id: string; contact_id: string; payload: ChildPayload }>`
@@ -353,7 +370,27 @@ export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'
      WHERE tenant_id = app.tenant_id() AND kind = 'message_draft' AND status IN ('approved','executed')
        AND trigger_ref->>'kind' = 'seller_update_send' AND trigger_ref->>'actionId' = ${parentId}
      ORDER BY contact_id`.execute(tx);
-  const out: { contactId: string; messageId: string | null; created: boolean }[] = [];
+  const out: { contactId: string; messageId: string | null; created: boolean; blocked?: boolean }[] = [];
+  // lane V2-B (R-CMA-7, E632): the value range is re-checked once per parent before any child is queued; on a failure
+  // nothing is queued and each child not yet queued is blocked with the reason (the resume pass reads approved or
+  // executed children only, so it never sends one later)
+  const value = children.rows.find((c) => c.payload.value !== undefined)?.payload.value;
+  if (value !== undefined) {
+    const g = await sellerRangeGate(tx, now, value);
+    if (!g.ok) {
+      const explanation = `Not sent: the value range can no longer be shown to clients (${g.sentence}).`;
+      for (const c of children.rows) {
+        const m = await sql<{ id: string }>`SELECT id FROM messages WHERE tenant_id = app.tenant_id() AND idempotency_key = ${sendKey(parentId, c.contact_id)}`.execute(tx);
+        if (m.rows[0]) {
+          out.push({ contactId: c.contact_id, messageId: m.rows[0].id, created: false });
+          continue;
+        }
+        await sql`UPDATE assistant_actions SET status = 'blocked', explanation = ${explanation} WHERE tenant_id = app.tenant_id() AND id = ${c.id}`.execute(tx);
+        out.push({ contactId: c.contact_id, messageId: null, created: false, blocked: true });
+      }
+      return out;
+    }
+  }
   for (const c of children.rows) {
     await lockContact(tx, c.contact_id as never);
     const p = c.payload;
@@ -378,7 +415,7 @@ export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'
 export async function sendSellerUpdate(actor: UserActor, actionId: string, input: SendInput, deps: AssistantDeps): Promise<SendResult> {
   const allIds = await sellerIdsAsSystem(deps, actor, actionId);
   // A: validate as the agent
-  type Pre = { kind: 'replay'; status: string } | { kind: 'go'; payload: SellerUpdatePayload; recommendation: string; excluded: string[]; recipients: RecipientView[]; address: string } | { kind: 'invalidated' };
+  type Pre = { kind: 'replay'; status: string } | { kind: 'go'; payload: SellerUpdatePayload; recommendation: string; excluded: string[]; recipients: RecipientView[]; address: string; valueRemoved: boolean } | { kind: 'invalidated' };
   const pre: Pre = await asUser(deps, actor, async (tx, now) => {
     const a = await ownDraft(tx, actor, actionId);
     if (a.status === 'invalidated') return { kind: 'invalidated' };
@@ -397,6 +434,7 @@ export async function sendSellerUpdate(actor: UserActor, actionId: string, input
     const ids = feedbackIdsOf(payload);
     const excluded = input.excludedFeedbackIds !== undefined ? [...new Set(input.excludedFeedbackIds)] : (choices.excludedFeedbackIds ?? []);
     if (excluded.some((x) => !ids.has(x))) throw new AppError('VALIDATION_FAILED');
+    const valueRemoved = input.valueRemoved ?? choices.valueRemoved ?? false;
     const recipients = await recipientsOf(tx, payload.listingId, now, allIds);
     const sendable = recipients.filter((r) => r.sendable).map((r) => r.contactId).sort();
     if (input.recipientIds !== undefined) {
@@ -404,7 +442,7 @@ export async function sendSellerUpdate(actor: UserActor, actionId: string, input
       if (seen.length !== sendable.length || seen.some((x, i) => x !== sendable[i])) throw new AppError('SELLER_UPDATE_RECIPIENTS_CHANGED', { reachable: sendable.length });
     }
     if (sendable.length === 0) throw new AppError('SELLER_UPDATE_NO_RECIPIENT');
-    return { kind: 'go', payload, recommendation, excluded, recipients, address: head.addressLine1 };
+    return { kind: 'go', payload, recommendation, excluded, recipients, address: head.addressLine1, valueRemoved };
   });
   if (pre.kind === 'invalidated') {
     await asUser(deps, actor, async (tx, now) => {
@@ -433,14 +471,16 @@ export async function sendSellerUpdate(actor: UserActor, actionId: string, input
     if ((a.payload as unknown as SellerUpdatePayload).dataSha256 !== pre.payload.dataSha256) throw new AppError('SELLER_UPDATE_STALE', { assembledThrough: (a.payload as unknown as SellerUpdatePayload).assembledThrough });
     const signature = await senderSignature(tx);
     const agentName = await displayName(tx);
-    const edited = { recommendation: pre.recommendation, excludedFeedbackIds: pre.excluded, recipients, address: pre.address };
+    const edited = { recommendation: pre.recommendation, excludedFeedbackIds: pre.excluded, recipients, address: pre.address, valueRemoved: pre.valueRemoved };
     await A.setDecision(tx, a.id, { status: 'approved', decidedByUserId: actor.userId, now, editedPayload: edited });
     // one approved send per seller, bound like any approved draft to that contact's owner (the agent) and
     // ownership period, so dispatch's R-AST-7 check holds for each (the handback-reply pattern of drafts.ts)
     for (const r of recipients) {
       const sig = r.channel === 'email' ? signature : null;
-      const t = sellerText({ address: pre.address, period, sections: pre.payload.sections, excludedFeedbackIds: pre.excluded, recommendation: pre.recommendation, agentName: sig ? null : agentName });
-      await sendActionFor(tx, deps, actor, a.id, pre.payload.listingId, r.contactId, { sellerUpdateActionId: a.id, channel: r.channel, subject: t.subject, text: t.body, signature: sig });
+      const t = sellerText({ address: pre.address, period, sections: pre.payload.sections, excludedFeedbackIds: pre.excluded, recommendation: pre.recommendation, agentName: sig ? null : agentName, channel: r.channel, valueRemoved: pre.valueRemoved });
+      // lane V2-B: a child whose text carries the value range stores what D re-checks before it is queued
+      const carries = pre.payload.value !== undefined && pre.payload.sections.some((s) => s.kind === 'value' && s.state === 'has_data' && carriesValue(s, { channel: r.channel, valueRemoved: pre.valueRemoved }));
+      await sendActionFor(tx, deps, actor, a.id, pre.payload.listingId, r.contactId, { sellerUpdateActionId: a.id, channel: r.channel, subject: t.subject, text: t.body, signature: sig, ...(carries ? { value: pre.payload.value! } : {}) });
     }
     await audit(tx, actor, { action: 'draft.approved_with_edits', entity: { type: 'assistant_action', id: a.id }, changes: redactDiff({ recommendation: '', excluded_count: 0 }, { recommendation: pre.recommendation, excluded_count: pre.excluded.length }, { entity: 'message' }) });
     await A.resolveFeedFor(tx, a.id, now);
@@ -460,7 +500,8 @@ async function queueAndSend(actor: UserActor, actionId: string, status: string, 
     outcomes.push({ contactId: q.contactId, messageId: q.messageId, result: d.kind === 'not_due' ? 'queued' : d.kind === 'needs_retap' ? 'blocked' : d.kind });
   }
   const order: SendResult['result'][] = ['sent', 'queued', 'dispatch_unknown', 'noop', 'blocked', 'failed'];
-  const best = order.find((k) => outcomes.some((o) => o.result === k)) ?? 'failed';
+  // lane V2-B (E632): nothing queued because the value range failed its re-check is 'blocked', never 'failed'
+  const best = order.find((k) => outcomes.some((o) => o.result === k)) ?? (queued.length > 0 && queued.every((q) => q.blocked) ? 'blocked' : 'failed');
   const first = outcomes.find((o) => o.messageId !== null);
   return { actionId, status, result: best, messageId: first?.messageId ?? null, recipients: outcomes };
 }

@@ -21,6 +21,7 @@ import { DEFAULT_COMPETING_RULE, STRICTEST_LICENSE_PACK } from '@realty/core/lis
 import { type IanaZone, type Instant, addLocalDays, localDateOf, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { type SellerValue, sellerValueSection } from '../cma/sellerValue.js';
 import { AppError } from '../errors.js';
 import { LISTING_COLS, type ListingRow, connectionClientEligible, factsOfRow, mlsCitySpellings, mlsConnections } from '../mls/eligibility.js';
 
@@ -126,7 +127,7 @@ async function mlsInput(tx: Tx, subject: ListingRow, now: Instant): Promise<{ in
 }
 
 /** Everything core needs for one listing and period, read under the caller's RLS. */
-export async function loadInputs(tx: Tx, listingId: string, period: Period, now: Instant): Promise<{ inputs: SellerUpdateInputs; packNotReviewed: boolean }> {
+export async function loadInputs(tx: Tx, listingId: string, period: Period, now: Instant): Promise<{ inputs: SellerUpdateInputs; packNotReviewed: boolean; subject: ListingRow }> {
   const subj = (await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.id = ${listingId}`.execute(tx)).rows[0];
   if (!subj) throw new AppError('NOT_FOUND');
   const start = toIso(period.start);
@@ -181,7 +182,7 @@ export async function loadInputs(tx: Tx, listingId: string, period: Period, now:
     mls: mls.input,
     knownBuyerNames: [...new Set(names)],
   };
-  return { inputs, packNotReviewed: mls.packNotReviewed };
+  return { inputs, packNotReviewed: mls.packNotReviewed, subject: subj };
 }
 
 export interface Assembled {
@@ -189,23 +190,31 @@ export interface Assembled {
   claims: ClaimSpec[];
   assembledThrough: Instant;
   dataSha256: string;
+  /** lane V2-B: what the send re-checks when the 'value' section shows a value (else absent) */
+  value?: SellerValue;
 }
 
 /** Hash of every fact shown: sections without the "MLS data as of …" sentence (see the header). */
 export function dataSha256(sections: readonly Section[]): string {
-  const stable = sections.map((s) => (s.kind === 'competing' ? { ...s, statement: s.state, lines: s.state === 'stale' ? [] : s.lines } : s));
+  // lane V2-B: a shown value's statement carries "MLS data as of …" too; its comps and every gate flip still count
+  const stable = sections.map((s) => (s.kind === 'competing' ? { ...s, statement: s.state, lines: s.state === 'stale' ? [] : s.lines } : s.kind === 'value' && s.state === 'has_data' ? { ...s, statement: s.state } : s));
   return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
 }
 
 /** Assemble one update now (caller's transaction and RLS). */
 export async function assemble(tx: Tx, listingId: string, period: Period, now: Instant): Promise<Assembled> {
-  const { inputs, packNotReviewed } = await loadInputs(tx, listingId, period, now);
+  const { inputs, packNotReviewed, subject } = await loadInputs(tx, listingId, period, now);
   const out = assembleSellerUpdate(inputs, period);
-  const sections = packNotReviewed
+  const core = packNotReviewed
     ? out.sections.map((s): Section => (s.kind === 'competing' ? { kind: 'competing', title: s.title, state: 'unavailable', statement: MLS_PACK_NOT_REVIEWED, lines: [{ text: MLS_PACK_NOT_REVIEWED }], claimOrdinals: [] } : s))
     : out.sections;
-  const claims = packNotReviewed ? out.claims.filter((c) => c.section !== 'competing') : out.claims;
-  return { sections, claims, assembledThrough: now, dataSha256: dataSha256(sections) };
+  const coreClaims = packNotReviewed ? out.claims.filter((c) => c.section !== 'competing') : out.claims;
+  // lane V2-B (R-CMA-10, R-SELL-2): the 'value' section after core's four, its claim ordinals after core's
+  const v = await sellerValueSection(tx, subject, period, now);
+  const from = out.claims.length;
+  const sections = [...core, { ...v.section, claimOrdinals: v.section.claimOrdinals.map((o) => o + from) }];
+  const claims = [...coreClaims, ...v.claims.map((c) => ({ ...c, ordinal: c.ordinal + from }))];
+  return { sections, claims, assembledThrough: now, dataSha256: dataSha256(sections), ...(v.value ? { value: v.value } : {}) };
 }
 
 // ---- the seller-facing text --------------------------------------------------------------------------
@@ -221,10 +230,21 @@ export function fmtPeriod(p: Period): string {
   return `${short.format(p.start)} – ${long.format(p.end - 1)}`;
 }
 
+/**
+ * Whether the seller's text carries the 'value' section (lane V2-B): not when the agent removed it, not by text message
+ * (owner question 5, VERIFY WITH COUNSEL C5), and not when it is unavailable with nothing for the seller (an agent-only
+ * reason).
+ */
+export function carriesValue(s: Section, o: { valueRemoved?: boolean | undefined; channel?: 'email' | 'sms' | undefined }): boolean {
+  if (s.kind !== 'value') return true;
+  return !o.valueRemoved && o.channel !== 'sms' && !(s.state === 'unavailable' && s.lines.length === 0);
+}
+
 /** The update as the seller reads it; `recommendation` is the agent's own words (null before they type it). */
-export function sellerText(o: { address: string; period: Period; sections: readonly Section[]; excludedFeedbackIds: readonly string[]; recommendation: string | null; agentName: string | null }): { subject: string; body: string } {
+export function sellerText(o: { address: string; period: Period; sections: readonly Section[]; excludedFeedbackIds: readonly string[]; recommendation: string | null; agentName: string | null; valueRemoved?: boolean | undefined; channel?: 'email' | 'sms' | undefined }): { subject: string; body: string } {
   const out: string[] = [`Update on ${o.address}, ${fmtPeriod(o.period)}`];
   for (const s of o.sections) {
+    if (!carriesValue(s, o)) continue;
     const lines = s.lines.filter((l) => !(l.feedback && o.excludedFeedbackIds.includes(l.feedback.feedbackId)));
     const kept = s.kind === 'feedback' && s.state === 'has_data' && lines.length === 0 ? [{ text: 'No feedback to share this time.' }] : lines;
     const statement = SELLER_STATEMENT[s.kind] ?? s.statement;
