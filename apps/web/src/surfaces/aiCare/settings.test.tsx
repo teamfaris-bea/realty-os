@@ -18,7 +18,8 @@ describe('My AI assistant (/settings/ai-assistant)', () => {
     expect(listings).not.toBeChecked();
     expect(listings).toBeDisabled();
     expect(screen.getAllByText('Not available yet on this deployment').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Their email replies pause AI care and come to you for now/)).toBeInTheDocument();
+    // ISA-2b wired DKIM verdicts (EMAIL_SENDER_CHECKS): the old "email replies come to you for now" note is gone
+    expect(screen.queryByText(/Their email replies pause AI care and come to you for now/)).toBeNull();
     expect((screen.getByLabelText('Your time zone') as HTMLSelectElement).value).toBeTruthy();
   });
 

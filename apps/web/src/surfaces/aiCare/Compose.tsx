@@ -98,7 +98,7 @@ function ResumeToast({ contactId, first, onClose }: { contactId: string; first: 
             Resume AI care
           </Button>
         ) : null}
-        <Button variant="quiet" onClick={onClose} aria-label="Close">
+        <Button variant="secondary" onClick={onClose}>
           Close
         </Button>
       </div>
