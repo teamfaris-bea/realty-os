@@ -7,12 +7,14 @@
 // The package is the frozen jsonb of handoff.ts:56-73, re-shaped for the web: instants become ISO strings; the
 // conversation keeps seq, status and messageId only (a turn's decision and denied codes stay on the turns route);
 // any confidence, score or probability key and any tenant key are dropped wherever they appear (R-AST-13, R-TEN-3).
-// Keys ISA-2b adds pass through (z.looseObject). canAcknowledge says whether the ack route's UPDATE would match a row
-// for this viewer (0080's isa_update: the recipient or a tenant-wide role; V8), so the web never offers a button that 404s.
+// Keys ISA-2b adds pass through (z.looseObject). canAcknowledge says whether the ack route would authorize this viewer
+// (core can('ai_isa.handoff') on the merge root's facts; batch 13 isa-4 F14) AND its UPDATE would match a row (0080's
+// isa_update: the recipient or a tenant-wide role; V8), so the web never offers a button that 404s.
 // Batch 13 merge: 0081's sla_class 'none' (no human touch can clear it, so no deadline) is a class here too and is never
 // overdue, and a handoff the system closed (closed_reason, 0081) is done, never overdue, as on the panel (isa/routes.ts).
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { can } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -100,6 +102,23 @@ export function webPackage(raw: unknown): unknown {
 
 const CATEGORY_KIND: Record<string, 'confirmation' | 'holding_line'> = { ai_isa_confirmation: 'confirmation', ai_isa_holding_line: 'holding_line' };
 
+/**
+ * Whether POST /ai-isa/handoffs/:id/ack would authorize this actor: core can('ai_isa.handoff') on the facts of the record
+ * the handoff's merge chain ends at, exactly as the ack route's preHandler decides (a re-auth prompt is no refusal).
+ */
+async function mayAcknowledge(req: FastifyRequest, handoffId: string): Promise<boolean> {
+  const actor = req.actor;
+  const state = req.authState;
+  if (!actor || !state) return false;
+  const p = platformOf(req);
+  const root = await withTenantTx(actorOf(req), (tx) => sql<{ c: string }>`SELECT app.contact_merge_root(tenant_id, contact_id) AS c FROM ai_isa_handoffs
+    WHERE tenant_id = app.tenant_id() AND id = ${handoffId}`.execute(tx), { db: p.db });
+  const facts = root.rows[0] ? await detailFacts(req, () => root.rows[0]!.c) : null;
+  if (facts === null) return false;
+  const r = can(actor, 'ai_isa.handoff', { ...facts, reauth: { reauthenticatedAt: state.reauthenticatedAt, now: state.now } });
+  return r.ok || r.code === 'REAUTH_REQUIRED';
+}
+
 async function register(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const handoffFacts = async (req: FastifyRequest) => {
@@ -110,6 +129,9 @@ async function register(app: FastifyInstance): Promise<void> {
   };
   r.get('/ai-isa/handoffs/:id', { config: { auth: 'ai_isa.view' }, preHandler: authorize('ai_isa.view', handoffFacts), schema: { params: IdParams, response: { 200: HandoffView } } }, async (req) => {
     const actor = actorOf(req);
+    // batch 13 isa-4 F14: the ack route's own authorization (ai_isa.handoff on the merge root's facts, as isa/routes.ts
+    // decides it) AND its UPDATE's RLS (the recipient or a tenant-wide role, below), so "Got it" never 404s
+    const ackOk = await mayAcknowledge(req, req.params.id);
     return withTenantTx(actor, async (tx, now) => {
       const h = await sql<{ id: string; assignment_id: string; contact_id: string; reason: string; sla_class: (typeof SLA_CLASSES)[number]; sla_due_at: Date; sla_met_at: Date | null; closed_reason: (typeof HANDOFF_CLOSE_REASONS)[number] | null;
         created_at: Date; acknowledged_at: Date | null; acknowledged_by_user_id: string | null; recipient_user_id: string | null; confirmation_status: string; package: unknown; pending_message_id: string | null }>`
@@ -126,14 +148,13 @@ async function register(app: FastifyInstance): Promise<void> {
         if (msg) pendingMessage = { id: msg.id, kind: CATEGORY_KIND[msg.action_category ?? ''] ?? 'holding_line', channel: msg.channel, status: msg.status, scheduledFor: msg.scheduled_for?.toISOString() ?? null };
       }
       const tenantWide = actor.role === 'owner' || actor.role === 'admin';
-      const ackRole = actor.role === 'owner' || actor.role === 'admin' || actor.role === 'team_lead' || actor.role === 'agent';
       return {
         id: row.id, assignmentId: row.assignment_id, contactId: row.contact_id, reason: row.reason, slaClass: row.sla_class,
         slaDueAt: row.sla_due_at.toISOString(), slaMetAt: row.sla_met_at?.toISOString() ?? null, overdue: row.sla_class !== 'none' && row.sla_met_at === null && row.closed_reason === null && row.sla_due_at.getTime() < now,
         closedReason: row.closed_reason,
         createdAt: row.created_at.toISOString(), acknowledgedAt: row.acknowledged_at?.toISOString() ?? null, acknowledgedByUserId: row.acknowledged_by_user_id,
         recipientUserId: row.recipient_user_id,
-        canAcknowledge: tenantWide || (ackRole && row.recipient_user_id !== null && row.recipient_user_id === actor.userId),
+        canAcknowledge: ackOk && (tenantWide || (row.recipient_user_id !== null && row.recipient_user_id === actor.userId)),
         confirmationStatus: row.confirmation_status,
         pendingMessage,
         package: webPackage(row.package) as z.infer<typeof HandoffPackage>,

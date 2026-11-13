@@ -1,9 +1,11 @@
 // GET /ai-isa/handoffs/:id (ISA-4; R-ISA-14, R-PERM-5, R-AST-13): the full package, read-only. Real Postgres through
 // the API harness; the fake ISA model and fake telephony only.
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms } from '../comms/testing.js';
 import { call, handoffOf, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from '../isa/testing.js';
+import { depsFromPlatform } from '../comms/runtime.js';
 import { HandoffPackage, HandoffView, webPackage } from './routes.js';
 
 let h: ApiHarness;
@@ -70,6 +72,24 @@ describe('GET /ai-isa/handoffs/:id (R-ISA-14)', () => {
     expect(tl.body.canAcknowledge).toBe(false);
     // and the ack route agrees: the TL's UPDATE matches no row
     expect((await call(w.teamLead!, 'POST', `/ai-isa/handoffs/${handoffId}/ack`, {})).status).toBe(404);
+  });
+
+  it('E521 V8 (batch 13 isa-4 F14): a recipient the ack route would refuse (an agent who now only collaborates on the lead) gets canAcknowledge false, matching the 404', async () => {
+    const { lead, handoffId } = await humanRequestHandoff();
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    // the lead moves to another agent through the ownership engine; the earlier owner stays the handoff's recipient and
+    // is added as a collaborator, so the handoff is still visible to them (ai_isa.view: own or collaborator)
+    expect((await runOwnershipCommand(w.owner.actor(), lead.id as never, { kind: 'reassign', toUserId: a1.userId as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids })).ok).toBe(true);
+    expect((await call(a1, 'POST', `/contacts/${lead.id}/collaborators`, { userId: a0.userId })).status).toBe(200);
+    const v = await call<View & { recipientUserId: string | null }>(a0, 'GET', `/ai-isa/handoffs/${handoffId}`);
+    expect(v.status, JSON.stringify(v.body)).toBe(200);
+    expect(v.body.recipientUserId).toBe(a0.userId);
+    expect((await call(a0, 'POST', `/ai-isa/handoffs/${handoffId}/ack`, {})).status).toBe(404);
+    expect(v.body.canAcknowledge).toBe(false);
+    // the new owner is not the recipient (0080 isa_update) and the Owner may
+    expect((await call<View>(a1, 'GET', `/ai-isa/handoffs/${handoffId}`)).body.canAcknowledge).toBe(false);
+    expect((await call<View>(w.owner, 'GET', `/ai-isa/handoffs/${handoffId}`)).body.canAcknowledge).toBe(true);
   });
 
   it('E521 R-ISA-30 (batch 13 merge, 0081 B12X-2): a handoff with no deadline (sla_class none) reads as such and is never overdue', async () => {

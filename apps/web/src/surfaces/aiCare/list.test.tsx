@@ -98,6 +98,23 @@ describe('Under AI care (/ai-care)', () => {
     expect(await screen.findByText('Ended: The team turned the AI assistant off.')).toBeInTheDocument();
   });
 
+  it('R-ISA-15 E496 (batch 13 isa-4 F14): the owner ends care from the list and Undo says "until you resume it", never "the owner"', async () => {
+    const until = new Date(Date.now() + 10_000).toISOString();
+    const control = { assignmentId: ISA_IDS.assignment, state: 'paused', epoch: 1, inFlight: [], canceled: 0, undoUntil: until, sentence: 'Ended.' };
+    const fake = list([row()])
+      .on(`POST /contacts/${IDS.jane}/ai-isa/end`, { status: 200, body: control })
+      .on(`POST /contacts/${IDS.jane}/ai-isa/undo`, { status: 200, body: { ...control, undoUntil: null, sentence: 'Undone.' } });
+    isaApp(fake, '/ai-care', 'agent');
+    const u = userEvent.setup();
+    const card = (await screen.findByRole('link', { name: 'Jane Doe' })).closest('article')!;
+    await u.click(within(card).getByRole('button', { name: 'More' }));
+    await u.click(within(card).getByRole('button', { name: 'End AI care' }));
+    const toast = await screen.findByTestId('ai-undo-toast');
+    await u.click(within(toast).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(screen.getByTestId('announcer').textContent).toContain('Undone. AI care stays paused until you resume it.'));
+    expect(screen.getByTestId('announcer').textContent).not.toMatch(/the owner resumes/);
+  });
+
   it('R-PERM-5: a TC is never shown the page, and nothing is fetched', async () => {
     const fake = list();
     isaApp(fake, '/', 'tc');

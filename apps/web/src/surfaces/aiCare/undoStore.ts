@@ -17,6 +17,9 @@ export interface UndoToast {
   fresh: boolean;
   /** set by the person page's Take over: the thread's compose box takes focus when it closes */
   composeAfter: boolean;
+  /** the assignment's owner (batch 13 isa-4 F14): the toast's words follow it wherever the host is mounted */
+  ownerUserId?: string;
+  ownerName?: string | null;
 }
 
 let current: UndoToast | null = null;

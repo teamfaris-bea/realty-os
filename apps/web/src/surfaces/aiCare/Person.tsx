@@ -199,7 +199,11 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
             {p.openOffer ? (
               <ul>
                 {p.openOffer.slots.map((s) => (
-                  <li key={s.startsAt}>{localTime(s.startsAt)}</li>
+                  // batch 13 isa-4 F14: both zones when theirs is explicit (R-ISA-29; brief item 6)
+                  <li key={s.startsAt}>
+                    {localTime(s.startsAt)}
+                    {p.zones.source === 'explicit' && p.zones.zones.length === 1 ? ` (${localTime(s.startsAt, p.zones.zones[0]!)}, their time)` : ''}
+                  </li>
                 ))}
               </ul>
             ) : BUILT.has('book_appointments') ? (

@@ -151,8 +151,9 @@ export function AiCareControls({ target, inThread = false, layout = 'row', label
   // a reload inside someone's window restores the toast for viewers with control (E496)
   const c = controlsFor({ role: viewer.role, viewerUserId: viewer.userId, ownerUserId: target.ownerUserId, state: target.state, undoOpen, canResume: target.canResume });
   useEffect(() => {
-    if (undoFromPanel && c.undo && getUndo() === null) openUndo({ contactId: target.contactId, kind: 'end', closesAt: windowFromPanel(target.undoUntil!, Date.now()), returnFocus: null, fresh: false, composeAfter: false });
-  }, [undoFromPanel, c.undo, target.contactId, target.undoUntil]);
+    if (undoFromPanel && c.undo && getUndo() === null)
+      openUndo({ contactId: target.contactId, kind: 'end', closesAt: windowFromPanel(target.undoUntil!, Date.now()), returnFocus: null, fresh: false, composeAfter: false, ownerUserId: target.ownerUserId, ownerName: target.ownerName });
+  }, [undoFromPanel, c.undo, target.contactId, target.undoUntil, target.ownerUserId, target.ownerName]);
   const [more, setMore] = useState(false);
   const [line, setLine] = useState<string | null>(null);
   const moreId = useId();
@@ -183,7 +184,7 @@ export function AiCareControls({ target, inThread = false, layout = 'row', label
     const receivedAt = Date.now();
     if (!r.ok) return refused(r.code, r.message);
     const composeAfter = kind === 'take_over' && !inThread;
-    openUndo({ contactId: id, kind, closesAt: windowFromResponse(sentAt, receivedAt, r.data.undoUntil), returnFocus: composeAfter ? null : el, fresh: true, composeAfter: kind === 'take_over' });
+    openUndo({ contactId: id, kind, closesAt: windowFromResponse(sentAt, receivedAt, r.data.undoUntil), returnFocus: composeAfter ? null : el, fresh: true, composeAfter: kind === 'take_over', ownerUserId: target.ownerUserId, ownerName: target.ownerName });
     const lines = inFlightLines(r.data);
     if (lines.length > 0) setLine(lines.join(' '));
     if (composeAfter) navigate(`/contacts/${id}/thread?compose=${lastInboundChannel(qc, id)}`, { state: { aiTakeOver: r.data, receivedAt } });
@@ -281,12 +282,21 @@ export function UndoToastHost({ ownerUserId, ownerName }: { ownerUserId?: string
   useEffect(() => registerHost(me), [me]);
   const first = useIsFirstHost(me);
   const t = useUndo();
-  const [after, setAfter] = useState<{ contactId: string; until: number; text: string } | null>(null);
+  const [after, setAfter] = useState<{ contactId: string; until: number; text: string; ownerUserId?: string; ownerName?: string | null } | null>(null);
   if (!first) return null;
+  // batch 13 isa-4 F14: the toast's own owner (stored with it) wins over the host's, so a host with none (the list) still
+  // says "until you resume it" to the owner
   return (
     <>
-      {t ? <ToastView key={`${t.contactId}:${t.closesAt}`} ownerUserId={ownerUserId} ownerName={ownerName} onExpired={(cid) => setAfter({ contactId: cid, until: Date.now() + 10_000, text: 'Finishing…' })} /> : null}
-      {after && !t ? <AfterWindow state={after} ownerUserId={ownerUserId} ownerName={ownerName} onDone={() => setAfter(null)} /> : null}
+      {t ? (
+        <ToastView
+          key={`${t.contactId}:${t.closesAt}`}
+          ownerUserId={t.ownerUserId ?? ownerUserId}
+          ownerName={t.ownerUserId ? (t.ownerName ?? null) : ownerName}
+          onExpired={(cid) => setAfter({ contactId: cid, until: Date.now() + 10_000, text: 'Finishing…', ownerUserId: t.ownerUserId, ownerName: t.ownerName })}
+        />
+      ) : null}
+      {after && !t ? <AfterWindow state={after} ownerUserId={after.ownerUserId ?? ownerUserId} ownerName={after.ownerUserId ? (after.ownerName ?? null) : ownerName} onDone={() => setAfter(null)} /> : null}
     </>
   );
 }
@@ -301,7 +311,11 @@ function ToastView({ ownerUserId, ownerName, onExpired }: { ownerUserId?: string
   const [now, setNow] = useState(() => Date.now());
   const left = Math.max(0, Math.ceil((t.closesAt - now) / 1000));
   const said5 = useRef(false);
-  const text = t.kind === 'take_over' ? 'You took over. AI care ends in 10 seconds; Undo keeps it paused instead.' : 'AI care ends in 10 seconds. Undo keeps it paused instead.';
+  // batch 13 isa-4 F14: a toast restored after a reload says the seconds it had left when it opened, never "10"
+  const [opened] = useState(() => Math.max(1, Math.ceil((t.closesAt - Date.now()) / 1000)));
+  const secs = t.fresh ? 10 : opened;
+  const inSecs = `${secs} second${secs === 1 ? '' : 's'}`;
+  const text = t.kind === 'take_over' ? `You took over. AI care ends in ${inSecs}; Undo keeps it paused instead.` : `AI care ends in ${inSecs}. Undo keeps it paused instead.`;
   const finishing = t.closesAt <= now;
   const close = (focusBack: boolean) => {
     const el = t.returnFocus;

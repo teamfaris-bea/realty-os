@@ -98,6 +98,15 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(document.body.textContent).not.toMatch(/on file|confidence|\bscore\b|0\.93|0\.81|93%|81%/i);
   });
 
+  it('R-ISA-29 (batch 13 isa-4 F14): the times offered show their time beside the viewer\'s when their zone is explicit', async () => {
+    const at = new Date(Date.now() + 2 * 86_400_000);
+    at.setUTCHours(15, 0, 0, 0);
+    const p = panel({ openOffer: { id: ISA_IDS.optin, status: 'open', slots: [{ startsAt: at.toISOString(), endsAt: new Date(at.getTime() + 1_800_000).toISOString() }], expiresAt: iso(86_400_000) } });
+    isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');
+    const s = await screen.findByRole('region', { name: 'Times offered' });
+    expect(within(s).getByText(/^.+ \(.+ CST, their time\)$/)).toBeInTheDocument();
+  });
+
   it('R-ISA-22 V5: a team lead never reads "You opted in", "You own" or "Waiting on you"; the owner is named instead', async () => {
     const p = panel({ heldTopics: [{ class: 'pricing_negotiation', since: new Date().toISOString(), sentence: 'Waiting on Ava: pricing negotiation.' }] });
     isaApp(person(p), `/contacts/${IDS.jane}`, 'team_lead', { userId: ISA_IDS.tl });
@@ -334,13 +343,16 @@ describe('Take over, End and the Undo toast (R-ISA-15, E496)', () => {
     await waitFor(() => expect(announced()).toBe('Someone already undid this. AI care stays paused.'));
   });
 
-  it("E496: another person's open window shows Undo to a viewer with control (restored from panel.undoUntil), and never to a collaborator", async () => {
+  it("E496 (batch 13 isa-4 F14): another person's open window shows Undo to a viewer with control (restored from panel.undoUntil, worded from the seconds left), and never to a collaborator", async () => {
     const p = panel({ state: 'paused' });
     p.assignment!.undoUntil = new Date(Date.now() + 6000).toISOString();
     const first = isaApp(person(p, { live: false }), `/contacts/${IDS.jane}/thread`, 'owner', { userId: ISA_IDS.other });
     const toast = await screen.findByTestId('ai-undo-toast');
     const left = Number(within(toast).getByRole('timer').textContent?.replace(/\D/g, ''));
     expect(left).toBeLessThanOrEqual(6);
+    // batch 13 isa-4 F14: a restored toast says the seconds actually left, never "10 seconds"
+    expect(within(toast).getByText(/^AI care ends in [1-6] seconds?\. Undo keeps it paused instead\.$/)).toBeInTheDocument();
+    expect(toast.textContent).not.toMatch(/10 seconds/);
     expect(screen.queryByRole('button', { name: 'Resume AI care' })).toBeNull();
     // a collaborating agent (not the owner) sees no Undo
     first.view.unmount();
