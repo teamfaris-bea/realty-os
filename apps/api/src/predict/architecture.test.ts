@@ -34,6 +34,23 @@ function importsOf(file: string): string[] {
 }
 const resolvesInto = (file: string, spec: string, dir: string) => spec.startsWith('.') && resolve(dirname(file), spec).startsWith(dir + '/');
 
+// The S2 pin on predict/routes.ts (batch 14 audit S2, decision (c)): the first write or row lock in `code`, or null.
+// An UPDATE is caught with an alias (`UPDATE t f SET`, `UPDATE t AS f SET`, the idiom workspace/feed.ts uses on the same
+// table), with ONLY, quoted or inside a CTE; any upper-case UPDATE keyword at all is a write or a row lock here.
+const WRITE_SQL = /\b(INSERT\s+INTO|UPDATE\s+(?:ONLY\s+)?[a-z_."]+(?:\s+(?:AS\s+)?(?!SET\b)[a-z_]+)?\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE|COPY\s+[a-z_.]+\s+FROM|FOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE))\b/i;
+const SQL_UPDATE_KEYWORD = /\bUPDATE\b/;
+const WRITE_BUILDER = /\b(insertInto|updateTable|deleteFrom|mergeInto|replaceInto)\s*\(/;
+function firstWrite(code: string): string | null {
+  return code.match(WRITE_SQL)?.[0] ?? code.match(SQL_UPDATE_KEYWORD)?.[0] ?? code.match(WRITE_BUILDER)?.[0] ?? null;
+}
+/** The routes `code` registers, as '<method> <path>', on ANY receiver (not only one named r or app): every verb call
+ *  whose first argument is a literal path, plus any `.route(` and any POST/PUT/PATCH/ALL with a path in a variable. */
+function routesIn(code: string): string[] {
+  const out = [...code.matchAll(/\.(get|post|put|patch|delete|head|options|all)\s*\(\s*(['"`]\/[^'"`]*['"`])/g)].map((m) => `${m[1]} ${m[2]}`);
+  for (const m of code.matchAll(/\.(route)\s*\(|\.(post|put|patch|all)\s*\(\s*(?!['"`]\/)/g)) out.push(`${m[1] ?? m[2]} (path not a literal)`);
+  return out;
+}
+
 describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
   it('the scans are not vacuous: the prediction module and the rest of apps/api are read', () => {
     expect(PREDICT_RUNTIME.map(rel).sort()).toEqual(['predict/decide.ts', 'predict/handlers.ts', 'predict/models.ts', 'predict/pass.ts', 'predict/provider.ts', 'predict/routes.ts', 'predict/settings.ts']);
@@ -91,14 +108,42 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
     const file = join(PREDICT, 'routes.ts');
     // code only: the header comment explains the rule
     const code = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    expect(code.match(/\b(INSERT\s+INTO|UPDATE\s+[a-z_.]+\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE|COPY\s+[a-z_.]+\s+FROM|FOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE))\b/i)?.[0] ?? null).toBeNull();
-    expect(code.match(/\b(insertInto|updateTable|deleteFrom|mergeInto|replaceInto)\s*\(/)?.[0] ?? null).toBeNull();
+    expect(firstWrite(code)).toBeNull();
     // no app.* function but app.tenant_id(): a definer could write on its behalf
     expect([...code.matchAll(/\bapp\.([a-z_]+)\s*\(/g)].map((m) => m[1])).toEqual(['tenant_id']);
     // the routes it registers: exactly one, the GET of /likely
-    expect([...code.matchAll(/\b(?:r|app)\.(get|post|put|patch|delete|head|options|all|route)\s*\(\s*(['"`][^'"`]*['"`])?/g)].map((m) => `${m[1]} ${m[2] ?? ''}`)).toEqual(["get '/likely'"]);
+    expect(routesIn(code)).toEqual(["get '/likely'"]);
     // and its own relative imports cannot reach a writer: the actor helper and the RouteModule type
     expect(importsOf(file).filter((s) => s.startsWith('.')).sort()).toEqual(['../admin/common.js', '../routes.js']);
+  });
+
+  it('R-PRED-4 R-STAFF-7 (b14 to-do): the S2 pin\'s patterns fire on planted writes and routes, aliased, CTE and any receiver included', () => {
+    const writes = [
+      'await sql`UPDATE priority_feed_items f SET state = f.state WHERE f.user_id = ${actor.userId}`.execute(tx);',
+      'await sql`UPDATE priority_feed_items AS f SET state = f.state`.execute(tx);',
+      'await sql`UPDATE ONLY priority_feed_items SET state = state`.execute(tx);',
+      'await sql`WITH u AS (UPDATE priority_feed_items f SET state = f.state RETURNING f.id) SELECT count(*) FROM u`.execute(tx);',
+      'await sql`update public.priority_feed_items set state = state`.execute(tx);',
+      'await sql`UPDATE "priority_feed_items" SET state = state`.execute(tx);',
+      'await sql`INSERT INTO contact_predictions (id) VALUES (${id})`.execute(tx);',
+      'await sql`DELETE FROM priority_feed_items WHERE id = ${id}`.execute(tx);',
+      'await sql`SELECT id FROM priority_feed_items WHERE id = ${id} FOR UPDATE`.execute(tx);',
+      "await tx.updateTable('priority_feed_items').set({ state: 'done' }).execute();",
+    ];
+    for (const w of writes) expect(firstWrite(w), w).not.toBeNull();
+    // reads stay clean
+    expect(firstWrite('await sql`SELECT f.id, f.updated_at FROM priority_feed_items f WHERE f.state = ${s}`.execute(tx); // last update time')).toBeNull();
+    const routes = [
+      "r.post('/likely/:id/dismiss', handler);",
+      "t.post('/likely/:id/dismiss', handler);",
+      "s.get('/likely/export', handler);",
+      "fastify.delete(`/likely/${id}`, handler);",
+      "instance.route({ method: 'POST', url: '/likely/x', handler });",
+      'scope.put(LIKELY_PATH, handler);',
+    ];
+    for (const x of routes) expect(routesIn(`r.get('/likely', h);\n${x}`), x).not.toEqual(["get '/likely'"]);
+    // a Map or Headers .get is not a route
+    expect(routesIn("r.get('/likely', h);\nconst v = byId.get(id) ?? req.headers.get('x-id');")).toEqual(["get '/likely'"]);
   });
 
   it('R-PRED-4: no SQL outside predict/** names contact_predictions or property_records, except the feed read (workspace/feed.ts)', () => {
