@@ -182,13 +182,15 @@ describe('deploy/app-vm templates (R-DEPLOY-7)', () => {
       STORAGE_DIR: '/var/lib/realty/storage',
       TRUST_PROXY: 'uniquelocal',
     });
-    for (const k of ['MLS_LIVE_CALLS', 'ALLOW_FAKE_PROVIDERS', 'TELEPHONY_LIVE_REQUESTS']) expect(s.get(k), k).toBe('false');
+    for (const k of ['MLS_LIVE_CALLS', 'ALLOW_FAKE_PROVIDERS', 'TELEPHONY_LIVE_REQUESTS', 'AI_ISA_LIVE_SENDS', 'PUBLIC_RECORDS_LIVE_CALLS']) expect(s.get(k), k).toBe('false');
     for (const k of [...settings, ...refs]) {
       expect(OWNER_NAMES.includes(k), k).toBe(false);
       expect(k, k).not.toMatch(/^PG[A-Z][A-Z0-9_]*$/);
     }
     for (const [k, v] of s) expect(v, k).not.toMatch(/[$'"]| #/);
-    expect(read(SETTINGS)).toMatch(/AI ISA lane's enable switches go here/);
+    // the AI ISA has merged (batch 12): its live switch is in the settings at off (asserted above), not a placeholder
+    expect(read(SETTINGS)).not.toMatch(/AI ISA lane's enable switches go here/);
+    expect(read(SETTINGS)).toMatch(/^AI_ISA_LIVE_SENDS=false$/m);
   });
 
   it('the templates hold no secret value and no real host', () => {

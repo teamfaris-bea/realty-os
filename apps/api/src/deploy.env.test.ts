@@ -227,6 +227,9 @@ describe('deploy/env.production.example', () => {
     expect(vars.get('MLS_LIVE_CALLS')).toBe('false');
     expect(vars.get('TELEPHONY_LIVE_REQUESTS')).toBe('false');
     expect(vars.get('ALLOW_FAKE_PROVIDERS')).toBe('false');
+    // batch 12: the AI ISA live switch (D12 proposed) and the county kill switch (D10) ship off too
+    expect(vars.get('AI_ISA_LIVE_SENDS')).toBe('false');
+    expect(vars.get('PUBLIC_RECORDS_LIVE_CALLS')).toBe('false');
   });
 
   it('R-DEPLOY-5 E485 E484: verified TLS to <db-host> with the mounted CA path, no query string; the CA path must hold a certificate', () => {

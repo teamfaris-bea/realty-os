@@ -540,7 +540,7 @@ A KMS-backed KEK is **not** a drop-in, and it is not built: `Kek.platformKey` is
 
 - [ ] Release step green. `/api/ready` 200 behind the load balancer. TLS on the public origin.
 - [ ] `db:preflight` green (`--owner --app`, §3). The database connection is `DATABASE_SSL_MODE=verify-full` (the start-up line shows `databaseTls.mode`). On the app VM, `/run/realty/owner.env` was removed after the release step (§12).
-- [ ] Every live switch is off: `TELEPHONY_LIVE_REQUESTS=false`, `MLS_LIVE_CALLS=false`, `ALLOW_FAKE_PROVIDERS=false` (and any later lane's enable switch), each until its own owner decision.
+- [ ] Every live switch is off: `TELEPHONY_LIVE_REQUESTS=false`, `MLS_LIVE_CALLS=false`, `ALLOW_FAKE_PROVIDERS=false`, `AI_ISA_LIVE_SENDS=false` (D12 proposed) and `PUBLIC_RECORDS_LIVE_CALLS=false` (D10) (and any later lane's enable switch), each until its own owner decision.
 - [ ] `DATABASE_URL` is the app role. The owner credentials are only in the release job's environment (with the compose stack: in `.env.owner`, never `.env.production`; `docker compose -f docker-compose.prod.yml --env-file .env.owner exec -T api printenv MIGRATION_DATABASE_URL` prints nothing and exits 1).
 - [ ] Twilio: master account upgraded; the first team's brand and campaign approved; a live test text, reply, STOP and HELP; a click-to-call with the announcement and the recording kept; a call to a one-party state if you use that mode (**VERIFY WITH COUNSEL**).
 - [ ] Email: SPF, DKIM and DMARC aligned for the platform and team domains; a test marketing email unsubscribed with the mail client's own button; a reply lands in the thread; a hard bounce to a test address shows as a suppression.
@@ -766,7 +766,7 @@ The shape for the first real teams. Two machines on one private network: the **a
 - **Owner commands:** the release step, counsel-review and KEK rotation run on the app VM through the `release` profile, with the owner secret rendered only for that window and removed afterwards. A separate admin host can come later.
 - **Hosting, secrets, region:** option A; the provider's secret manager, rendered into root-only files at deploy time, with the owner secret in its own scope; one US region near the team, database and bucket together (**VERIFY WITH COUNSEL**: region and DPA).
 
-Live switches stay **off** throughout: `TELEPHONY_LIVE_REQUESTS=false`, `MLS_LIVE_CALLS=false`, `ALLOW_FAKE_PROVIDERS=false` (`deploy/app-vm/app.settings.example`; `apps/api/src/deploy.appvm.test.ts` asserts them). Each stays off until its own owner decision.
+Live switches stay **off** throughout: `TELEPHONY_LIVE_REQUESTS=false`, `MLS_LIVE_CALLS=false`, `ALLOW_FAKE_PROVIDERS=false`, `AI_ISA_LIVE_SENDS=false` and `PUBLIC_RECORDS_LIVE_CALLS=false` (`deploy/app-vm/app.settings.example` and `deploy/env.production.example`; `apps/api/src/deploy.appvm.test.ts` and `deploy.env.test.ts` assert them). Each stays off until its own owner decision.
 
 ### 12.1 Gates
 

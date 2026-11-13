@@ -9,7 +9,9 @@
 # refuses them). No secret here, and no owner credential (MIGRATION_DATABASE_URL, POSTGRES_*) and no libpq PG*
 # variable: the renderer refuses them.
 #
-# The AI ISA lane's enable switches go here, set to off, once that lane merges.
+# Every live switch is here at its off value (TELEPHONY_LIVE_REQUESTS, MLS_LIVE_CALLS, AI_ISA_LIVE_SENDS,
+# PUBLIC_RECORDS_LIVE_CALLS; apps/api/src/deploy.appvm.test.ts). The AI ISA's other switches are in the database
+# (the Owner's tenant switch and the unreviewed platform:ai_isa pack).
 
 NODE_ENV=production
 
@@ -77,5 +79,12 @@ FUB_SYSTEM_NAME=
 # ---- MLS (DEPLOY §11): kill switch off until §11.5 is signed off ----
 MLS_PROVIDER=fake
 MLS_LIVE_CALLS=false
+
+# ---- AI ISA (D12 PROPOSED): live switch off until a written pilot approval ----
+AI_ISA_LIVE_SENDS=false
+
+# ---- county public records (owner decision D10): kill switch off ----
+PUBLIC_RECORDS_PROVIDER=fake
+PUBLIC_RECORDS_LIVE_CALLS=false
 
 LOG_LEVEL=info
