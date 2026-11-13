@@ -635,6 +635,54 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(panel.body.handoff).toMatchObject({ id: ho.id, overdue: false });
   });
 
+  it('R-ISA-30 E521 (b12 recheck R17): 201 older handoffs at level 2 that nobody touches (nothing left to do) never starve a newer due handoff; a touch on them is still read and meets them all', async () => {
+    // the 201 rows: clones of one real handoff on one untouched, owned lead (its assignment and action cloned with it),
+    // escalated to level 2 a day ago and due two days ago, so they sort ahead of every other due handoff
+    const old = await handedToA1();
+    const seeded = (await (async () => {
+      const c = await h.su.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`CREATE TEMP TABLE r17 ON COMMIT DROP AS SELECT gen_random_uuid() AS aid, gen_random_uuid() AS hid, gen_random_uuid() AS xid, i FROM generate_series(1, 201) i`);
+        await c.query(`INSERT INTO ai_isa_assignments SELECT (jsonb_populate_record(NULL::ai_isa_assignments, to_jsonb(a) || jsonb_build_object('id', r.aid))).*
+          FROM ai_isa_assignments a JOIN ai_isa_handoffs s ON s.assignment_id = a.id, r17 r WHERE s.id = $1`, [old.ho.id]);
+        await c.query(`INSERT INTO assistant_actions SELECT (jsonb_populate_record(NULL::assistant_actions, to_jsonb(x) || jsonb_build_object('id', r.xid, 'dedupe_key', 'r17:' || r.xid))).*
+          FROM assistant_actions x JOIN ai_isa_handoffs s ON s.assistant_action_id = x.id, r17 r WHERE s.id = $1`, [old.ho.id]);
+        await c.query(`INSERT INTO ai_isa_handoffs SELECT (jsonb_populate_record(NULL::ai_isa_handoffs, to_jsonb(s) || jsonb_build_object('id', r.hid, 'assignment_id', r.aid,
+            'assistant_action_id', r.xid, 'created_at', now() - interval '3 days' - r.i * interval '1 second', 'sla_due_at', now() - interval '2 days' - r.i * interval '1 second',
+            'sla_escalation_level', 2, 'sla_escalated_at', now() - interval '1 day'))).*
+          FROM ai_isa_handoffs s, r17 r WHERE s.id = $1`, [old.ho.id]);
+        const ids = (await c.query<{ hid: string }>(`SELECT hid FROM r17`)).rows.map((r) => r.hid);
+        await c.query('COMMIT');
+        return ids;
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      } finally {
+        c.release();
+      }
+    })());
+    expect(seeded).toHaveLength(201);
+    const levels = async (ids: string[]) => (await h.su.query<{ level: number; met: boolean; n: number }>(
+      `SELECT sla_escalation_level AS level, sla_met_at IS NOT NULL AS met, count(*)::int AS n FROM ai_isa_handoffs WHERE id = ANY($1::uuid[]) GROUP BY 1, 2 ORDER BY 1, 2`, [ids])).rows;
+    expect(await levels(seeded)).toEqual([{ level: 2, met: false, n: 201 }]);
+    // the newer handoff is due: the sweep escalates it to level 1; the 201 rows, with nothing to do, are not touched
+    const fresh = await handedToA1();
+    await ageAndSweep(fresh.ho.id);
+    expect((await handoffs([fresh.l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+    expect(await overdueOf(fresh.l.id)).toBeGreaterThanOrEqual(1);
+    expect(await levels(seeded)).toEqual([{ level: 2, met: false, n: 201 }]);
+    expect(await overdueOf(old.l.id)).toBe(0);
+    // a touch on their lead still reaches every one of them, at most 200 a pass, and closes each
+    await touch(old.l.id);
+    const deps = depsFromPlatform(h.app.platform);
+    const actor = systemActor(w.tenantId, 'assistant');
+    for (let pass = 0; pass < 3; pass += 1) await withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor), { db: h.database });
+    expect(await levels(seeded)).toEqual([{ level: 2, met: true, n: 201 }]);
+    expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_isa_handoffs WHERE id = ANY($1::uuid[]) AND closed_reason = 'deadline_met'`, [seeded])).rows[0]!.n).toBe(201);
+  });
+
   it('R-ISA-30 E521 (b12 recheck R21): a handoff whose card was decided and whose lead is then closed is marked done once (lead_closed, one audit row): its decided action stays as it is, it never alerts and nothing calls it overdue', async () => {
     const { l, ho, a1 } = await handedToA1();
     // a1's card is decided as the pre-R11 generic Dismiss left it (seeded: the taps refuse it now)

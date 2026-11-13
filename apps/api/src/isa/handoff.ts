@@ -235,20 +235,31 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
   // rehomeHandbacks and the merge keep current while it is proposed). b12 recheck R10: a decided card has no holder;
   // the record's last owner on the ownership ledger stands in, and only with none does it fall back to the frozen
   // recipient, then the assignment's owner
-  const rows = await sql<{ id: string; action_id: string; contact_id: string; lead_closed: boolean; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null }>`
-    SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level,
-           CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
-           CASE WHEN x.status = 'proposed' THEN x.owner_user_id END AS holder_user_id,
-           CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
-                  WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.owner_user_id IS NOT NULL ORDER BY e.seq DESC LIMIT 1) END AS previous_user_id,
-           COALESCE(h.recipient_user_id, a.owner_user_id) AS frozen_user_id, c.last_human_touch_at AS touched
-      FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
-      JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
-      LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
-     WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' AND h.closed_at IS NULL
-     ORDER BY h.sla_due_at LIMIT 200`.execute(tx);
+  // b12 recheck R17: the read set holds only the rows this pass has work for, decided in SQL: a touch that meets the
+  // deadline, a closed lead, a level-0 row past its deadline or a level-1 row past its second one. A row at level 2 that
+  // nobody touched on an open lead (a pond lead nobody claims, say) has nothing left to do and is not read, so however
+  // many pile up they never fill the 200 and starve a newer handoff; a touch or a close brings it back. Every row read
+  // leaves the set or moves up a level, so the 200 bound the work of one pass and every due row is reached in turn.
+  const at = new Date(now);
+  const rows = await sql<{ id: string; action_id: string; contact_id: string; lead_closed: boolean; created_at: Date; sla_due_at: Date; sla_escalation_level: number; owner_user_id: string | null; holder_user_id: string | null; previous_user_id: string | null; frozen_user_id: string; touched: Date | null; touch_met: boolean; escalate: boolean }>`
+    SELECT s.* FROM (
+      SELECT h.id, h.assistant_action_id AS action_id, c.id AS contact_id, c.ownership_state = 'closed' AS lead_closed, h.created_at, h.sla_due_at, h.sla_escalation_level,
+             CASE WHEN c.ownership_state = 'owned' THEN c.owner_user_id END AS owner_user_id,
+             CASE WHEN x.status = 'proposed' THEN x.owner_user_id END AS holder_user_id,
+             CASE WHEN c.ownership_state <> 'owned' THEN (SELECT e.owner_user_id FROM lead_ownership_events e
+                    WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.owner_user_id IS NOT NULL ORDER BY e.seq DESC LIMIT 1) END AS previous_user_id,
+             COALESCE(h.recipient_user_id, a.owner_user_id) AS frozen_user_id, c.last_human_touch_at AS touched,
+             COALESCE(c.last_human_touch_at >= h.created_at, false) AS touch_met,
+             (h.sla_escalation_level = 0 AND h.sla_due_at <= ${at}::timestamptz)
+               OR (h.sla_escalation_level = 1 AND h.sla_due_at + (h.sla_due_at - h.created_at) <= ${at}::timestamptz) AS escalate
+        FROM ai_isa_handoffs h JOIN ai_isa_assignments a ON a.tenant_id = h.tenant_id AND a.id = h.assignment_id
+        JOIN contacts c ON c.tenant_id = h.tenant_id AND c.id = app.contact_merge_root(h.tenant_id, h.contact_id)
+        LEFT JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id
+       WHERE h.tenant_id = app.tenant_id() AND h.sla_met_at IS NULL AND h.sla_class <> 'none' AND h.closed_at IS NULL) s
+     WHERE s.touch_met OR s.lead_closed OR s.escalate
+     ORDER BY s.sla_due_at, s.id LIMIT 200`.execute(tx);
   for (const r of rows.rows) {
-    if (r.touched !== null && r.touched.getTime() >= r.created_at.getTime()) {
+    if (r.touch_met) {
       await sql`UPDATE ai_isa_handoffs SET sla_met_at = ${r.touched} WHERE tenant_id = app.tenant_id() AND id = ${r.id}`.execute(tx);
       await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'deadline_met', now);
       met += 1;
@@ -261,10 +272,8 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant, actor
       if (await closeHandoffInTx(tx, actor, { id: r.id, actionId: r.action_id }, 'lead_closed', now)) closed += 1;
       continue;
     }
-    if (now < r.sla_due_at.getTime() || r.sla_escalation_level >= 2) continue;
-    // level 1 at the deadline; level 2 one more deadline-length later
-    const span = r.sla_due_at.getTime() - r.created_at.getTime();
-    if (r.sla_escalation_level === 1 && now < r.sla_due_at.getTime() + span) continue;
+    // level 1 at the deadline; level 2 one more deadline-length later (the read set's `escalate`)
+    if (!r.escalate) continue;
     const level = r.sla_escalation_level + 1;
     const targets = await overdueTargets(tx, { owner: r.owner_user_id, holder: r.holder_user_id, previous: r.previous_user_id, frozen: r.frozen_user_id }, level);
     const label = (await contactLabel(tx, r.contact_id)) ?? 'A lead';
