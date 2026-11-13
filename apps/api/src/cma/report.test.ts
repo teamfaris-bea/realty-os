@@ -2,6 +2,7 @@
 // share and PDF tests (share.test.ts, pdf.test.ts) run the same builder on real rows.
 import type { DisplayListing } from '@realty/core/listings';
 import { describe, expect, it } from 'vitest';
+import { renderHumanBody, unsubscribeUrl } from '../comms/render.js';
 import { ESTIMATE_SENTENCE } from './gates.js';
 import { CHECK_WORDING, REPORT_MAX_EMAIL_CHARS, type ReportInput, buildReport, dayText, emailText, longestParts, pdfFields, refusalFor, reportSha256 } from './report.js';
 
@@ -169,5 +170,15 @@ describe('R-CMA-9 rule 5: refusals and warnings', () => {
     const r = buildReport(input({ subjectAddress: `1 Sample\r\nAve ${'z'.repeat(400)}` }));
     expect(r.subject).not.toMatch(/[\r\n]/);
     expect(r.subject.length).toBe(300);
+  });
+});
+
+describe('VERIFY 4: the email cap', () => {
+  it('R-CMA-9 VERIFY 4: a report at the 16,000 cap with the longest signature (1,000, R-PAR-25), brokerage name (200), postal address (300) and an unsubscribe link stays under messages\' 20,000 (0001)', () => {
+    const body = 'r'.repeat(REPORT_MAX_EMAIL_CHARS);
+    const unsub = unsubscribeUrl(`https://${'a'.repeat(180)}.example.test`, new Uint8Array(32), '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002');
+    const out = renderHumanBody(body, { channel: 'email', purpose: 'marketing', identity: { brokerageLegalName: 'b'.repeat(200), postalAddress: 'p'.repeat(300) }, unsubscribe: unsub, signature: 's'.repeat(1000) });
+    expect(out.length).toBeLessThanOrEqual(20_000);
+    expect(out.length).toBeGreaterThan(REPORT_MAX_EMAIL_CHARS + 1500);
   });
 });

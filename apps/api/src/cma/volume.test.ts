@@ -12,7 +12,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { MLS_VOLUME, mlsVolumeFixture } from '../mls/testing.js';
-import { type CmaWorld, address, call, cmaWorld, contact, daysAgo, mlsSale } from './testing.js';
+import { randomUUID } from 'node:crypto';
+import { type CmaWorld, address, call, cmaWorld, contact, daysAgo, fixtureEmail, mlsSale, sharePreview } from './testing.js';
+import { randomPhone } from '../leads/testing.js';
 
 const { ROWS, HOT_ZIP, HOT_LAT, HOT_LON, BIG_CITY, BIG_SUBDIVISION } = MLS_VOLUME;
 let h: ApiHarness;
@@ -57,6 +59,26 @@ describe('POST /cma at volume (VERIFY budget)', () => {
     expect(last!.cma.comps.length).toBeGreaterThanOrEqual(3);
     expect(last!.cma.area.reads.map((t) => t.tier)).toEqual(['subdivision', 'within_1mi', 'postal_code', 'within_3mi', 'city', 'rate_pool']);
     for (const t of last!.cma.area.reads) expect([t.tier, t.ran, t.limitReached]).toEqual([t.tier, true, true]);
+    expect(p95(times)).toBeLessThan(2000);
+  }, 300_000);
+
+  it('VERIFY 5 R-CMA-9: GET /cma/:id/share-preview (its read transaction and comms\' preview transaction) stays under p95 2 s on the same rows', async () => {
+    const times: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const r0 = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: randomUUID(), displayName: 'Vol Seller', phones: [randomPhone()], emails: [fixtureEmail()] });
+      const c = r0.body.contact.id;
+      const line1 = `${80 + i} Sample Avenue`;
+      await address(h, w.tenantId, c, { line1, city: BIG_CITY, postalCode: HOT_ZIP });
+      await mlsSale(w, { line1, city: BIG_CITY, postalCode: HOT_ZIP, subdivision: BIG_SUBDIVISION, closeDate: daysAgo(3000), sqft: 1500, yearBuilt: 1975, latE6: HOT_LAT + 15_000, lonE6: HOT_LON - 15_000 });
+      const tap = await call<{ cma: { id: string } }>(w.agents[0]!, 'POST', `/contacts/${c}/cma`);
+      expect(tap.status).toBe(201);
+      const t = performance.now();
+      const p = await sharePreview(w.agents[0]!, tap.body.cma.id);
+      times.push(performance.now() - t);
+      expect(p.status).toBe(200);
+      expect(p.body.preview.decision).not.toBeNull(); // comms' preview ran (no sender in this world: a deny, in words)
+    }
+    console.info(`[cma volume] share-preview p95 ${Math.round(p95(times))} ms over ${times.length} runs (${times.map((x) => Math.round(x)).join(', ')})`);
     expect(p95(times)).toBeLessThan(2000);
   }, 300_000);
 });
