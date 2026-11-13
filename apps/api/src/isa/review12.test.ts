@@ -438,6 +438,42 @@ describe('b12 recheck R2, R8: the overdue escalation follows whoever holds the c
       expect(to2).toEqual(expect.arrayContaining([tl2.userId, w.owner.userId]));
     });
   });
+
+  it('R-ISA-30 E521 (b12 recheck R14): a handoff card decided while a1 owned the lead, which then moves to a0 and a0 releases to the pond, escalates to a0\'s Team Lead (the ledger\'s last owner), never to tl2 or a1', async () => {
+    await twoTeams(async (tl2) => {
+      const { runOwnershipCommand } = await import('../leads/ownership.js');
+      const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+      const l = await isaLead(h, a0);
+      expect((await startCare(a0, l.id)).status).toBe(200);
+      await runIsa(h, w.tenantId);
+      const ids = depsFromPlatform(h.app.platform).ids;
+      const move = (to: string) => runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: to as never, reason: 'MANUAL_REASSIGN' } as never, randomUUID(), undefined, { db: h.database, ids });
+      expect((await move(a1.userId!)).ok).toBe(true);
+      await runIsa(h, w.tenantId);
+      const [ho] = await handoffs([l.id]);
+      expect(ho).toMatchObject({ reason: 'owner_change', recipient_user_id: a1.userId });
+      expect(ho!.sla_class).not.toBe('none');
+      // a1's card is decided as the pre-R11 generic Dismiss left it (seeded: the taps refuse it now)
+      const actionId = (await h.su.query<{ id: string }>(`SELECT assistant_action_id AS id FROM ai_isa_handoffs WHERE id = $1`, [ho!.id])).rows[0]!.id;
+      await h.su.query(`UPDATE assistant_actions SET status = 'rejected', decided_by_user_id = $2, decided_at = now() WHERE id = $1`, [actionId, a1.userId]);
+      await h.su.query(`UPDATE priority_feed_items SET state = 'done', resolved_at = now() WHERE assistant_action_id = $1`, [actionId]);
+      // the lead moves on to a0 (rehomeHandbacks moves proposed cards only: the decided action stays a1's), then a0 releases it
+      expect((await move(a0.userId!)).ok).toBe(true);
+      await runIsa(h, w.tenantId, 1);
+      expect((await command(a0, l.id, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+      await runIsa(h, w.tenantId, 1);
+      expect((await h.su.query<{ s: string }>(`SELECT ownership_state AS s FROM contacts WHERE id = $1`, [l.id])).rows[0]!.s).not.toBe('owned');
+      expect(await actions([l.id])).toEqual([expect.objectContaining({ owner_user_id: a1.userId, status: 'rejected' })]);
+      // (the sweep is tenant-wide: an earlier case's handoff may reach its second level in the same sweep)
+      expect((await ageAndSweep(ho!.id)).escalated).toBeGreaterThanOrEqual(1);
+      expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+      // the frozen recipient is a1, whose Team Lead is tl2: only the ownership ledger names a0 as the last owner
+      const to = await overdueTo(l.id);
+      expect(to, 'not the frozen recipient\'s Team Lead').not.toContain(tl2.userId);
+      expect(to, 'never the agent who decided the card').not.toContain(a1.userId);
+      expect(to).toEqual([w.teamLead!.userId]);
+    });
+  });
 });
 
 describe('b12 recheck R11: an AI handoff card is decided on its own path, never by the generic Approvals taps (R-ISA-30; E521)', () => {
