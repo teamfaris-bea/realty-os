@@ -551,12 +551,15 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
       await msgs.markSent(tx, m.id, m.channel === 'email' ? 'email' : 'telephony', found.providerRef);
       if (m.channel === 'mms' && /^MM[0-9a-f]{32}$/.test(found.providerRef)) await enqueueProviderCleanup(tx, { messageId: m.id, providerRef: found.providerRef }, m.dispatchedAt!); // D5a R-MMS-7
       if (status !== 'sent') await msgs.setStatus(tx, m.id, status, status === 'delivered' ? null : 'RECONCILED_FAILED', null);
+      // b12 review B12X-5: the AI ISA machine hears how a dispatch_unknown message resolved
+      if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, status);
       return { kind: 'resolved' as const, status };
     }
     const deadline = plusMs(m.dispatchedAt as Instant, MAX_RECONCILE_MS);
     if (now < deadline) return { kind: 'retry' as const, at: (Math.min(deadline, now + 2 * MINUTE_MS) as Instant) };
     await msgs.markFailed(tx, m.id, 'DISPATCH_UNKNOWN_UNRESOLVED', null);
     if (m.channel === 'mms' && m.phoneNumberId) await enqueueProviderCleanup(tx, { messageId: m.id, phoneNumberId: m.phoneNumberId, dispatchedAt: m.dispatchedAt! }, m.dispatchedAt!); // D5a E298
+    if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'failed');
     return { kind: 'resolved' as const, status: 'failed' };
   });
 }

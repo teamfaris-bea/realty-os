@@ -60,7 +60,7 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
   const ok = r.status === 'sent' || r.status === 'delivered';
   await sql`UPDATE ai_isa_shared_facts SET status = ${ok ? 'sent' : 'canceled'} WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND status = 'pending'`.execute(tx);
   await sql`UPDATE ai_isa_turns SET status = ${ok ? 'sent' : r.status === 'dispatch_unknown' ? 'unknown' : r.status === 'canceled' ? 'canceled' : 'blocked'}
-    WHERE tenant_id = app.tenant_id() AND id = ${r.turn_id} AND status IN ('sending','deferred')`.execute(tx);
+    WHERE tenant_id = app.tenant_id() AND id = ${r.turn_id} AND status IN ('sending','deferred','unknown')`.execute(tx);
   await sql`UPDATE ai_isa_handoffs SET confirmation_status = ${ok ? 'sent' : r.status === 'canceled' ? 'canceled' : 'refused'}
     WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND pending_message_id = ${messageId} AND confirmation_status IN ('queued','scheduled')`.execute(tx);
   if (!ok && r.status !== 'dispatch_unknown') {

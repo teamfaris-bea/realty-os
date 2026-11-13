@@ -12,6 +12,7 @@ import { toIso } from '@realty/core/foundation';
 import { type Tx, hmacBytes, lockContact, recordConsentEvent, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
+import { emitSendResultInTx, isAiIsaMessage } from '../isa/send.js';
 import { PROVIDER_OPT_OUT_CODES, hint } from './dispatch.js';
 import * as msgs from './repos/messages.js';
 import { LEDGER_SYSTEM, type CommsDeps } from './types.js';
@@ -112,6 +113,9 @@ async function applyInTx(tx: Tx, actor: SystemActor, e: StatusEvent, now: Instan
   }
   const next = nextStatus(m.status, e.mapped);
   if (next) await msgs.setStatus(tx, m.id, next, next === 'delivered' || next === 'sent' ? null : failureReason(next, e.providerStatus, e.errorCode), e.errorCode ?? null);
+  // R-ISA-14 (D12 proposed; b12 review B12X-5): a later carrier status of an AI ISA message reaches its machine (2
+  // undelivered in a row end care delivery_problem, E518), once per message and status
+  if (next && isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, next);
   // R-TWL-9: an unverified sender reported by the status callback marks the number's registration not ready in THIS
   // transaction (never an opt-out; the message is not retried or reconciled: a terminal failure)
   if (next && (e.mapped === 'failed' || e.mapped === 'undelivered') && channel === 'sms' && isSenderNotVerified(e.errorCode)) {

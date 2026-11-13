@@ -224,3 +224,30 @@ describe('b12 review B12X-4: nothing automated runs beside live AI care (R-ISA-2
     expect(await runOf(during)).toEqual({ status: 'skipped_ineligible', reason: 'AI_ISA_ACTIVE' });
   });
 });
+
+describe('b12 review B12X-5: a later carrier status of an AI ISA message reaches the machine (R-ISA-14; E518)', () => {
+  it('R-ISA-14 E518: an undelivered status callback for a sent AI text emits send_result once, and the machine counts it toward delivery_problem (2 in a row)', async () => {
+    const { inboundSms } = await import('../comms/testing.js');
+    const { applyMessageStatus } = await import('../comms/status.js');
+    const { aiMessages } = await import('./testing.js');
+    const l = await isaLead(h, w.agents[0]!);
+    expect((await startCare(w.agents[0]!, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const undeliver = async (id: string, n: number) => {
+      const r = await applyMessageStatus(systemActor(w.tenantId, 'provider'), { providerEventRef: `evt-undelivered-${id}-${n}`, message: { id }, providerStatus: 'undelivered', mapped: 'undelivered', errorCode: '30003', occurredAt: Date.now() as never }, depsFromPlatform(h.app.platform));
+      expect(r.kind).toBe('applied');
+    };
+    await inboundSms(h, l.phone, w.mainNumber, 'Hi, we are looking for a place soon');
+    await runIsa(h, w.tenantId);
+    const first = (await aiMessages(h, l.id)).filter((m) => m.status === 'sent').at(-1)!;
+    expect(first).toBeTruthy();
+    await undeliver(first.id, 1);
+    const jobs = await h.su.query<{ s: string }>(`SELECT payload->>'status' AS s FROM jobs WHERE kind = 'ai_isa.send_result' AND payload->>'messageId' = $1 ORDER BY id`, [first.id]);
+    expect(jobs.rows.map((x) => x.s)).toEqual(['sent', 'undelivered']);
+    await runIsa(h, w.tenantId, 1);
+    expect((await h.su.query<{ n: number }>(`SELECT undelivered_streak AS n FROM ai_isa_assignments WHERE contact_id = $1`, [l.id])).rows[0]!.n).toBe(1);
+    // a re-delivered callback is a duplicate: no second job
+    const again = await applyMessageStatus(systemActor(w.tenantId, 'provider'), { providerEventRef: `evt-undelivered-${first.id}-1`, message: { id: first.id }, providerStatus: 'undelivered', mapped: 'undelivered', errorCode: '30003', occurredAt: Date.now() as never }, depsFromPlatform(h.app.platform));
+    expect(again.kind).toBe('duplicate');
+  });
+});
