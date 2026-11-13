@@ -33,7 +33,10 @@
 --     BYPASSRLS), STABLE, pinned search_path, schema-qualified, writes nothing. True when an unlifted
 --     ai_isa_person_blocks row exists on any record of the person of p_contact (app.contact_person_ids run as its owner,
 --     which sees every record of the tenant), inside the CALLER's tenant only (p_tenant must equal app.tenant_id();
---     another tenant's id answers false). Output: one boolean, never a row, a reason or an id. EXECUTE: app_user only.
+--     another tenant's id answers false), and only for a caller who may know it (b12 recheck R5): the user who owns the
+--     record's root survivor (the start check's caller) or a tenant-wide actor; anyone else gets false, so it is no
+--     oracle on records they cannot see. Output: one boolean, never a row, a reason or an id. EXECUTE: app_user only
+--     (the guard that calls it is an invoker trigger, so the starter's role needs it).
 --   * replaced (invoker, trigger bindings unchanged): app.ai_isa_assignments_guard (the block check only),
 --     app.ai_isa_person_blocks_guard (the lift's owner and inbound checks follow the merge root), app.ai_isa_send_check
 --     (EXECUTE still only app_definer: the person-block clause and the holiday refusal only), app.appointments_book_lock.
@@ -54,7 +57,15 @@
 -- =============================================================================
 CREATE FUNCTION app.ai_isa_person_blocked(p_tenant uuid, p_contact uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
-  SELECT p_tenant = app.tenant_id() AND EXISTS (
+  SELECT p_tenant = app.tenant_id()
+     -- b12 recheck R5: an answer only for the user who owns the record's root survivor (the start check's caller, whom
+     -- the guard has already required to own the record) or a tenant-wide actor (who reads every block row anyway);
+     -- anyone else gets false whatever the blocks are (a definer cannot ask the caller's RLS, so ownership is checked)
+     AND (app.is_tenant_wide()
+          OR (app.actor_kind() = 'user' AND EXISTS (
+                SELECT 1 FROM public.contacts r
+                 WHERE r.tenant_id = p_tenant AND r.id = app.contact_merge_root(p_tenant, p_contact) AND r.owner_user_id = app.user_id())))
+     AND EXISTS (
     SELECT 1 FROM public.ai_isa_person_blocks b
      WHERE b.tenant_id = p_tenant AND b.lifted_at IS NULL AND b.contact_id = ANY (app.contact_person_ids(p_tenant, p_contact)))
 $$;
@@ -550,6 +561,11 @@ BEGIN
   IF NOT r.prosecdef OR r.owner <> 'app_definer' OR NOT EXISTS (SELECT 1 FROM unnest(r.proconfig) cfg WHERE cfg LIKE 'search_path=%')
      OR has_function_privilege('public', r.oid, 'EXECUTE') OR NOT has_function_privilege('app_user', r.oid, 'EXECUTE') THEN
     RAISE EXCEPTION '0081 self-check failed: app.ai_isa_person_blocked shape';
+  END IF;
+  -- b12 recheck R5: it answers only the root survivor's owner or a tenant-wide actor
+  IF (SELECT p.prosrc !~ 'AND \(app\.is_tenant_wide\(\)\s+OR \(app\.actor_kind\(\) = ''user'' AND EXISTS \(\s+SELECT 1 FROM public\.contacts r\s+WHERE r\.tenant_id = p_tenant AND r\.id = app\.contact_merge_root\(p_tenant, p_contact\) AND r\.owner_user_id = app\.user_id\(\)\)\)\)'
+        FROM pg_proc p WHERE p.oid = 'app.ai_isa_person_blocked(uuid, uuid)'::regprocedure) THEN
+    RAISE EXCEPTION '0081 self-check failed: app.ai_isa_person_blocked answers a caller who cannot see the record';
   END IF;
   IF has_function_privilege('app_user', 'app.ai_isa_send_check(public.messages)', 'EXECUTE') THEN
     RAISE EXCEPTION '0081 self-check failed: ai_isa_send_check must run only inside the guard';

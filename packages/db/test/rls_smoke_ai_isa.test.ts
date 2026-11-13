@@ -867,6 +867,27 @@ describe('a merged-away record under the survivor (b12 review db-isa-merge-1, db
     expect(await errOf(startCare(x, s, uuid(), p))).toBe('ok');
   });
 
+  it('R-ISA-31 R-ISA-22 (b12 recheck R5): app.ai_isa_person_blocked answers only the owner of the record\'s root survivor (the start check\'s caller) and Owner/Admin; an agent who cannot see the record learns nothing', async () => {
+    const blockedAs = async (a: Actor, contactId: string) => (await q<{ b: boolean }>(a, sql`SELECT app.ai_isa_person_blocked(app.tenant_id(), ${contactId}::uuid) AS b`))[0]!.b;
+    const peer = w.agents[1]!;
+    const l = await leadUnderCare(x, { start: false });
+    const clear = await leadUnderCare(x, { start: false });
+    await q(w.system('assistant'), sql`INSERT INTO ai_isa_person_blocks (tenant_id, id, contact_id, reason) VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'ai_declined')`);
+    expect((await q(peer.actor, sql`SELECT id FROM contacts WHERE id = ${l.contactId}::uuid`)).length).toBe(0);
+    // the peer gets the same answer for a blocked and an unblocked record it cannot see
+    expect(await blockedAs(peer.actor, l.contactId)).toBe(false);
+    expect(await blockedAs(peer.actor, clear.contactId)).toBe(false);
+    expect(await blockedAs(x.agent.actor, l.contactId)).toBe(true);
+    expect(await blockedAs(x.agent.actor, clear.contactId)).toBe(false);
+    expect(await blockedAs(w.owner.actor, l.contactId)).toBe(true);
+    // a block on a merged-away record: the survivor's owner is answered (the start check), the peer is not, by either id
+    const s = await selfCreated(h.app, w, x.agent, 'Survivor Oracle Lead');
+    await mergeInto(s, l.contactId);
+    expect(await blockedAs(x.agent.actor, s)).toBe(true);
+    expect(await blockedAs(peer.actor, s)).toBe(false);
+    expect(await blockedAs(peer.actor, l.contactId)).toBe(false);
+  });
+
   it('R-ISA-22 R-ISA-16 E526: the AI ISA rows of a merged-away record are read by the survivor\'s agent and Team Lead, and its handoff is acknowledged by its recipient; another agent sees none', async () => {
     const l = await leadUnderCare(x);
     await inbound(x, l);
