@@ -162,10 +162,11 @@ export type HandoffCloseReason = (typeof HANDOFF_CLOSE_REASONS)[number];
  * still-proposed action is executed, by the system (a person decides an action only as themselves, 0018; `executed` is
  * what an internal action takes once handled). Done means: a human touch met the deadline (the sweep, in its
  * transaction), "Got it" on a handoff no touch can ever meet (sla_class 'none'), the lead was closed by a person (the
- * sweep: a closed lead takes no touch), or AI care restarted on the person after a human touch since the handoff
- * (startCare; a restart alone never ends it, b12 recheck R16). The handoff's stored close (closed_at, closed_reason;
- * 0081, b12 recheck R19) marks it done for the sweep, the panel, the list and the Admin count, so its deadline never
- * alerts afterwards. b12 recheck R21: the close keys on that marker, not on the action: a handoff whose card a person
+ * sweep: a closed lead takes no touch), AI care restarted on the person after a human touch since the handoff
+ * (startCare; a restart alone never ends it, b12 recheck R16), or the owner's "Continue AI care" decided the
+ * continued-from assignment's own handoff (startCare with continueCare's handoff, care_continued; b12 recheck R23).
+ * The handoff's stored close (closed_at, closed_reason; 0081, b12 recheck R19) marks it done for the sweep, the panel,
+ * the list and the Admin count, so its deadline never alerts afterwards. b12 recheck R21: the close keys on that marker, not on the action: a handoff whose card a person
  * already decided (rejected or invalidated, as the generic taps did before R11) is marked done too, its action left as
  * the person decided it, so a closed lead's decided handoff stops being read, once. Idempotent: a second call changes
  * nothing and writes no second audit row.

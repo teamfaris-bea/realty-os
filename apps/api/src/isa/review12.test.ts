@@ -792,6 +792,82 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect((await handoffs([l.id]))[0]).toMatchObject({ sla_escalation_level: 0 });
   });
 
+  /** b12 recheck R23: the person inquires again more than reinquirySlaAfterDays after the last touch, so the ownership
+   *  engine starts a same-owner new period (REINQUIRY_SLA, R-OWN-20; the touch and owned_at are moved back, there is no
+   *  fake clock), and AI care pauses `reinquiry` at its next turn (link 6). Returns the paused assignment's id. */
+  async function pausedForReinquiry(contactId: string): Promise<string> {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const a = (await assignmentOf(h, contactId))!;
+    expect(a).toMatchObject({ ended_at: null, paused_at: null });
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE contacts SET owned_at = owned_at - interval '8 days', last_human_touch_at = last_human_touch_at - interval '8 days' WHERE id = $1`, [contactId]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const seq = async () => (await h.su.query<{ s: string }>(`SELECT ownership_period_seq AS s FROM contacts WHERE id = $1`, [contactId])).rows[0]!.s;
+    const before = await seq();
+    const r = await runOwnershipCommand(systemActor(w.tenantId, 'provider'), contactId as never, { kind: 'reinquiry', inquiryId: randomUUID() } as never, randomUUID(), undefined,
+      { db: h.database, ids: depsFromPlatform(h.app.platform).ids });
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(await seq()).not.toBe(before);
+    await h.su.query(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at) VALUES ($1, 'realtime', 'ai_isa.turn', $2::jsonb, now())`,
+      [w.tenantId, JSON.stringify({ assignmentId: a.id, trigger: 'sweep', epoch: a.epoch })]);
+    await runIsa(h, w.tenantId);
+    expect(await assignmentOf(h, contactId)).toMatchObject({ id: a.id, pause_reason: 'reinquiry', ended_at: null });
+    return a.id;
+  }
+  const handoffOfAssignment = async (assignmentId: string) => (await h.su.query<{ id: string; reason: string; sla_class: string; sla_met_at: Date | null; sla_escalation_level: number; closed_reason: string | null }>(
+    `SELECT id, reason, sla_class, sla_met_at, sla_escalation_level, closed_reason FROM ai_isa_handoffs WHERE assignment_id = $1`, [assignmentId])).rows[0]!;
+  const overdueKeys = async (contactId: string) => (await h.su.query<{ k: string }>(`SELECT dedupe_key AS k FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = $1`, [contactId])).rows.map((r) => r.k);
+
+  it('R-ISA-30 E516 (b12 recheck R23): "Continue AI care" after a reinquiry ends the old assignment reinquiry_period and closes its own handoff care_continued (the owner decided; no touch is recorded): its card closes, its action is executed, it never alerts, and care goes on', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const oldId = await pausedForReinquiry(l.id);
+    const c = await call<{ assignmentId: string }>(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    expect(c.body.assignmentId).not.toBe(oldId);
+    expect((await h.su.query<{ r: string }>(`SELECT end_reason AS r FROM ai_isa_assignments WHERE id = $1`, [oldId])).rows[0]!.r).toBe('reinquiry_period');
+    const ho = await handoffOfAssignment(oldId);
+    expect(ho).toMatchObject({ reason: 'reinquiry_period', sla_met_at: null });
+    expect(ho.sla_class).not.toBe('none');
+    // past its deadline it never alerts (before R23 the sweep paged the Team Lead while AI care went on)
+    await ageAndSweep(ho.id);
+    expect(await overdueOf(l.id)).toBe(0);
+    // it is done: closed care_continued, its card closed and its action executed by the system, no touch recorded
+    expect(await handoffOfAssignment(oldId)).toMatchObject({ closed_reason: 'care_continued', sla_escalation_level: 0, sla_met_at: null });
+    expect(await closedAudit(ho.id)).toEqual([{ reason: 'care_continued', actor_kind: 'system' }]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: null }]);
+    expect(await actionOf(ho.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
+    // AI care carries on: the continuation is live and linked to the old assignment
+    expect((await h.su.query<{ from: string | null; ended: Date | null }>(`SELECT continued_from_assignment_id AS from, ended_at AS ended FROM ai_isa_assignments WHERE id = $1`, [c.body.assignmentId])).rows[0])
+      .toEqual({ from: oldId, ended: null });
+  });
+
+  it('R-ISA-30 E521 (b12 recheck R23, R16 kept): a Continue closes only the continued-from assignment\'s own handoff; an older handoff no human touched still alerts', async () => {
+    const { agent, l, ho: older } = await endedByAgent();
+    // R16: a restart with no touch since leaves the older handoff open
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const midId = await pausedForReinquiry(l.id);
+    expect((await call(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {})).status).toBe(200);
+    const own = await handoffOfAssignment(midId);
+    expect(own.closed_reason).toBe('care_continued');
+    expect(await closedAudit(own.id)).toEqual([{ reason: 'care_continued', actor_kind: 'system' }]);
+    expect(await closedAudit(older.id)).toEqual([]);
+    expect(await actionOf(older.id)).toMatchObject({ status: 'proposed' });
+    // both past their deadlines: only the older one alerts (the sweep is tenant-wide: an earlier case's may too)
+    await ageAndSweep(own.id);
+    expect((await ageAndSweep(older.id)).escalated).toBeGreaterThanOrEqual(1);
+    expect((await handoffs([l.id])).find((x) => x.id === older.id)).toMatchObject({ sla_met_at: null, sla_escalation_level: 1 });
+    const keys = await overdueKeys(l.id);
+    expect(keys.some((k) => k.startsWith(`ai_isa_overdue:${older.id}:`))).toBe(true);
+    expect(keys.some((k) => k.startsWith(`ai_isa_overdue:${own.id}:`))).toBe(false);
+  });
+
   it('R-ISA-30 (b12 recheck R19): the panel\'s handoff and the "Got it" result say why a handoff is closed: null while open, then deadline_met, lead_closed, acknowledged or care_restarted', async () => {
     type PanelHandoff = { id: string; reason: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; closedReason: string | null };
     const panelOf = async (as: TestClient, contactId: string) => {
@@ -993,5 +1069,113 @@ describe('b12 recheck R25: a person\'s zone written through the API is stored by
     expect(r.status).toBe(200);
     expect(await pgKnows(r.body.contact.timezone!)).toBe(true);
     expect((await h.su.query<{ ok: boolean }>(`SELECT (now() AT TIME ZONE timezone) IS NOT NULL AS ok FROM contacts WHERE id = $1`, [l.id])).rows[0]!.ok).toBe(true);
+  });
+});
+
+describe('b12 recheck R23: a re-attestation continues AI care a policy change paused, ends it for that cause and closes its handoff (R-ISA-1, R-ISA-15, R-ISA-30; E524)', () => {
+  // its own tenant: the policy versions change here
+  let x: IsaWorld;
+  let current: string;
+  beforeAll(async () => {
+    x = await isaWorld(h);
+    current = x.versionId;
+  }, 240_000);
+
+  /** A new approved version of the tenant's AI policy (seeded as isaWorld seeds the first; the editor is the web
+   *  lane's), the current one moved to `superseded` (the new one widens it) or `revoked`. */
+  async function changePolicy(kind: 'widened' | 'revoked'): Promise<string> {
+    const next = randomUUID();
+    const sha = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      // (one approved version per playbook: the current one leaves `approved` first)
+      await h.su.query(`UPDATE playbook_versions SET status = $2 WHERE id = $1`, [current, kind === 'widened' ? 'superseded' : 'revoked']);
+      await h.su.query(`INSERT INTO playbook_versions (tenant_id, id, playbook_id, version_no, steps, tone, content_sha256, status, created_by_user_id)
+        SELECT tenant_id, $2, playbook_id, version_no + 1, steps, tone, $3, 'approved', created_by_user_id FROM playbook_versions WHERE id = $1`, [current, next, sha]);
+      await h.su.query(`INSERT INTO playbook_approvals (tenant_id, id, playbook_version_id, decision, decided_by_user_id, decided_by_role, content_sha256, attestation, decided_at)
+        VALUES ($1, gen_random_uuid(), $2, 'approve', $3, 'owner', $4, 'approved', now())`, [x.tenantId, next, x.owner.userId, sha]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    current = next;
+    return next;
+  }
+  const sweep = () => {
+    const deps = depsFromPlatform(h.app.platform);
+    const actor = systemActor(x.tenantId, 'assistant');
+    return withTenantTx(actor, (tx, now) => slaSweepInTx(tx, deps.ids, now, actor), { db: h.database });
+  };
+  async function agedSweep(handoffId: string) {
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '1 minute', created_at = now() - interval '2 minutes' WHERE id = $1 AND sla_class <> 'none'`, [handoffId]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    return sweep();
+  }
+
+  /** Live care on a fresh lead; the policy changes and the assignment's next turn pauses it; the agent re-attests. */
+  async function continuedAfter(kind: 'widened' | 'revoked') {
+    const { freshReauth } = await import('./testing.js');
+    const agent = x.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, x.tenantId);
+    const a = (await assignmentOf(h, l.id))!;
+    const next = await changePolicy(kind);
+    await h.su.query(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at) VALUES ($1, 'realtime', 'ai_isa.turn', $2::jsonb, now())`,
+      [x.tenantId, JSON.stringify({ assignmentId: a.id, trigger: 'sweep', epoch: a.epoch })]);
+    await runIsa(h, x.tenantId);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: a.id, ended_at: null, pause_reason: kind === 'widened' ? 'policy_updated' : 'approval_revoked' });
+    await freshReauth(h, agent);
+    const r = await call<{ continued: { contactId: string; assignmentId: string }[]; notContinued: unknown[] }>(agent, 'POST', '/me/ai-isa/re-attest', { versionId: next });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const mine = r.body.continued.find((c) => c.contactId === l.id);
+    expect(mine, JSON.stringify(r.body)).toBeTruthy();
+    return { agent, l, oldId: a.id, newId: mine!.assignmentId };
+  }
+  async function endedFor(oldId: string) {
+    const q = <T extends object>(text: string) => h.su.query<T>(text, [oldId]).then((r) => r.rows);
+    return {
+      endReason: (await q<{ r: string }>(`SELECT end_reason AS r FROM ai_isa_assignments WHERE id = $1`))[0]!.r,
+      control: (await q<{ r: string }>(`SELECT reason AS r FROM ai_isa_controls WHERE assignment_id = $1 AND kind = 'system_end'`)).map((c) => c.r),
+      audit: (await q<{ r: string }>(`SELECT reason AS r FROM audit_log WHERE action = 'ai_isa.system_ended' AND entity_id = $1`)).map((c) => c.r),
+      handoff: (await q<{ id: string; reason: string; closed_reason: string | null; sla_met_at: Date | null; sla_escalation_level: number; card: string; action: string }>(
+        `SELECT h.id, h.reason, h.closed_reason, h.sla_met_at, h.sla_escalation_level, x.status AS action,
+                (SELECT string_agg(f.state, ',' ORDER BY f.state) FROM priority_feed_items f WHERE f.assistant_action_id = h.assistant_action_id) AS card
+           FROM ai_isa_handoffs h JOIN assistant_actions x ON x.tenant_id = h.tenant_id AND x.id = h.assistant_action_id WHERE h.assignment_id = $1`))[0]!,
+    };
+  }
+  const closedAudit = async (handoffId: string) => (await h.su.query<{ reason: string; actor_kind: string }>(
+    `SELECT reason, actor_kind FROM audit_log WHERE action = 'ai_isa.handoff_closed' AND entity_id = $1 ORDER BY seq`, [handoffId])).rows;
+  const overdueOf = async (contactId: string) => (await h.su.query(`SELECT 1 FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = $1`, [contactId])).rows.length;
+
+  it('R-ISA-30: the close reasons the API names (HANDOFF_CLOSE_REASONS) are exactly the CHECK of ai_isa_handoffs.closed_reason (0081)', async () => {
+    const { HANDOFF_CLOSE_REASONS } = await import('./schemas.js');
+    const def = (await h.su.query<{ d: string }>(`SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid = 'public.ai_isa_handoffs'::regclass AND conname = 'ai_isa_handoffs_closed_reason_check'`)).rows[0]!.d;
+    expect([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).sort()).toEqual([...HANDOFF_CLOSE_REASONS].sort());
+  });
+
+  it('R-ISA-15 E524: a widening version pauses care policy_updated; the re-attestation ends it policy_updated (the card, the controls row and the audit name it, never reinquiry_period) and closes its handoff care_continued, which never alerts', async () => {
+    const { l, oldId, newId } = await continuedAfter('widened');
+    const e = await endedFor(oldId);
+    expect({ endReason: e.endReason, control: e.control, audit: e.audit }).toEqual({ endReason: 'policy_updated', control: ['policy_updated'], audit: ['policy_updated'] });
+    expect(e.handoff).toMatchObject({ reason: 'policy_updated', closed_reason: 'care_continued', sla_met_at: null, action: 'executed', card: 'done' });
+    expect(await closedAudit(e.handoff.id)).toEqual([{ reason: 'care_continued', actor_kind: 'system' }]);
+    await agedSweep(e.handoff.id);
+    expect(await overdueOf(l.id)).toBe(0);
+    expect((await endedFor(oldId)).handoff.sla_escalation_level).toBe(0);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: newId, ended_at: null });
+  });
+
+  it('R-ISA-15 E524: a revoked approval pauses care approval_revoked; after a new approved version the re-attestation ends it policy_updated (§3.2) and closes its handoff care_continued, which never alerts', async () => {
+    const { l, oldId, newId } = await continuedAfter('revoked');
+    const e = await endedFor(oldId);
+    expect({ endReason: e.endReason, control: e.control, audit: e.audit }).toEqual({ endReason: 'policy_updated', control: ['policy_updated'], audit: ['policy_updated'] });
+    expect(e.handoff).toMatchObject({ reason: 'policy_updated', closed_reason: 'care_continued', sla_met_at: null, action: 'executed', card: 'done' });
+    await agedSweep(e.handoff.id);
+    expect(await overdueOf(l.id)).toBe(0);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: newId, ended_at: null });
   });
 });

@@ -30,8 +30,9 @@
 --     refusal is matched as its own branch (the ELSIF on the AI ISA categories followed by its RAISE): its message text
 --     alone is a prefix of the assistant branch's "... mandate (assistant)" refusal, so it proved nothing.
 --  8. b12 recheck R19 (R-ISA-30): ai_isa_handoffs.closed_at and closed_reason record that the system closed a done
---     handoff and why ('deadline_met', 'acknowledged', 'lead_closed', 'care_restarted'), so the panel can say so; only
---     the system sets them, once (the handoff guard), and a close is final.
+--     handoff and why ('deadline_met', 'acknowledged', 'lead_closed', 'care_restarted'; b12 recheck R23:
+--     'care_continued', the owner's Continue AI care on the continued-from assignment's own handoff), so the panel can
+--     say so; only the system sets them, once (the handoff guard), and a close is final.
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4; docs/ARCHITECTURE.md §21.43):
 --   * new function app.ai_isa_person_blocked(uuid, uuid) RETURNS boolean: SECURITY DEFINER (owner app_definer,
@@ -564,7 +565,8 @@ ALTER TABLE stage_automation_decisions ADD CONSTRAINT stage_automation_decisions
 -- 7. b12 recheck R19 (R-ISA-30): a handoff's closed marker (why it is done)
 -- =============================================================================
 ALTER TABLE ai_isa_handoffs ADD COLUMN closed_at timestamptz,
-  ADD COLUMN closed_reason text CONSTRAINT ai_isa_handoffs_closed_reason_check CHECK (closed_reason IN ('deadline_met','acknowledged','lead_closed','care_restarted'));
+  -- b12 recheck R23: 'care_continued' (the owner's Continue AI care decides the continued-from assignment's handoff)
+  ADD COLUMN closed_reason text CONSTRAINT ai_isa_handoffs_closed_reason_check CHECK (closed_reason IN ('deadline_met','acknowledged','lead_closed','care_restarted','care_continued'));
 ALTER TABLE ai_isa_handoffs ADD CONSTRAINT ai_isa_handoffs_closed_pair CHECK ((closed_at IS NULL) = (closed_reason IS NULL));
 
 -- 0080's handoffs guard verbatim except the lines marked "b12 recheck R19"
@@ -646,5 +648,11 @@ BEGIN
         FROM pg_proc p WHERE p.oid = 'app.ai_isa_handoffs_guard()'::regprocedure)
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.ai_isa_handoffs'::regclass AND conname = 'ai_isa_handoffs_closed_pair') THEN
     RAISE EXCEPTION '0081 self-check failed: a user can close an AI handoff, or a close is not final';
+  END IF;
+  -- b12 recheck R23: a Continue AI care has its own close reason (review12.test.ts keeps the CHECK equal to the API's
+  -- HANDOFF_CLOSE_REASONS)
+  IF (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = 'public.ai_isa_handoffs'::regclass
+        AND c.conname = 'ai_isa_handoffs_closed_reason_check') NOT LIKE '%''care_continued''%' THEN
+    RAISE EXCEPTION '0081 self-check failed: ai_isa_handoffs.closed_reason has no care_continued';
   END IF;
 END $$;

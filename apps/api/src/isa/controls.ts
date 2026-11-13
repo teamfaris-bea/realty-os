@@ -61,6 +61,8 @@ export interface StartInput {
   fromHandbackId?: string;
   /** set by Continue AI care (reinquiry, policy re-attestation) */
   continuedFrom?: string;
+  /** set by continueCare: the handoff its end of `continuedFrom` wrote, which the owner's Continue decides (b12 recheck R23) */
+  continuedHandoff?: { id: string; actionId: string };
 }
 
 /**
@@ -145,6 +147,12 @@ export async function startCare(actor: UserActor, deps: IsaDeps, contactId: stri
   // (b12 review B12X-4, R-ISA-2: also the automated messages already built, which dispatch then refuses as
   // ASSISTANT_ACTION_WITHDRAWN, and the module 26 trigger firings still scheduled, skipped visibly)
   const sys = await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
+    // b12 recheck R23: the owner's explicit "Continue AI care" (after a reinquiry, or a re-attestation) is a person's
+    // decision on the handoff the continued-from assignment's end just wrote, not a touch: it closes care_continued (no
+    // deadline is recorded as met) and never alerts, since care goes on in this continuation. Before, R16's touch rule
+    // kept it open, so every Continue paged the Team Lead, then Owner/Admin, while AI care carried on. Any other earlier
+    // handoff keeps R16's rule below.
+    if (i.continuedHandoff) await closeHandoffInTx(tx, sa, i.continuedHandoff, 'care_continued', now);
     // b12 recheck R13, R16: AI care restarting on the person ends an earlier handoff only once a human touched the person
     // since it was written (R-ISA-30: only a human touch clears the deadline; a restart is no touch and earns no credit,
     // D12): its card closes, its action is executed and the deadline is recorded as met by that touch (what the sweep
@@ -315,19 +323,31 @@ export async function systemPauseInTx(tx: Tx, deps: IsaDeps, actor: SystemActor,
   return true;
 }
 
-/** Owner "Continue AI care" after a same-owner reinquiry (or a re-attestation): end this one, start a linked one. */
-export async function continueCare(actor: UserActor, deps: IsaDeps, contactId: string, side: StartInput['side'] | null = null): Promise<ControlOutcome & { stoppedEnrollment: boolean; supersededProposals: number }> {
+/** Why continueCare ends the assignment it continues (b12 recheck R23): the card, the controls row and the audit name it. */
+export type ContinueEndReason = Extract<IsaEndReason, 'reinquiry_period' | 'policy_updated'>;
+
+/**
+ * Owner "Continue AI care" after a same-owner reinquiry (E516, `reinquiry_period`) or a re-attestation (§3.2,
+ * `policy_updated`): end this one for that reason, start a linked one. b12 recheck R23: the end's handoff is handed to
+ * startCare, which closes it (care_continued) once the continuation exists; if the start is refused, it stays open and
+ * its deadline alerts as any other (care did not go on).
+ */
+export async function continueCare(actor: UserActor, deps: IsaDeps, contactId: string, side: StartInput['side'] | null = null, endReason: ContinueEndReason = 'reinquiry_period'): Promise<ControlOutcome & { stoppedEnrollment: boolean; supersededProposals: number }> {
   const prev = await withTenantTx(actor, async (tx) => {
     const a = await loadFor(tx, contactId);
     if (a.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
     return a;
   }, { db: deps.db });
-  await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
+  const handoff = await asSystem(deps, actor.tenantId, async (tx, now, sa) => {
     await lockForTurn(tx, prev.contactId, prev.id);
     const a = await assignmentById(tx, prev.id, 'update');
-    if (a && a.endedAt === null) await systemEndInTx(tx, deps, sa, a, 'reinquiry_period', now);
+    // only the handoff of an end made here: one another path wrote (a stop, a booking) is not the owner's to decide
+    if (a === null || a.endedAt !== null || !(await systemEndInTx(tx, deps, sa, a, endReason, now))) return null;
+    const h = await sql<{ id: string; action_id: string }>`SELECT id, assistant_action_id AS action_id FROM ai_isa_handoffs
+      WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
+    return h.rows[0] ? { id: h.rows[0].id, actionId: h.rows[0].action_id } : null;
   });
-  return startCare(actor, deps, contactId, { side: side ?? prev.side, continuedFrom: prev.id });
+  return startCare(actor, deps, contactId, { side: side ?? prev.side, continuedFrom: prev.id, ...(handoff ? { continuedHandoff: handoff } : {}) });
 }
 
 export async function liftBlock(actor: UserActor, deps: IsaDeps, contactId: string, inboundMessageId: string, attestation: string): Promise<boolean> {

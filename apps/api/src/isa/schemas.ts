@@ -12,8 +12,8 @@ export const CHANNELS = ['sms', 'email'] as const;
 export const CAPABILITIES = ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const;
 export const STATES = ['starting', 'awaiting_reply', 'engaged', 'nurture', 'scheduling', 'booking', 'awaiting_agent', 'paused', 'ended'] as const;
 export const LINK_EFFECTS = ['ok', 'hold', 'pause', 'end'] as const;
-/** b12 recheck R19: the CHECK of ai_isa_handoffs.closed_reason (0081). */
-export const HANDOFF_CLOSE_REASONS = ['deadline_met', 'acknowledged', 'lead_closed', 'care_restarted'] as const;
+/** b12 recheck R19: the CHECK of ai_isa_handoffs.closed_reason (0081). b12 recheck R23: care_continued. */
+export const HANDOFF_CLOSE_REASONS = ['deadline_met', 'acknowledged', 'lead_closed', 'care_restarted', 'care_continued'] as const;
 
 const Iso = z.string();
 /** Why the system closed a handoff (isa/handoff.ts closeHandoffInTx; ai_isa_handoffs.closed_reason, 0081), or null. */
