@@ -4,8 +4,9 @@
 // it will be emailed, what won't print, the wording to check, and every reason the Email button is off. "Email to
 // {first name}" is on only when the preview says it can be shared, and one tap is one request (POST /cma/:id/share
 // with the hashes the preview showed). The email is shown as it will be sent, open (never behind a tap), and the phone's
-// sticky bar names the recipient, the address and the send-time check beside the button (ShareRecipient; audit F7). A report that changed since the preview (CMA_STALE) is fetched again and says
-// so. Nothing here offers another way to send the report.
+// sticky bar names the recipient, the address and the send-time check beside the button (ShareRecipient; audit F7). A
+// report that changed since the preview (CMA_STALE) is fetched again and says so. Nothing here offers another way to
+// send the report.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { Button, Card, Notice } from '../../design/index.js';
