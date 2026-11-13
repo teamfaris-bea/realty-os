@@ -1,4 +1,4 @@
-// api-portal, batch 14 audit F2 (orchestrator decision (a)), the DB half: portal_link_seals (migration 0242) is
+// api-portal, batch 14 audit F2 (orchestrator decision (a)), the DB half: portal_link_seals (migration 0088) is
 // definer-only, holds a sealed link for at most 15 minutes, and is reached only through portal.seal_link,
 // portal.link_for_send, portal.unseal_link and portal.sweep_link_seals, each of which refuses or answers nothing to anyone
 // but the system actor of the tenant. The behaviour with real messages (rendered at the provider send, dropped at a
@@ -31,7 +31,7 @@ afterAll(async () => {
 
 const errCode = (e: { message?: string; code?: string }) => (/^[A-Z_]+:/.test(e.message ?? '') ? e.message!.split(':')[0] : e.code);
 
-describe('b14 F2: the sealed sign-in link (portal_link_seals, 0242)', () => {
+describe('b14 F2: the sealed sign-in link (portal_link_seals, 0088)', () => {
   it('F2: app_user has no privilege on portal_link_seals: no staff role, not the system actor, not a client principal', async () => {
     for (const actor of [w.owner.actor, w.agents[0]!.actor, w.system('worker')]) {
       for (const q of [sql`SELECT * FROM portal_link_seals`, sql`DELETE FROM portal_link_seals`, sql`INSERT INTO portal_link_seals (tenant_id, message_id, url_enc, expires_at) VALUES (app.tenant_id(), ${uuid()}, ${Buffer.alloc(48)}, now())`]) {

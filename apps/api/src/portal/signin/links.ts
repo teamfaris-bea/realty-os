@@ -3,7 +3,7 @@
 //
 // Per link, as the system of the definer row's tenant (R-TEN-3), in one transaction: queueOutboundInTx (initiator
 // system, purpose informational, category portal_login_link, to the login point) with a FIXED LINE as its body, the URL
-// sealed beside it (portal.seal_link: envelope-encrypted under the tenant field key, AAD = the message id; 0242), and a
+// sealed beside it (portal.seal_link: envelope-encrypted under the tenant field key, AAD = the message id; 0088), and a
 // portal.link_expire job at +60 s. After commit, dispatchOutbound inline (the queued comms.dispatch races it; one TX1
 // wins). Every send goes through dispatchOutbound: D1 opt-outs, suppressions, do-not-contact and the DB guard apply;
 // only the automation pause does not (core check 8, R-PORTAL-11).

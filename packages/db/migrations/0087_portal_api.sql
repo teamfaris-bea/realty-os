@@ -1,6 +1,7 @@
 -- =============================================================================
--- 0241_portal_api.sql : client-portal API support (PHASE2_3_PLAN module 45, lane api-portal).
--- (Lane placeholder number; the orchestrator renumbers it when merging. Forward-only; edits no earlier migration.)
+-- 0087_portal_api.sql : client-portal API support (PHASE2_3_PLAN module 45, lane api-portal).
+-- (Lane number 0241, renumbered 0087 at the batch 14 merge, after batch 13's 0086. Forward-only; edits no earlier
+-- migration.)
 --
 -- What it changes
 --   (a) portal_grants.display jsonb: the published copy of a grant's title, scope and contact card (R-PORTAL-18;
@@ -27,7 +28,7 @@
 --   (g) self-check: every `portal` function owned by app_definer, search_path pinned, not executable by PUBLIC;
 --       the client allowlist is still exactly the three portal tables.
 --
--- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.43):
+-- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.52; SECURITY §20):
 --   portal.document_download(bytea, inet, text)  SECURITY DEFINER, owner app_definer, search_path pinned,
 --       EXECUTE to app_user only. Client context only (app.principal_type() = 'client' and an account id), the
 --       stream token single use, 60 s, of the calling account; the whole chain re-checked by
@@ -81,7 +82,7 @@ CREATE UNIQUE INDEX portal_items_live_source ON portal_items (tenant_id, grant_i
 -- -----------------------------------------------------------------------------
 ALTER TABLE portal_items ADD COLUMN retracted_by_user_id uuid;
 -- An ordinary immediate FK, like published_by_user_id's (0018). Kept as well as the guard below (b14 audit F6,
--- ARCHITECTURE §21.44): the guard decides who may be written (the acting member, or NULL for the system); the FK keeps
+-- ARCHITECTURE §21.52): the guard decides who may be written (the acting member, or NULL for the system); the FK keeps
 -- the stored id a member of the tenant for any writer, the definers and maintenance included. An erase failure once
 -- blamed on it ("lead_email_messages_tenant_id_inquiry_id_fkey" in purge_contact_internal) comes from the name order of
 -- contacts' RI triggers, not from this FK (packages/db/test/portal_retracted_by_fk.test.ts reproduces it without it).
@@ -258,14 +259,14 @@ BEGIN
      AND (pg_get_userbyid(p.proowner) <> 'app_definer'
           OR NOT EXISTS (SELECT 1 FROM unnest(p.proconfig) cfg WHERE cfg LIKE 'search_path=%')
           OR has_function_privilege('public', p.oid, 'EXECUTE'));
-  IF bad IS NOT NULL THEN RAISE EXCEPTION '0241 self-check failed: portal function %', bad; END IF;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION '0087 self-check failed: portal function %', bad; END IF;
   SELECT string_agg(c.relname, ', ') INTO bad
     FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'public' AND p.polname = 'tenant_isolation'
      AND pg_get_expr(p.polqual, p.polrelid) LIKE '%client%'
      AND c.relname NOT IN ('portal_accounts','portal_grants','portal_items');
-  IF bad IS NOT NULL THEN RAISE EXCEPTION '0241 self-check failed: client principal admitted outside the portal allowlist: %', bad; END IF;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION '0087 self-check failed: client principal admitted outside the portal allowlist: %', bad; END IF;
   IF NOT has_function_privilege('app_user', 'portal.document_download(bytea, inet, text)', 'EXECUTE') THEN
-    RAISE EXCEPTION '0241 self-check failed: app_user cannot call portal.document_download';
+    RAISE EXCEPTION '0087 self-check failed: app_user cannot call portal.document_download';
   END IF;
 END $$;

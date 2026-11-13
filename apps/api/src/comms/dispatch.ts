@@ -19,7 +19,7 @@
 //                and runs again in a NEW transaction with the guard's code as a deny: recorded as above,
 //                answered as blocked, never sent, never retried, never a 500
 //   provider.send(idempotencyKey = message.id)        (never inside a transaction)
-//        module 45's sign-in link (flagged edit, 0242): its URL is never in messages.body; providerText renders it from
+//        module 45's sign-in link (flagged edit, 0088): its URL is never in messages.body; providerText renders it from
 //        its sealed copy (portal_link_seals) after the stored line, here and in the reconcile's lookup only
 //        web chat (module 22): the transport's deliverChannelMessage (reserved name: only this file calls it,
 //        R-GATE-15), through the session's widget connection; a closed session or a widget that is not connected is
@@ -401,7 +401,7 @@ type SendOutcome = { ok: true; provider: 'telephony' | 'email' | 'web_chat'; ref
 
 // ---- module 45's sign-in link (flagged module-22 edit; b14 audit F2, orchestrator decision (a)) ----------------
 // A portal_login_link message never holds its URL in messages.body: the body is a fixed line from the insert on, and
-// the URL is sealed in portal_link_seals (0242: definer-only, envelope-encrypted with the message id in the AAD). Only
+// the URL is sealed in portal_link_seals (0088: definer-only, envelope-encrypted with the message id in the AAD). Only
 // here, as the system, is it read and rendered after that line: at the provider send, and in the reconcile's lookup so
 // the SMS is matched by exactly the text the provider got. Nothing else renders it, so no reader can copy it.
 

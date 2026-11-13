@@ -1,6 +1,6 @@
 // b14 audit F2 (orchestrator decision (a), a flagged module-22 edit; R-PORTAL-11, E684): the sign-in URL never enters
 // messages.body. The message stores a fixed line; the URL lives in a sealed side record (portal_link_seals, migration
-// 0242: definer-only, envelope-encrypted with the message id in the AAD) that comms/dispatch.ts reads as the system
+// 0088: definer-only, envelope-encrypted with the message id in the AAD) that comms/dispatch.ts reads as the system
 // at providerSend and in reconcileOutbound, and that goes at the first final status, after 15 minutes, and with the
 // message (an erasure). Fakes only; platform:portal is cleared in the per-test database inside try/finally.
 import { requestPortalLogin, withTenantTx } from '@realty/db';

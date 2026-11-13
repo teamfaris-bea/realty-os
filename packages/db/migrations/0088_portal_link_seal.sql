@@ -1,8 +1,8 @@
 -- =============================================================================
--- 0242_portal_link_seal.sql : the client's sign-in link never sits in a readable message body (PHASE2_3_PLAN module 45,
+-- 0088_portal_link_seal.sql : the client's sign-in link never sits in a readable message body (PHASE2_3_PLAN module 45,
 -- lane api-portal; batch 14 audit finding F2, orchestrator decision (a): approved as a flagged module-22 edit).
--- (Lane placeholder number, after 0241_portal_api; the orchestrator renumbers both when merging. Forward-only; edits no
--- earlier migration.)
+-- (Lane number 0242, renumbered 0088 at the batch 14 merge, after 0087_portal_api (lane number 0241). Forward-only;
+-- edits no earlier migration.)
 --
 -- Before: a portal_login_link message stored the whole link in messages.body (plaintext, indexed, tokenized by 0032's
 -- trigger, read by threads, the inbox, search and the handback and AI readers) until its status was final, which on
@@ -29,7 +29,7 @@
 --                                              portal_login_link row reaching a final status): deletes its seal.
 -- No change to any column, policy or function of messages or of any earlier migration.
 --
--- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.44 "the sealed sign-in link"): the four portal definers and
+-- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.52 "the sealed sign-in link"): the four portal definers and
 -- the trigger function are SECURITY DEFINER, owned by app_definer, search_path pinned, never executable by PUBLIC;
 -- app_user may execute the four portal ones (each refuses or answers nothing outside a system actor's own tenant), not
 -- the trigger function. No definer returns plaintext: the database never sees the URL.
@@ -158,15 +158,15 @@ BEGIN
      AND (pg_get_userbyid(p.proowner) <> 'app_definer'
           OR NOT EXISTS (SELECT 1 FROM unnest(p.proconfig) cfg WHERE cfg LIKE 'search_path=%')
           OR has_function_privilege('public', p.oid, 'EXECUTE'));
-  IF bad IS NOT NULL THEN RAISE EXCEPTION '0242 self-check failed: function %', bad; END IF;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION '0088 self-check failed: function %', bad; END IF;
   IF has_function_privilege('app_user', 'app.portal_link_seal_on_final()', 'EXECUTE')
      OR has_function_privilege('app_user', 'portal.link_seal_caller_ok_internal()', 'EXECUTE') THEN
-    RAISE EXCEPTION '0242 self-check failed: app_user may execute an internal function';
+    RAISE EXCEPTION '0088 self-check failed: app_user may execute an internal function';
   END IF;
   IF has_table_privilege('app_user', 'public.portal_link_seals', 'SELECT')
      OR has_table_privilege('app_user', 'public.portal_link_seals', 'INSERT')
      OR has_table_privilege('app_user', 'public.portal_link_seals', 'UPDATE')
      OR has_table_privilege('app_user', 'public.portal_link_seals', 'DELETE') THEN
-    RAISE EXCEPTION '0242 self-check failed: app_user has a privilege on portal_link_seals';
+    RAISE EXCEPTION '0088 self-check failed: app_user has a privilege on portal_link_seals';
   END IF;
 END $$;
