@@ -314,6 +314,11 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
       { db: deps.db },
     );
   }
+  return retractClaimed(deps, tenantId, publicationId, requestedBy);
+}
+
+/** retractPublication after its permission check and audit (run once, even when a confirmed 'unknown' row re-enters). */
+async function retractClaimed(deps: PublishDeps, tenantId: string, publicationId: string, requestedBy: UserActor | null): Promise<{ outcome: 'retracted' | 'remove_yourself' | 'not_live' | 'in_progress' }> {
   // TX1 (the claim), as the system
   const claimId = deps.ids.next<'RetractClaimId'>();
   const pub = await asSystem(deps, tenantId, async (tx) => {
@@ -321,20 +326,23 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
     if (!p) return null;
     // 'unknown' may be live but has no post id to delete: the agent removes it themselves (R-MKT-9, R-MKT-4). No
     // provider call, so no claim: TX2 decides under this row's lock (it may have been confirmed meanwhile)
-    if (p.status === 'unknown') return { p, c: null, token: null, claimId: null };
+    if (p.status === 'unknown') return { p, c: null, token: null, claimId: null, sawUnknown: true };
     if (p.status !== 'published' || !p.external_post_id) return null;
+    const c = await repo.targetById(tx, p.connection_id);
+    // module 53 (R-GBP-3): while platform:gbp is uncleared, Google is called only to take down a post whose listing must
+    // come down (the system's retraction, requestedBy null); a person's own retraction gets the "remove it yourself"
+    // card. It takes no claim (gbp-1): no provider call follows, and a claim left by a crash or a failed TX2 would let
+    // the reconcile pass finish it as the system, calling Google for a listing that need not come down
+    const gbpHeld = c?.kind === 'gbp_location' && requestedBy !== null && !(await repo.platformCleared(tx, 'platform:gbp'));
+    if (gbpHeld) return { p, c, token: null, claimId: null, sawUnknown: false };
     // a live claim is another retraction in flight; the 0054 guard refuses replacing it before the window too. The
     // guard stamps the claim with clock_timestamp(): the time it was taken, after any wait for the row
     const took = await sql`UPDATE marketing_publications SET retract_claim_id = ${claimId}, retract_claimed_at = clock_timestamp()
                             WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND status = 'published'
                               AND (retract_claim_id IS NULL OR retract_claimed_at < now() - app.marketing_retract_claim_window())`.execute(tx);
     if (Number(took.numAffectedRows ?? 0) === 0) return 'in_progress' as const;
-    const c = await repo.targetById(tx, p.connection_id);
-    // module 53 (R-GBP-3): while platform:gbp is uncleared, Google is called only to take down a post whose listing must
-    // come down (the system's retraction, requestedBy null); a person's own retraction gets the "remove it yourself" card
-    const gbpHeld = c?.kind === 'gbp_location' && requestedBy !== null && !(await repo.platformCleared(tx, 'platform:gbp'));
-    const token = c?.credential_id && !gbpHeld ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
-    return { p, c, token, claimId };
+    const token = c?.credential_id ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
+    return { p, c, token, claimId, sawUnknown: false };
   });
   if (!pub) return { outcome: 'not_live' };
   if (pub === 'in_progress') return { outcome: 'in_progress' };
@@ -371,12 +379,13 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
     if (!still || (still.status !== 'published' && still.status !== 'unknown')) return { outcome: 'not_live' as const };
     // another retraction holds the claim now (this one's went stale and was taken over, or this 'unknown' row was
     // confirmed and claimed meanwhile): that one decides, and raises the card if it must. null === null: an 'unknown'
-    // row, still unclaimed, goes on
+    // row, or a person's GBP retraction held by R-GBP-3, still unclaimed, goes on
     if (still.retract_claim_id !== pub.claimId) return { outcome: 'in_progress' as const };
     // this 'unknown' row was confirmed meanwhile (reconcile's lookup, or the provider's late answer): it has a post id
-    // now, so the provider can delete it. Retracted through the claim instead of handed to the agent (once: a
-    // 'published' row never becomes 'unknown' again, so the second run takes the claim path)
-    if (pub.claimId === null && still.status === 'published') return 'confirmed_meanwhile' as const;
+    // now, so the provider can delete it. Retracted again for the same requester (a person's GBP retraction stays held
+    // by R-GBP-3, gbp-1), through the claim instead of handed to the agent (once: a 'published' row never becomes
+    // 'unknown' again, so the second run does not come back here)
+    if (pub.sawUnknown && still.status === 'published') return 'confirmed_meanwhile' as const;
     await raiseRemoveYourselfCard(tx, deps, { pieceId: pub.p.piece_id, publicationId, targetKind: pub.p.connection_kind, targetName: pub.p.connection_name });
     // the post stays recorded as live; the claim is released, so a later request asks the provider again
     if (pub.claimId !== null) {
@@ -385,7 +394,7 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
     }
     return { outcome: 'remove_yourself' as const };
   });
-  if (done === 'confirmed_meanwhile') return retractPublication(deps, tenantId, publicationId, null);
+  if (done === 'confirmed_meanwhile') return retractClaimed(deps, tenantId, publicationId, requestedBy);
   return done;
 }
 
