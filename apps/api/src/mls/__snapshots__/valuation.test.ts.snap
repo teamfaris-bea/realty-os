@@ -266,6 +266,22 @@ exports[`R-AST-13: the changed schemas > R-AST-13 R-TEN-3: GET /admin/mls and th
             ],
             "type": "object",
           },
+          "ai_isa_comps": {
+            "additionalProperties": false,
+            "properties": {
+              "counselReviewed": {
+                "type": "boolean",
+              },
+              "value": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "value",
+              "counselReviewed",
+            ],
+            "type": "object",
+          },
           "automated_notes": {
             "additionalProperties": false,
             "properties": {
@@ -422,6 +438,7 @@ exports[`R-AST-13: the changed schemas > R-AST-13 R-TEN-3: GET /admin/mls and th
           "agent_cma",
           "client_cma",
           "automated_notes",
+          "ai_isa_comps",
           "avm_flag_scope",
           "statements",
         ],
@@ -514,6 +531,7 @@ exports[`R-AST-13: the changed schemas > R-AST-13 R-TEN-3: GET /admin/mls and th
                               "agent_cma",
                               "client_cma",
                               "automated_notes",
+                              "ai_isa_comps",
                               "avm_flag_scope",
                               "statements",
                             ],
@@ -815,6 +833,7 @@ exports[`R-AST-13: the changed schemas > R-AST-13 R-TEN-3: GET /admin/mls and th
                     "agent_cma",
                     "client_cma",
                     "automated_notes",
+                    "ai_isa_comps",
                     "avm_flag_scope",
                     "statements",
                   ],

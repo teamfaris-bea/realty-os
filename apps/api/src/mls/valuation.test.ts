@@ -212,8 +212,8 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
       expect(v.sentence).not.toMatch(/may reach clients|reach clients where/);
       expect(v.sentence).toContain(VALUATION_NO_SHARING);
     }
-    expect(none.sentence).toBe(`Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
-    expect(partial.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. 5 of 5 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(none.sentence).toBe(`Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 6 of 6 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(partial.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. 6 of 6 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
     expect(full.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. Every valuation value is marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
     expect(VALUATION_NO_SHARING).toBe('Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.');
   });
