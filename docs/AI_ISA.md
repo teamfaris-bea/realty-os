@@ -496,7 +496,8 @@ Readiness is computed by core only from **usable** claims: verified, not needs_r
      - returns CALENDAR_UNAVAILABLE unless the calendar is connected or degraded (today's bookSlot proceeds on `not_connected`/`needs_reconnect` with an empty busy set and refuses only `unavailable`, service.ts:407);
      - returns SLOT_SOURCE_CHANGED when the live link id differs from the offer's, which means a new offer;
      - returns SLOT_TAKEN with `nextSlot`; the AI then makes a new offer and never books the alternative;
-     - refuses MEMBER_NOT_ACTIVE.
+     - refuses MEMBER_NOT_ACTIVE;
+     - (batch 13 integration, b12 recheck R3 for this path) books on the record's root survivor (`app.contact_merge_root`), read again under lock 5 just before the insert, with the record's and the root's `contacts` rows held FOR SHARE NOWAIT until the job's transaction commits. The contact locks come before lock 5 in the global order, so they are not taken here; NOWAIT never waits. A merge re-points the record's appointments (0072) in the statement that writes the record's row, so with the rows held it cannot re-point before this insert commits. A record being written right now (a merge in flight) returns CONTACT_BUSY: nothing is decided, the offer stays `accepting` and the job runs again 5 s later (its expiry still bounds the retries).
 
      `bookSlot` passes `{requireLiveCalendar: false}`, so its behaviour and tests are unchanged.
    - Then TX-C (locks 2→3→4) records the result. When booked and care is still live, it writes the handoff (`appointment_booked`) and queues the confirmation as the handoff's pending message. When care is no longer live, the handoff says "booked; confirmation not sent". A GrantRevoked during the booking is written by `revokeLinkAsSystem` in the job's own transaction, so a later rollback cannot lose it.

@@ -459,6 +459,97 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(next.id).not.toBe(o!.id);
   });
 
+  // b13 integration (b12 recheck R3 for the AI booking): tx#1 holds lock 5 alone and the contact locks come before lock 5
+  // in the global order, so it cannot take them; a merge of the lead can commit, or be in flight, between its care read
+  // and its insert (E526, R-OWN-24). Two real transactions each, driven through the job's own seam.
+  async function acceptingOffer() {
+    const { l, o } = await offered();
+    // the offer's message is half an hour old (the gap and the caps allow the confirmation now), and "1" was accepted
+    await h.su.query(`UPDATE messages SET dispatched_at = dispatched_at - interval '30 minutes' WHERE contact_id = $1 AND direction = 'outbound' AND dispatched_at IS NOT NULL`, [l.id]);
+    await h.su.query(`UPDATE ai_isa_slot_offers SET status = 'accepting', accepted_slot = 1, accepted_message_id = $2 WHERE id = $1`, [o!.id, o!.offered_message_id]);
+    await h.su.query(`UPDATE ai_isa_assignments SET machine = jsonb_set(jsonb_set(machine, '{offer,status}', '"accepting"'), '{offer,acceptedIndex}', '0') WHERE contact_id = $1`, [l.id]);
+    const { ownedContact } = await import('../comms/testing.js');
+    const survivor = await ownedContact(agent(), { consent: false });
+    const { runBookJob } = await import('./booking/book.js');
+    const d = { ...depsFromPlatform(h.app.platform), adapters: h.providers.integrations, now: () => Date.now() };
+    const payload = { assignmentId: (await assignmentOf(h, l.id))!.id, offerId: o!.id };
+    return { l, o: o!, survivor, run: () => runBookJob(d as never, bw.tenantId, payload) };
+  }
+  const merge = async (survivorId: string, loserId: string) => {
+    const { command } = await import('../leads/testing.js');
+    return (await command(bw.owner, survivorId, 'merge', { loserId, ownerChoice: agent().userId })).status;
+  };
+  const apptsOf = async (offerId: string) => (await h.su.query<{ contact_id: string }>(`SELECT a.contact_id FROM appointments a
+    JOIN ai_isa_slot_offers o ON o.appointment_id = a.id WHERE o.id = $1`, [offerId])).rows.map((r) => r.contact_id);
+
+  it('R-OWN-24 E526 (b12 recheck R3, AI booking): a merge of the lead that commits after tx#1\'s care read, while it holds lock 5, books the appointment on the root survivor, never the merged-away record', async () => {
+    const x = await acceptingOffer();
+    const { bookTestHooks } = await import('./booking/book.js');
+    let merged: number | null = null;
+    bookTestHooks.afterCareRead = async () => {
+      bookTestHooks.afterCareRead = undefined;
+      // the merge needs no booking lock (0072 moves contact_id only), so it commits while tx#1 waits here
+      merged = await merge(x.survivor.id, x.l.id);
+    };
+    try {
+      await x.run();
+    } finally {
+      bookTestHooks.afterCareRead = undefined;
+    }
+    expect(merged).toBe(200);
+    expect((await h.su.query(`SELECT merged_into_contact_id FROM contacts WHERE id = $1`, [x.l.id])).rows[0]).toEqual({ merged_into_contact_id: x.survivor.id });
+    expect((await offerOf(x.l.id))!.status).toBe('accepted');
+    expect(await apptsOf(x.o.id)).toEqual([x.survivor.id]);
+    expect((await h.su.query(`SELECT count(*)::int AS n FROM appointments WHERE contact_id = $1`, [x.l.id])).rows[0]).toEqual({ n: 0 });
+  });
+
+  it('R-OWN-24 E526 (b12 recheck R3, AI booking): a merge in flight at tx#1\'s insert (it has re-pointed the record and not committed) → CONTACT_BUSY, nothing booked, the job tries again; after the merge commits care is not live and nothing is booked on the merged-away record', async () => {
+    const x = await acceptingOffer();
+    await h.su.query(`INSERT INTO conversations (tenant_id, id, contact_id) SELECT tenant_id, gen_random_uuid(), id FROM contacts c
+      WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM conversations v WHERE v.contact_id = c.id)`, [x.l.id]);
+    const blocker = await h.su.connect();
+    let released = false;
+    const release = async () => { if (!released) { released = true; await blocker.query('COMMIT'); } };
+    let inFlight: Promise<number> | null = null;
+    let fallback: ReturnType<typeof setTimeout> | null = null;
+    const { bookTestHooks } = await import('./booking/book.js');
+    try {
+      await blocker.query('BEGIN');
+      const pid = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      expect((await blocker.query('SELECT 1 FROM conversations WHERE contact_id = $1 FOR UPDATE', [x.l.id])).rows.length).toBeGreaterThan(0);
+      bookTestHooks.afterCareRead = async () => {
+        bookTestHooks.afterCareRead = undefined;
+        // the merge takes both contact locks, re-points the record (its appointments move with it, 0072) and then waits
+        // on the record's conversation row, which the blocker holds: it is in flight when tx#1 goes on to its insert
+        inFlight = merge(x.survivor.id, x.l.id);
+        let waiting = false;
+        for (let i = 0; i < 500 && !waiting; i++) {
+          waiting = (await h.su.query('SELECT 1 FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid))', [pid])).rows.length > 0;
+          if (!waiting) await new Promise((r) => setTimeout(r, 10));
+        }
+        expect(waiting, 'the merge waits on the held conversation row').toBe(true);
+        // a booking that waited on the merge would hang this case: the merge is let go after 3 s whatever happens
+        fallback = setTimeout(() => void release(), 3000);
+      };
+      const first = await x.run();
+      bookTestHooks.afterCareRead = undefined;
+      expect(first).toBe('RETRY:CONTACT_BUSY');
+      expect((await offerOf(x.l.id))!.status).toBe('accepting');
+      expect(await apptsOf(x.o.id)).toEqual([]);
+      await release();
+      expect(await inFlight).toBe(200);
+      // the job's next run: the merge stopped care (its stop signal), so nothing is booked and the offer is refused
+      expect(await x.run()).toBe('REFUSED:CARE_NOT_LIVE');
+    } finally {
+      bookTestHooks.afterCareRead = undefined;
+      if (fallback) clearTimeout(fallback);
+      await release().catch(() => undefined);
+      blocker.release();
+    }
+    expect((await offerOf(x.l.id))!.status).toBe('refused');
+    expect((await h.su.query(`SELECT count(*)::int AS n FROM appointments WHERE contact_id = $1`, [x.l.id])).rows[0]).toEqual({ n: 0 });
+  });
+
   it('R-ISA-15 E523: a pause while tx#1 holds lock 5 → booked, no confirmation, critical, BOOKED_WHILE_PAUSED and CONFIRMATION_NOT_SENT', async () => {
     const { l } = await offered();
     const { bookTestHooks } = await import('./booking/book.js');

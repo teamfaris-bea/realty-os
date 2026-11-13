@@ -479,7 +479,41 @@ export interface BookInTxOptions {
   bufferMinutes?: number;
 }
 
-export type BookInTxResult = BookResult | { ok: false; code: 'SLOT_SOURCE_CHANGED' };
+export type BookInTxResult = BookResult | { ok: false; code: 'SLOT_SOURCE_CHANGED' | 'CONTACT_BUSY' };
+
+/**
+ * b13 integration (b12 recheck R3 for the AI booking): the root survivor of `contactId`, with its row and the record's
+ * row held FOR SHARE until the caller commits, or null when another transaction is writing either row right now.
+ * The booking holds lock 5 and the contact locks come before it in the global order, so it cannot take them (it would
+ * wait under lock 5); NOWAIT never waits. A merge re-points the record's appointments (0072) in the same statement that
+ * writes the record's row, so with the rows held a merge cannot re-point before this booking's insert commits (it
+ * then moves the new appointment too), and a merge that has already written them is in flight: refused, not waited on.
+ * The root is read again under the rows until it holds still, as lockContactRoot does.
+ */
+async function holdContactRootNoWait(tx: Tx, contactId: string): Promise<string | null> {
+  const rootOf = async () => ((await sql<{ id: string | null }>`SELECT app.contact_merge_root(app.tenant_id(), ${contactId}::uuid) AS id`.execute(tx)).rows[0]?.id ?? contactId).toLowerCase();
+  const held = new Set<string>();
+  let root = await rootOf();
+  for (let i = 0; i < 8; i++) {
+    const want = [...new Set([contactId.toLowerCase(), root])].filter((x) => !held.has(x)).sort();
+    if (want.length > 0) {
+      await sql`SAVEPOINT book_contact_root`.execute(tx);
+      try {
+        await sql`SELECT id FROM contacts WHERE tenant_id = app.tenant_id() AND id = ANY (${want}::uuid[]) ORDER BY id FOR SHARE NOWAIT`.execute(tx);
+      } catch (err) {
+        if ((err as { code?: unknown }).code !== '55P03') throw err;
+        await sql`ROLLBACK TO SAVEPOINT book_contact_root`.execute(tx);
+        return null;
+      }
+      await sql`RELEASE SAVEPOINT book_contact_root`.execute(tx);
+      for (const x of want) held.add(x);
+    }
+    const again = await rootOf();
+    if (again === root) return root;
+    root = again;
+  }
+  return null;
+}
 
 /**
  * The AI ISA booking (ISA-2b, D8a; R-ISA-13, R-CAL-3, E151), inside the caller's SYSTEM transaction: the ai_isa.book
@@ -490,6 +524,9 @@ export type BookInTxResult = BookResult | { ok: false; code: 'SLOT_SOURCE_CHANGE
  * savepoint: the assistant-overlap trigger's APPOINTMENT_OVERLAP (0080, narrowed to the assistant and system path by
  * 0081) becomes SLOT_TAKEN with no next slot. bookSlot (the voice path) keeps batch 12's design instead (b12 recheck
  * R9: the live read first, under no lock; F5/R3: the contact root locked before lock 5) and does not call this.
+ * b13 integration (R3 here): just before the insert the contact's root survivor is read again under lock 5 and the
+ * appointment is booked on it, with both rows held (holdContactRootNoWait); a record being written right now (a merge
+ * in flight) refuses CONTACT_BUSY, which the ai_isa.book job retries rather than reports.
  */
 export async function bookSlotInTx(tx: Tx, deps: Pick<CalendarDeps, 'envelope' | 'ids' | 'adapters' | 'now'>, tenantId: string, input: BookInput, o: BookInTxOptions): Promise<BookInTxResult> {
   const s = Date.parse(input.startsAt);
@@ -518,10 +555,14 @@ export async function bookSlotInTx(tx: Tx, deps: Pick<CalendarDeps, 'envelope' |
     }
     return { ok: false, code: 'SLOT_TAKEN', nextSlot: next };
   }
+  // b13 integration (b12 recheck R3): the record may have been merged away since the caller's care read; book on its
+  // root survivor, with both rows held so that a merge cannot re-point the record before this insert commits
+  const contactId = input.contactId ? await holdContactRootNoWait(tx, input.contactId) : null;
+  if (input.contactId && contactId === null) return { ok: false, code: 'CONTACT_BUSY' };
   const id = deps.ids.next<'AppointmentId'>();
   await sql`SAVEPOINT book_slot`.execute(tx);
   try {
-    await repo.insertBooked(tx, { id, userId: input.userId, contactId: input.contactId ?? null, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
+    await repo.insertBooked(tx, { id, userId: input.userId, contactId, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
   } catch (err) {
     if (/APPOINTMENT_OVERLAP/.test((err as Error).message ?? '')) {
       await sql`ROLLBACK TO SAVEPOINT book_slot`.execute(tx);

@@ -16,7 +16,7 @@ import { ISA_BOOKING_DEFAULTS, refusalClass, step, type IsaFacts } from './coreS
 import { finalizeInTx, systemEndInTx } from './controls.js';
 import { applyActionsInTx, cancelForAssignmentInTx, contextFor, type IsaDeps, pauseCardInTx } from './effects.js';
 import { confirmationNotSentInTx, slaSweepInTx } from './handoff.js';
-import { runBookJob } from './booking/book.js';
+import { BOOK_BUSY_RETRY_MS, runBookJob } from './booking/book.js';
 import { runOfferJob } from './booking/offer.js';
 import { proposeAiSavedSearchInTx } from './buyer/savedSearch.js';
 import { emitIsaSendResultsInTx } from './sendResult.js';
@@ -239,7 +239,11 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
   };
   const book: StandaloneJobHandler<z.infer<typeof BookPayload>> = {
     kind: 'ai_isa.book', queue: 'realtime', mode: 'standalone', via: 'assistant', schema: BookPayload, maxAttempts: 5,
-    async run(ctx, p) { await runBookJob(calDeps(ctx.providers), ctx.actor.tenantId, p); },
+    // b13 integration: CONTACT_BUSY (a merge of the lead in flight at the insert) decides nothing; the job runs again
+    async run(ctx, p) {
+      const r = await runBookJob(calDeps(ctx.providers), ctx.actor.tenantId, p);
+      if (r.startsWith('RETRY:')) return { retryAt: (ctx.now + BOOK_BUSY_RETRY_MS) as Instant };
+    },
   };
   const tx = <P>(kind: `${string}.${string}`, schema: TxJobHandler<P>['schema'], fn: (t: Tx, deps: IsaDeps, actor: SystemActor, p: P, now: Instant, ctx: JobContext) => Promise<unknown>, queue: 'realtime' | 'default' = 'realtime'): TxJobHandler<P> => ({
     kind, queue, via: 'assistant', schema, async run(ctx, p) { await fn(ctx.tx, isaDeps(depsFor, ctx.providers), ctx.actor, p, ctx.now, ctx); },

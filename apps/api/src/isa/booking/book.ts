@@ -11,6 +11,8 @@
 //        4. an open appointment of the person, read under lock 5 → APPOINTMENT_ALREADY_SET (one per person per
 //           organizer; across organizers the residual is stated in DATA_MODEL R-ISA-13).
 //        5. bookSlotInTx with requireLiveCalendar, the offer's link and the policy buffer (the live read under lock 5).
+//           It books on the record's root survivor, read again under lock 5 (b13 integration, b12 recheck R3); a record
+//           being written right now (a merge in flight) is CONTACT_BUSY: nothing is decided, the job runs again shortly.
 //        6. accepted with the appointment (unique), audited ai_isa.slot_booked; or refused with its code, audited
 //           ai_isa.booking_refused.
 //   TX-C (locks 2 → 3 → 4; trigger `booking`): step(booking_result). Codes core lacks go as CALENDAR_UNAVAILABLE
@@ -55,8 +57,11 @@ const actorOf = (tenantId: string): SystemActor => systemActor(tenantId as Tenan
 /** The 1-based accepted slot of a row (the CHECK), as the slot itself. */
 export const acceptedSlotOf = (o: Pick<OfferRow, 'slots' | 'acceptedSlot'>): IsaSlot | null => (o.acceptedSlot === null ? null : (o.slots[o.acceptedSlot - 1] ?? null));
 
-/** tx#1. Returns the offer's final status (accepted / refused / skipped). */
-async function tx1(deps: BookJobDeps, tenantId: string, p: BookPayload): Promise<{ kind: 'skip' } | { kind: 'done'; readAt: Instant }> {
+/** How soon the job runs again after CONTACT_BUSY (the offer stays accepting; its expiry still bounds the retries). */
+export const BOOK_BUSY_RETRY_MS = 5_000;
+
+/** tx#1. Returns the offer's final status (accepted / refused / skipped), or a retry (CONTACT_BUSY: nothing decided). */
+async function tx1(deps: BookJobDeps, tenantId: string, p: BookPayload): Promise<{ kind: 'skip' } | { kind: 'retry'; code: 'CONTACT_BUSY' } | { kind: 'done'; readAt: Instant }> {
   return withTenantTx(actorOf(tenantId), async (tx, now) => {
     const peek = await offerById(tx, p.offerId);
     if (peek === null || peek.assignmentId !== p.assignmentId) return { kind: 'skip' as const };
@@ -92,7 +97,8 @@ async function tx1(deps: BookJobDeps, tenantId: string, p: BookPayload): Promise
     // 5. the booking, with a live read on the offer's link under lock 5
     const res = await bookSlotInTx(tx, deps, tenantId, { userId: o.organizerUserId, contactId: a.contactId, kind: o.kind, startsAt: new Date(slot.startsAt).toISOString(),
       endsAt: new Date(slot.endsAt).toISOString(), createdByKind: 'assistant' }, { requireLiveCalendar: true, expectLinkId: o.availabilityLinkId, bufferMinutes: ctx.content.booking.bufferMinutes });
-    if (!res.ok) return refuse(res.code);
+    // b13 integration (b12 recheck R3): the record is being written right now (a merge in flight): the job tries again
+    if (!res.ok) return res.code === 'CONTACT_BUSY' ? { kind: 'retry' as const, code: res.code } : refuse(res.code);
     // 6. accepted (appointment_id unique, 0190)
     await sql`UPDATE ai_isa_slot_offers SET status = 'accepted', appointment_id = ${res.appointmentId} WHERE tenant_id = app.tenant_id() AND id = ${o.id}`.execute(tx);
     await audit(tx, actorOf(tenantId), { action: 'ai_isa.slot_booked', entity: { type: 'ai_isa_slot_offer', id: o.id }, reason: 'BOOKED' });
@@ -185,9 +191,10 @@ export async function txC(deps: BookJobDeps, tenantId: string, offerId: string, 
   }, { db: deps.db, retries: 2 });
 }
 
-/** The job body: tx#1, then TX-C. */
+/** The job body: tx#1, then TX-C. 'RETRY:…' means nothing was decided and the job runs again (handlers.ts). */
 export async function runBookJob(deps: BookJobDeps, tenantId: string, p: BookPayload): Promise<string> {
   const r = await tx1(deps, tenantId, p);
   if (r.kind === 'skip') return 'SKIPPED';
+  if (r.kind === 'retry') return `RETRY:${r.code}`;
   return txC(deps, tenantId, p.offerId, r.readAt);
 }
