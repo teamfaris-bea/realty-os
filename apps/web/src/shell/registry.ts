@@ -50,6 +50,7 @@ import { surface as adminCoachingSurface } from '../surfaces/admin/coaching/inde
 import { surface as adminTransactionsSurface } from '../surfaces/admin/transactions/index.js';
 import { surface as documentsSurface } from '../surfaces/documents/index.js';
 import { surface as voiceSurface } from '../surfaces/voice/index.js';
+import { surface as adsSurface } from '../surfaces/ads/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -92,5 +93,6 @@ export const surfaces: SurfaceModule[] = [
   adminTransactionsSurface,
   documentsSurface,
   voiceSurface,
+  adsSurface,
   // registry: add new entries above this line
 ];

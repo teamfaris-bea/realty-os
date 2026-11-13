@@ -111,6 +111,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   // module 55 (lane phase3-staff): the document page (a TC or ISA off the deal sees its not-available state)
   { path: '/documents/:documentId', roles: ALL, url: (i) => `/documents/${i.documentId}` },
   { path: '/documents/:documentId/dates', roles: ALL, url: (i) => `/documents/${i.documentId}/dates` },
+  // module 55 (lane phase3-staff): the Google Ads page (the sweep's tenant has platform:ads uncleared: its dark state)
+  { path: '/ads', roles: ADMINS, url: at('/ads') },
 ];
 
 /** Screens outside the app frame (signed out). */
