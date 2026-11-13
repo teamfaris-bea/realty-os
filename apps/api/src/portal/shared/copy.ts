@@ -16,17 +16,13 @@ export const SIGNIN_ACCEPTED =
 
 export const LINK_EMAIL_SUBJECT = 'Your sign-in link';
 
-/** The sign-in link message (E643: it names whose portal it opens). */
-export function linkBody(o: { brokerage: string; name: string; url: string; channel: 'sms' | 'email' }): string {
-  const lead = `${o.brokerage}: here is the sign-in link for ${o.name}'s client portal. It works once, for 15 minutes.`;
-  return o.channel === 'email'
-    ? `${lead}\n\n${o.url}\n\nIf you did not ask for it, you can ignore this message.`
-    : `${lead} ${o.url} If you did not ask for it, ignore this text.`;
-}
-
-/** What the stored message says once the send is final (R-PORTAL-11; F3). */
-export function redactedLinkBody(o: { brokerage: string; name: string }): string {
-  return `${o.brokerage}: sign-in link for ${o.name}'s client portal (link removed after sending; it worked once, for 15 minutes).`;
+/**
+ * The stored line of a sign-in link message (E643: it names whose portal it opens). The URL is never in it (b14 audit
+ * F2): comms/dispatch.ts renders the sealed URL after this line at the provider send only, so staff reading the thread
+ * see this line, which says the link is not kept, and the client gets the line with the link after it.
+ */
+export function linkLine(o: { brokerage: string; name: string; channel: 'sms' | 'email' }): string {
+  return `${o.brokerage}: sign-in link for ${o.name}'s client portal. It works once, for 15 minutes; if you did not ask for it, ignore this ${o.channel === 'email' ? 'message' : 'text'}. Sign in here (the link itself is not kept in the message history):`;
 }
 
 export const INVITE_EMAIL_SUBJECT = (scope: 'purchase' | 'sale'): string => `Follow your home ${scope} online`;

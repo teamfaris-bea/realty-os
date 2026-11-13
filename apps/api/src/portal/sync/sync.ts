@@ -8,7 +8,7 @@
 //   3 store expiry once (F10): closed ⇒ GREATEST(closed_at, granted_at) + 90 days; lost ⇒ GREATEST(now, granted_at +
 //     1 s); a listing sold, withdrawn or expired ⇒ now + 90 days (VERIFY WITH COUNSEL, Q-PORTAL-4)
 //   4 refresh the contact card when the deal owner, listing agent or team sender changed (audited)
-//   5 backstop: final sign-in link messages older than 15 minutes redacted, queued ones canceled
+//   5 backstop: sign-in links still queued after 15 minutes canceled; expired sealed links and those of final messages dropped
 import type { Instant, SystemActor } from '@realty/core/foundation';
 import { publishable, renderPortalItem } from '@realty/core/portal';
 import type { Tx } from '@realty/db';

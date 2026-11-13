@@ -3,9 +3,9 @@
 // as a constructed actor here (worker/systemActor.test.ts).
 import { commsRuntime } from '../../comms/runtime.js';
 import type { JobHandler, TxJobHandler } from '../../worker/types.js';
-import { linkRedactInTx } from '../signin/links.js';
+import { linkExpireInTx } from '../signin/links.js';
 import type { CardDeps } from '../staff/display.js';
-import { PORTAL_LINK_REDACT, PORTAL_SYNC_EVERY_MS, PORTAL_SYNC_KIND, SyncPayload } from './jobs.js';
+import { PORTAL_LINK_EXPIRE, PORTAL_SYNC_EVERY_MS, PORTAL_SYNC_KIND, SyncPayload } from './jobs.js';
 import { portalSyncInTx } from './sync.js';
 
 type DepsFor = () => CardDeps;
@@ -27,16 +27,16 @@ export function makePortalHandlers(depsFor: DepsFor = defaultDeps): JobHandler<u
       if (c.retracted + c.published + c.expired + c.cards + c.links > 0) ctx.log.info('portal.sync', { jobId: ctx.job.id.toString(), ...c });
     },
   };
-  const redact: TxJobHandler<{ messageId: string }> = {
-    kind: PORTAL_LINK_REDACT.kind,
-    queue: PORTAL_LINK_REDACT.queue,
+  const expire: TxJobHandler<{ messageId: string }> = {
+    kind: PORTAL_LINK_EXPIRE.kind,
+    queue: PORTAL_LINK_EXPIRE.queue,
     via: 'worker',
-    schema: PORTAL_LINK_REDACT.schema,
+    schema: PORTAL_LINK_EXPIRE.schema,
     async run(ctx, p) {
-      return linkRedactInTx(ctx.tx, p.messageId, ctx.now);
+      return linkExpireInTx(ctx.tx, p.messageId, ctx.now);
     },
   };
-  return [sync, redact] as unknown as JobHandler<unknown>[];
+  return [sync, expire] as unknown as JobHandler<unknown>[];
 }
 
 /** Everything api/portal registers with the worker (CONVENTIONS §3). */

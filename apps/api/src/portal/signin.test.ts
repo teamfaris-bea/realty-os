@@ -8,7 +8,7 @@ import { reconcileOutbound } from '../comms/dispatch.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { systemActor } from '../worker/systemActor.js';
 import { linkChannels } from './signin/delivery.js';
-import { linkRedactInTx } from './signin/links.js';
+import { linkExpireInTx } from './signin/links.js';
 import { settlePortalSignins, signinTestHooks } from './signin/routes.js';
 import { PortalClient, askLink, call, client, deal, invite, json, lastToken, portalWorld, randomEmail, setPortalCleared, signIn, slugOf, type PortalWorld } from './testing.js';
 
@@ -167,25 +167,25 @@ describe('R-PORTAL-10 one answer for every address (E640)', () => {
 });
 
 describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
-  it('R-PORTAL-11: the link reaches the fake by email and by text, names whose portal it opens, and its stored body is redacted once final', async () => {
+  it('R-PORTAL-11: the link reaches the fake by email, names whose portal it opens, and the stored body is the fixed line with no link (b14 F2; seal.test.ts covers every status)', async () => {
     const c = await invited({ firstName: 'Nia' });
     await askLink(h, slug, c.email, ip());
     const mail = h.providers.email.sent.filter((m) => m.to === c.email).at(-1)!;
     expect(mail.subject).toBe('Your sign-in link');
     expect(mail.text).toContain("sign-in link for Nia's client portal");
-    expect(mail.text).toMatch(/\/portal\.html#token=[A-Za-z0-9_-]{43}/);
+    expect(mail.text).toMatch(/\/portal\.html#token=[A-Za-z0-9_-]{43}$/);
     const rows = await linkMessages(c.id);
     expect(rows.at(-1)!.status).toBe('sent');
-    expect(rows.at(-1)!.body).toMatch(/: sign-in link for Nia's client portal \(link removed after sending; it worked once, for 15 minutes\)\.$/);
-    // the search tokens follow the body (0032's trigger)
+    expect(rows.at(-1)!.body).toBe("Harbor Realty LLC: sign-in link for Nia's client portal. It works once, for 15 minutes; if you did not ask for it, ignore this message. Sign in here (the link itself is not kept in the message history):");
+    // the search tokens follow the body (0032's trigger): the line is indexed, the token never was
     const tok = lastToken(h, c.email)!;
     const hits = await h.su.query(`SELECT 1 FROM message_search_tokens WHERE message_id = $1 AND token ILIKE $2`, [rows.at(-1)!.id, `%${tok.slice(0, 12).toLowerCase()}%`]);
     expect(hits.rowCount).toBe(0);
-    const indexed = await h.su.query(`SELECT 1 FROM message_search_tokens WHERE message_id = $1 AND token = 'removed'`, [rows.at(-1)!.id]);
-    expect(indexed.rowCount).toBe(1); // the redacted line is what search now holds
+    const indexed = await h.su.query(`SELECT 1 FROM message_search_tokens WHERE message_id = $1 AND token = 'history'`, [rows.at(-1)!.id]);
+    expect(indexed.rowCount).toBe(1);
   });
 
-  it('E644: while the outcome is unknown the body is kept so the reconcile can find the text; once final it is redacted', async () => {
+  it('E644: while the outcome is unknown the body still holds no link (the reconcile renders it from its seal, seal.test.ts); once final it is unchanged', async () => {
     const c = await invited({ firstName: 'Kit' });
     // the login point is the email; switch it to the phone so the link goes by text
     const phonePoint = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'`, [c.id])).rows[0]!.id;
@@ -194,18 +194,19 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     await askLink(h, slug, c.phone, ip());
     const [m] = (await linkMessages(c.id)).slice(-1);
     expect(m!.status).toBe('dispatch_unknown');
-    expect(m!.body).toMatch(/#token=/);
+    expect(m!.body).not.toMatch(/#token=/);
     const deps = depsFromPlatform(h.app.platform);
     const sys = systemActor(w.tenantId, 'worker');
-    await withTenantTx(sys, (tx, now) => linkRedactInTx(tx, m!.id, now), { db: h.database });
-    expect((await linkMessages(c.id)).at(-1)!.body).toMatch(/#token=/); // still unknown: kept
+    await withTenantTx(sys, (tx, now) => linkExpireInTx(tx, m!.id, now), { db: h.database });
+    expect((await linkMessages(c.id)).at(-1)!.status).toBe('dispatch_unknown'); // under 15 minutes: left to the reconcile
     const r = await reconcileOutbound(m!.id, deps, w.tenantId);
     expect(r).toMatchObject({ kind: 'resolved' });
-    await withTenantTx(sys, (tx, now) => linkRedactInTx(tx, m!.id, now), { db: h.database });
-    expect((await linkMessages(c.id)).at(-1)!.body).toMatch(/link removed after sending/);
+    const after = (await linkMessages(c.id)).at(-1)!;
+    expect(after.status).toBe('sent');
+    expect(after.body).toBe(m!.body);
   });
 
-  it('E644: a link still queued after 15 minutes is canceled PORTAL_LINK_EXPIRED and redacted', async () => {
+  it('E644: a link still queued after 15 minutes is canceled PORTAL_LINK_EXPIRED; its body never held the link', async () => {
     const c = await invited({ firstName: 'Pat' });
     h.providers.email.failNext('unavailable');
     await askLink(h, slug, c.email, ip());
@@ -213,10 +214,10 @@ describe('R-PORTAL-11 the sign-in link (E642-E645)', () => {
     // a retryable provider failure leaves it for the queued comms.dispatch; make it look 16 minutes old
     await h.su.query(`UPDATE messages SET status = 'queued', created_at = now() - interval '16 minutes' WHERE id = $1`, [m!.id]);
     const sys = systemActor(w.tenantId, 'worker');
-    await withTenantTx(sys, (tx, now) => linkRedactInTx(tx, m!.id, now), { db: h.database });
+    await withTenantTx(sys, (tx, now) => linkExpireInTx(tx, m!.id, now), { db: h.database });
     const after = (await linkMessages(c.id)).at(-1)!;
     expect(after.status).toBe('canceled');
-    expect(after.body).toMatch(/link removed after sending/);
+    expect(after.body).not.toMatch(/#token=/);
     expect((await h.su.query<{ status_reason: string }>('SELECT status_reason FROM messages WHERE id = $1', [m!.id])).rows[0]!.status_reason).toBe('PORTAL_LINK_EXPIRED');
   });
 

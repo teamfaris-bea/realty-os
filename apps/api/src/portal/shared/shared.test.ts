@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { csrfTokenFor } from '../../auth/tokens.js';
 import { downloadNames } from '../../documents/read.js';
 import { ERROR_STATUS } from '../../errors.js';
-import { CODE_SENTENCES, inviteBody, linkBody, redactedLinkBody } from './copy.js';
+import { renderSealedLink } from '../../comms/dispatch.js';
+import { CODE_SENTENCES, inviteBody, linkLine } from './copy.js';
 import { attachmentDisposition, portalFileNames } from './fileNames.js';
 import { portalCsrfToken, portalCsrfValid } from './session.js';
 import { displayOf, grantView, timelineView } from './view.js';
@@ -40,12 +41,15 @@ describe('honest copy (R-PORTAL-10, R-PORTAL-11, R-PORTAL-13)', () => {
     for (const c of Object.keys(CODE_SENTENCES)) expect(Object.hasOwn(ERROR_STATUS, c) || c === 'PORTAL_PERSON_ONLY' || c === 'PORTAL_RULE_MILESTONES_ONLY', c).toBe(true);
   });
 
-  it('R-PORTAL-11 E643: the link names whose portal it opens; the stored line keeps the name and drops the link', () => {
+  it('R-PORTAL-11 E643 (b14 F2): the stored line names whose portal it opens and holds no link; the client gets the line with the link rendered after it', () => {
     const url = 'https://app.example.test/portal.html#token=AAAA';
-    expect(linkBody({ brokerage: 'Sample Realty', name: 'Jane', url, channel: 'sms' })).toBe(`Sample Realty: here is the sign-in link for Jane's client portal. It works once, for 15 minutes. ${url} If you did not ask for it, ignore this text.`);
-    const r = redactedLinkBody({ brokerage: 'Sample Realty', name: 'Jane' });
-    expect(r).toBe("Sample Realty: sign-in link for Jane's client portal (link removed after sending; it worked once, for 15 minutes).");
-    expect(r).not.toContain('token');
+    const sms = linkLine({ brokerage: 'Sample Realty', name: 'Jane', channel: 'sms' });
+    expect(sms).toBe("Sample Realty: sign-in link for Jane's client portal. It works once, for 15 minutes; if you did not ask for it, ignore this text. Sign in here (the link itself is not kept in the message history):");
+    const mail = linkLine({ brokerage: 'Sample Realty', name: 'Jane', channel: 'email' });
+    expect(mail).toContain('ignore this message.');
+    for (const l of [sms, mail]) expect(l).not.toMatch(/token|portal\.html|https?:/);
+    expect(renderSealedLink(sms, url, 'sms')).toBe(`${sms} ${url}`);
+    expect(renderSealedLink(mail, url, 'email')).toBe(`${mail}\n\n${url}`);
   });
 
   it('R-PORTAL-13: the invite notice names the page and the sign-in address kind, never a token', () => {

@@ -2170,6 +2170,15 @@ export interface PortalItemsTable {
   retracted_by_user_id: string | null;
 }
 
+/** public.portal_link_seals (table) */
+export interface PortalLinkSealsTable {
+  tenant_id: string;
+  message_id: string;
+  url_enc: Buffer;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+}
+
 /** public.portal_login_tokens (table) */
 export interface PortalLoginTokensTable {
   tenant_id: string;
@@ -3069,6 +3078,7 @@ export interface DB {
   portal_accounts: PortalAccountsTable;
   portal_grants: PortalGrantsTable;
   portal_items: PortalItemsTable;
+  portal_link_seals: PortalLinkSealsTable;
   portal_login_tokens: PortalLoginTokensTable;
   portal_sessions: PortalSessionsTable;
   portal_stream_tokens: PortalStreamTokensTable;
@@ -3245,6 +3255,7 @@ export const TABLE_NAMES = [
   'portal_accounts',
   'portal_grants',
   'portal_items',
+  'portal_link_seals',
   'portal_login_tokens',
   'portal_sessions',
   'portal_stream_tokens',

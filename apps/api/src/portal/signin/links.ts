@@ -1,28 +1,31 @@
-// The client's sign-in link (R-PORTAL-11; findings F2, F3, F9, F12). Called only AFTER the HTTP reply has left
-// (signin/routes.ts), so the answer never waits on whether an account matched.
+// The client's sign-in link (R-PORTAL-11; findings F2, F3, F9, F12; b14 audit F2). Called only AFTER the HTTP reply has
+// left (signin/routes.ts), so the answer never waits on whether an account matched.
 //
 // Per link, as the system of the definer row's tenant (R-TEN-3), in one transaction: queueOutboundInTx (initiator
-// system, purpose informational, category portal_login_link, to the login point) and a portal.link_redact job at
-// +60 s. After commit, dispatchOutbound inline (the queued comms.dispatch races it; one TX1 wins), then the stored
-// body is redacted once the send is final. Every send goes through dispatchOutbound: D1 opt-outs, suppressions,
-// do-not-contact and the DB guard apply; only the automation pause does not (core check 8, R-PORTAL-11).
+// system, purpose informational, category portal_login_link, to the login point) with a FIXED LINE as its body, the URL
+// sealed beside it (portal.seal_link: envelope-encrypted under the tenant field key, AAD = the message id; 0242), and a
+// portal.link_expire job at +60 s. After commit, dispatchOutbound inline (the queued comms.dispatch races it; one TX1
+// wins). Every send goes through dispatchOutbound: D1 opt-outs, suppressions, do-not-contact and the DB guard apply;
+// only the automation pause does not (core check 8, R-PORTAL-11).
 //
-// Redaction keeps the body while the message is `dispatching` or `dispatch_unknown`: the SMS reconcile finds the
-// provider's message by sender, recipient, BODY and time (dispatch.ts reconcileOutbound), for up to 10 minutes.
+// The URL never enters messages.body, at any status (b14 audit F2, orchestrator decision (a)): comms/dispatch.ts
+// renders it from the seal after the stored line, at the provider send and in the SMS reconcile's lookup, and nowhere
+// else. The seal goes at the first final status (a trigger on messages), at 15 minutes (portal.link_expire, and
+// portal.sync's backstop) and with the message (erasure).
 import { createHash } from 'node:crypto';
 import type { ContactId, Instant, TenantId } from '@realty/core/foundation';
 import { type PortalLoginLink, type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
 import { queueOutboundInTx } from '../../comms/compose.js';
-import { dispatchOutbound } from '../../comms/dispatch.js';
+import { dispatchOutbound, portalLinkSealAad } from '../../comms/dispatch.js';
 import { markCanceled } from '../../comms/repos/messages.js';
 import { asSystem } from '../../comms/runtime.js';
 import type { CommsDeps } from '../../comms/types.js';
 import { enqueueTyped } from '../../worker/registry.js';
-import { LINK_EMAIL_SUBJECT, linkBody, portalLinkUrl, redactedLinkBody } from '../shared/copy.js';
-import { LINK_REDACT_RETRY_MS, LINK_TTL_MS, PORTAL_LINK_REDACT } from '../sync/jobs.js';
+import { LINK_EMAIL_SUBJECT, linkLine, portalLinkUrl } from '../shared/copy.js';
+import { LINK_EXPIRE_RETRY_MS, LINK_TTL_MS, PORTAL_LINK_EXPIRE } from '../sync/jobs.js';
 
-/** Statuses after which nothing reads the body again to send or reconcile it. */
+/** Statuses after which nothing sends or reconciles the link again (its seal goes at the first of them). */
 export const FINAL_STATUSES = ['sent', 'delivered', 'failed', 'undelivered', 'bounced', 'blocked', 'canceled'] as const;
 const FINAL = new Set<string>(FINAL_STATUSES);
 
@@ -54,6 +57,9 @@ export interface DeliverDeps {
   comms: CommsDeps;
   webOrigin: string;
   log: LinkLog;
+  /** Test seam (never set in production): runs once the link is queued, before the inline dispatch, so a test can let
+   *  the queued comms.dispatch win TX1 (the worker-wins race, b14 audit F2). */
+  beforeInlineDispatch?: (messageId: string) => Promise<void>;
 }
 
 /** Sends each link (usually one; spouses sharing an email get one each, E643). Never throws: errors are logged by code. */
@@ -83,7 +89,7 @@ async function deliverOne(d: DeliverDeps, link: PortalLoginLink): Promise<void> 
       {
         contactId: link.contactId,
         channel,
-        body: linkBody({ brokerage: f.brokerage, name: f.name, url: portalLinkUrl(d.webOrigin, link.token), channel }),
+        body: linkLine({ brokerage: f.brokerage, name: f.name, channel }),
         ...(channel === 'email' ? { subject: LINK_EMAIL_SUBJECT } : {}),
         initiator: 'system',
         purpose: 'informational',
@@ -95,7 +101,12 @@ async function deliverOne(d: DeliverDeps, link: PortalLoginLink): Promise<void> 
     );
     if (!r.ok) return { code: r.code };
     if (r.created) {
-      await enqueueTyped(tx, PORTAL_LINK_REDACT, { messageId: r.messageId }, { runAt: (now + LINK_REDACT_RETRY_MS) as Instant, dedupeKey: PORTAL_LINK_REDACT.dedupeKey({ messageId: r.messageId }) });
+      // the URL is sealed beside the message, never written to it (b14 audit F2)
+      const url = Buffer.from(portalLinkUrl(d.webOrigin, link.token), 'utf8');
+      const sealed = await d.comms.envelope.inTx(tx, link.tenantId).encrypt(link.tenantId, portalLinkSealAad(r.messageId), url);
+      url.fill(0);
+      await sql`SELECT portal.seal_link(${r.messageId}::uuid, ${Buffer.from(sealed)})`.execute(tx);
+      await enqueueTyped(tx, PORTAL_LINK_EXPIRE, { messageId: r.messageId }, { runAt: (now + LINK_EXPIRE_RETRY_MS) as Instant, dedupeKey: PORTAL_LINK_EXPIRE.dedupeKey({ messageId: r.messageId }) });
     }
     return { messageId: r.messageId };
   });
@@ -103,72 +114,51 @@ async function deliverOne(d: DeliverDeps, link: PortalLoginLink): Promise<void> 
     d.log.warn({ code: queued.code }, 'portal: a sign-in link was not queued');
     return;
   }
+  await d.beforeInlineDispatch?.(queued.messageId);
   await dispatchOutbound(queued.messageId, d.comms, { tenantId: link.tenantId });
-  await asSystem(d.comms, link.tenantId, 'worker', (tx) => redactLinkInTx(tx, queued.messageId));
+}
+
+/** Drops a link's seal (the system only; a no-op for anyone else, or when it is already gone). */
+async function unsealInTx(tx: Tx, messageId: string): Promise<void> {
+  await sql`SELECT portal.unseal_link(${messageId}::uuid)`.execute(tx);
 }
 
 /**
- * Replaces a sign-in link message's body with the fixed line once its status is final (R-PORTAL-11; F3, F9).
- * As the system (messages_update admits tenant-wide actors). Returns whether the body was replaced.
+ * portal.link_expire: final ⇒ the seal is gone (the trigger dropped it; dropped again here for certainty); under 15
+ * minutes ⇒ again in 60 s (or at the 15-minute mark); at 15 minutes a link still queued or scheduled is canceled
+ * PORTAL_LINK_EXPIRED, and the seal of any link still not final (dispatching, dispatch_unknown) is dropped: the link has
+ * expired, so nothing renders it again (a reconcile then matches nothing and ends DISPATCH_UNKNOWN_UNRESOLVED).
  */
-export async function redactLinkInTx(tx: Tx, messageId: string): Promise<boolean> {
-  const m = await sql<{ contact_id: string; status: string }>`
-    SELECT contact_id, status FROM public.messages
-     WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND action_category = 'portal_login_link'`.execute(tx);
-  const row = m.rows[0];
-  if (!row || !FINAL.has(row.status)) return false;
-  const f = await nameFacts(tx, row.contact_id);
-  const line = redactedLinkBody({ brokerage: f?.brokerage ?? 'Your agent', name: f?.name ?? 'the client' });
-  const r = await sql`
-    UPDATE public.messages SET body = ${line}
-     WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND action_category = 'portal_login_link'
-       AND status IN ('sent','delivered','failed','undelivered','bounced','blocked','canceled') AND body <> ${line}`.execute(tx);
-  return Number(r.numAffectedRows ?? 0) > 0;
-}
-
-/**
- * portal.link_redact: final ⇒ redact; under 15 minutes ⇒ again in 60 s; at 15 minutes a link still queued or scheduled
- * is canceled PORTAL_LINK_EXPIRED and redacted; one dispatching or dispatch_unknown keeps its body until the reconcile
- * decides (checked again every minute; portal.sync's backstop catches any left behind).
- */
-export async function linkRedactInTx(tx: Tx, messageId: string, now: Instant): Promise<{ retryAt: Instant } | void> {
+export async function linkExpireInTx(tx: Tx, messageId: string, now: Instant): Promise<{ retryAt: Instant } | void> {
   const r = await sql<{ contact_id: string; status: string; created_at: Date }>`
     SELECT contact_id, status, created_at FROM public.messages
      WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND action_category = 'portal_login_link'`.execute(tx);
   const m = r.rows[0];
-  if (!m) return;
-  if (FINAL.has(m.status)) {
-    await redactLinkInTx(tx, messageId);
-    return;
-  }
-  const age = now - m.created_at.getTime();
-  if (age < LINK_TTL_MS) return { retryAt: (now + LINK_REDACT_RETRY_MS) as Instant };
+  if (!m) return; // erased: the seal went with the message
+  if (FINAL.has(m.status)) return unsealInTx(tx, messageId);
+  const expiresAt = m.created_at.getTime() + LINK_TTL_MS;
+  if (now < expiresAt) return { retryAt: Math.min(now + LINK_EXPIRE_RETRY_MS, expiresAt) as Instant };
   if (m.status === 'queued' || m.status === 'scheduled') {
     await lockContact(tx, m.contact_id as ContactId);
     await markCanceled(tx, messageId, 'PORTAL_LINK_EXPIRED', null);
-    await redactLinkInTx(tx, messageId);
-    return;
   }
-  if (age < 4 * LINK_TTL_MS) return { retryAt: (now + LINK_REDACT_RETRY_MS) as Instant };
+  await unsealInTx(tx, messageId);
 }
 
-/** portal.sync's backstop: final links older than 15 minutes redacted, queued ones canceled (ids of this tenant). */
+/** portal.sync's backstop: links still queued after 15 minutes are canceled, and this tenant's expired seals and the
+ *  seals of final messages are dropped. Returns how many links it canceled plus how many seals it dropped. */
 export async function linkBackstopInTx(tx: Tx, limit: number): Promise<number> {
-  const r = await sql<{ id: string; status: string; contact_id: string }>`
-    SELECT id, status, contact_id FROM public.messages
+  const r = await sql<{ id: string; contact_id: string }>`
+    SELECT id, contact_id FROM public.messages
      WHERE tenant_id = app.tenant_id() AND action_category = 'portal_login_link' AND direction = 'outbound'
-       AND created_at < now() - interval '15 minutes'
-       AND (status IN ('queued','scheduled') OR (status IN ('sent','delivered','failed','undelivered','bounced','blocked','canceled') AND body LIKE '%#token=%'))
+       AND created_at < now() - interval '15 minutes' AND status IN ('queued','scheduled')
      ORDER BY created_at LIMIT ${limit}`.execute(tx);
-  let n = 0;
   for (const m of r.rows) {
-    if (m.status === 'queued' || m.status === 'scheduled') {
-      await lockContact(tx, m.contact_id as ContactId);
-      await markCanceled(tx, m.id, 'PORTAL_LINK_EXPIRED', null);
-    }
-    if (await redactLinkInTx(tx, m.id)) n++;
+    await lockContact(tx, m.contact_id as ContactId);
+    await markCanceled(tx, m.id, 'PORTAL_LINK_EXPIRED', null);
   }
-  return n;
+  const swept = await sql<{ n: number }>`SELECT portal.sweep_link_seals() AS n`.execute(tx);
+  return r.rows.length + Number(swept.rows[0]?.n ?? 0);
 }
 
 export type { TenantId };

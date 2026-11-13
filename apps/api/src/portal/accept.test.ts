@@ -105,13 +105,13 @@ describe('R-PORTAL-8 R-PORTAL-13 R-PORTAL-15 R-PORTAL-16 R-PORTAL-17 module 45 a
       expect((await pc.get(`/api/portal/timeline?grantId=${otherInv.body.grant.id}`)).statusCode).toBe(404);
       expect((await pc.get(`/api/portal/documents?grantId=${dealId}`)).statusCode).toBe(404);
 
-      // the stored link message has no token once its send is final
+      // the stored link message never held the token (b14 audit F2: the URL is sealed beside it, never in the body)
       const rows = await h.su.query<{ body: string; status: string }>(`SELECT body, status FROM messages WHERE action_category = 'portal_login_link' AND contact_id = $1`, [buyer.id]);
       expect(rows.rows.length).toBeGreaterThan(0);
       for (const m of rows.rows) {
         expect(m.status).toBe('sent');
         expect(m.body).not.toMatch(/token/);
-        expect(m.body).toMatch(/link removed after sending/);
+        expect(m.body).toMatch(/\(the link itself is not kept in the message history\):$/);
       }
 
       // revoke: everything hidden on the next request

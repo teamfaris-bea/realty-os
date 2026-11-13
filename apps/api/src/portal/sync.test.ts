@@ -43,7 +43,7 @@ describe('R-PORTAL-15 portal.sync', () => {
     const sync = handlers.find((x) => x.kind === 'portal.sync')!;
     expect(sync.every?.ms).toBe(PORTAL_SYNC_EVERY_MS);
     expect(PORTAL_SYNC_EVERY_MS).toBe(300_000);
-    expect(handlers.some((x) => x.kind === 'portal.link_redact')).toBe(true);
+    expect(handlers.some((x) => x.kind === 'portal.link_expire')).toBe(true);
   });
 
   it('R-PORTAL-15: publishes confirmed milestones only, once (idempotent), as the system', async () => {
