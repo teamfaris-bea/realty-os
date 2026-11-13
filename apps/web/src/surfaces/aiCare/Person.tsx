@@ -13,7 +13,7 @@ import { Button, ButtonLink, Card, Dialog, Notice, announce, useStickyBottom } f
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
 import { type ApiError, useApi } from '../../shell/index.js';
-import { type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useMe, usePanel } from './api.js';
+import { type PanelHandoff, type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useMe, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './Controls.js';
 import { BUILT } from './built.js';
 import { capsWords, localDate, localTime, PAUSE_EXPIRY_MS, scheduledWords, zonesWords } from './time.js';
@@ -117,7 +117,7 @@ export function AiCarePanelSection({ contact }: { contact: ContactFullView }) {
   const { p, viewer } = useContactPanel(contact);
   if (!p) return null;
   const showStart = p.canStart || (p.startRefusal !== null && p.assignment?.endedAt !== null);
-  if (!p.assignment && !showStart && !p.block) return null;
+  if (!p.assignment && !showStart && !p.block && !p.earlierHandoff) return null;
   return (
     <Card className="flex flex-col gap-3" aria-labelledby="ai-care-title">
       <h2 id="ai-care-title" className="text-[19px] font-semibold text-ink">
@@ -213,6 +213,8 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
       ) : null}
       {a && a.endedAt ? <p className="text-[15px] text-ink">AI care ended: {endWords(a.endReason)}</p> : null}
       {p.handoff ? <HandoffLines h={p.handoff} viewer={viewer} first={first} /> : null}
+      {/* batch 13 isa-4 (b12 recheck R16 follow-up): an earlier handoff a restart left open still has its deadline */}
+      {p.earlierHandoff ? <HandoffLines h={p.earlierHandoff} viewer={viewer} first={first} title="An earlier handoff is still open" /> : null}
       {p.inactivityReleaseAt && live ? (
         <p className="text-[15px] text-ink">
           Returns to the pond on {localDate(p.inactivityReleaseAt)} unless {who('you reach them', `${viewer.ownerFirst} reaches them`)}. AI messages don't reset this.
@@ -407,9 +409,9 @@ function HeldTopics({ p, viewer, contactId }: { p: PanelResponse; viewer: Viewer
   );
 }
 
-function HandoffLines({ h, viewer, first }: { h: NonNullable<PanelResponse['handoff']>; viewer: ViewerInfo; first: string }) {
+function HandoffLines({ h, viewer, first, title = 'Handoff' }: { h: PanelHandoff; viewer: ViewerInfo; first: string; title?: string }) {
   return (
-    <Section title="Handoff">
+    <Section title={title}>
       <p>{handoffWhy(h.reason)}</p>
       {h.slaMetAt ? (
         <p>

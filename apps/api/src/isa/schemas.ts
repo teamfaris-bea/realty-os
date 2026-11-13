@@ -151,6 +151,9 @@ export const PanelResponse = z.object({
   // b12 recheck R19: closedReason says why the system closed it (null while open), so a lead-closed handoff is told
   // apart from one a sweep has not reached
   handoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), closedReason: HandoffClosedReason }).nullable(),
+  // batch 13 isa-4 (b12 recheck R16 follow-up): the person's newest still-open handoff of an EARLIER assignment (a
+  // restart with no human touch leaves it open, and its deadline still alerts); null when there is none
+  earlierHandoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), closedReason: HandoffClosedReason }).nullable(),
   inactivityReleaseAt: Iso.nullable(),
   inactivitySentence: z.string().nullable(),
   block: z.object({ reason: z.string(), since: Iso, sentence: z.string() }).nullable(),

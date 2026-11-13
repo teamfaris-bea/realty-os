@@ -1322,21 +1322,70 @@
                     "type": "string"
                   },
                   "closedReason": {
+                    "$ref": "#/$defs/__schema1"
+                  }
+                },
+                "required": [
+                  "id",
+                  "reason",
+                  "slaClass",
+                  "slaDueAt",
+                  "slaMetAt",
+                  "overdue",
+                  "confirmationStatus",
+                  "closedReason"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earlierHandoff": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "slaClass": {
+                    "type": "string",
+                    "enum": [
+                      "critical",
+                      "high",
+                      "normal",
+                      "low",
+                      "none"
+                    ]
+                  },
+                  "slaDueAt": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "slaMetAt": {
                     "anyOf": [
                       {
-                        "type": "string",
-                        "enum": [
-                          "deadline_met",
-                          "acknowledged",
-                          "lead_closed",
-                          "care_restarted",
-                          "care_continued"
-                        ]
+                        "$ref": "#/$defs/__schema0"
                       },
                       {
                         "type": "null"
                       }
                     ]
+                  },
+                  "overdue": {
+                    "type": "boolean"
+                  },
+                  "confirmationStatus": {
+                    "type": "string"
+                  },
+                  "closedReason": {
+                    "$ref": "#/$defs/__schema1"
                   }
                 },
                 "required": [
@@ -1417,6 +1466,7 @@
           "openOffer",
           "heldTopics",
           "handoff",
+          "earlierHandoff",
           "inactivityReleaseAt",
           "inactivitySentence",
           "block"
@@ -1425,6 +1475,23 @@
         "$defs": {
           "__schema0": {
             "type": "string"
+          },
+          "__schema1": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deadline_met",
+                  "acknowledged",
+                  "lead_closed",
+                  "care_restarted",
+                  "care_continued"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }

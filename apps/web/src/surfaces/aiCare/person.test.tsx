@@ -47,6 +47,14 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(document.body.textContent).not.toMatch(/Respond by|Overdue/);
   });
 
+  it('R-ISA-30 E521 (batch 13 isa-4, b12 recheck R16 follow-up): after a restart with no touch, the panel shows the earlier handoff that is still open and overdue', async () => {
+    const p = panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', closedReason: null } });
+    isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');
+    const s = await screen.findByRole('region', { name: 'An earlier handoff is still open' });
+    expect(within(s).getByText('Someone on the team ended it.')).toBeInTheDocument();
+    expect(within(s).getByText(/^Respond by .+ · Overdue\. A call, text or email to Jane from you or a collaborator meets it\.$/)).toBeInTheDocument();
+  });
+
   it('R-ISA-22 V5: a team lead never reads "You opted in", "You own" or "Waiting on you"; the owner is named instead', async () => {
     const p = panel({ heldTopics: [{ class: 'pricing_negotiation', since: new Date().toISOString(), sentence: 'Waiting on Ava: pricing negotiation.' }] });
     isaApp(person(p), `/contacts/${IDS.jane}`, 'team_lead', { userId: ISA_IDS.tl });

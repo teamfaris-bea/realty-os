@@ -98,6 +98,7 @@ export function panel(over: Partial<PanelResponse> & { state?: 'live' | 'paused'
     openOffer: null,
     heldTopics: [],
     handoff: null,
+    earlierHandoff: null,
     inactivityReleaseAt: null,
     inactivitySentence: null,
     block: null,

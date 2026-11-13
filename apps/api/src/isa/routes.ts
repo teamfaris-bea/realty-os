@@ -48,7 +48,7 @@ async function panel(req: FastifyRequest, contactId: string) {
     };
     if (a === null) {
       return { ...base, assignment: null, canResume: false, chain: [], capabilities: [], consent: [], zones: { zones: [], source: 'union' as const, sentence: 'Not under AI care.' },
-        nextAllowedSendAt: null, capsSentence: '', lastDecision: null, factsSent: [], openOffer: null, heldTopics: [], handoff: null };
+        nextAllowedSendAt: null, capsSentence: '', lastDecision: null, factsSent: [], openOffer: null, heldTopics: [], handoff: null, earlierHandoff: null };
     }
     // b12 review F6: the latest assignment can be a merged-away record's (ended by the merge): read-only history, its
     // turns, facts and handoff only (that record's own facts are not the survivor's, and its contact row stays hidden)
@@ -68,9 +68,16 @@ async function panel(req: FastifyRequest, contactId: string) {
     const h = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; done: boolean; closed_reason: HandoffCloseReason | null }>`SELECT id, reason, sla_class, sla_due_at, sla_met_at, confirmation_status, closed_reason,
         closed_at IS NOT NULL AS done
       FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}`.execute(tx);
+    // batch 13 isa-4 (b12 recheck R16 follow-up): a restart with no human touch leaves an earlier handoff open, and its
+    // deadline still alerts; the panel reports the person's newest such handoff so it never reads as nothing pending
+    const eh = await sql<{ id: string; reason: string; sla_class: string; sla_due_at: Date; sla_met_at: Date | null; confirmation_status: string; closed_reason: HandoffCloseReason | null }>`SELECT id, reason, sla_class,
+        sla_due_at, sla_met_at, confirmation_status, closed_reason
+      FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND assignment_id <> ${a.id} AND closed_at IS NULL AND sla_met_at IS NULL
+      ORDER BY created_at DESC, id DESC LIMIT 1`.execute(tx);
     const last = turn.rows[0];
     const capsOn = new Set(opt.rows[0]?.c ?? []);
     const hd = h.rows[0];
+    const ed = eh.rows[0];
     return {
       ...base,
       assignment: {
@@ -100,6 +107,8 @@ async function panel(req: FastifyRequest, contactId: string) {
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
       handoff: hd ? { id: hd.id, reason: hd.reason, slaClass: hd.sla_class as (typeof S.SLA_CLASSES)[number], slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && !hd.done && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status,
         closedReason: hd.closed_reason } : null,
+      earlierHandoff: ed ? { id: ed.id, reason: ed.reason, slaClass: ed.sla_class as (typeof S.SLA_CLASSES)[number], slaDueAt: ed.sla_due_at.toISOString(), slaMetAt: null,
+        overdue: ed.sla_class !== 'none' && ed.sla_due_at.getTime() < now, confirmationStatus: ed.confirmation_status, closedReason: ed.closed_reason } : null,
     };
   }, { db: deps.db });
 }

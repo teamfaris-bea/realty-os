@@ -112,6 +112,16 @@ export interface PanelAssignment {
   undoUntil: string | null;
   ownerUserId: string;
 }
+export interface PanelHandoff {
+  id: string;
+  reason: string;
+  slaClass: SlaClass;
+  slaDueAt: string;
+  slaMetAt: string | null;
+  overdue: boolean;
+  confirmationStatus: string;
+  closedReason: HandoffClosedReason | null;
+}
 export interface PanelResponse {
   contactId: string;
   assignment: PanelAssignment | null;
@@ -128,7 +138,9 @@ export interface PanelResponse {
   factsSent: { factKind: string; listingId: string | null; sentAt: string; source: string | null; asOf: string | null }[];
   openOffer: { id: string; status: string; slots: { startsAt: string; endsAt: string }[]; expiresAt: string } | null;
   heldTopics: { class: string; since: string; sentence: string }[];
-  handoff: { id: string; reason: string; slaClass: SlaClass; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; closedReason: HandoffClosedReason | null } | null;
+  handoff: PanelHandoff | null;
+  /** batch 13 isa-4 (b12 recheck R16 follow-up): the newest still-open handoff of an earlier assignment (a restart with no touch leaves it open) */
+  earlierHandoff: PanelHandoff | null;
   inactivityReleaseAt: string | null;
   inactivitySentence: string | null;
   block: { reason: string; since: string; sentence: string } | null;

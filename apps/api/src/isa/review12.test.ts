@@ -902,6 +902,23 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
   });
 
+  it('R-ISA-30 E521 (batch 13 isa-4, b12 recheck R16 follow-up): after a restart with no touch, the panel still reports the earlier open handoff and, once past its deadline, that it is overdue', async () => {
+    type H = { id: string; overdue: boolean; closedReason: string | null; slaClass: string } | null;
+    const { agent, l, ho } = await endedByAgent();
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    const before = await call<{ handoff: H; earlierHandoff: H }>(agent, 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(before.status, JSON.stringify(before.body)).toBe(200);
+    expect(before.body.handoff).toBeNull();
+    expect(before.body.earlierHandoff).toMatchObject({ id: ho.id, overdue: false, closedReason: null });
+    await ageAndSweep(ho.id);
+    const after = await call<{ handoff: H; earlierHandoff: H }>(agent, 'GET', `/contacts/${l.id}/ai-isa`);
+    expect(after.body.earlierHandoff).toMatchObject({ id: ho.id, overdue: true });
+    // a touch and the sweep meet it: it is no longer reported
+    await touch(l.id);
+    await ageAndSweep(ho.id);
+    expect((await call<{ earlierHandoff: H }>(agent, 'GET', `/contacts/${l.id}/ai-isa`)).body.earlierHandoff).toBeNull();
+  });
+
   it('R-ISA-30 (b12 recheck R16): a restart after a human touch since the handoff closes it (care_restarted) and records the deadline as met; it then never alerts', async () => {
     const { agent, l, ho } = await endedByAgent();
     await touch(l.id);
