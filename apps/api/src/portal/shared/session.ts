@@ -28,5 +28,5 @@ export function portalCsrfValid(sessionSecret: Uint8Array, sessionId: string, pr
   return constantTimeEqual(portalCsrfToken(sessionSecret, sessionId), presented);
 }
 
-/** Q-PORTAL-3 / VERIFY 3: the session lengths module 43 stores (0023: idle 24 h, absolute 14 days), shown to the client. */
+/** VERIFY 3 (C10), VERIFY WITH COUNSEL: the session lengths module 43 stores (0023: idle 24 h, absolute 14 days), shown to the client. */
 export const SESSION_POLICY = { idleHours: 24, absoluteDays: 14 } as const;

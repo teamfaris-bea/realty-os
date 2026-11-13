@@ -113,11 +113,11 @@ Phase 1 stays in force and is never weakened: FORCE RLS with composite `(tenant_
 | Q-PORTAL-2 (module 45) | Keep the link out of the stored message? | Yes, at every status (batch 14 audit F2, orchestrator decision (a)): the body is a fixed line from the insert on, the URL is sealed beside it for at most 15 minutes and rendered only at the provider send; a link still queued after 15 minutes is canceled (`PORTAL_LINK_EXPIRED`). **VERIFY WITH COUNSEL** (record-keeping: the stored copy is the fixed line, not the exact text sent). |
 | Q-PORTAL-3 (module 45) | Invite and publish while the portal is dark? | Yes: account, grant and items are created, nothing is sent, and every staff view says the client sees nothing yet. |
 | Q-PORTAL-4 (module 45) | Grant expiry? | 90 days after the later of closing and the grant; at once when the deal is lost; 90 days after a listing is sold, withdrawn or expired; revoke any time (**VERIFY WITH COUNSEL**, C10). |
-| Q-PORTAL-5 (module 45) | Republish after a retraction? | Yes, by a person, as a new item; `portal.sync` never republishes a milestone a person retracted. |
+| Q-PORTAL-5 (module 45) | Republish after a retraction? | Yes, by a person, as a new item; `portal.sync` never republishes a milestone a person retracted (**VERIFY WITH COUNSEL**, VERIFY 6). |
 | Q-PORTAL-6 (module 45) | The contact card? | Agent name, the team number the client is texted from, the conversation's reply address (only once an email set its token); never a personal cell (**VERIFY WITH COUNSEL**). |
 | Q-PORTAL-7 (module 45) | The invite notice as the agent's own message (a touch)? | Yes (a system notice would be blocked by the pause, F2); compose's purpose rule applies: marketing with no open deal or recent reply (**VERIFY WITH COUNSEL**). |
 | Q-PORTAL-8 (module 45) | Retract next steps when their task is done or canceled? | Yes (`portal.sync`). |
-| Q-PORTAL-9 (module 45) | Show completed milestones? | Yes, as dates (no done mark until core renders one). |
+| Q-PORTAL-9 (module 45) | Show completed milestones? | Yes, as dates (no done mark until core renders one) (**VERIFY WITH COUNSEL**, VERIFY 5, C10). |
 | Q-PORTAL-10 (module 45) | A separate CSRF secret for the portal? | No: a portal-only key derived from SESSION_SECRET (`HMAC(secret, "realty:portal-csrf:v1")`). |
 | Q-PORTAL-11 (module 45) | A separate DB role for the portal API (Q11)? | Unchanged: the same role; the client actor only from the portal resolver (lint). |
 | Q-PORTAL-12 (module 45) | Decrypt downloads with the one wrapped key `portal.document_download` returns, rather than a system transaction? | The definer (no staff or system transaction on the client path). |
