@@ -17,14 +17,15 @@
 //     that sorts first. The lane's container rebuilt its test template at that crossing with the immediate FK, then
 //     again above it with the deferred one: the deferral only rode along with the rebuild. In this checkout the
 //     immediate FK passes both erasure tests (it is immediate again, as its sibling published_by_user_id).
-// This file reproduces the failure deterministically by re-creating the lead_inquiries foreign key (a newer, larger
-// oid sorts after lead_email_messages'), inside a transaction rolled back after each case.
+// This file forces that order deterministically by re-creating the lead_inquiries foreign key (a newer, larger oid
+// sorts after lead_email_messages'), inside a transaction rolled back after each case. Since batch 14's 0089 the purge
+// unlinks the person's lead emails itself before deleting anything, so that order erases the person too.
 import { randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenantTx } from '../src/tenantTx.js';
-import { createHarness, createWorld, type Harness, intakeLead, suFixture, suRows, uuid, type World } from './world.js';
+import { createHarness, createWorld, type Harness, intakeLead, suRows, uuid, type World } from './world.js';
 
 let h: Harness;
 let w: World;
@@ -104,21 +105,22 @@ describe('b14 F6: the erase cascade and portal_items_retracted_by_fk', () => {
     expect(r.error).toBeNull();
   });
 
-  it('F6: the lane\'s failure reproduced: when lead_email_messages\' SET NULL sorts first the purge fails on the inquiry FK re-check, with or without portal_items_retracted_by_fk', async () => {
+  // Before 0089 this order failed with the lane's exact error ("lead_email_messages ... violates foreign key constraint
+  // lead_email_messages_tenant_id_inquiry_id_fkey"), with or without the portal FK, and only because of the purge's own
+  // earlier UPDATE of the email row. 0089 unlinks the person's lead emails inside the purge before any record is
+  // deleted, so the order no longer matters (erase_trigger_order_0089.test.ts holds the full proof: both orders and the
+  // end state).
+  it('F6: the lane\'s failing order (lead_email_messages\' SET NULL first) now erases the person, with or without portal_items_retracted_by_fk (0089)', async () => {
     const contactId = await leadFromEmail();
     const flipped = await purgeInRolledBackTx(contactId, recreateInquiryFk);
     expect(flipped.order).toEqual(['lead_email_messages', 'lead_inquiries']);
-    expect(flipped.error).toMatch(/lead_email_messages.*violates foreign key constraint "lead_email_messages_tenant_id_inquiry_id_fkey"/);
-    // the portal FK plays no part: dropped, the failure is the same
+    expect(flipped.error).toBeNull();
+    // the portal FK plays no part: dropped, the outcome is the same
     const noPortalFk = await purgeInRolledBackTx(contactId, async (c) => {
       await c.query('ALTER TABLE portal_items DROP CONSTRAINT portal_items_retracted_by_fk');
       await recreateInquiryFk(c);
     });
-    expect(noPortalFk.error).toMatch(/lead_email_messages_tenant_id_inquiry_id_fkey/);
-    // and the row versions matter: without the purge's own earlier UPDATE of the email row (sender domain set NULL
-    // first), the SET NULL is not re-checked and the flipped order passes
-    await suFixture(h.su, `UPDATE lead_email_messages SET sender_domain = NULL, dkim_pass_domains = '{}' WHERE contact_id = $1`, [contactId]);
-    expect((await purgeInRolledBackTx(contactId, recreateInquiryFk)).error).toBeNull();
+    expect(noPortalFk.error).toBeNull();
   });
 
   it('F6: trigger names sort as text, so an oid with one more digit sorts first (the power-of-ten crossing that flipped the lane\'s template)', async () => {
