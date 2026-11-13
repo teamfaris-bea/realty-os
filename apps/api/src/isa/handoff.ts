@@ -486,8 +486,11 @@ async function sweepFailedInTx(tx: Tx, actor: SystemActor, failed: { id: string;
 /**
  * Item 9 (R-ISA-14; E533): the post-handoff confirmation did not go out. `not_sent` (canceled by a non-acknowledgement
  * inbound, failed, undelivered, blocked, or late): the card becomes critical (score 98, AI_ISA_CONFIRMATION_NOT_SENT),
- * an `ai_isa_handoff_hot` notification, and the deadline is pulled in to 15 minutes. `closed` (ISA_HANDOFF_CLOSED: a
- * person reached them first): the card says so, nothing hot. Codes only; never message content.
+ * an `ai_isa_handoff_hot` notification, and the deadline is pulled in to 15 minutes. When D1 leaves the person no text,
+ * call or email, a hand confirmation is impossible: the card says so (AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE, keep or
+ * cancel the appointment), the notification reads "Appointment not confirmed", and no deadline is set or pulled in; a
+ * handoff with no deadline (sla_class 'none') never gets one (b13 integration). `closed` (ISA_HANDOFF_CLOSED: a person
+ * reached them first): the card says so, nothing hot. Codes only; never message content.
  */
 export async function confirmationNotSentInTx(tx: Tx, ids: IdGenerator, h: { id: string; assignmentId: string; contactId: string; recipientUserId: string | null }, kind: 'not_sent' | 'closed', now: Instant): Promise<void> {
   const label = (await contactLabel(tx, h.contactId)) ?? 'A lead';
@@ -496,14 +499,24 @@ export async function confirmationNotSentInTx(tx: Tx, ids: IdGenerator, h: { id:
         updated_at = now() WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
     return;
   }
+  // b13 integration: ask for a hand confirmation only when one is possible. D1 (sending checks only opt-outs) can leave
+  // the person no text, call or email (a person-level do-not-contact, or every channel opted out); then the card says so
+  // and asks to keep or cancel the appointment. A handoff with no deadline (sla_class 'none', 0081) never gets one here.
+  const reach = await humanReachable(tx, h.contactId);
+  const ho = (await sql<{ sla_class: string }>`SELECT sla_class FROM ai_isa_handoffs WHERE tenant_id = app.tenant_id() AND id = ${h.id}`.execute(tx)).rows[0];
+  const deadline = reach.any && ho?.sla_class !== 'none';
   const due = new Date(now + ISA_SLA_MINUTES.critical * 60_000);
-  await sql`UPDATE ai_isa_handoffs SET sla_due_at = least(sla_due_at, ${due}) WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND sla_met_at IS NULL`.execute(tx);
-  await sql`UPDATE priority_feed_items SET score = 98, band = 'pinned', due_at = least(COALESCE(due_at, ${due}), ${due}),
-      reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_SENT', text: 'The appointment confirmation was not sent: confirm it by hand.' }])}::jsonb, updated_at = now()
+  if (deadline) await sql`UPDATE ai_isa_handoffs SET sla_due_at = least(sla_due_at, ${due}) WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND sla_met_at IS NULL`.execute(tx);
+  const reason = reach.any
+    ? { code: 'AI_ISA_CONFIRMATION_NOT_SENT', text: 'The appointment confirmation was not sent: confirm it by hand.' }
+    : { code: 'AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE', text: 'The appointment confirmation was not sent, and no text, call or email can reach them now (they opted out), so it cannot be confirmed by hand: keep or cancel the appointment.' };
+  await sql`UPDATE priority_feed_items SET score = 98, band = 'pinned', due_at = CASE WHEN ${deadline} THEN least(COALESCE(due_at, ${due}), ${due}) ELSE due_at END,
+      reasons = ${JSON.stringify([reason])}::jsonb, updated_at = now()
     WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
   const targets = h.recipientUserId ? [h.recipientUserId] : await adminUserIds(tx);
+  const title = reach.any ? `Confirm the appointment: ${label}` : `Appointment not confirmed: ${label}`;
   for (const userId of targets) {
-    await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_hot', priority: 'critical', title: `Confirm the appointment: ${label}`.slice(0, 120), body: null,
+    await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_hot', priority: 'critical', title: title.slice(0, 120), body: null,
       subjectType: 'contact', subjectId: h.contactId, dedupeKey: `ai_isa_confirmation_not_sent:${h.id}` }, now);
   }
 }

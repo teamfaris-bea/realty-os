@@ -698,6 +698,48 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect((await handoffOf(h, l.id))[0]!.confirmation_status).toBe('refused');
   });
 
+  // b13 integration (left open since the ISA-2b merge): confirmationNotSentInTx made the card critical, moved its due time
+  // and asked for "confirm it by hand" even on a handoff with no deadline (sla_class none: D1 leaves no channel), where
+  // a hand confirmation is impossible (D1, sending checks only opt-outs)
+  it('R-ISA-14 E533 R-ISA-30 E521: on a handoff with no deadline whose person D1 leaves no channel, a confirmation that did not go out gets an honest card (no "confirm it by hand", no deadline) and no "Confirm the appointment" notification', async () => {
+    const { l } = await offered();
+    await reply(l, '2', 6, { holdConfirmation: true });
+    const ho = (await handoffOf(h, l.id))[0]!;
+    expect(ho.pending_message_id).not.toBeNull();
+    // the person asks on a call never to be contacted: D1 now leaves no text, call or email; the handoff carries no
+    // deadline, as writeHandoffInTx writes one when that is so (0081's CHECK: due at creation, never escalated)
+    expect((await call(agent(), 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    const c = await h.su.connect();
+    try {
+      await c.query('SET session_replication_role = replica');
+      await c.query(`UPDATE ai_isa_handoffs SET sla_class = 'none', sla_due_at = created_at, sla_escalation_level = 0 WHERE id = $1`, [ho.id]);
+    } finally {
+      await c.query('SET session_replication_role = origin');
+      c.release();
+    }
+    const cardOf = async () => (await h.su.query<{ score: number; due_at: Date | null; reasons: { code: string; text: string }[] }>(
+      `SELECT score, due_at, reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff' AND dedupe_key = $2`, [l.id, `ai_isa_handoff:${(await assignmentOf(h, l.id))!.id}`])).rows[0]!;
+    const before = await cardOf();
+    // the confirmation's dispatch runs (or the opt-out already canceled it): it does not go out
+    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND kind = 'comms.dispatch' AND status = 'pending'`, [bw.tenantId]);
+    await runIsa(h, bw.tenantId, 3);
+    const m = (await aiMessages(h, l.id)).find((x) => x.id === ho.pending_message_id)!;
+    expect(['blocked', 'canceled']).toContain(m.status);
+    expect(['refused', 'canceled']).toContain((await handoffOf(h, l.id))[0]!.confirmation_status);
+    const card = await cardOf();
+    expect(card.reasons.map((r) => r.code)).toEqual(['AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE']);
+    expect(card.reasons[0]!.text).toBe('The appointment confirmation was not sent, and no text, call or email can reach them now (they opted out), so it cannot be confirmed by hand: keep or cancel the appointment.');
+    expect(card.reasons[0]!.text).not.toMatch(/confirm it by hand/);
+    // no deadline appears: the card's due time and the handoff's stay as they were
+    expect(card.due_at?.getTime() ?? null).toBe(before.due_at?.getTime() ?? null);
+    const row = (await h.su.query<{ sla_class: string; same: boolean; level: number }>(`SELECT sla_class, sla_due_at = created_at AS same, sla_escalation_level AS level FROM ai_isa_handoffs WHERE id = $1`, [ho.id])).rows[0]!;
+    expect(row).toEqual({ sla_class: 'none', same: true, level: 0 });
+    const notes = (await h.su.query<{ title: string }>(`SELECT title FROM notifications WHERE subject_id = $1 AND dedupe_key = $2`, [l.id, `ai_isa_confirmation_not_sent:${ho.id}`])).rows;
+    expect(notes.length).toBeGreaterThanOrEqual(1);
+    for (const n of notes) expect(n.title).not.toMatch(/^Confirm the appointment/);
+    expect(notes.every((n) => /^Appointment not confirmed: /.test(n.title))).toBe(true);
+  });
+
   // batch 13 audit ISA2B-14 (and ISA2B-02's untested backstop): the CONFIRMATION_LATE sweep reads the notice of the
   // policy the booking ran under (stored with the appointment at TX-C), not core's default
   it('R-ISA-14 E533: the sweep cancels a confirmation still unsent at slot start minus the policy\'s notice (CONFIRMATION_LATE): status canceled, the card critical', async () => {
