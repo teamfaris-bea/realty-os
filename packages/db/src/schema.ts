@@ -2147,6 +2147,7 @@ export interface PortalGrantsTable {
   expires_at: Timestamp | null;
   revoked_at: Timestamp | null;
   revoked_by_user_id: string | null;
+  display: Generated<Json>;
 }
 
 /** public.portal_items (table) */
@@ -2166,6 +2167,7 @@ export interface PortalItemsTable {
   published_by_user_id: string | null;
   published_at: Timestamp;
   retracted_at: Timestamp | null;
+  retracted_by_user_id: string | null;
 }
 
 /** public.portal_login_tokens (table) */

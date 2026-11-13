@@ -451,7 +451,7 @@ describe('grants on the definer-only tables', () => {
              has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec, has_function_privilege('app_user', p.oid, 'EXECUTE') AS app_user_exec
         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'portal' ORDER BY 1`);
     expect(rows.map((r) => r.fn.replace(/\(.*/, ''))).toEqual([
-      'portal.audit_internal', 'portal.consume_login', 'portal.document_chain_internal', 'portal.document_object', 'portal.end_session',
+      'portal.audit_internal', 'portal.consume_login', 'portal.document_chain_internal', 'portal.document_download', 'portal.document_object', 'portal.end_session',
       'portal.issue_document_stream', 'portal.record_audit', 'portal.request_login', 'portal.resolve_session',
     ]);
     for (const r of rows) {
