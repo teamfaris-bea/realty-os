@@ -38,6 +38,23 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(document.body.textContent).not.toMatch(/\b[A-Z]{2,}_[A-Z_]+\b/);
   });
 
+  it('R-ISA-22 (b13 review F3-ui): on a phone with care live, the AI care bar stacks above the Note · Log bar (never over it), Note stays reachable, and each bar has its page-end spacer', async () => {
+    const details = { contactId: IDS.jane, rowVersion: 1, doNotContact: false, stage: { stage: 'new', label: 'New', locked: [], lockedReason: null }, stageLabels: {}, addresses: [], collaborators: [], relationships: [], removedPoints: [], canEdit: true, canManageCollaborators: false };
+    isaApp(person(panel()).on(`GET /contacts/${IDS.jane}/details`, { status: 200, body: { details } }), `/contacts/${IDS.jane}`, 'agent');
+    const aiBar = await screen.findByTestId('ai-phone-bar');
+    const note = await screen.findByRole('button', { name: 'Note' });
+    const noteBar = note.closest('[data-sticky]')!;
+    expect(noteBar).not.toBe(aiBar);
+    // the Note · Log bar publishes its own height; the AI bar sits that far above the tab bar
+    expect(noteBar.getAttribute('data-testid')).toBe('person-phone-bar');
+    expect(aiBar.className).toContain('bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--person-bar-h,0px))]');
+    expect(noteBar.className).toContain('bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))]');
+    expect(document.documentElement.style.getPropertyValue('--person-bar-h')).not.toBe('');
+    expect(document.querySelectorAll('main [data-sticky-spacer]').length).toBe(2);
+    await userEvent.setup().click(note);
+    expect(await screen.findByRole('dialog', { name: 'Note on Jane Doe' })).toBeInTheDocument();
+  });
+
   it('R-ISA-30 E521 (batch 13 merge, 0081): the panel never gives a no-deadline handoff a "Respond by" or "Overdue", and says why a closed one is closed', async () => {
     const ended = (h: Partial<NonNullable<PanelResponse['handoff']>>) => panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'opted_out', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: false, confirmationStatus: 'none', closedReason: null, ...h } });
     const v = isaApp(person(ended({ slaClass: 'none' }), { live: false }), `/contacts/${IDS.jane}`, 'agent');

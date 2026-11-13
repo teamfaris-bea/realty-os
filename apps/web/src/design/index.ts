@@ -20,4 +20,4 @@ export {
   type EvidenceSourceType,
 } from './Evidence.js';
 export { safeUrl, SAFE_URL_SCHEMES, type SafeUrlOptions } from './safeUrl.js';
-export { STICKY_BOTTOM_VAR, useStickyBottom } from './Sticky.js';
+export { STICKY_BOTTOM_VAR, type StickyBottomOptions, useStickyBottom } from './Sticky.js';

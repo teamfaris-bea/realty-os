@@ -9,6 +9,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { Button, ButtonLink, Card, Dialog, Notice, announce, useStickyBottom } from '../../design/index.js';
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
@@ -88,9 +89,14 @@ export function AiCareStrip({ contact }: { contact: Contact }) {
       {state !== 'ended' || undo ? <AiCareControls target={target} /> : null}
       <UndoToastHost ownerUserId={a.ownerUserId} ownerName={ownerName} />
       {state === 'live' && !undo ? (
-        <div ref={bar} data-sticky className="fixed inset-x-0 z-40 border-t border-line bg-canvas/95 px-4 py-2 backdrop-blur md:hidden bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))]" data-testid="ai-phone-bar">
-          <AiCareControls target={target} layout="bar" label={`AI care for ${contact.displayName} (bar)`} />
-        </div>
+        <>
+          {/* b13 review F3-ui: stacked above the person page's Note · Log bar (its height, --person-bar-h; 0 when it is not
+              mounted), never over it; its own page-end spacer, as that bar has one */}
+          <div ref={bar} data-sticky className="fixed inset-x-0 z-40 border-t border-line bg-canvas/95 px-4 py-2 backdrop-blur md:hidden bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--person-bar-h,0px))]" data-testid="ai-phone-bar">
+            <AiCareControls target={target} layout="bar" label={`AI care for ${contact.displayName} (bar)`} />
+          </div>
+          {typeof document !== 'undefined' && document.querySelector('main') ? createPortal(<div aria-hidden="true" data-sticky-spacer className="h-16 md:hidden" />, document.querySelector('main')!) : null}
+        </>
       ) : null}
     </div>
   );

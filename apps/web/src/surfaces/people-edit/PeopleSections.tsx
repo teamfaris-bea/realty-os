@@ -32,13 +32,17 @@ function Section({ title, children, action }: { title: string; children: ReactNo
   );
 }
 
+/** The Note · Log bar's own height on <html>: a bar stacked above it on the person page (AI care) offsets by it. */
+export const PERSON_BAR_VAR = '--person-bar-h';
+
 function Inner({ contact }: { contact: ContactFullView }) {
   const d = useDetails(contact.id);
   const desktop = useIsDesktop();
   const navigate = useNavigate();
   const { call } = useAgentSheets();
   const [sheet, setSheet] = useState<'note' | 'log' | null>(null);
-  const stickyRef = useStickyBottom<HTMLDivElement>();
+  // b13 review F3-ui: the AI care bar (aiCare/Person.tsx) stacks above this one by its height (PERSON_BAR_VAR)
+  const stickyRef = useStickyBottom<HTMLDivElement>({ stackVar: PERSON_BAR_VAR });
   if (d.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (d.isError) return <Notice tone="error">{d.error.message}</Notice>;
   const details = d.data.details;
@@ -71,9 +75,9 @@ function Inner({ contact }: { contact: ContactFullView }) {
       </Section>
 
       {/* the page's end clears the sticky Note · Log bar: a spacer at the end of <main>, not mid-page */}
-      {!desktop && typeof document !== 'undefined' && document.querySelector('main') ? createPortal(<div aria-hidden="true" className="h-16" />, document.querySelector('main')!) : null}
+      {!desktop && typeof document !== 'undefined' && document.querySelector('main') ? createPortal(<div aria-hidden="true" data-sticky-spacer className="h-16" />, document.querySelector('main')!) : null}
       {!desktop ? (
-        <div ref={stickyRef} data-sticky className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-20 border-t border-line bg-surface/95 px-4 py-2 backdrop-blur md:hidden">
+        <div ref={stickyRef} data-sticky data-testid="person-phone-bar" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-20 border-t border-line bg-surface/95 px-4 py-2 backdrop-blur md:hidden">
           <div className="mx-auto grid max-w-2xl grid-cols-2 gap-2">
             <Button onClick={() => setSheet('note')}>Note</Button>
             <Button variant="secondary" onClick={() => setSheet('log')}>
