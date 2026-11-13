@@ -292,12 +292,12 @@ export async function upsertFeed(tx: Tx, ids: IdGenerator, f: FeedSpec): Promise
 }
 
 /**
- * Closes the caller's open feed items about an action (approve / reject / dismiss). `resolvedBy` 'condition' records
- * that the card's condition stopped holding rather than a module deciding its subject (an AI ISA handoff that is done,
- * b12 recheck R13); the default leaves resolved_by NULL as before.
+ * Closes the caller's open feed items about an action (approve / reject / dismiss). resolved_by stays NULL: the module
+ * that owns the subject handled it, which is final for the card's key (workspace/feed.ts). An AI ISA handoff that is
+ * done closes its card this way too (isa/handoff.ts closeHandoffInTx; b12 recheck R22).
  */
-export async function resolveFeedFor(tx: Tx, actionId: string, now: Instant, resolvedBy: 'condition' | null = null): Promise<void> {
+export async function resolveFeedFor(tx: Tx, actionId: string, now: Instant): Promise<void> {
   await sql`
-    UPDATE priority_feed_items SET state = 'done', resolved_at = ${toIso(now)}::timestamptz, resolved_by = ${resolvedBy}, snoozed_until = NULL, updated_at = now()
+    UPDATE priority_feed_items SET state = 'done', resolved_at = ${toIso(now)}::timestamptz, snoozed_until = NULL, updated_at = now()
      WHERE tenant_id = app.tenant_id() AND assistant_action_id = ${actionId} AND state IN ('open','snoozed')`.execute(tx);
 }

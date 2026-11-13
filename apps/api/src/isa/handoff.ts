@@ -157,7 +157,7 @@ export type HandoffCloseReason = 'deadline_met' | 'acknowledged' | 'lead_closed'
 
 /**
  * b12 recheck R13: a handoff that is done closes. Its pinned card closes (every open card of its action, whoever holds
- * it; resolved_by 'condition') and its still-proposed action is executed, by the system (a person decides an action
+ * it; resolved_by NULL, the "handled by its module" close that is final for the key, b12 recheck R22) and its still-proposed action is executed, by the system (a person decides an action
  * only as themselves, 0018; `executed` is what an internal action takes once handled). Done means: a human touch met
  * the deadline (the sweep, in its transaction), "Got it" on a handoff no touch can ever meet (sla_class 'none'), the
  * lead was closed (the sweep: a closed lead takes no touch), or AI care restarted on the person (startCare). An
@@ -167,7 +167,7 @@ export type HandoffCloseReason = 'deadline_met' | 'acknowledged' | 'lead_closed'
 export async function closeHandoffInTx(tx: Tx, actor: SystemActor, h: { id: string; actionId: string }, reason: HandoffCloseReason, now: Instant): Promise<boolean> {
   const x = await sql<{ id: string }>`UPDATE assistant_actions SET status = 'executed', updated_at = now()
     WHERE tenant_id = app.tenant_id() AND id = ${h.actionId} AND kind = 'ai_isa_handoff' AND status = 'proposed' RETURNING id`.execute(tx);
-  await resolveFeedFor(tx, h.actionId, now, 'condition');
+  await resolveFeedFor(tx, h.actionId, now);
   if (x.rows.length === 0) return false;
   await audit(tx, actor, { action: 'ai_isa.handoff_closed', entity: { type: 'ai_isa_handoff', id: h.id }, reason });
   return true;

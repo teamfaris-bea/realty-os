@@ -555,11 +555,11 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'open', resolved_by: null }]);
     expect(await actionOf(ho.id)).toMatchObject({ status: 'proposed' });
     expect(await closedAudit(ho.id)).toEqual([]);
-    // the human touch meets it: the card closes (condition), the system executes the action, the deadline is met
+    // the human touch meets it: the card closes (resolved_by NULL: its module handled it, final), the system executes the action, the deadline is met
     await touch(l.id);
     await ageAndSweep(ho.id);
     expect((await handoffs([l.id]))[0]!.sla_met_at).not.toBeNull();
-    expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: a1.userId, state: 'done', resolved_by: null }]);
     expect(await actionOf(ho.id)).toEqual({ id: actionId, status: 'executed', decided_by_user_id: null });
     expect(await closedAudit(ho.id)).toEqual([{ reason: 'deadline_met', actor_kind: 'system' }]);
     const feed = await call<{ pinned: { assistantActionId: string | null }[] }>(a1, 'GET', '/feed');
@@ -579,7 +579,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
     const ack = await call<{ slaMet: boolean }>(agent, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {});
     expect([ack.status, ack.body.slaMet]).toEqual([200, false]);
-    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: null }]);
     expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
     expect(await closedAudit(ho!.id)).toEqual([{ reason: 'acknowledged', actor_kind: 'system' }]);
     // a repeat ack changes nothing more
@@ -602,7 +602,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect((await call(w.owner, 'POST', `/ai-isa/handoffs/${ho!.id}/ack`, {})).status).toBe(200);
     const after = await cardRows(l.id);
     expect(after).toHaveLength(before.length);
-    expect(after.every((c) => c.state === 'done' && c.resolved_by === 'condition')).toBe(true);
+    expect(after.every((c) => c.state === 'done' && c.resolved_by === null)).toBe(true);
     expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed' });
   });
 
@@ -614,7 +614,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     // the pending card followed the lead to the previous owner's Team Lead (rehomeHandbacks) and is still open
     expect(await cardRows(l.id)).toEqual([{ user_id: w.teamLead!.userId, state: 'open', resolved_by: null }]);
     await ageAndSweep(ho.id);
-    expect(await cardRows(l.id)).toEqual([{ user_id: w.teamLead!.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: w.teamLead!.userId, state: 'done', resolved_by: null }]);
     expect(await actionOf(ho.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
     expect((await handoffs([l.id]))[0]).toMatchObject({ sla_met_at: null, sla_escalation_level: 0 });
     expect(await closedAudit(ho.id)).toEqual([{ reason: 'lead_closed', actor_kind: 'system' }]);
@@ -638,7 +638,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     expect(ho!.sla_class).not.toBe('none');
     expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'open', resolved_by: null }]);
     expect((await startCare(agent, l.id)).status).toBe(200);
-    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: 'condition' }]);
+    expect(await cardRows(l.id)).toEqual([{ user_id: agent.userId, state: 'done', resolved_by: null }]);
     expect(await actionOf(ho!.id)).toMatchObject({ status: 'executed', decided_by_user_id: null });
     expect(await closedAudit(ho!.id)).toEqual([{ reason: 'care_restarted', actor_kind: 'system' }]);
     await ageAndSweep(ho!.id);
