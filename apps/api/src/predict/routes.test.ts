@@ -79,10 +79,28 @@ describe('GET /likely (module 55; R-STAFF-7)', () => {
     expect(kept.rows[0].n).toBeGreaterThan(0);
   });
 
-  it('R-STAFF-7: the route is a SELECT only (the R-PRED-4 architecture scan reads predict/routes.ts) and writes no row', async () => {
-    const before = await h.su.query(`SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1`, [w.tenantId]);
-    await likely(w.agents[0]!);
-    const after = await h.su.query(`SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1`, [w.tenantId]);
-    expect(after.rows[0].n).toBe(before.rows[0].n);
+  it('R-STAFF-7: the route is a SELECT only (predict/architecture.test.ts scans predict/routes.ts on its own) and writes no row: the feed cards, the predictions and the audit log are the same, row versions included', async () => {
+    // a ready list, so the read reaches the feed and prediction rows (after the withdrawal above it would stop at no_model)
+    const def = await approvedModel(h, FIRST_PARTY_MODEL);
+    const a = w.agents[0]!;
+    const c = await contactOf(a, { firstName: 'Ezra' });
+    await savedListings(h, w.tenantId, c.id, 3);
+    await pass(h, w.tenantId, { registry: testRegistry(def) });
+    // xmin changes on any UPDATE of a row, even one that writes the same values
+    const snapshot = async () =>
+      (
+        await h.su.query<{ t: string; rows: unknown }>(
+          `SELECT 'priority_feed_items' AS t, coalesce(jsonb_agg(jsonb_build_object('xmin', f.xmin::text, 'row', to_jsonb(f)) ORDER BY f.id), '[]') AS rows FROM priority_feed_items f WHERE f.tenant_id = $1
+           UNION ALL SELECT 'contact_predictions', coalesce(jsonb_agg(jsonb_build_object('xmin', p.xmin::text, 'row', to_jsonb(p)) ORDER BY p.contact_id, p.model_version), '[]') FROM contact_predictions p WHERE p.tenant_id = $1
+           UNION ALL SELECT 'audit_log', to_jsonb(count(*)) FROM audit_log WHERE tenant_id = $1`,
+          [w.tenantId],
+        )
+      ).rows;
+    const before = await snapshot();
+    expect(JSON.stringify(before)).toContain(c.id);
+    const v = await likely(a);
+    expect(v.state).toBe('ready');
+    expect(v.items.map((i) => i.contactId)).toContain(c.id);
+    expect(await snapshot()).toEqual(before);
   });
 });

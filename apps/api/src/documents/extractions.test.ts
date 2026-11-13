@@ -75,12 +75,30 @@ describe('GET /documents/extractions (module 55; R-STAFF-2)', () => {
     expect((await list(w.tc)).some((x) => x.documentId === docId)).toBe(false);
   });
 
-  it('R-STAFF-2: decided extractions leave the list; the route writes nothing', async () => {
+  it('R-STAFF-2: the route writes nothing: the actions, their claims, the documents and the audit log are the same, row versions included', async () => {
     const { dealId } = await makeDeal(w, w.agents[0]!);
     const docId = await contract(w.tc, dealId);
+    // xmin changes on any UPDATE of a row, even one that writes the same values
+    const snapshot = async () =>
+      (
+        await h.su.query<{ t: string; rows: unknown }>(
+          `SELECT 'assistant_actions' AS t, coalesce(jsonb_agg(jsonb_build_object('xmin', a.xmin::text, 'row', to_jsonb(a)) ORDER BY a.id), '[]') AS rows FROM assistant_actions a WHERE a.tenant_id = $1
+           UNION ALL SELECT 'assistant_claims', coalesce(jsonb_agg(jsonb_build_object('xmin', c.xmin::text, 'row', to_jsonb(c)) ORDER BY c.id), '[]') FROM assistant_claims c WHERE c.tenant_id = $1
+           UNION ALL SELECT 'documents', coalesce(jsonb_agg(jsonb_build_object('xmin', d.xmin::text, 'row', to_jsonb(d)) ORDER BY d.id), '[]') FROM documents d WHERE d.tenant_id = $1
+           UNION ALL SELECT 'audit_log', to_jsonb(count(*)) FROM audit_log WHERE tenant_id = $1`,
+          [w.tenantId],
+        )
+      ).rows;
+    const before = await snapshot();
+    expect((await list(w.tc)).some((x) => x.documentId === docId)).toBe(true);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('R-STAFF-2: decided extractions leave the list', async () => {
+    const { dealId } = await makeDeal(w, w.agents[0]!);
+    const docId = await contract(w.tc, dealId);
+    expect((await list(w.tc)).some((x) => x.documentId === docId)).toBe(true);
     await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE tenant_id = $1 AND dedupe_key = $2`, [w.tenantId, `contract_extraction:${docId}`]);
-    const before = (await h.su.query('SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1', [w.tenantId])).rows[0].n;
     expect((await list(w.tc)).some((x) => x.documentId === docId)).toBe(false);
-    expect((await h.su.query('SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1', [w.tenantId])).rows[0].n).toBe(before);
   });
 });
