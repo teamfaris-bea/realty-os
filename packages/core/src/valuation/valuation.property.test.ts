@@ -72,7 +72,7 @@ function bad(kind: BadKind, base: CmaCandidate, id: string): CmaCandidate {
     case 'other_type':
       return sale({ propertyType: 'condo' });
     case 'other_source':
-      return sale({ sizeSource: 'BuildingAreaTotal' });
+      return sale({ sizeSource: 'AboveGradeFinishedArea' }); // another measure (BuildingAreaTotal is never one: R-MLS-7)
     case 'future':
       return sale({ closeDate: addMonths(VALUATION_DATE, 1) });
     case 'subject_address':
