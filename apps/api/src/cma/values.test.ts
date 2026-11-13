@@ -168,8 +168,8 @@ const bothCleared = <T>(fn: () => Promise<T>) => withCmaCleared(() => withAvmCle
 const rangeLimit = (w: NurtureWorld, bps: number) => h.su.query('UPDATE tenant_settings SET avm_max_range_bps = $2 WHERE tenant_id = $1', [w.tenantId, bps]);
 
 /** A nurture world whose MLS pack records every valuation use with a statement for SC, After-closing alerts approved. */
-async function noteWorld(pack: Record<string, unknown> = scPack()): Promise<NurtureWorld> {
-  const w = await nurtureWorld(h);
+async function noteWorld(pack: Record<string, unknown> = scPack(), o: Parameters<typeof nurtureWorld>[1] = {}): Promise<NurtureWorld> {
+  const w = await nurtureWorld(h, o);
   await setPack(w.mls, pack);
   await approveTemplate(w.agents[0]!, 'after_closing_alerts');
   await rangeLimit(w, 10_000); // the engine's range on the fixture: the tenant limit is data (owner question 7)
@@ -230,20 +230,41 @@ describe('lane V2-B deliverable 3: the in-house note and its queue-time re-check
     expect(await homeMail(c)).toEqual([]);
   });
 
-  it('E369 E636 R-CMA-6: a feed 3 days stale under a 24 h limit (as-of within 35 days, both packs) ⇒ skipped ESTIMATE_NOT_DISPLAYABLE, nothing queued, and the fact shows no number', async () => {
-    const w = await noteWorld();
+  it('E369 E636 R-CMA-6: a feed 3 days stale under a 24 h limit (as-of within 35 days, both packs) ⇒ skipped ESTIMATE_NOT_DISPLAYABLE, nothing queued, and the fact read by the agent and an ISA (its own past client) says "Estimate not shown to clients." with no number; a TC on the deal sees no firing at all', async () => {
+    const w = await noteWorld(scPack(), { others: ['isa', 'tc'] });
+    const [isa, tc] = w.others;
+    const roles = await Promise.all([w.agents[0]!, isa!, tc!].map(async (by) => (await h.su.query<{ role: string }>('SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2', [w.tenantId, by.userId])).rows[0]?.role));
+    expect(roles).toEqual(['agent', 'isa', 'tc']);
+    // contact.view_detail: an ISA reads its own contacts, a TC the contacts of its deals (core authz MATRIX)
     const c = await covered(w);
+    await approveTemplate(isa!, 'after_closing_alerts');
+    const mine = await pastClient(h, w, isa!);
+    await mlsSale(mw(w), { line1: mine.line1, ...SC, closeDate: daysAgo(1500), sqft: 1500, beds: 3 });
+    await h.su.query("INSERT INTO deal_members (tenant_id, deal_id, user_id, role) VALUES ($1, $2, $3, 'tc')", [w.tenantId, c.dealId, tc!.userId]);
     await feedLastSyncedAt(mw(w), new Date(Date.now() - 3 * 86_400_000));
-    await bothCleared(() => noteFor(w, c));
-    expect((await valuationsOf(h, c.addressId))[0]).toMatchObject({ status: 'ok', display_allowed: false });
-    expect(await skipOf(c)).toBe('ESTIMATE_NOT_DISPLAYABLE');
-    expect(await homeMail(c)).toEqual([]);
-    for (const by of [w.agents[0]!, ...(w.others ?? [])]) {
-      const r = await call<Runs>(by, 'GET', `/contacts/${c.id}/trigger-runs`);
-      if (r.status !== 200) continue;
-      expect(r.body.runs[0]!.fact!.text).toMatch(/Estimate not shown to clients\.$/);
-      expect(JSON.stringify(r.body)).not.toMatch(/\$\d/);
+    await bothCleared(async () => {
+      await estimate(w);
+      for (const x of [c, mine]) await firingsDue(h, x.id);
+      await reconcileAndRun(h, w.tenantId);
+    });
+    for (const x of [c, mine]) {
+      expect((await valuationsOf(h, x.addressId))[0]).toMatchObject({ status: 'ok', display_allowed: false });
+      expect(await skipOf(x)).toBe('ESTIMATE_NOT_DISPLAYABLE');
+      expect(await homeMail(x)).toEqual([]);
     }
+    // b13 audit V2B-9: every read must succeed (a refused read is a failure, never skipped)
+    for (const [who, by, x] of [['agent', w.agents[0]!, c], ['isa', isa!, mine]] as const) {
+      const r = await call<Runs>(by, 'GET', `/contacts/${x.id}/trigger-runs`);
+      expect([who, r.status]).toEqual([who, 200]);
+      const run = r.body.runs.find((y) => y.trigger === 'home_value');
+      expect([who, run?.fact?.text]).toEqual([who, expect.stringMatching(/Estimate not shown to clients\.$/)]);
+      expect([who, JSON.stringify(r.body)]).toEqual([who, expect.not.stringMatching(/\$\s?\d/)]);
+    }
+    // a TC on the deal reads 200 and no firing at all: module 26's read joins each run's playbook, and the agent's
+    // personal After-closing alerts playbook is not visible to a TC (0001 playbooks_select: scope 'team', the owner or
+    // a tenant-wide reader), so the TC sees neither the snippet nor any number
+    const t = await call<Runs>(tc!, 'GET', `/contacts/${c.id}/trigger-runs`);
+    expect([t.status, t.body]).toEqual([200, { runs: [] }]);
   });
 
   it('E370 E374 E625 R-CMA-10: a live near match, the home relisted saying N, the home live in the MLS saying Y, or a live team listing not yet in the MLS ⇒ not displayable, a visible skip', async () => {
