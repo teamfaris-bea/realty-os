@@ -146,6 +146,31 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     expect(notes()).toBe(1);
   });
 
+  it('E692 (b14 to-do, priorNotices anchored by the contact): a sent message to someone else that carries the grant\'s invite key never counts as this person\'s note', async () => {
+    const c = await client(agent(), { firstName: 'Kit' });
+    const d = await deal(agent(), c.id);
+    const notes = () => h.providers.email.sent.filter((m) => m.to === c.email).length;
+    await setPortalCleared(h, false);
+    let first;
+    try {
+      first = await invite(agent(), d, c.id);
+    } finally {
+      await setPortalCleared(h, true);
+    }
+    expect(notes()).toBe(0);
+    // another agent's own email to their own contact, under a key that matches the grant's invite pattern
+    const other = await client(w.agents[1]!, { firstName: 'Ola' });
+    await deal(w.agents[1]!, other.id);
+    const m = await call<{ message: { status: string } }>(w.agents[1]!, 'POST', `/contacts/${other.id}/messages`, { channel: 'email', subject: 'Hello', body: 'Hello there.', idempotencyKey: `portal_invite:${first.body.grant.id}` });
+    expect(m.status).toBe(200);
+    expect(m.body.message.status).toBe('sent');
+    // Kit never got a note, so this invite sends it (never "already invited")
+    const again = await invite(agent(), d, c.id);
+    expect(again.body.notice.text).not.toMatch(/already invited/);
+    expect(again.body.notice).toMatchObject({ sent: true, channel: 'email' });
+    expect(notes()).toBe(1);
+  });
+
   it('E692 (b14 F7): when the first note was blocked, a repeat invite never claims a note was sent; it says none reached them and offers Resend', async () => {
     const c = await client(agent(), { firstName: 'Bree' });
     const d = await deal(agent(), c.id);

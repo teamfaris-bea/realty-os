@@ -175,10 +175,12 @@ export function noticeFromNote(first: string, channel: 'sms' | 'email', status: 
  * invite says a note was sent only when one was; a note still on its way is said to be; a grant none of whose notes
  * arrived gets its note now when this inviter's key is still unused, else is told so and offered Resend.
  */
-async function priorNotices(tx: Tx, grantId: string, inviterId: string): Promise<{ sent: boolean; inFlight: boolean; mineUsed: boolean }> {
+async function priorNotices(tx: Tx, grantId: string, inviterId: string, contactId: string): Promise<{ sent: boolean; inFlight: boolean; mineUsed: boolean }> {
+  // b14: anchored by the invitee (every invite note goes to them; messages has contact indexes), so the key pattern only
+  // filters that person's outbound messages, never a scan of the tenant's, and a key on someone else's message never counts
   const r = await sql<{ status: string; mine: boolean }>`
     SELECT status, idempotency_key = ${`h:${inviterId}:portal_invite:${grantId}`} AS mine FROM public.messages
-     WHERE tenant_id = app.tenant_id() AND direction = 'outbound'
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND direction = 'outbound'
        AND idempotency_key ~ ${`^h:[0-9a-f-]{36}:portal_invite:${grantId}(:|$)`}`.execute(tx);
   return {
     sent: r.rows.some((m) => m.status === 'sent' || m.status === 'delivered'),
@@ -196,7 +198,7 @@ export async function invite(req: FastifyRequest, scope: Scope, input: InviteInp
   if (!r.cleared) notice = { sent: false, text: inviteNotSent(r.first), channel: null, decision: null };
   else if (!r.createdGrant && !r.createdAccount && input.resend !== true) {
     // b14 audit F7: never "no second note" when no first note went (an invite while the portal was off, a blocked note)
-    const prior = await asSystem(deps, req.actor!.tenantId, 'worker', (tx) => priorNotices(tx, r.grantId, req.actor!.userId));
+    const prior = await asSystem(deps, req.actor!.tenantId, 'worker', (tx) => priorNotices(tx, r.grantId, req.actor!.userId, input.contactId));
     if (prior.sent) notice = { sent: false, text: inviteNoNotice(r.first), channel: null, decision: null };
     else if (prior.inFlight) notice = { sent: false, text: inviteNoteInFlight(r.first), channel: null, decision: null };
     else if (prior.mineUsed) notice = { sent: false, text: inviteNoteNotReached(r.first), channel: null, decision: null };
