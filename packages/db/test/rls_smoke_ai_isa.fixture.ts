@@ -19,21 +19,60 @@ function localOf(zone: string, at = new Date()): { hour: number; isoDow: number 
   const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(parts.weekday!) + 1;
   return { hour: Number(parts.hour), isoDow: dow };
 }
-/** A zone where it is now 10:00–17:59 on Monday–Saturday (inside every window, initiated days included). */
-export function openZone(): string {
-  const z = ETC.find((x) => { const l = localOf(x); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 6; });
-  if (!z) throw new Error('no open zone now');
+/** A zone where it is now (or at `at`) 10:00–17:59 on Monday–Saturday (inside every window, initiated days included), or
+ *  undefined. From about 06:00 to 22:00 UTC on a Sunday there is none: UTC−12 is past Saturday 18:00, UTC+12 not yet at
+ *  Monday 10:00. */
+export function initiatedZone(at = new Date()): string | undefined {
+  return ETC.find((x) => { const l = localOf(x, at); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 6; });
+}
+/** A zone where it is now (or at `at`) 10:00–17:59: initiatedZone() when there is one, else one where it is 10:00–17:59 on
+ *  the Sunday (the 25 offsets reach every hour, so one always exists). b13: it used to throw 'no open zone now' on a
+ *  Sunday from about 06:00 to 22:00 UTC, which failed every case built on leadUnderCare(). Replies go out in the
+ *  fallback zone; an initiated AI message waits for a permitted day (ISA_QUIET_HOURS), so a case that needs an initiated
+ *  send uses initiatedDayNow() below. */
+export function openZone(at = new Date()): string {
+  const z = initiatedZone(at) ?? ETC.find((x) => { const l = localOf(x, at); return l.hour >= 10 && l.hour < 18; });
+  if (z === undefined) throw new Error(`openZone: no fixed-offset zone is at 10:00-17:59 at ${at.toISOString()}`);
   return z;
 }
-/** A zone where it is now 10:00–17:59 on a weekday (Monday–Friday) when there is one, else openZone(). */
-export function openWeekdayZone(): string {
-  return ETC.find((x) => { const l = localOf(x); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 5; }) ?? openZone();
+/** A zone where it is now (or at `at`) 10:00–17:59 on a weekday (Monday–Friday) when there is one, else openZone(). */
+export function openWeekdayZone(at = new Date()): string {
+  return ETC.find((x) => { const l = localOf(x, at); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 5; }) ?? openZone(at);
 }
-/** A zone where it is now 01:00–04:59 (outside every window). */
-export function closedZone(): string {
-  const z = ETC.find((x) => { const l = localOf(x); return l.hour >= 1 && l.hour < 5; });
-  if (!z) throw new Error('no closed zone now');
+/** A zone where it is now (or at `at`) 01:00–04:59 (outside every window, any day). */
+export function closedZone(at = new Date()): string {
+  const z = ETC.find((x) => { const l = localOf(x, at); return l.hour >= 1 && l.hour < 5; });
+  if (z === undefined) throw new Error(`closedZone: no fixed-offset zone is at 01:00-04:59 at ${at.toISOString()}`);
   return z;
+}
+/** There is no fake clock (the guard reads now()). A case that needs an initiated AI send to go out runs `fn` with the
+ *  day it is now in `zone` a permitted initiated day, in this file's own database, and puts everything back after. On a
+ *  Monday–Saturday that is not a US federal holiday it changes nothing. On a Sunday (no zone is on a permitted day from
+ *  about 06:00 to 22:00 UTC) it adds that ISO weekday to the platform:ai_isa pack's initiated_days; on a federal holiday
+ *  it swaps app.ai_isa_us_federal_holiday for one that excepts that date. The case still proves what it is about. */
+export async function initiatedDayNow<T>(h: Harness, zone: string, fn: () => Promise<T>): Promise<T> {
+  const [p] = await suRows<{ rules: Record<string, unknown>; dow: number; d: string; holiday: boolean; def: string }>(h.su,
+    `SELECT j.rules, extract(isodow FROM now() AT TIME ZONE $1)::int AS dow, to_char((now() AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS d,
+            app.ai_isa_us_federal_holiday((now() AT TIME ZONE $1)::date) AS holiday,
+            pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS def
+       FROM jurisdiction_packs j WHERE j.key = 'platform:ai_isa'`, [zone]);
+  const days = (p!.rules.initiated_days as number[] | undefined) ?? [1, 2, 3, 4, 5, 6];
+  const addDay = !days.includes(p!.dow);
+  if (addDay) await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('initiated_days', $1::jsonb) WHERE key = 'platform:ai_isa'`, [JSON.stringify([...days, p!.dow])]);
+  if (p!.holiday) {
+    await h.su.query(p!.def.replace('CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday', 'CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday_b13_orig'));
+    await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE
+      SET search_path = pg_catalog AS $$ SELECT d <> DATE '${p!.d}' AND app.ai_isa_us_federal_holiday_b13_orig(d) $$`);
+  }
+  try {
+    return await fn();
+  } finally {
+    if (p!.holiday) {
+      await h.su.query(p!.def);
+      await h.su.query(`DROP FUNCTION app.ai_isa_us_federal_holiday_b13_orig(date)`);
+    }
+    if (addDay) await h.su.query(`UPDATE jurisdiction_packs SET rules = $1::jsonb WHERE key = 'platform:ai_isa'`, [JSON.stringify(p!.rules)]);
+  }
 }
 
 export interface IsaWorld {

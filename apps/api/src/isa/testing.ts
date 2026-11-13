@@ -31,10 +31,26 @@ function localOf(zone: string, at: Date): { hour: number; isoDow: number } {
   const parts = Object.fromEntries(f.formatToParts(at).map((p) => [p.type, p.value]));
   return { hour: Number(parts.hour), isoDow: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(parts.weekday!) + 1 };
 }
-/** A fixed-offset zone where it is now (or at `at`) 10:00–17:59, Monday to Saturday. */
-export const openZone = (at = new Date()) => ETC.find((z) => { const l = localOf(z, at); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 6; })!;
-/** A fixed-offset zone where it is now (or at `at`) 01:00–04:59. */
-export const closedZone = (at = new Date()) => ETC.find((z) => { const l = localOf(z, at); return l.hour >= 1 && l.hour < 5; })!;
+/** A fixed-offset zone where it is now (or at `at`) 10:00–17:59, Monday to Saturday (inside every window, initiated days
+ *  included), or undefined. From about 06:00 to 22:00 UTC on a Sunday there is none: UTC−12 is already past Saturday
+ *  18:00 and UTC+12 is not yet at Monday 10:00. */
+export const initiatedZone = (at = new Date()): string | undefined => ETC.find((z) => { const l = localOf(z, at); return l.hour >= 10 && l.hour < 18 && l.isoDow <= 6; });
+/** A fixed-offset zone where it is now (or at `at`) 10:00–17:59: initiatedZone() when there is one, else one where it is
+ *  10:00–17:59 on the Sunday (the 25 offsets reach every hour, so one always exists). b13: it used to return undefined on
+ *  a Sunday from about 06:00 to 22:00 UTC, so isaLead wrote a null explicit zone. A reply goes out in the fallback zone;
+ *  an initiated AI message there waits for a permitted day (ISA_QUIET_HOURS, Q-ISA-2), so a case that needs an initiated
+ *  send asks for initiatedZone() and handles its absence. Never undefined: it throws if no zone qualifies. */
+export const openZone = (at = new Date()): string => {
+  const z = initiatedZone(at) ?? ETC.find((x) => { const l = localOf(x, at); return l.hour >= 10 && l.hour < 18; });
+  if (z === undefined) throw new Error(`openZone: no fixed-offset zone is at 10:00-17:59 at ${at.toISOString()}`);
+  return z;
+};
+/** A fixed-offset zone where it is now (or at `at`) 01:00–04:59 (outside every window, any day). Never undefined. */
+export const closedZone = (at = new Date()): string => {
+  const z = ETC.find((x) => { const l = localOf(x, at); return l.hour >= 1 && l.hour < 5; });
+  if (z === undefined) throw new Error(`closedZone: no fixed-offset zone is at 01:00-04:59 at ${at.toISOString()}`);
+  return z;
+};
 
 export interface IsaWorld extends CommsWorld {
   versionId: string;
