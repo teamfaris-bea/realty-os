@@ -361,10 +361,13 @@ export const CAPABILITY_WORDS: Record<string, string> = {
  * built and dark: allowed says what they still wait for; not allowed says only the opt-in or policy, one reason.
  */
 export const SOLD_COMPS_WAIT = 'none go out until counsel review of platform:cma and platform:ai_isa_seller_data is recorded and the MLS licence allows it';
-export function capabilityLine(c: { capability: string; allowed: boolean; built?: boolean }, v: Viewer): string {
+export function capabilityLine(c: { capability: string; allowed: boolean; built?: boolean; calendarConnected?: boolean }, v: Viewer): string {
   const what = (CAPABILITY_WORDS[c.capability] ?? 'Another capability').replace('your calendar', v.isOwner ? 'your calendar' : `${v.ownerFirst}'s calendar`).replace('for you to approve', v.isOwner ? 'for you to approve' : `for ${v.ownerFirst} to approve`);
   if (c.built !== true) return `${what}: not available yet on this deployment.`;
-  if (c.allowed) return c.capability === 'seller_sold_comps' ? `${what}: allowed, but ${SOLD_COMPS_WAIT}.` : `${what}: yes.`;
+  if (c.allowed && c.capability === 'seller_sold_comps') return `${what}: allowed, but ${SOLD_COMPS_WAIT}.`;
+  // b14 to-do (B13S-2 low): no times are offered while the owner's calendar is not connected (turn.ts)
+  if (c.allowed && c.capability === 'book_appointments' && c.calendarConnected === false) return `${what}: allowed, but ${v.isOwner ? 'your' : `${v.ownerFirst}'s`} calendar is not connected, so no times are offered.`;
+  if (c.allowed) return `${what}: yes.`;
   return `${what}: no. ${v.isOwner ? 'Not in your opt-in or the team policy.' : `Not in ${v.ownerFirst}'s opt-in or the team policy.`}`;
 }
 

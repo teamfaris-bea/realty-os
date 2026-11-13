@@ -128,6 +128,14 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(document.body.textContent).not.toMatch(/not available yet|not built|Booking is not available/i);
   });
 
+  it('E534 (b14 to-do, B13S-2 low): booking allowed while the calendar is not connected never reads "yes": it says no times are offered', async () => {
+    const p = panel();
+    p.capabilities = p.capabilities.map((c) => (c.capability === 'book_appointments' ? { ...c, allowed: true, calendarConnected: false } : c));
+    isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText('Book appointments on your calendar: allowed, but your calendar is not connected, so no times are offered.')).toBeInTheDocument();
+    expect(screen.queryByText('Book appointments on your calendar: yes.')).toBeNull();
+  });
+
   it('E496 (batch 13 isa-4 F10): Take over is offered while care is paused because someone on the team wrote (human_contact)', async () => {
     const p = panel({ state: 'paused' });
     p.assignment!.pauseReason = 'human_contact';

@@ -1058,6 +1058,9 @@
                 "built": {
                   "type": "boolean"
                 },
+                "calendarConnected": {
+                  "type": "boolean"
+                },
                 "sentence": {
                   "type": "string"
                 }

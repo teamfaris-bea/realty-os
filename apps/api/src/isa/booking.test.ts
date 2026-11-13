@@ -158,7 +158,7 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     const p = await call<{ capabilities: { capability: string; allowed: boolean; built: boolean; sentence: string }[] }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`);
     expect(p.status).toBe(200);
     const row = (c: string) => p.body.capabilities.find((x) => x.capability === c)!;
-    expect(row('book_appointments')).toEqual({ capability: 'book_appointments', allowed: true, built: true, sentence: 'Allowed.' });
+    expect(row('book_appointments')).toEqual({ capability: 'book_appointments', allowed: true, built: true, calendarConnected: true, sentence: 'Allowed.' });
     expect(row('converse')).toMatchObject({ allowed: true, built: true });
     // in the team policy, not in this agent's opt-in
     expect(row('share_listings')).toEqual({ capability: 'share_listings', allowed: false, built: true, sentence: 'Not in the opt-in or the team policy.' });
@@ -166,6 +166,17 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(JSON.stringify(p.body.capabilities)).not.toMatch(/not available yet|not built/i);
     const me = await call<{ builtCapabilities: string[] }>(agent(), 'GET', '/me/ai-isa');
     expect(me.body.builtCapabilities).toEqual(['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments']);
+    // b14 to-do (B13S-2 low): the calendar disconnected after the opt-in, the turn offers no times (turn.ts
+    // calendarLiveInTx), so the panel says so instead of a bare "Allowed."
+    const links = await h.su.query<{ id: string; status: string }>(`SELECT id, status FROM user_calendar_links WHERE user_id = $1 AND status IN ('connected','degraded')`, [agent().userId]);
+    expect(links.rows.length).toBeGreaterThan(0);
+    try {
+      await h.su.query(`UPDATE user_calendar_links SET status = 'pending_review' WHERE id = ANY($1)`, [links.rows.map((x) => x.id)]);
+      const off = await call<{ capabilities: { capability: string; allowed: boolean; built: boolean; sentence: string }[] }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`);
+      expect(off.body.capabilities.find((x) => x.capability === 'book_appointments')).toEqual({ capability: 'book_appointments', allowed: true, built: true, calendarConnected: false, sentence: 'Allowed, but the calendar is not connected, so no times are offered.' });
+    } finally {
+      for (const x of links.rows) await h.su.query('UPDATE user_calendar_links SET status = $2 WHERE id = $1', [x.id, x.status]);
+    }
   });
 
   it('R-ISA-13 E528: an offer is sent; "2" → accepting → booked → appointment_booked, the confirmation pending in local time and zone', async () => {

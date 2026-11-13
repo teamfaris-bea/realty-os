@@ -143,7 +143,8 @@ export const PanelResponse = z.object({
   canResume: z.boolean(),
   chain: z.array(ChainLink),
   // b13 review B13S-2: built says this tree implements it (isa/sentences.ts ISA_BUILT_CAPABILITIES); the web reads it
-  capabilities: z.array(z.object({ capability: z.string(), allowed: z.boolean(), built: z.boolean(), sentence: z.string() })),
+  // b14 to-do (B13S-2 low): calendarConnected on the book_appointments row only (the owner's calendar is live now)
+  capabilities: z.array(z.object({ capability: z.string(), allowed: z.boolean(), built: z.boolean(), calendarConnected: z.boolean().optional(), sentence: z.string() })),
   consent: z.array(z.object({ channel: z.enum(CHANNELS), sentence: z.string() })),
   zones: z.object({ zones: z.array(z.string()), source: z.enum(['explicit', 'union']), sentence: z.string() }),
   nextAllowedSendAt: Iso.nullable(),

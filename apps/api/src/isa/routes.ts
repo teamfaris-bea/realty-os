@@ -22,7 +22,7 @@ import * as S from './schemas.js';
 import { adminLoosening, adminPut, adminView, meView, optIn, optInLoosening, reattest, revokeOptIn } from './settings.js';
 import type { TurnDeps } from './turn.js';
 import { ISA_BUILT_CAPABILITIES, STATE_SENTENCES, appointmentAlreadySetSentence, capabilityRow, chipOf, startRefusalSentence } from './sentences.js';
-import { liveOfferOf } from './booking/rows.js';
+import { calendarLiveInTx, liveOfferOf } from './booking/rows.js';
 
 function depsOf(req: FastifyRequest): TurnDeps {
   return depsFromPlatform(platformOf(req)) as TurnDeps;
@@ -33,7 +33,7 @@ async function panel(req: FastifyRequest, contactId: string) {
   const actor = actorOf(req);
   const deps = depsOf(req);
   const sharedAddress = await sharedAddressAsSystem(deps, actor.tenantId, contactId);
-  return withTenantTx(actor, async (tx, now) => {
+  const p = await withTenantTx(actor, async (tx, now) => {
     const a = await latestAssignmentOf(tx, contactId);
     const refusal = a !== null && a.endedAt === null ? null : await startRefusal(tx, actor, contactId, { sharedAddress });
     const block = await activeBlock(tx, contactId);
@@ -118,6 +118,14 @@ async function panel(req: FastifyRequest, contactId: string) {
         overdue: ed.sla_class !== 'none' && ed.sla_due_at.getTime() < now, confirmationStatus: ed.confirmation_status, confirmationNotSent: edNotSent, closedReason: ed.closed_reason } : null,
     };
   }, { db: deps.db });
+  // b14 to-do (B13S-2 low): turn.ts offers times only while the owner's calendar is live (checked at opt-in only), so the
+  // booking row says when it is not. Read as the system after the panel's transaction: a viewer may read only their
+  // own calendar links (calendar_links_self), and only the boolean leaves.
+  if (p.assignment === null || !p.capabilities.some((c) => c.capability === 'book_appointments')) return p;
+  const ownerId = p.assignment.ownerUserId;
+  const calendarLive = await withTenantTx(systemActor(actor.tenantId, 'worker'), (tx) => calendarLiveInTx(tx, ownerId), { db: deps.db });
+  // the row's allowed already is policy AND opt-in AND built; restated with the calendar
+  return { ...p, capabilities: p.capabilities.map((c) => (c.capability === 'book_appointments' ? capabilityRow(c.capability, c.allowed, c.allowed, { calendarLive }) : c)) };
 }
 
 async function register(app: FastifyInstance): Promise<void> {

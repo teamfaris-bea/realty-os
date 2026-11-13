@@ -34,10 +34,16 @@ const START_REFUSALS: Record<string, string> = {
  */
 export const ISA_BUILT_CAPABILITIES = ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const;
 
-/** The panel's "What it may do" row of a capability: allowed (the team policy and the owner's opt-in) and the sentence. */
-export function capabilityRow(cap: string, inPolicy: boolean, inOptIn: boolean): { capability: string; allowed: boolean; built: boolean; sentence: string } {
+/**
+ * The panel's "What it may do" row of a capability: allowed (the team policy and the owner's opt-in) and the sentence.
+ * b14 to-do (B13S-2 low): the booking row also carries whether the owner's calendar is live now (turn.ts offers times
+ * only then; the calendar is checked only at opt-in), so an allowed booking never reads as a bare "Allowed." while no
+ * times can be offered.
+ */
+export function capabilityRow(cap: string, inPolicy: boolean, inOptIn: boolean, o: { calendarLive?: boolean } = {}): { capability: string; allowed: boolean; built: boolean; calendarConnected?: boolean; sentence: string } {
   const built = (ISA_BUILT_CAPABILITIES as readonly string[]).includes(cap);
   const allowed = built && inPolicy && inOptIn;
+  const calendar = cap === 'book_appointments' && o.calendarLive !== undefined ? { calendarConnected: o.calendarLive } : {};
   const sentence = !built
     ? 'Not built in this version.'
     : !allowed
@@ -46,8 +52,10 @@ export function capabilityRow(cap: string, inPolicy: boolean, inOptIn: boolean):
         ? 'Allowed. Recent sales still go out only once counsel review of platform:cma and platform:ai_isa_seller_data is recorded and the MLS licence allows it.'
         : cap === 'seller_competition'
           ? 'Allowed: competing listings with their asking prices.'
-          : 'Allowed.';
-  return { capability: cap, allowed, built, sentence };
+          : calendar.calendarConnected === false
+            ? 'Allowed, but the calendar is not connected, so no times are offered.'
+            : 'Allowed.';
+  return { capability: cap, allowed, built, ...calendar, sentence };
 }
 
 /** Control and booking refusals (ISA-2b; the web shows the sentence). */

@@ -136,7 +136,8 @@ export interface PanelResponse {
   startRefusal: { code: string; sentence: string } | null;
   canResume: boolean;
   chain: ChainLink[];
-  capabilities: { capability: string; allowed: boolean; built: boolean; sentence: string }[];
+  /** b14 to-do (B13S-2 low): calendarConnected on the book_appointments row only (the owner's calendar is live now) */
+  capabilities: { capability: string; allowed: boolean; built: boolean; calendarConnected?: boolean; sentence: string }[];
   consent: { channel: Channel; sentence: string }[];
   zones: { zones: string[]; source: 'explicit' | 'union'; sentence: string };
   nextAllowedSendAt: string | null;

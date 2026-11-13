@@ -23,4 +23,11 @@ describe('what this tree builds (B13S-2)', () => {
     expect(capabilityRow('seller_sold_comps', true, true)).toMatchObject({ allowed: true, built: true, sentence: expect.stringMatching(/platform:cma and platform:ai_isa_seller_data/) });
     expect(capabilityRow('share_value_estimate', true, true)).toEqual({ capability: 'share_value_estimate', allowed: false, built: false, sentence: 'Not built in this version.' });
   });
+
+  it('R-ISA-22 (b14 to-do, B13S-2 low): booking allowed while the owner\'s calendar is not connected says no times are offered; only the booking row carries the calendar', () => {
+    expect(capabilityRow('book_appointments', true, true, { calendarLive: false })).toEqual({ capability: 'book_appointments', allowed: true, built: true, calendarConnected: false, sentence: 'Allowed, but the calendar is not connected, so no times are offered.' });
+    expect(capabilityRow('book_appointments', true, true, { calendarLive: true })).toEqual({ capability: 'book_appointments', allowed: true, built: true, calendarConnected: true, sentence: 'Allowed.' });
+    expect(capabilityRow('book_appointments', true, false, { calendarLive: false })).toEqual({ capability: 'book_appointments', allowed: false, built: true, calendarConnected: false, sentence: 'Not in the opt-in or the team policy.' });
+    expect(capabilityRow('share_listings', true, true, { calendarLive: false })).toEqual({ capability: 'share_listings', allowed: true, built: true, sentence: 'Allowed.' });
+  });
 });
