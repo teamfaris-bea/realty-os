@@ -6,6 +6,7 @@ import { instantFromDate } from '@realty/core/foundation';
 import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { DISPATCH_UNKNOWN_UNRESOLVED } from '../comms/dispatch.js';
 import { commsRuntime } from '../comms/runtime.js';
 import type { CommsDeps } from '../comms/types.js';
 import type { Providers } from '../providers/index.js';
@@ -54,11 +55,15 @@ async function locked(tx: Tx, id: string): Promise<AssignmentRow | null> {
  * emitSendResultInTx), statuses only move forward, so a job whose status the message has already left was overtaken
  * by a later status with its own job and does nothing (one carrier failure is counted once, E518). The status is
  * read after the turn lock, which the status callback and TX2 also take. The text itself counts toward the limit on
- * the first of its results the machine handles, whichever that is (b12 recheck R12, machine.ts onSendResult).
+ * the first of its results the machine handles, whichever that is (b12 recheck R12, machine.ts onSendResult). A failure
+ * counts it only when the provider may have taken it: it holds a provider ref, or its dispatch_unknown was never
+ * resolved (DISPATCH_UNKNOWN_UNRESOLVED; the 40-message limit is a safety cap, so over-counting is the safe side, b12
+ * recheck R15). A refusal at dispatch never left and is not counted.
  */
 export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, messageId: string, status: string, now: Instant): Promise<string> {
   const read = () => sql<{ status: string; reason: string | null; accepted: boolean; turn_id: string | null; assignment_id: string | null; category: string }>`
-    SELECT m.status, m.status_reason AS reason, m.provider_message_ref IS NOT NULL AS accepted, t.id AS turn_id, t.assignment_id, m.action_category AS category FROM messages m
+    SELECT m.status, m.status_reason AS reason, (m.provider_message_ref IS NOT NULL OR (m.status = 'failed' AND m.status_reason = ${DISPATCH_UNKNOWN_UNRESOLVED})) AS accepted,
+           t.id AS turn_id, t.assignment_id, m.action_category AS category FROM messages m
       LEFT JOIN ai_isa_turns t ON t.tenant_id = m.tenant_id AND t.message_id = m.id WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}`.execute(tx);
   const peek = (await read()).rows[0];
   if (!peek?.assignment_id) return 'NO_TURN';
@@ -95,7 +100,7 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
   const kind = (await sql<{ k: string | null }>`SELECT payload->>'messageKind' AS k FROM assistant_actions WHERE tenant_id = app.tenant_id()
     AND id = (SELECT assistant_action_id FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId})`.execute(tx)).rows[0]?.k ?? 'conversation';
   // b12 recheck R12: the machine counts the text once, on the first of its results it sees (a failure counts the text
-  // only once the provider had accepted it)
+  // only once the provider had accepted it or may have: R15, an unresolved dispatch_unknown)
   const st = step(a.machine, { type: 'send_result', at: now, messageId, messageKind: kind as never, status: r.status as never, reasonCodes: reason ? [reason] : [], accepted: r.accepted }, ctx.facts);
   await applyActionsInTx({ tx, deps, actor, ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, st);
   return ok ? 'SENT' : cls.toUpperCase();

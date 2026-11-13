@@ -88,6 +88,9 @@ interface Tx1Context {
 }
 
 const MAX_RECONCILE_MS = 10 * MINUTE_MS;
+/** The failure reason of a dispatch_unknown message the provider lookup never resolved within MAX_RECONCILE_MS: it has
+ *  no provider ref, but the provider may have accepted it (the AI ISA counts it toward its limit, b12 recheck R15). */
+export const DISPATCH_UNKNOWN_UNRESOLVED = 'DISPATCH_UNKNOWN_UNRESOLVED';
 
 /** BUILD_PLAN interface (tenant and caller made explicit; reported as a spec correction). */
 export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts: DispatchOptions): Promise<DispatchResult> {
@@ -557,7 +560,7 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
     }
     const deadline = plusMs(m.dispatchedAt as Instant, MAX_RECONCILE_MS);
     if (now < deadline) return { kind: 'retry' as const, at: (Math.min(deadline, now + 2 * MINUTE_MS) as Instant) };
-    await msgs.markFailed(tx, m.id, 'DISPATCH_UNKNOWN_UNRESOLVED', null);
+    await msgs.markFailed(tx, m.id, DISPATCH_UNKNOWN_UNRESOLVED, null);
     if (m.channel === 'mms' && m.phoneNumberId) await enqueueProviderCleanup(tx, { messageId: m.id, phoneNumberId: m.phoneNumberId, dispatchedAt: m.dispatchedAt! }, m.dispatchedAt!); // D5a E298
     if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'failed');
     return { kind: 'resolved' as const, status: 'failed' };
