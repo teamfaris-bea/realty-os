@@ -15,6 +15,8 @@ import { watchOf } from './subject.js';
 import { COUNT_SHARE_ENABLED } from './counts.js';
 import { factPlaceholdersInTx, onEscalationInTx, sellerBundleInTx, sellerFactsCurrentInTx, sellerStartRefusalInTx, COMPS_PLACEHOLDER } from './index.js';
 import { type IsaDeps, contextFor, queueIsaMessageInTx } from './isa2Seam.js';
+import { suFixture } from '../../leads/testing.js';
+import type { FakeEmail } from '../../providers/fake/email.js';
 import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, panel, randomUUID, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 import { runSellerWatchInTx } from './watch.js';
 
@@ -44,6 +46,59 @@ const factsOf = async (messageId: string) => (await h.su.query<{ fact_kind: stri
   'SELECT fact_kind, price_kind, tier, status, comp_set_hash FROM ai_isa_shared_facts WHERE message_id = $1 ORDER BY created_at', [messageId])).rows;
 const messageOf = async (id: string) => (await h.su.query<{ channel: string; body: string; status: string }>('SELECT channel, body, status FROM messages WHERE id = $1', [id])).rows[0]!;
 
+// b17: the panel's pack sentence names each pack a comps email waits on, the assistant's own (platform:ai_isa) too, as
+// the Integrations line does (catalog.ts PACK_ALSO_NEEDS)
+const PACK_WAITS =
+  'Can share recent sales: no — waiting for counsel review of the Client CMAs pack (platform:cma), the assistant’s recent-sales emails pack (platform:ai_isa_seller_data) and the assistant’s ISA texts and emails pack (platform:ai_isa).';
+type PanelBody = { capabilities: { comps: { available: boolean; sentence: string } }; blockers: { code: string; sentence: string }[] };
+
+describe('b17: the seller panel says yes only when a comps email could go', () => {
+  it('b17: platform:ai_isa unreviewed (the other packs and the licence recorded): no comps, and the panel and the readiness sentence name the assistant’s pack', async () => {
+    const l = await sellerLead(h, w);
+    expect((await confirm(w, l)).status).toBe(200);
+    await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:ai_isa'`);
+    try {
+      const { r, p } = await withSellerPacksCleared(h, async () => ({ r: await build(l), p: await panel(w.agents[0]!, l.id) }));
+      expect(r).toEqual({ ok: false, codes: ['PLATFORM_NOT_CLEARED'] });
+      const body = p.body as unknown as PanelBody;
+      expect(body.capabilities.comps).toEqual({ available: false, sentence: PACK_WAITS });
+      expect(body.blockers.filter((b) => b.code === 'PLATFORM_NOT_CLEARED')).toEqual([
+        {
+          code: 'PLATFORM_NOT_CLEARED',
+          sentence: 'Recent sales from the assistant wait for counsel review of the in-house CMA wording (platform:cma), of the assistant’s seller-data wording (platform:ai_isa_seller_data) and of the assistant’s own texts and emails (platform:ai_isa); at least one is not recorded.',
+        },
+      ]);
+    } finally {
+      await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:ai_isa'`);
+    }
+  });
+
+  it('b17: a passing build with no brokerage postal address or no verified sending domain is not a yes: the panel names the missing one', async () => {
+    const w9 = await sellerWorld(h); // its own tenant: the postal address and the sending domain change here
+    const l = await sellerLead(h, w9);
+    expect((await confirm(w9, l)).status).toBe(200);
+    const comps = async () => {
+      const r = await asSystem(h, w9, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant()));
+      return { ok: r.ok, ...((await panel(w9.agents[0]!, l.id)).body as unknown as PanelBody).capabilities.comps };
+    };
+    await withSellerPacksCleared(h, async () => {
+      // neither is set in a new tenant
+      expect(await comps()).toEqual({ ok: true, available: false, sentence: 'Can share recent sales: no — the brokerage’s postal address is not set (Brokerage settings) and the team’s sending domain is not verified (Sending domains).' });
+      // the owner-only setting, as a fixture (the trigger admits the superuser fixture path only)
+      await suFixture(h, [{ text: 'UPDATE tenant_settings SET brokerage_postal_address = $2 WHERE tenant_id = $1', values: [w9.tenantId, '1 Sample Plaza, Suite 2, Springfield, ST 00000'] }]);
+      expect(await comps()).toEqual({ ok: true, available: false, sentence: 'Can share recent sales: no — the team’s sending domain is not verified (Sending domains), and the assistant’s emails go out from it.' });
+      // a verified domain under the team identity the assistant sends from (comms chooseEmailIdentity(tx, null))
+      (h.providers.email as unknown as FakeEmail).verifiedDomains.add('mail.seller-panel.test');
+      const dom = await call<{ domain: { id: string } }>(w9.owner, 'POST', '/sending-domains', { domain: 'mail.seller-panel.test' });
+      expect((await call(w9.owner, 'POST', `/sending-domains/${dom.body.domain.id}/verify`)).status).toBe(200);
+      await h.su.query(`UPDATE email_identities SET domain_id = $2, from_address = 'team@mail.seller-panel.test' WHERE tenant_id = $1 AND user_id IS NULL`, [w9.tenantId, dom.body.domain.id]);
+      expect(await comps()).toEqual({ ok: true, available: true, sentence: 'Can share recent sales: yes, by email, the complete set only.' });
+      await suFixture(h, [{ text: 'UPDATE tenant_settings SET brokerage_postal_address = NULL WHERE tenant_id = $1', values: [w9.tenantId] }]);
+      expect(await comps()).toEqual({ ok: true, available: false, sentence: 'Can share recent sales: no — the brokerage’s postal address is not set (Brokerage settings), and every marketing email carries it.' });
+    });
+  });
+});
+
 describe('E534 R-ISA-18: the seller packs and the licence', () => {
   it('E534 R-ISA-18: with the default packs no comps exist, the panel names both packs, and asking-price competition is still built', async () => {
     const l = await sellerLead(h, w);
@@ -51,7 +106,7 @@ describe('E534 R-ISA-18: the seller packs and the licence', () => {
     expect((await confirm(w, l)).status).toBe(200);
     expect(await build(l)).toEqual({ ok: false, codes: ['PLATFORM_NOT_CLEARED'] });
     const p = await panel(w.agents[0]!, l.id);
-    expect((p.body as unknown as { capabilities: { comps: { sentence: string } } }).capabilities.comps.sentence).toBe('Can share recent sales: no — waiting for counsel review (platform:cma) and the seller-data pack.');
+    expect((p.body as unknown as { capabilities: { comps: { sentence: string } } }).capabilities.comps.sentence).toBe(PACK_WAITS);
     expect(JSON.stringify(p.body)).toMatch(/platform:cma.*platform:ai_isa_seller_data/);
     const id = await queueFacts(l, ['C1'], 'sms');
     expect(id).not.toBeNull();

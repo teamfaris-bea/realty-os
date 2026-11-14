@@ -13,7 +13,7 @@ import { type ListingRow, type MlsEligibility, SIZE, clientSoldView, clientView 
 import { type Prominence, canonicalText, emailStatementOk, printable, statementProminence } from '../../cma/statement.js';
 
 export { compsForSubjectInTx, type CompsForSubject, type RefListing, type StoredResult, type SubjectRecord } from '../../cma/service.js';
-export { AI_ISA_SELLER_PACK, CMA_PLATFORM_PACK, type Blocker, type ClientShare, type CmaConnections, clientReadiness, nearMatches, notLivingAreaSize, readinessConnections } from '../../cma/gates.js';
+export { AI_ISA_PACK, AI_ISA_SELLER_PACK, CMA_PLATFORM_PACK, type Blocker, type ClientShare, type CmaConnections, clientReadiness, nearMatches, notLivingAreaSize, readinessConnections } from '../../cma/gates.js';
 export { type ResolvedSubject, newest, resolveSubject } from '../../cma/subject.js';
 export { connectionSizeField, defaultAddress, platformCleared, listingRows } from '../../cma/repos.js';
 export {

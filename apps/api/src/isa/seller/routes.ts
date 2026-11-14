@@ -14,6 +14,7 @@ import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import type { z } from 'zod';
 import { audit } from '../../audit.js';
+import { chooseEmailIdentity, emailIdentityFacts } from '../../comms/repos/gate.js';
 import { AppError } from '../../errors.js';
 import { detailFacts, liveDetailFacts } from '../../people/common.js';
 import { authorize } from '../../rbac.js';
@@ -28,6 +29,32 @@ import * as S from './schemas.js';
 import { confirmationCodes, currentSubjectInTx, ensureWatchInTx, watchOf } from './subject.js';
 
 const idOf = (req: FastifyRequest) => (req.params as { id: string }).id;
+/**
+ * b17: the pack sentence names each pack a comps email waits on, the assistant's own too, as the Integrations line
+ * does (integrations/catalog.ts PACK_ALSO_NEEDS, its pack names); readiness 'ai_isa' requires all three (cma/gates.ts).
+ */
+export const PACK_WAITS_SENTENCE =
+  'Can share recent sales: no — waiting for counsel review of the Client CMAs pack (platform:cma), the assistant’s recent-sales emails pack (platform:ai_isa_seller_data) and the assistant’s ISA texts and emails pack (platform:ai_isa).';
+/** b17: a passing build is still not a yes while every marketing email would be refused (R-GATE-12, R-PAR-39). */
+const SENDING_MISSING = {
+  postal: 'Can share recent sales: no — the brokerage’s postal address is not set (Brokerage settings), and every marketing email carries it.',
+  domain: 'Can share recent sales: no — the team’s sending domain is not verified (Sending domains), and the assistant’s emails go out from it.',
+  both: 'Can share recent sales: no — the brokerage’s postal address is not set (Brokerage settings) and the team’s sending domain is not verified (Sending domains).',
+} as const;
+
+/**
+ * What a comps email needs of the tenant beyond the packs and the licence: the brokerage's postal address (gate check
+ * 4, POSTAL_ADDRESS_MISSING; core isa/lines.ts composeMessage adds it) and a verified sending domain under the identity
+ * the assistant sends from (gate check 3, EMAIL_DOMAIN_UNVERIFIED; comms compose.ts draftFor picks the team identity,
+ * chooseEmailIdentity(tx, null)).
+ */
+async function sendingReadyInTx(tx: Tx): Promise<{ postal: boolean; domain: boolean }> {
+  const r = await sql<{ postal: string | null }>`SELECT brokerage_postal_address AS postal FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx);
+  const id = await chooseEmailIdentity(tx, null);
+  const ident = id === null ? null : await emailIdentityFacts(tx, id);
+  return { postal: (r.rows[0]?.postal ?? '').trim() !== '', domain: ident?.status === 'active' && ident.domain?.verifiedAt != null };
+}
+
 export const SUSPENSION_SENTENCE = 'Recent sales paused: they asked about price. Prepare or re-run a CMA, share one, or let the assistant keep sharing.';
 export const WATCH_SENTENCE = 'Competition updates are not sent yet (not built yet).';
 
@@ -54,12 +81,17 @@ export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, 
   const packWaits = blockers.some((b) => b.code === 'PLATFORM_NOT_CLEARED');
   const gates = sellerSide(a) ? await sellerGatesInTx(tx, viewer, a, now, 'competition') : null;
   const suspended = sellerSide(a) ? await compsSuspendedNowInTx(tx, viewer, a, w) : false;
-  const compsOk = sellerSide(a) && codes.length === 0 && blockers.length === 0 && !suspended && (w?.last_comps_check?.codes.length ?? 1) === 0;
+  const built = sellerSide(a) && codes.length === 0 && blockers.length === 0 && !suspended && (w?.last_comps_check?.codes.length ?? 1) === 0;
+  // b17: a passing build with no postal address or no verified sending domain would still be refused at the gate
+  const sending = built ? await sendingReadyInTx(tx) : { postal: true, domain: true };
+  const compsOk = built && sending.postal && sending.domain;
   const compsSentence = compsOk
     ? 'Can share recent sales: yes, by email, the complete set only.'
-    : packWaits
-      ? 'Can share recent sales: no — waiting for counsel review (platform:cma) and the seller-data pack.'
-      : `Can share recent sales: no — ${[...codes, ...blockers.map((b) => b.code), ...(w?.last_comps_check?.codes ?? [])][0] ?? 'not checked yet'}.`;
+    : built
+      ? SENDING_MISSING[!sending.postal && !sending.domain ? 'both' : !sending.postal ? 'postal' : 'domain']
+      : packWaits
+        ? PACK_WAITS_SENTENCE
+        : `Can share recent sales: no — ${[...codes, ...blockers.map((b) => b.code), ...(w?.last_comps_check?.codes ?? [])][0] ?? 'not checked yet'}.`;
   const link = sellerSide(a) ? await assignmentSubjectLinkInTx(tx, a) : { effect: 'ok' as const, code: null, sentence: 'Not under seller AI care.', listingIds: [] };
   let counts: { active: number; comingSoon: number; pending: number; sentence: string } | null = null;
   if (subject.state === 'ok' && subject.facts && subject.addressKey) {

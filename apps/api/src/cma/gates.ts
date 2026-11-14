@@ -199,7 +199,7 @@ export interface ReadinessInput {
   /**
    * The client use readiness is judged for (ISA-3, flagged additive; V2-B's 'automated_notes' at batch 13): 'client_cma'
    * (the default; V1's output is byte-identical); 'ai_isa' (the AI ISA's comps email, R-ISA-18): platform:cma AND
-   * platform:ai_isa_seller_data (never platform:avm), the licence's ai_isa_comps, SELLER_WITHHELD under either flag
+   * platform:ai_isa_seller_data AND (b17) platform:ai_isa (never platform:avm), the licence's ai_isa_comps, SELLER_WITHHELD under either flag
    * scope, and no dismissal of a near match (R-CMA-7); or 'automated_notes' (lane V2-B, R-CMA-10: in-house home-value
    * notes and seller value ranges): platform:cma (avm.ts's automatedGate adds platform:avm for notes), the licence's
    * automated_notes, SELLER_WITHHELD under either avm_flag_scope (M2) and no dismissal of a near match (nothing is
@@ -214,6 +214,8 @@ export interface ReadinessInput {
 export type ReadinessUse = 'client_cma' | 'ai_isa' | 'automated_notes';
 /** The AI ISA's seller-data pack (docs/AI_ISA.md §6.3; 0084's 2026.11.1, lane number 0191). */
 export const AI_ISA_SELLER_PACK = 'platform:ai_isa_seller_data';
+/** The AI ISA's own pack (docs/AI_ISA.md §6.1): every AI ISA message, a comps email too, waits on it (isa/repo.ts). */
+export const AI_ISA_PACK = 'platform:ai_isa';
 
 interface UseRules {
   packs: readonly string[];
@@ -241,8 +243,11 @@ function useOf(use: ReadinessUse, state: string | null): UseRules {
       };
     case 'ai_isa':
       return {
-        packs: [CMA_PLATFORM_PACK, AI_ISA_SELLER_PACK],
-        platformSentence: 'Recent sales from the assistant wait for counsel review of the in-house CMA wording (platform:cma) and of the assistant’s seller-data wording (platform:ai_isa_seller_data); at least one is not recorded.',
+        // b17: the comps email is an AI ISA message, which also waits on the assistant's own pack (isa/repo.ts
+        // tenantIsaFacts, chain link 1), so readiness requires it too and its sentence names it (catalog.ts
+        // PACK_ALSO_NEEDS does the same on the Integrations page)
+        packs: [CMA_PLATFORM_PACK, AI_ISA_SELLER_PACK, AI_ISA_PACK],
+        platformSentence: 'Recent sales from the assistant wait for counsel review of the in-house CMA wording (platform:cma), of the assistant’s seller-data wording (platform:ai_isa_seller_data) and of the assistant’s own texts and emails (platform:ai_isa); at least one is not recorded.',
         licenceUse: 'ai_isa_comps',
         allowed: (v) => v.aiIsaComps,
         clientUseSentence: `Your MLS licence pack does not say sold data may be emailed to seller leads by the assistant. ${VALUATION_USE_WHERE}`,
