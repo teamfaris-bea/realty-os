@@ -95,7 +95,7 @@ describe('R-VOICE-4 arguments: identical to or stricter than app.voice_tool_args
   const s = openSession();
   const f = hotFacts();
   it.each([
-    ['an unknown tool', 'dial_number', { number: '+15550100199' }, 'VOICE_TOOL_UNKNOWN'],
+    ['an unknown tool', 'dial_number', { number: '+15555550117' }, 'VOICE_TOOL_UNKNOWN'],
     ['a non-string tool name', 42, {}, 'VOICE_TOOL_UNKNOWN'],
     ['an extra key', 'take_message', { topic: 'PRICE', note: 'call me at 5' }, 'VOICE_TOOL_ARGS_INVALID'],
     ['free text as a topic', 'take_message', { topic: 'call me back at 555 0100' }, 'VOICE_TOOL_ARGS_INVALID'],
@@ -105,7 +105,7 @@ describe('R-VOICE-4 arguments: identical to or stricter than app.voice_tool_args
     ['null as args', 'end_call', null, 'VOICE_TOOL_ARGS_INVALID'],
     ['a string as args', 'end_call', 'goodbye', 'VOICE_TOOL_ARGS_INVALID'],
     ['an object without a plain prototype', 'end_call', Object.create(null) as object, 'VOICE_TOOL_ARGS_INVALID'],
-    ['a phone number as the transfer target', 'warm_transfer', { target_user_id: '+15550100199' }, 'VOICE_TOOL_ARGS_INVALID'],
+    ['a phone number as the transfer target', 'warm_transfer', { target_user_id: '+15555550117' }, 'VOICE_TOOL_ARGS_INVALID'],
     ['an upper-case uuid as the transfer target', 'warm_transfer', { target_user_id: OWNER_ID.toUpperCase() }, 'VOICE_TOOL_ARGS_INVALID'],
     ['no transfer target', 'warm_transfer', {}, 'VOICE_TOOL_ARGS_INVALID'],
     ['a booking without a slot', 'book_appointment', {}, 'VOICE_TOOL_ARGS_INVALID'],

@@ -11,8 +11,8 @@ import { type ContactsStagePlan, type ExistingIndexInput, type NormalizedRecord,
 import { USERS, emptyIndexInput, existingContact, simulateCommit } from './testing/fixtures.js';
 
 const C9 = '00000000-0000-7000-8000-0000000c0009' as ContactId;
-const PHONE = '(415) 820-0001';
-const OTHER_PHONE = '(415) 820-0002';
+const PHONE = '(415) 555-0130';
+const OTHER_PHONE = '(415) 555-0131';
 
 function person(id: number, last: string, extra: Record<string, unknown> = {}): RecordOutcome<NormalizedRecord> {
   return mapFub('contacts', { id, firstName: 'Ann', lastName: last, phones: [{ value: PHONE, type: 'mobile', status: 'Valid' }], assignedUserId: 11, ...extra }, USERS);

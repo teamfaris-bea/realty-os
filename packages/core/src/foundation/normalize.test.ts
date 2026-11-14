@@ -4,29 +4,29 @@ import { normalizeEmail, normalizePhone } from './normalize.js';
 
 describe('normalizePhone (US default)', () => {
   it.each([
-    ['2125551234', '+12125551234'],
-    ['(212) 555-1234', '+12125551234'],
-    ['212.555.1234', '+12125551234'],
-    ['  212 555 1234  ', '+12125551234'],
-    ['12125551234', '+12125551234'],
-    ['1 (212) 555-1234', '+12125551234'],
-    ['+1 212-555-1234', '+12125551234'],
-    ['+12125551234', '+12125551234'],
-    ['tel:+12125551234', '+12125551234'],
+    ['2125550123', '+12125550123'],
+    ['(212) 555-0123', '+12125550123'],
+    ['212.555.0123', '+12125550123'],
+    ['  212 555 0123  ', '+12125550123'],
+    ['12125550123', '+12125550123'],
+    ['1 (212) 555-0123', '+12125550123'],
+    ['+1 212-555-0123', '+12125550123'],
+    ['+12125550123', '+12125550123'],
+    ['tel:+12125550123', '+12125550123'],
     ['212-555-0100', '+12125550100'],
-    ['800-555-1212', '+18005551212'],
+    ['800-555-0199', '+18005550199'],
     ['011 44 20 7946 0958', '+442079460958'],
     ['+44 20 7946 0958', '+442079460958'],
-    ['２１２５５５１２３４', '+12125551234'], // full-width digits (NFKC)
+    ['２１２５５５０１２３', '+12125550123'], // full-width digits (NFKC)
   ])('10/11-digit and formatted numbers: %s → %s', (raw, e164) => {
     expect(normalizePhone(raw, 'US')).toEqual({ ok: true, e164 });
   });
 
   it.each([
-    ['212-555-1234 x123', '+12125551234', '123'],
-    ['(212) 555-1234 ext. 45', '+12125551234', '45'],
-    ['212.555.1234 extension 7', '+12125551234', '7'],
-    ['+1 212 555 1234;ext=5', '+12125551234', '5'],
+    ['212-555-0123 x123', '+12125550123', '123'],
+    ['(212) 555-0123 ext. 45', '+12125550123', '45'],
+    ['212.555.0123 extension 7', '+12125550123', '7'],
+    ['+1 212 555 0123;ext=5', '+12125550123', '5'],
   ])('extensions are stripped from E.164 and returned separately: %s', (raw, e164, extension) => {
     expect(normalizePhone(raw, 'US')).toEqual({ ok: true, e164, extension });
   });
@@ -38,11 +38,11 @@ describe('normalizePhone (US default)', () => {
     ['411', 'N11 service code'],
     ['555-0100', 'E45: 7 digits without an area code'],
     ['5550100', '7 digits'],
-    ['212555123', '9 digits'],
-    ['212 555 12345', '11 digits not starting with 1'],
-    ['22125551234', '11 digits not starting with 1'],
-    ['1 (999) 555-1234', 'unassigned area code'],
-    ['+1 212 155 1234', 'exchange starting with 1'],
+    ['212555012', '9 digits'],
+    ['212 555 01234', '11 digits not starting with 1'],
+    ['22125550123', '11 digits not starting with 1'],
+    ['1 (999) 555-0123', 'unassigned area code'],
+    ['+1 212 155 0123', 'exchange starting with 1'],
     ['1-800-FLOWERS', 'vanity letters'],
     ['call me', 'no digits'],
     ['', 'empty'],
@@ -55,7 +55,7 @@ describe('normalizePhone (US default)', () => {
   });
 
   it('rejects non-string input from untyped callers', () => {
-    expect(normalizePhone(12125551234 as unknown as string, 'US')).toEqual({ ok: false, code: 'PHONE_INVALID' });
+    expect(normalizePhone(12125550123 as unknown as string, 'US')).toEqual({ ok: false, code: 'PHONE_INVALID' });
     expect(normalizeEmail(null as unknown as string)).toEqual({ ok: false, code: 'EMAIL_INVALID' });
   });
 

@@ -74,9 +74,9 @@ describe('hostile model requests (R-VOICE-4)', () => {
   it.each([
     ['free text in an argument', 'take_message', { topic: 'Caller is Jane at 555-0100, wants a call at 5pm' }, 'VOICE_TOOL_ARGS_INVALID'],
     ['an extra key', 'end_call', { reason_code: 'GOODBYE', summary: 'The caller was upset' }, 'VOICE_TOOL_ARGS_INVALID'],
-    ['an unknown tool', 'send_sms', { to: '+15550100199', body: 'hi' }, 'VOICE_TOOL_UNKNOWN'],
+    ['an unknown tool', 'send_sms', { to: '+15555550117', body: 'hi' }, 'VOICE_TOOL_UNKNOWN'],
     ['a content tool name instead of a ledger tool', 'transfer_to_owner', {}, 'VOICE_TOOL_UNKNOWN'],
-    ['a phone number as the target', 'warm_transfer', { target_user_id: '+15550100199' }, 'VOICE_TOOL_ARGS_INVALID'],
+    ['a phone number as the target', 'warm_transfer', { target_user_id: '+15555550117' }, 'VOICE_TOOL_ARGS_INVALID'],
     ['another member as the target', 'warm_transfer', { target_user_id: OTHER_MEMBER_ID }, 'TRANSFER_NOT_OWNER'],
     ['a slot that was never offered', 'book_appointment', SLOT_ARGS(SLOT_3AM), 'SLOT_NOT_OFFERED'],
     ['record_opt_out without the caller\'s words', 'record_opt_out', { channel: 'all' }, 'OPT_OUT_NOT_HEARD'],

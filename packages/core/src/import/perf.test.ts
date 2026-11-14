@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ContactId } from '../foundation/index.js';
 import { buildExistingIndex, commitPlan, dryRun, mapFub, normalizeCsv, parseCsv, reconciles, stageReconciles, suggestMapping } from './index.js';
+import { bulkFictionalPhone, written } from '../testing/index.js';
 import { USERS, csvBytes, emptyIndexInput, existingContact } from './testing/fixtures.js';
 
 const N = 50_000;
@@ -16,11 +17,9 @@ const COVERAGE = (globalThis as { __vitest_worker__?: { config?: { coverage?: { 
 const BUDGET_MS = COVERAGE ? 60_000 : 10_000;
 
 function phone(i: number): string {
-  // Valid US numbers: area codes 212/415/312/646, exchange 2xx–9xx, line 0000–9999.
-  const area = [212, 415, 312, 646][i % 4] as number;
-  const exch = 200 + (Math.floor(i / 4) % 700);
-  const line = String(Math.floor(i / 2800) % 10000).padStart(4, '0');
-  return `(${area}) ${exch}-${line}`;
+  // b17 (B17R-2): 50,000 distinct, valid and fictional numbers (NANP 555-0100 to 555-0199 area code by area code,
+  // then the UK drama ranges), written as people write them.
+  return written(bulkFictionalPhone(i));
 }
 
 function fubPerson(i: number): unknown {

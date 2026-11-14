@@ -87,9 +87,9 @@ describe('contacts matching (R-IMPORT-7, R-OWN-25)', () => {
 
   it('R-IMPORT-7 property: a name-only match is never auto-merged; it becomes a duplicate candidate of a new contact', () => {
     fc.assert(
-      fc.property(fc.stringMatching(/^[A-Z][a-z]{1,8} [A-Z][a-z]{1,10}$/), fc.integer({ min: 0, max: 9999 }), (name, n) => {
+      fc.property(fc.stringMatching(/^[A-Z][a-z]{1,8} [A-Z][a-z]{1,10}$/), fc.integer({ min: 0, max: 99 }), (name, n) => {
         const input = emptyIndexInput({ contacts: [existingContact({ contactId: C1, displayName: name, phones: ['+12065550100'] })] });
-        const phone = `415-555-${String(n).padStart(4, '0')}`;
+        const phone = `415-555-01${String(n).padStart(2, '0')}`;
         const r = only(contactsRun(`Name,Phone\n${name.toUpperCase()},${phone}\n`, input));
         expect(r.action?.kind).toBe('create_contact');
         expect(r.matchContactId).toBeNull();

@@ -95,12 +95,15 @@ describe('property: nextAnnualOccurrence (R-PAR-20)', () => {
   });
 });
 
+/** b17 (B17R-2): a fictional US number, +1 NXX 555-0100 to 555-0199. */
+const fictionalUs = fc.tuple(fc.integer({ min: 200, max: 999 }), fc.integer({ min: 0, max: 99 })).map(([area, nn]) => `+1${area}55501${String(nn).padStart(2, '0')}`);
+
 describe('property: planReplacePoint never edits in place (R-PAR-11)', () => {
   it('R-PAR-11 a successful plan always removes the old id as replaced and adds a different address of the same kind', () => {
     fc.assert(
-      fc.property(fc.integer({ min: 2002000000, max: 9899999999 }), fc.integer({ min: 2002000000, max: 9899999999 }), (a, b) => {
-        const old = { id: 'p1', kind: 'phone' as const, address: `+1${a}`, label: 'mobile' as const, removed: false, removedReason: null };
-        const r = planReplacePoint(old, `+1${b}`);
+      fc.property(fictionalUs, fictionalUs, (a, b) => {
+        const old = { id: 'p1', kind: 'phone' as const, address: a, label: 'mobile' as const, removed: false, removedReason: null };
+        const r = planReplacePoint(old, b);
         if (!r.ok) return;
         expect(r.plan.remove).toEqual({ id: 'p1', reason: 'replaced' });
         expect(r.plan.add.kind).toBe('phone');

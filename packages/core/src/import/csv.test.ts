@@ -119,7 +119,7 @@ describe('parseCsv: CSV edge rows (BUILD_PLAN module 6)', () => {
   });
 
   it('R-IMPORT-13 a CSV file holds at most 50,000 rows: 50,000 parse, 50,001 is refused, a larger maxRows is clamped', () => {
-    const rows = (n: number) => `Name,Phone\n${Array.from({ length: n }, (_, i) => `P${i},+1415555${String(i % 10000).padStart(4, '0')}`).join('\n')}\n`;
+    const rows = (n: number) => `Name,Phone\n${Array.from({ length: n }, (_, i) => `P${i},+141555501${String(i % 100).padStart(2, '0')}`).join('\n')}\n`;
     const ok = parseCsv(csvBytes(rows(50_000)), { maxRows: 50_000 });
     expect('error' in ok ? ok.error : ok.rows.length).toBe(50_000);
     expect(parseCsv(csvBytes(rows(50_001)), { maxRows: 50_000 })).toMatchObject({ error: { code: 'CSV_TOO_MANY_ROWS', limit: 50_000 } });

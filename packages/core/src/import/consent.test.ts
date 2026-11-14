@@ -45,7 +45,8 @@ const fieldsArb: fc.Arbitrary<FubConsentFields> = fc.record({
     fc.oneof(
       fc.record({
         kind: fc.constant('phone' as const),
-        address: fc.integer({ min: 2002000000, max: 9899999999 }).map((n) => `+1${n}`),
+        // b17 (B17R-2): fictional, +1 NXX 555-0100 to 555-0199
+        address: fc.tuple(fc.integer({ min: 200, max: 999 }), fc.integer({ min: 0, max: 99 })).map(([area, nn]) => `+1${area}55501${String(nn).padStart(2, '0')}`),
         grants: fc.uniqueArray(channelArb),
         revokes: fc.uniqueArray(channelArb),
         doNotContact: fc.boolean(),

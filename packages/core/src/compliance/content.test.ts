@@ -35,7 +35,7 @@ describe('detectPaymentInstructions (R-GATE-7)', () => {
   });
 
   it.each([
-    'Call me at 555-201-4433',
+    'Call me at 555-555-0128',
     'MLS# 123456789 just hit the market',
     'The house is wired for ethernet and has fiber wiring to the garage',
     'A swift closing is our goal!',

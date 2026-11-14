@@ -82,7 +82,7 @@ describe('row normalization edges', () => {
   });
 
   it('caps: at most 10 phones/emails, 100 tags, 200 imported fields; duplicate custom keys and control-only values are dropped', () => {
-    const phones = Array.from({ length: 12 }, (_, i) => `415-555-${String(100 + i).padStart(4, '0')}`).join(';');
+    const phones = Array.from({ length: 12 }, (_, i) => `415-555-01${String(i).padStart(2, '0')}`).join(';');
     const emails = Array.from({ length: 12 }, (_, i) => `e${i}@example.com`).join(';');
     const tags = Array.from({ length: 105 }, (_, i) => `t${i}`).join(',');
     const m: ColumnMapping = [{ field: 'full_name' }, { field: 'phone' }, { field: 'email' }, { field: 'tags' }, ...Array.from({ length: 205 }, (_, i) => ({ field: 'custom' as const, key: `k${i % 203}` })), { field: 'custom', key: 'ctl' }];

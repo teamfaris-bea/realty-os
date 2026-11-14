@@ -70,7 +70,7 @@ const argsArb: fc.Arbitrary<unknown> = fc.oneof(
   fc.constant({ target_user_id: OWNER_ID }),
   fc.constant({ target_user_id: OTHER_MEMBER_ID }),
   fc.uuid().map((u) => ({ target_user_id: u })),
-  fc.constant({ target_user_id: '+15550100199' }),
+  fc.constant({ target_user_id: '+15555550117' }),
   fc.constant(SLOT_ARGS(SLOT_A)),
   fc.constant(SLOT_ARGS(SLOT_B, 'listing_appointment')),
   fc.constant(SLOT_ARGS(SLOT_3AM)),
