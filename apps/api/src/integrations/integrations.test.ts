@@ -31,6 +31,11 @@ interface View {
 const CMA_LINE = 'Client CMAs, seller value ranges and in-house home-value notes';
 const CMA_ALSO = 'In-house home-value notes also need the Home-value notes pack';
 const AVM_ALSO = 'In-house home-value notes from recent MLS sales also need the Client CMAs, seller value ranges and in-house home-value notes pack';
+// b14 round 2: ISA-3 (batch 13) built the assistant's recent-sales emails behind platform:ai_isa_seller_data; they also
+// need platform:cma and the MLS licence pack's permission (cma/gates.ts readiness use 'ai_isa': both packs, ai_isa_comps)
+const SELLER_LINE = "The assistant's recent-sales emails";
+const SELLER_ALSO = 'Recent sales from the assistant also need the Client CMAs, seller value ranges and in-house home-value notes pack';
+const SELLER_LICENCE = "Your MLS licence pack must also allow sold data in the assistant's emails to seller leads. An Owner or Admin records this from your MLS agreement on the MLS admin page, under Valuation use.";
 
 async function list(c: TestClient = owner): Promise<View> {
   return (await call<View>(c, 'GET', '/admin/integrations')).body;
@@ -79,7 +84,9 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);
-      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : p.key === 'platform:ai_isa_seller_data' ? /would also wait for counsel review \(pack \S+, not yet reviewed\)\.$/ : / stays off: awaiting counsel review/);
+      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : / stays off: awaiting counsel review/);
+      // only the D10 outreach pack names a capability that is not built (no outreach path exists)
+      if (p.key !== 'platform:public_records_outreach') expect(p.sentence, p.key).not.toMatch(/not built/);
     }
     // module 71 (D9, F8): the platform:cma pack names what waits on it. Batch 13 (V2-A, V2-B) builds all three, so the
     // line no longer says "not built" (b13 audit V2B-1, Honest UI), and it names the second pack in-house notes need
@@ -105,19 +112,23 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     }
   });
 
-  it('b12 review ui-pack-isa-1, ui-2, ui-1 (R-INT-6): the recent-sales emails pack says they are not built, before and after a counsel review; the AI ISA pack lines name "the assistant", never "AI"', async () => {
+  it('b14 round 2 (b12 review ui-1; R-INT-6, R-ISA-18): the recent-sales emails pack says they are held, never "not built" (ISA-3 built them in batch 13): it stays off until counsel review is recorded, names platform:cma and the MLS licence pack beside it, and says cleared only for the pack once reviewed; the AI ISA pack lines name "the assistant", never "AI"', async () => {
     // ISA-3's 0084 publishes platform:ai_isa_seller_data@2026.11.1 (unreviewed) and retires 2026.11.0 (batch 13)
     const before = (await list()).platformPacks;
-    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe("The assistant's recent-sales emails: not built in this version, so no recent sales are emailed to a seller; they would also wait for counsel review (pack 2026.11.1, not yet reviewed).");
+    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(`${SELLER_LINE} stays off: awaiting counsel review (pack 2026.11.1, not yet reviewed). ${SELLER_ALSO} (not reviewed yet). ${SELLER_LICENCE}`);
     expect(before.find((x) => x.key === 'platform:ai_isa')!.sentence).toBe("The assistant's ISA texts and emails stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed).");
     for (const p of before) expect(p.sentence, p.key).not.toMatch(/\bAI\b/);
     try {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-01T00:00:00Z' WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
       const p = (await list()).platformPacks.find((x) => x.key === 'platform:ai_isa_seller_data')!;
-      expect(p).toMatchObject({ reviewed: true, sentence: "The assistant's recent-sales emails: not built in this version, so no recent sales are emailed to a seller; counsel reviewed the pack on 2026-12-01 (pack 2026.11.1)." });
-      expect(p.sentence).not.toMatch(/cleared/);
+      expect(p).toMatchObject({ reviewed: true, sentence: `${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO} (not reviewed yet). ${SELLER_LICENCE}` });
+      expect(p.sentence).not.toMatch(/not built/);
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-02T00:00:00Z' WHERE key = 'platform:cma' AND status = 'published'");
+      expect((await list()).platformPacks.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(
+        `${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO}, which counsel reviewed on 2026-12-02. ${SELLER_LICENCE}`,
+      );
     } finally {
-      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key IN ('platform:ai_isa_seller_data', 'platform:cma') AND status = 'published'");
     }
   });
 

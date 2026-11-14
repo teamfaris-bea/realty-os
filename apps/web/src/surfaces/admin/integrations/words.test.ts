@@ -42,14 +42,21 @@ describe('pack names (R-INT-6)', () => {
     expect(packName('platform:not_a_pack')).toBe('Another feature');
   });
 
-  it('b12 review ui-1, ui-pack-isa-1: the API catalog\'s pack lines the page prints under each name never call the assistant "AI"; the recent-sales emails pack says it is a later version', () => {
+  it('b12 review ui-1, ui-pack-isa-1: the API catalog\'s pack lines the page prints under each name never call the assistant "AI"', () => {
     const start = catalog.indexOf('export const PACK_GATES');
     const body = catalog.slice(start, catalog.indexOf('};', start));
     const lines = [...body.matchAll(/^\s*'platform:[a-z_]+': (['"])(.*)\1,/gm)].map((m) => m[2]!);
     expect(lines.length).toBe(apiPackKeys().length);
     expect(lines.filter((l) => /\bAI\b/.test(l))).toEqual([]);
-    expect(keysOf('NOT_BUILT_PACKS')).toContain('platform:ai_isa_seller_data');
-    expect(packName('platform:ai_isa_seller_data')).toBe("The assistant's recent-sales emails (a later version)");
+  });
+
+  it('b14 round 2 (R-INT-6, R-ISA-18): the recent-sales emails pack is named for what ISA-3 built (batch 13), never "a later version", is not in the API\'s not-built list, and matches the API catalog\'s line', () => {
+    expect(packName('platform:ai_isa_seller_data')).toBe("The assistant's recent-sales emails");
+    expect(packName('platform:ai_isa_seller_data')).not.toMatch(/later version|not built/);
+    expect(keysOf('NOT_BUILT_PACKS')).not.toContain('platform:ai_isa_seller_data');
+    const start = catalog.indexOf('export const PACK_GATES');
+    const line = catalog.slice(start, catalog.indexOf('};', start)).match(/^\s*'platform:ai_isa_seller_data': "([^"]*)"/m)![1];
+    expect(packName('platform:ai_isa_seller_data')).toBe(line);
   });
 
   it('D9 R-CMA-10 b13 audit V2B-1: platform:cma is named for everything built behind it (V2-A client CMAs, V2-B seller value ranges and in-house notes), never "a later version", and matches the API catalog\'s line', () => {

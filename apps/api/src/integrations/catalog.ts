@@ -9,6 +9,7 @@
 //    "not set up on this platform yet"; nothing claims to work when it does not.
 //  - Owner decision D2: what the owner took out of scope is listed as "Not offered", can never be connected and
 //    offers no capability.
+import { VALUATION_USE_WHERE } from '../mls/eligibility.js';
 import type { Capabilities, ConnectionKind, ConnectionStatus, IntegrationAdapters, OAuthProviderName } from '../providers/integrations/types.js';
 
 export type ConnectMethod = 'oauth' | 'partner' | 'keyed' | 'api_key' | 'later' | 'out_of_scope';
@@ -130,12 +131,10 @@ export const NEVER_CLEARED_PACKS: readonly string[] = ['platform:meta'];
  * PACK_NAMES. platform:cma left this list in batch 13 (b13 audit V2B-1): V2-A builds client CMAs (the share email and
  * its PDF) and V2-B builds seller value ranges and in-house home-value notes, all behind it, so its line says
  * "stays off" until counsel review is recorded and "cleared" after, as any built capability's does.
+ * platform:ai_isa_seller_data left it in batch 14 round 2 the same way: ISA-3 (batch 13, apps/api/src/isa/seller/**)
+ * builds the assistant's recent-sales emails behind it, so "not built in this version" was false (Honest UI).
  */
-export const NOT_BUILT_PACKS: Readonly<Record<string, string>> = {
-  // b12 review ui-pack-isa-1/ui-2 (D12 proposed): the assistant's recent-sales emails are ISA-3's; nothing in this
-  // version writes a shared sold fact, and the guard also needs platform:cma (0080 ISA_SELLER_DATA_NOT_CLEARED)
-  'platform:ai_isa_seller_data': 'no recent sales are emailed to a seller',
-};
+export const NOT_BUILT_PACKS: Readonly<Record<string, string>> = {};
 
 /** platform:* pack → what waits on it, in words (R-INT-6). The web mirrors the keys in words.ts PACK_NAMES (words.test.ts). */
 export const PACK_GATES: Record<string, string> = {
@@ -165,6 +164,18 @@ export const PACK_GATES: Record<string, string> = {
 export const PACK_ALSO_NEEDS: Readonly<Record<string, { pack: string; what: string }>> = {
   'platform:cma': { pack: 'platform:avm', what: 'In-house home-value notes' },
   'platform:avm': { pack: 'platform:cma', what: 'In-house home-value notes from recent MLS sales' },
+  // b14 round 2 (R-ISA-18; cma/gates.ts readiness use 'ai_isa' needs both packs): ISA-3's recent-sales emails
+  'platform:ai_isa_seller_data': { pack: 'platform:cma', what: 'Recent sales from the assistant' },
+};
+
+/**
+ * b14 round 2 (R-ISA-18, R-MLS licence pack): a pack whose capability also needs the MLS licence pack's permission,
+ * which the Integrations page does not read, so the line names the requirement and where it is recorded, never its
+ * state. The assistant's recent-sales emails need `valuation.ai_isa_comps` on every comp's feed (cma/gates.ts
+ * 'ai_isa', strict default false), as the readiness sentence says.
+ */
+export const PACK_ALSO_LICENCE: Readonly<Record<string, string>> = {
+  'platform:ai_isa_seller_data': `Your MLS licence pack must also allow sold data in the assistant's emails to seller leads. ${VALUATION_USE_WHERE}`,
 };
 
 /**
@@ -202,12 +213,13 @@ export const PER_USER_SERVICES = [
  */
 export function packSentence(p: PlatformPack, all: readonly PlatformPack[] = []): string {
   const base = packStateSentence(p);
+  const licence = Object.hasOwn(PACK_ALSO_LICENCE, p.key) ? ` ${PACK_ALSO_LICENCE[p.key]!}` : '';
   const also = PACK_ALSO_NEEDS[p.key];
-  if (also === undefined) return base;
+  if (also === undefined) return `${base}${licence}`;
   const other = all.find((x) => x.key === also.pack);
   const otherName = PACK_GATES[also.pack] ?? also.pack;
   const state = other === undefined ? ' reviewed by counsel' : other.reviewedByCounselAt === null ? ' (not reviewed yet)' : `, which counsel reviewed on ${other.reviewedByCounselAt.slice(0, 10)}`;
-  return `${base} ${also.what} also need the ${otherName} pack${state}.`;
+  return `${base} ${also.what} also need the ${otherName} pack${state}.${licence}`;
 }
 
 function packStateSentence(p: PlatformPack): string {

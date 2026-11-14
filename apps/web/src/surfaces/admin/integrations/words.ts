@@ -12,6 +12,9 @@ export const LEAD_SOURCES_PAGE_PATH = '/admin/lead-sources';
  * keys get a generic name; batch 11 sends-gates/F5, api-ui/F6). platform:meta is never shown (D2). platform:cma names
  * everything built behind it since batch 13 (V2-A client CMAs, V2-B seller value ranges and in-house notes), the API
  * catalog's own words, with no "(a later version)" (b13 audit V2B-1; batch 10 review api-ui/F3 named it for V1).
+ * platform:ai_isa_seller_data likewise since batch 14 round 2: ISA-3 (batch 13) built the assistant's recent-sales
+ * emails behind it, so the name no longer says "(a later version)"; the API's line says it stays off until counsel
+ * review is recorded and names platform:cma and the MLS licence pack beside it.
  */
 const PACK_NAMES: Record<string, string> = {
   'platform:fair_housing': 'Publishing marketing (fair-housing rules)',
@@ -27,7 +30,7 @@ const PACK_NAMES: Record<string, string> = {
   'platform:gbp': 'Google Business Profile',
   // the AI ISA packs (D12 proposed): staff copy calls it "the assistant", never "AI" (leadAdmin.test.ts copy lint)
   'platform:ai_isa': "The assistant's ISA texts and emails",
-  'platform:ai_isa_seller_data': "The assistant's recent-sales emails (a later version)", // not built (b12 review ui-2)
+  'platform:ai_isa_seller_data': "The assistant's recent-sales emails",
 };
 
 export function packName(key: string): string {

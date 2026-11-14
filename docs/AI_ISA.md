@@ -1087,7 +1087,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 | core/valuation/index.ts (70, V1-B) | exports `tierName` and the three area-sentence builders |
 | core/foundation/authz.ts | `canAsRole`; MATRIX `ai_isa.seller_facts` (system via `assistant` only) and `ai_isa.subject_confirm`; the five seller audit actions |
 | errors.ts, routes.ts, worker/handlers/index.ts | SUBJECT_* codes; `sellerRoutes`; the three seller jobs |
-| integrations/catalog.ts (21) | PACK_GATES `platform:ai_isa_seller_data`: batch 12's "The assistant's recent-sales emails" is kept, not the brief's "AI assistant recent sales for seller leads", because the copy lint names the assistant "the assistant", never "AI" (b12 review ui-1); its line says the emails are not built in this version |
+| integrations/catalog.ts (21) | PACK_GATES `platform:ai_isa_seller_data`: batch 12's "The assistant's recent-sales emails" is kept, not the brief's "AI assistant recent sales for seller leads", because the copy lint names the assistant "the assistant", never "AI" (b12 review ui-1). Batch 14 round 2: its line no longer says the emails are not built (ISA-3 built them); it says they stay off until counsel review is recorded and names `platform:cma` and the MLS licence pack's `ai_isa_comps` beside it, and the web name drops "(a later version)" |
 
 ---
 
