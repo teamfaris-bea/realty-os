@@ -6,7 +6,7 @@
 import { type Request, expect, test } from 'playwright/test';
 import { signIn, tap } from '../journeys/helpers.js';
 import type { WorldInfo } from '../journeys/stack.js';
-import { newClientContext, requestLink } from './common.js';
+import { newClientContext, openLinkAndSignIn, requestLink } from './common.js';
 import { type PortalStack, type PortalWorld, portalUrl, startPortalStack } from './stack.js';
 
 test.describe.configure({ mode: 'serial' });
@@ -45,14 +45,32 @@ test('E717: a staff browser on /portal.html calls only /api/portal/*; the staff 
   await expect(page.getByRole('heading', { level: 1, name: pw.dealName })).toBeVisible({ timeout: 20_000 });
 });
 
-test('E717: a client on / and on /portal gets the staff sign-in, never the portal', async ({ browser }, info) => {
+test('E717: Jane, signed in to the portal, on / and on /portal gets the staff sign-in, never the portal; her portal session answers no staff route', async ({ browser }, info) => {
+  test.setTimeout(180_000);
+  // b15 audit F4: Jane is signed in first (her portal cookie is in this context: __Host-psid, or psid on plain-http
+  // dev), so the staff sign-in is not trivially what a cookie-less browser gets
   const ctx = await newClientContext(browser, info);
   const p = await ctx.newPage();
+  const link = await requestLink(p, stack, pw.slug, pw.jane.email);
+  await openLinkAndSignIn(p, link);
+  await expect(p.getByRole('heading', { level: 1, name: 'Your home purchase' })).toBeVisible({ timeout: 20_000 });
+  expect((await ctx.cookies()).map((c) => c.name).filter((n) => n === '__Host-psid' || n === 'psid')).toHaveLength(1);
+  const staffAnswers: { path: string; status: number }[] = [];
+  p.on('response', (r) => {
+    const path = new URL(r.url()).pathname;
+    if (path.startsWith('/api/') && !path.startsWith('/api/portal/')) staffAnswers.push({ path, status: r.status() });
+  });
   for (const path of ['/', '/portal']) {
     await p.goto(stack.webUrl + path);
     await expect(p.getByLabel('Password'), path).toBeVisible({ timeout: 20_000 });
     await expect(p.getByRole('heading', { name: 'Sign in to your client portal' })).toHaveCount(0);
+    await expect(p.getByRole('heading', { name: 'Your home purchase' })).toHaveCount(0);
   }
+  expect(staffAnswers.filter((a) => a.path === '/api/auth/session').length).toBeGreaterThan(0);
+  expect(staffAnswers.filter((a) => a.path === '/api/auth/session' && a.status === 200)).toEqual([]);
+  // the portal session is still hers: back on the portal she is still signed in
+  await p.goto(portalUrl(stack, pw.slug));
+  await expect(p.getByRole('heading', { level: 1, name: 'Your home purchase' })).toBeVisible({ timeout: 20_000 });
   await ctx.close();
 });
 
