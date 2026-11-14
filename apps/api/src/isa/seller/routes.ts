@@ -21,7 +21,7 @@ import { authorize } from '../../rbac.js';
 import type { RouteModule } from '../../routes.js';
 import { actorOf, platformOf } from '../../workspace/common.js';
 import { EmptyBody, IdParams } from '../schemas.js';
-import { clientReadiness, mlsEligibility, nearMatches, notLivingAreaSize, readinessConnections } from './cmaSeam.js';
+import { AI_ISA_PACK, AI_ISA_SELLER_PACK, CMA_PLATFORM_PACK, clientReadiness, mlsEligibility, nearMatches, notLivingAreaSize, platformCleared, readinessConnections } from './cmaSeam.js';
 import { COUNT_SENTENCE, marketCountsInTx } from './counts.js';
 import { assignmentSubjectLinkInTx, compsSuspendedNowInTx, sellerGatesInTx } from './gates.js';
 import { type AssignmentRow, liveAssignmentOf } from './isa2Seam.js';
@@ -30,11 +30,36 @@ import { confirmationCodes, currentSubjectInTx, ensureWatchInTx, watchOf } from 
 
 const idOf = (req: FastifyRequest) => (req.params as { id: string }).id;
 /**
- * b17: the pack sentence names each pack a comps email waits on, the assistant's own too, as the Integrations line
- * does (integrations/catalog.ts PACK_ALSO_NEEDS, its pack names); readiness 'ai_isa' requires all three (cma/gates.ts).
+ * The packs a comps email waits on, in order, with the names the Integrations page gives them (integrations/catalog.ts
+ * PACK_GATES); readiness 'ai_isa' requires all three (cma/gates.ts).
  */
-export const PACK_WAITS_SENTENCE =
-  'Can share recent sales: no — waiting for counsel review of the Client CMAs pack (platform:cma), the assistant’s recent-sales emails pack (platform:ai_isa_seller_data) and the assistant’s ISA texts and emails pack (platform:ai_isa).';
+const SELLER_PACK_NAMES: readonly (readonly [string, string])[] = [
+  [CMA_PLATFORM_PACK, 'the Client CMAs pack (platform:cma)'],
+  [AI_ISA_SELLER_PACK, 'the assistant’s recent-sales emails pack (platform:ai_isa_seller_data)'],
+  [AI_ISA_PACK, 'the assistant’s ISA texts and emails pack (platform:ai_isa)'],
+];
+const MISSING_WORDS = {
+  licence: 'your MLS licence pack does not say sold data may be emailed to seller leads by the assistant (MLS admin page, Valuation use)',
+  postal: 'the brokerage’s postal address is not set (Brokerage settings)',
+  domain: 'the team’s sending domain is not verified (Sending domains)',
+} as const;
+
+/**
+ * b17 review B17R-1: the "no" names what a comps email still waits on and nothing else: only the packs counsel has not
+ * reviewed (b17 named all three whenever one waited, so recorded packs read as awaiting review), then the licence, the
+ * postal address and the sending domain when they are missing, as the Integrations line names each pack with its own
+ * review state (catalog.ts PACK_ALSO_NEEDS).
+ */
+export function packWaitsSentence(m: { packs: readonly string[]; licence: boolean; postal: boolean; domain: boolean }): string {
+  const names = SELLER_PACK_NAMES.filter(([key]) => m.packs.includes(key)).map(([, name]) => name);
+  const parts = [
+    ...(names.length > 0 ? [`waiting for counsel review of ${names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names.at(-1)!}`}`] : []),
+    ...(m.licence ? [MISSING_WORDS.licence] : []),
+    ...(m.postal ? [MISSING_WORDS.postal] : []),
+    ...(m.domain ? [MISSING_WORDS.domain] : []),
+  ];
+  return `Can share recent sales: no — ${parts.join('; ')}.`;
+}
 /** b17: a passing build is still not a yes while every marketing email would be refused (R-GATE-12, R-PAR-39). */
 const SENDING_MISSING = {
   postal: 'Can share recent sales: no — the brokerage’s postal address is not set (Brokerage settings), and every marketing email carries it.',
@@ -79,18 +104,23 @@ export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, 
     notLivingArea: notLivingAreaSize([subject.sizeSource]) }); // R-MLS-7: the subject's own size source (no comps here)
   const blockers = r.share.blockers.map((b) => ({ code: b.code, sentence: b.sentence }));
   const packWaits = blockers.some((b) => b.code === 'PLATFORM_NOT_CLEARED');
+  // b17 review B17R-1: which packs, and whether the licence also lacks the assistant's use
+  const waitingPacks: string[] = [];
+  if (packWaits) for (const [key] of SELLER_PACK_NAMES) if (!(await platformCleared(tx, key))) waitingPacks.push(key);
+  const licenceMissing = blockers.some((b) => b.code === 'CLIENT_USE_NOT_ALLOWED');
   const gates = sellerSide(a) ? await sellerGatesInTx(tx, viewer, a, now, 'competition') : null;
   const suspended = sellerSide(a) ? await compsSuspendedNowInTx(tx, viewer, a, w) : false;
   const built = sellerSide(a) && codes.length === 0 && blockers.length === 0 && !suspended && (w?.last_comps_check?.codes.length ?? 1) === 0;
   // b17: a passing build with no postal address or no verified sending domain would still be refused at the gate
-  const sending = built ? await sendingReadyInTx(tx) : { postal: true, domain: true };
+  const named = packWaits || licenceMissing;
+  const sending = built || named ? await sendingReadyInTx(tx) : { postal: true, domain: true };
   const compsOk = built && sending.postal && sending.domain;
   const compsSentence = compsOk
     ? 'Can share recent sales: yes, by email, the complete set only.'
     : built
       ? SENDING_MISSING[!sending.postal && !sending.domain ? 'both' : !sending.postal ? 'postal' : 'domain']
-      : packWaits
-        ? PACK_WAITS_SENTENCE
+      : named
+        ? packWaitsSentence({ packs: waitingPacks, licence: licenceMissing, postal: !sending.postal, domain: !sending.domain })
         : `Can share recent sales: no — ${[...codes, ...blockers.map((b) => b.code), ...(w?.last_comps_check?.codes ?? [])][0] ?? 'not checked yet'}.`;
   const link = sellerSide(a) ? await assignmentSubjectLinkInTx(tx, a) : { effect: 'ok' as const, code: null, sentence: 'Not under seller AI care.', listingIds: [] };
   let counts: { active: number; comingSoon: number; pending: number; sentence: string } | null = null;
