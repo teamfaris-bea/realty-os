@@ -11,13 +11,17 @@
 //
 // 0089 unlinks the person's lead emails (contact_id and inquiry_id) explicitly, in the purge, before any record is
 // deleted, so neither SET NULL action finds a row to update and the outcome no longer depends on the order. These tests
-// force each order by re-creating a foreign key (a newer oid sorts after the older one) inside a transaction that is
-// always rolled back.
+// force each order inside a transaction that is always rolled back, and assert the order before the outcome.
+// Batch 14 round 2: the order is forced by re-creating BOTH foreign keys in the wanted sequence and re-reading it
+// (riOrderFixture.ts forceRiOrder), never by re-creating one and trusting that a newer oid sorts later: names compare as
+// text, so in a long-lived cluster whose oid counter gained a digit since the template was built the new trigger sorts
+// first (lane 46). Each case also runs on a simulated template built below the 100000 crossing.
 import { randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenantTx } from '../src/tenantTx.js';
+import { forceRiOrder, recreateContactFk, riOrder, simulateShortOidTemplate } from './riOrderFixture.js';
 import { createHarness, createWorld, type Harness, intakeLead, suRows, uuid, type World } from './world.js';
 
 let h: Harness;
@@ -50,14 +54,6 @@ async function leadFromEmail(): Promise<{ contactId: string; inquiryId: string; 
   return { contactId, inquiryId: inq!.id, emailId };
 }
 
-/** contacts' RI action triggers for the two tables, in firing (name) order. */
-async function order(c: pg.PoolClient): Promise<string[]> {
-  const r = await c.query<{ t: string }>(`SELECT cr.relname AS t FROM pg_trigger tg JOIN pg_constraint con ON con.oid = tg.tgconstraint JOIN pg_class cr ON cr.oid = con.conrelid
-    WHERE tg.tgrelid = 'public.contacts'::regclass AND tg.tgisinternal AND cr.relname IN ('lead_inquiries','lead_email_messages') AND tg.tgname LIKE 'RI_ConstraintTrigger_a_%'
-    ORDER BY tg.tgname`);
-  return [...new Set(r.rows.map((x) => x.t))];
-}
-
 interface Outcome {
   order: string[];
   error: string | null;
@@ -72,7 +68,7 @@ async function purgeInRolledBackTx(ids: { contactId: string; inquiryId: string; 
   try {
     await c.query('BEGIN');
     await before(c);
-    const o = await order(c);
+    const o = await riOrder(c);
     let error: string | null = null;
     await c.query('SAVEPOINT purge');
     try {
@@ -95,15 +91,13 @@ async function purgeInRolledBackTx(ids: { contactId: string; inquiryId: string; 
   }
 }
 
-/** Re-creates lead_inquiries' contact FK: its new trigger sorts after lead_email_messages' (the order that failed). */
-const inquiriesLast = async (c: pg.PoolClient) => {
-  await c.query('ALTER TABLE lead_inquiries DROP CONSTRAINT lead_inquiries_tenant_id_contact_id_fkey');
-  await c.query('ALTER TABLE lead_inquiries ADD CONSTRAINT lead_inquiries_tenant_id_contact_id_fkey FOREIGN KEY (tenant_id, contact_id) REFERENCES contacts (tenant_id, id) ON DELETE CASCADE');
+/** lead_email_messages' SET NULL fires before the lead_inquiries cascade (the order that failed before 0089). */
+const emailsFirst = async (c: pg.PoolClient) => {
+  await forceRiOrder(c, ['lead_email_messages', 'lead_inquiries']);
 };
-/** Re-creates lead_email_messages' contact FK: its new trigger sorts after lead_inquiries' (the order that worked). */
-const emailsLast = async (c: pg.PoolClient) => {
-  await c.query('ALTER TABLE lead_email_messages DROP CONSTRAINT lead_email_messages_tenant_id_contact_id_fkey');
-  await c.query('ALTER TABLE lead_email_messages ADD CONSTRAINT lead_email_messages_tenant_id_contact_id_fkey FOREIGN KEY (tenant_id, contact_id) REFERENCES contacts (tenant_id, id) ON DELETE SET NULL (contact_id)');
+/** The lead_inquiries cascade fires first (the order that worked). */
+const inquiriesFirst = async (c: pg.PoolClient) => {
+  await forceRiOrder(c, ['lead_inquiries', 'lead_email_messages']);
 };
 
 /** The purge succeeded: the person and their inquiry are gone; the email stays as the tombstone of its message key,
@@ -115,10 +109,16 @@ const ERASED = {
   email: { status: 'lead_created', contact_id: null, inquiry_id: null, sender_domain: null, dkim_pass_domains: [] },
 };
 
-describe('b14: contact erasure does not depend on RI trigger-name order (0089)', () => {
+/** The cluster the test database lives in: as built here, or a template built below the 100000 oid crossing (simulated). */
+const CLUSTERS: [string, (c: pg.PoolClient) => Promise<void>][] = [
+  ['as built', async () => {}],
+  ['a template built before a power-of-ten oid crossing (simulated)', simulateShortOidTemplate],
+];
+
+describe.each(CLUSTERS)('b14: contact erasure does not depend on RI trigger-name order (0089), %s', (_name, cluster) => {
   it('erase cascade: when lead_email_messages\' SET NULL fires before the lead_inquiries cascade, the purge still erases the person and unlinks the email', async () => {
     const ids = await leadFromEmail();
-    const r = await purgeInRolledBackTx(ids, inquiriesLast);
+    const r = await purgeInRolledBackTx(ids, async (c) => { await cluster(c); await emailsFirst(c); });
     expect(r.order).toEqual(['lead_email_messages', 'lead_inquiries']);
     const { order: _o, ...outcome } = r;
     expect(outcome).toEqual(ERASED);
@@ -126,7 +126,7 @@ describe('b14: contact erasure does not depend on RI trigger-name order (0089)',
 
   it('erase cascade: in the other order (the lead_inquiries cascade first) the outcome is the same', async () => {
     const ids = await leadFromEmail();
-    const r = await purgeInRolledBackTx(ids, emailsLast);
+    const r = await purgeInRolledBackTx(ids, async (c) => { await cluster(c); await inquiriesFirst(c); });
     expect(r.order).toEqual(['lead_inquiries', 'lead_email_messages']);
     const { order: _o, ...outcome } = r;
     expect(outcome).toEqual(ERASED);
@@ -136,8 +136,53 @@ describe('b14: contact erasure does not depend on RI trigger-name order (0089)',
     const ids = await leadFromEmail();
     // the contact link alone gone (as a merge's ON DELETE SET NULL of a merged record would leave it), the inquiry kept
     await withTenantTx(w.system('provider'), (tx) => sql`UPDATE lead_email_messages SET contact_id = NULL WHERE id = ${ids.emailId}`.execute(tx), { db: h.app });
-    const r = await purgeInRolledBackTx(ids, inquiriesLast);
+    const r = await purgeInRolledBackTx(ids, async (c) => { await cluster(c); await emailsFirst(c); });
+    expect(r.order).toEqual(['lead_email_messages', 'lead_inquiries']);
     const { order: _o, ...outcome } = r;
     expect(outcome).toEqual(ERASED);
+  });
+});
+
+describe('b14 round 2: forcing the RI order is robust to the oid width (riOrderFixture.ts)', () => {
+  async function inRolledBackTx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+    const c = await h.su.connect();
+    try {
+      await c.query('BEGIN');
+      return await fn(c);
+    } finally {
+      await c.query('ROLLBACK');
+      c.release();
+    }
+  }
+
+  it('lane 46: re-creating ONE foreign key gets the wrong order once the template\'s triggers have fewer digits than a new oid; forceRiOrder gets the wanted order in both directions', async () => {
+    for (const [one, want] of [
+      ['lead_inquiries', ['lead_email_messages', 'lead_inquiries']],
+      ['lead_email_messages', ['lead_inquiries', 'lead_email_messages']],
+    ] as const) {
+      const r = await inRolledBackTx(async (c) => {
+        await simulateShortOidTemplate(c);
+        await recreateContactFk(c, one); // the old helper: "a newer oid sorts after the older one"
+        const old = await riOrder(c);
+        const forced = await forceRiOrder(c, want);
+        return { old, forced, after: await riOrder(c) };
+      });
+      expect(r.old, one).toEqual([...want].reverse());
+      expect(r.forced.order, one).toEqual([...want]);
+      expect(r.after, one).toEqual([...want]);
+    }
+  });
+
+  it('forceRiOrder re-reads and repeats when a round does not give the order (a crossing between the two), and throws after its last round rather than let a test assert under the wrong order', async () => {
+    const want = ['lead_email_messages', 'lead_inquiries'] as const;
+    const r = await inRolledBackTx(async (c) => {
+      let reads = 0;
+      const lyingOnce = async (cc: pg.PoolClient) => (++reads === 1 ? [...want].reverse() : riOrder(cc));
+      return forceRiOrder(c, want, { read: lyingOnce });
+    });
+    expect(r).toEqual({ order: [...want], rounds: 2 });
+    await expect(inRolledBackTx((c) => forceRiOrder(c, want, { tries: 3, read: async () => [...want].reverse() }))).rejects.toThrow(
+      'forceRiOrder: could not force lead_email_messages before lead_inquiries in 3 rounds (last read: lead_inquiries, lead_email_messages)',
+    );
   });
 });

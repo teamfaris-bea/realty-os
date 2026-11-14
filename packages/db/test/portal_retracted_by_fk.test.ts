@@ -17,14 +17,17 @@
 //     that sorts first. The lane's container rebuilt its test template at that crossing with the immediate FK, then
 //     again above it with the deferred one: the deferral only rode along with the rebuild. In this checkout the
 //     immediate FK passes both erasure tests (it is immediate again, as its sibling published_by_user_id).
-// This file forces that order deterministically by re-creating the lead_inquiries foreign key (a newer, larger oid
-// sorts after lead_email_messages'), inside a transaction rolled back after each case. Since batch 14's 0089 the purge
-// unlinks the person's lead emails itself before deleting anything, so that order erases the person too.
+// This file forces that order inside a transaction rolled back after each case, and asserts it before the outcome.
+// Batch 14 round 2: it re-creates BOTH contact foreign keys in the wanted sequence and re-reads the order
+// (riOrderFixture.ts forceRiOrder), since re-creating one and trusting "a newer, larger oid sorts later" fails once the
+// cluster's oid counter has more digits than the template's triggers (lane 46). Since batch 14's 0089 the purge unlinks
+// the person's lead emails itself before deleting anything, so that order erases the person too.
 import { randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenantTx } from '../src/tenantTx.js';
+import { forceRiOrder, riOrder, simulateShortOidTemplate } from './riOrderFixture.js';
 import { createHarness, createWorld, type Harness, intakeLead, suRows, uuid, type World } from './world.js';
 
 let h: Harness;
@@ -56,21 +59,13 @@ async function leadFromEmail(): Promise<string> {
   return contactId;
 }
 
-/** contacts' RI action triggers for the two tables, in firing (name) order. */
-async function order(c: pg.PoolClient): Promise<string[]> {
-  const r = await c.query<{ t: string }>(`SELECT cr.relname AS t FROM pg_trigger tg JOIN pg_constraint con ON con.oid = tg.tgconstraint JOIN pg_class cr ON cr.oid = con.conrelid
-    WHERE tg.tgrelid = 'public.contacts'::regclass AND tg.tgisinternal AND cr.relname IN ('lead_inquiries','lead_email_messages') AND tg.tgname LIKE 'RI_ConstraintTrigger_a_%'
-    ORDER BY tg.tgname`);
-  return [...new Set(r.rows.map((x) => x.t))];
-}
-
 /** Runs the purge in one transaction that is always rolled back; `before` may change the schema inside it. */
 async function purgeInRolledBackTx(contactId: string, before: (c: pg.PoolClient) => Promise<void> = async () => {}): Promise<{ order: string[]; error: string | null }> {
   const c = await h.su.connect();
   try {
     await c.query('BEGIN');
     await before(c);
-    const o = await order(c);
+    const o = await riOrder(c);
     try {
       await c.query('SELECT app.purge_contact_internal($1, $2)', [w.tenantId, contactId]);
       return { order: o, error: null };
@@ -83,9 +78,9 @@ async function purgeInRolledBackTx(contactId: string, before: (c: pg.PoolClient)
   }
 }
 
-const recreateInquiryFk = async (c: pg.PoolClient) => {
-  await c.query('ALTER TABLE lead_inquiries DROP CONSTRAINT lead_inquiries_tenant_id_contact_id_fkey');
-  await c.query('ALTER TABLE lead_inquiries ADD CONSTRAINT lead_inquiries_tenant_id_contact_id_fkey FOREIGN KEY (tenant_id, contact_id) REFERENCES contacts (tenant_id, id) ON DELETE CASCADE');
+/** lead_email_messages' SET NULL first (the lane's failing order before 0089). */
+const emailsFirst = async (c: pg.PoolClient) => {
+  await forceRiOrder(c, ['lead_email_messages', 'lead_inquiries']);
 };
 
 describe('b14 F6: the erase cascade and portal_items_retracted_by_fk', () => {
@@ -100,7 +95,8 @@ describe('b14 F6: the erase cascade and portal_items_retracted_by_fk', () => {
 
   it('F6: in the normal trigger order the purge of a lead with a linked lead email succeeds, with the immediate FK in place', async () => {
     const contactId = await leadFromEmail();
-    const r = await purgeInRolledBackTx(contactId);
+    // the normal order is forced too: a template built across a power-of-ten crossing has the other one (lane 46)
+    const r = await purgeInRolledBackTx(contactId, (c) => forceRiOrder(c, ['lead_inquiries', 'lead_email_messages']).then(() => undefined));
     expect(r.order).toEqual(['lead_inquiries', 'lead_email_messages']);
     expect(r.error).toBeNull();
   });
@@ -110,16 +106,21 @@ describe('b14 F6: the erase cascade and portal_items_retracted_by_fk', () => {
   // earlier UPDATE of the email row. 0089 unlinks the person's lead emails inside the purge before any record is
   // deleted, so the order no longer matters (erase_trigger_order_0089.test.ts holds the full proof: both orders and the
   // end state).
-  it('F6: the lane\'s failing order (lead_email_messages\' SET NULL first) now erases the person, with or without portal_items_retracted_by_fk (0089)', async () => {
+  it.each([
+    ['as built', async () => {}],
+    ['a template built before a power-of-ten oid crossing (simulated)', simulateShortOidTemplate],
+  ] as [string, (c: pg.PoolClient) => Promise<void>][])('F6: the lane\'s failing order (lead_email_messages\' SET NULL first) now erases the person, with or without portal_items_retracted_by_fk (0089), %s', async (_name, cluster) => {
     const contactId = await leadFromEmail();
-    const flipped = await purgeInRolledBackTx(contactId, recreateInquiryFk);
+    const flipped = await purgeInRolledBackTx(contactId, async (c) => { await cluster(c); await emailsFirst(c); });
     expect(flipped.order).toEqual(['lead_email_messages', 'lead_inquiries']);
     expect(flipped.error).toBeNull();
     // the portal FK plays no part: dropped, the outcome is the same
     const noPortalFk = await purgeInRolledBackTx(contactId, async (c) => {
       await c.query('ALTER TABLE portal_items DROP CONSTRAINT portal_items_retracted_by_fk');
-      await recreateInquiryFk(c);
+      await cluster(c);
+      await emailsFirst(c);
     });
+    expect(noPortalFk.order).toEqual(['lead_email_messages', 'lead_inquiries']);
     expect(noPortalFk.error).toBeNull();
   });
 
