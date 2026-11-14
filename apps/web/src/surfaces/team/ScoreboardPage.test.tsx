@@ -33,7 +33,7 @@ function assertDenominated(text: string) {
     .replace(/\d+ of \d+/g, '')
     .replace(/\d+ in \d+ days?/g, '')
     .replace(/\(of \d+ [a-z ]+\)/g, '')
-    .replace(/\d+ (calls?|texts, emails and chat replies|still waiting)/g, '')
+    .replace(/\d+ (call attempts?|texts, emails and chat replies sent|still waiting)/g, '')
     .replace(/Median \d+(\.\d+)? (sec|min|h|days?)( \d+ min)?/g, '');
   expect(stripped).not.toMatch(/\d/);
 }
@@ -77,17 +77,18 @@ describe('Scoreboard', () => {
     expect(fake.callsTo('GET /team/scoreboard?range=7d')).toHaveLength(0);
   });
 
-  it('E310 (owner decision D8): both boards say which sends are touches: calls, texts, emails and chat replies people sent themselves, never the assistant', async () => {
+  it('E310 E724 (owner decision D8; b18 item g): both boards say which sends are touches: attempts (calls answered or not, texts, emails and chat replies) people made themselves, never the assistant, and not connected conversations', async () => {
     const team = new FakeFetch().on('GET /team/scoreboard?range=7d', { status: 200, body: { range: range('7d'), members: [board()] } }).on('GET /team/momentum', { status: 200, body: momentum });
     leadAdminApp(team, '/team/scoreboard', 'team_lead');
-    expect(await screen.findByText('Touches count calls, texts, emails and chat replies people sent themselves. Messages the assistant sent never count here.')).toBeInTheDocument();
-    expect(within(await screen.findByRole('table')).getByText('20 calls · 14 texts, emails and chat replies')).toBeInTheDocument();
+    // b18 item g (E724): touches are attempts, not connected conversations, and both boards say so
+    expect(await screen.findByText('Touches are attempts: every call people placed themselves, answered or not, and every text, email and chat reply they sent. They are not connected conversations. Messages the assistant sent never count here.')).toBeInTheDocument();
+    expect(within(await screen.findByRole('table')).getByText('20 call attempts (answered or not) · 14 texts, emails and chat replies sent')).toBeInTheDocument();
   });
 
   it('E310 (owner decision D8): an agent\'s own board says the same about touches', async () => {
     const own = new FakeFetch().on('GET /scoreboard?range=7d', { status: 200, body: { range: range('7d'), scoreboard: board({ userId: ID.me, name: 'Ava Agent' }) } }).on('GET /team/momentum', { status: 200, body: { ...momentum, agents: [] } });
     leadAdminApp(own, '/team/scoreboard', 'agent');
-    expect(await screen.findByText('Touches count calls, texts, emails and chat replies you sent yourself. Messages the assistant sent never count here.')).toBeInTheDocument();
+    expect(await screen.findByText('Touches are attempts: every call you placed yourself, answered or not, and every text, email and chat reply you sent. They are not connected conversations. Messages the assistant sent never count here.')).toBeInTheDocument();
   });
 
   it('R-ACC-5 display: momentum flags a slow deal against the team median, and says when there is not enough history to compare', async () => {

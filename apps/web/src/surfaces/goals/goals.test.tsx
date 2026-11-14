@@ -9,6 +9,7 @@ import { AGENT, DEAL, FakeFetch, err, goalsBody, insightsApp, plan } from '../ow
 import { periodStartOf, todayIn } from './GoalsPage.js';
 import { humanize, periodWords, weekWords } from './humanize.js';
 import { deadlineWords } from './PlanPage.js';
+import { METRIC_LABEL } from './types.js';
 
 const violations = async () => (await axe.run(document.body, { rules: { 'color-contrast': { enabled: false } }, resultTypes: ['violations'] })).violations.map((v) => v.id);
 
@@ -141,5 +142,12 @@ describe('module 40 review fixes', () => {
     expect(periodWords('quarter', '2026-10-01')).toBe('Q4 2026');
     expect(periodWords('year', '2026-01-01')).toBe('2026');
     expect(weekWords('2020-W53')).toBe('Week of Mon, Dec 28 to Sun, Jan 3');
+  });
+});
+
+describe('b18 item g (E724): a touches goal counts attempts', () => {
+  it('E724: the metric is named as attempts (calls placed, answered or not), never as conversations', () => {
+    expect(METRIC_LABEL.touches).toBe('Touches (call attempts, texts, emails)');
+    expect(Object.values(METRIC_LABEL).join(' ')).not.toMatch(/conversation|connected/i);
   });
 });

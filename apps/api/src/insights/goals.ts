@@ -29,7 +29,8 @@ const PACE_TAIL = ' over the goal period so far, compared with an even pace acro
 export const PACE_METHOD: Record<GoalMetric, string> = {
   // app.scoreboard_activity (0035): every human, non-imported, non-bulk outbound message on any channel, web chat
   // included (D8(1)), plus calls (batch 7 review ownership-data/F7)
-  touches: `Counted from the scoreboard: calls, texts, emails and website-chat replies this member sent themselves (never imported, bulk or the assistant's)${PACE_TAIL}`,
+  // b18 item g (E724, owner 2026-11-14): an attempt, never a connected conversation (every placed call counts, answered or not)
+  touches: `Counted from the scoreboard: attempts this member made themselves, each call they placed (answered or not) and each text, email and website-chat reply they sent (never imported, bulk or the assistant's); attempts, not connected conversations,${PACE_TAIL}`,
   appointments_set: `Counted from the scoreboard: appointments this member set${PACE_TAIL}`,
   appointments_held: `Counted from the scoreboard: this member's appointments marked held${PACE_TAIL}`,
   agreements_signed: `Counted from the scoreboard: this member's deals that moved to agreement signed${PACE_TAIL}`,

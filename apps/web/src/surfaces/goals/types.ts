@@ -52,7 +52,7 @@ export const METRIC_LABEL: Record<Metric, string> = {
   appointments_held: 'Appointments held',
   agreements_signed: 'Agreements signed',
   closings: 'Closings',
-  touches: 'Touches (calls, texts, emails)',
+  touches: 'Touches (call attempts, texts, emails)', // b18 item g (E724): attempts, never connected conversations
 };
 
 export const PERIOD_LABEL: Record<PeriodKind, string> = { week: 'This week', month: 'This month', quarter: 'This quarter', year: 'This year' };

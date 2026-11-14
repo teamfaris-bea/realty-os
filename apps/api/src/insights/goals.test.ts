@@ -128,7 +128,8 @@ describe('review fixes (module 33 review)', () => {
     const by = new Map(all.map((g) => [g.metric, g.pace.method]));
     expect(by.get('closings')).toMatch(/deals that closed/);
     // b7 ownership-data/F7 (D8(1)): the sentence names every channel the count holds, and what it never holds
-    expect(by.get('touches')).toBe("Counted from the scoreboard: calls, texts, emails and website-chat replies this member sent themselves (never imported, bulk or the assistant's) over the goal period so far, compared with an even pace across the period.");
+    // b18 item g (E724): a touch is an attempt, and the method says so
+    expect(by.get('touches')).toBe("Counted from the scoreboard: attempts this member made themselves, each call they placed (answered or not) and each text, email and website-chat reply they sent (never imported, bulk or the assistant's); attempts, not connected conversations, over the goal period so far, compared with an even pace across the period.");
     expect(new Set(all.map((g) => g.pace.method)).size).toBe(new Set(all.map((g) => g.metric)).size);
   });
 });

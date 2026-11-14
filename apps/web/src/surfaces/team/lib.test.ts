@@ -62,8 +62,17 @@ describe('periodLabel and the period lines (one ownership period per card)', () 
 
 describe('scoreboardLines', () => {
   it('E310 (owner decision D8): the touches split names the chat replies counted with the texts and emails', () => {
-    const touches = scoreboardLines(board({ touches: { count: 5, calls: 2, textsAndEmails: 3, days: 7 } })).find((l) => l.label === 'Touches');
-    expect(touches).toEqual({ label: 'Touches', text: '5 in 7 days', detail: '2 calls · 3 texts, emails and chat replies' });
+    const touches = scoreboardLines(board({ touches: { count: 5, calls: 2, textsAndEmails: 3, days: 7 } })).find((l) => l.label === 'Touches (attempts)');
+    expect(touches).toEqual({ label: 'Touches (attempts)', text: '5 in 7 days', detail: '2 call attempts (answered or not) · 3 texts, emails and chat replies sent' });
+  });
+
+  it('E724 (b18 item g): touches are attempts and say so: a call counts whether or not it was answered, and nothing calls them conversations', () => {
+    for (const calls of [0, 1, 4]) {
+      const t = scoreboardLines(board({ touches: { count: calls + 1, calls, textsAndEmails: 1, days: 7 } })).find((l) => l.label.startsWith('Touches'))!;
+      expect(t.label).toBe('Touches (attempts)');
+      expect(t.detail).toMatch(calls === 1 ? /^1 call attempt \(answered or not\)/ : new RegExp(`^${calls} call attempts \\(answered or not\\)`));
+      expect(`${t.label} ${t.text} ${t.detail}`).not.toMatch(/conversation|connected|talked|spoke/i);
+    }
   });
 });
 

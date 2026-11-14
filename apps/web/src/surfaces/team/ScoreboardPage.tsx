@@ -102,7 +102,7 @@ function TeamBoard({ range }: { range: RangeKey }) {
           </div>
         </>
       ) : null}
-      <p className="text-[14px] text-ink-muted">Touches count calls, texts, emails and chat replies people sent themselves. Messages the assistant sent never count here.</p>
+      <p className="text-[14px] text-ink-muted">Touches are attempts: every call people placed themselves, answered or not, and every text, email and chat reply they sent. They are not connected conversations. Messages the assistant sent never count here.</p>
     </Section>
   );
 }
@@ -118,7 +118,7 @@ function OwnBoard({ range }: { range: RangeKey }) {
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
       {q.data ? <BoardCard board={q.data.scoreboard} /> : null}
-      <p className="text-[14px] text-ink-muted">Touches count calls, texts, emails and chat replies you sent yourself. Messages the assistant sent never count here.</p>
+      <p className="text-[14px] text-ink-muted">Touches are attempts: every call you placed yourself, answered or not, and every text, email and chat reply you sent. They are not connected conversations. Messages the assistant sent never count here.</p>
     </Section>
   );
 }
