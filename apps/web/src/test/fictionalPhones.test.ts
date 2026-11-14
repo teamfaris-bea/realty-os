@@ -17,7 +17,9 @@ function filesUnder(dir: string): string[] {
 }
 
 /** Ofcom's drama ranges, as digits after +44. */
-const DRAMA = [/^2079460\d{3}$/, /^7700900\d{3}$/, /^1632960\d{3}$/, /^1(?:1[3-8]|21|31|41|51|61)4960\d{3}$/, /^1914980\d{3}$/];
+// b17: also 028 9649 6xxx, 03069 990xxx, 0808 157 0xxx and 0909 879 0xxx (Ofcom's other drama blocks), which
+// packages/core/src/testing/phones.ts makes bulk test numbers from
+const DRAMA = [/^2079460\d{3}$/, /^7700900\d{3}$/, /^1632960\d{3}$/, /^1(?:1[3-8]|21|31|41|51|61)4960\d{3}$/, /^1914980\d{3}$/, /^(?:2896496|3069990|8081570|9098790)\d{3}$/];
 export const isDramaNumber = (digitsAfter44: string): boolean => DRAMA.some((r) => r.test(digitsAfter44));
 
 /** Every UK number written as +44 (spaces allowed), as digits after +44. */
@@ -28,7 +30,9 @@ export function ukNumbers(text: string): string[] {
 describe('b15 audit F13: UK phone numbers in the web app are fictional', () => {
   it('the check knows the ranges', () => {
     expect(['2079460958', '7700900123', '1632960001', '1134960000', '1914980999'].map(isDramaNumber)).toEqual([true, true, true, true, true]);
-    expect(['7700901000', '2079461000'].map(isDramaNumber)).toEqual([false, false]);
+    // b17 (B17R-2): the samples outside the ranges are ones no line can have (a digit too many, a digit too few), so
+    // this file names no number outside the drama ranges
+    expect(['77009001000', '207946099'].map(isDramaNumber)).toEqual([false, false]);
     expect(ukNumbers("sms('+442079460958') and +44 20 7946 0958 and +44 7700 900123")).toEqual(['2079460958', '2079460958', '7700900123']);
   });
 
