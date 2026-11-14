@@ -7,9 +7,9 @@
 // incomplete, no team, link landing, home (timeline, phone documents), several grants, nothing shared, no longer shared,
 // a failed download, signed out, a used link, 429, text messages off, and not available. Where the real stack cannot
 // reach a state without changing the world later tests use (a revoke is final; SMS is a config), the browser answers
-// that one request with module 45's own error body, or /me with its grants changed: the screen is the client's own.
+// with module 45's own error body, or /me with its grants changed, or (a revoke) both: the screen is the client's own.
 import { AxeBuilder } from '@axe-core/playwright';
-import { type Page, expect, test } from 'playwright/test';
+import { type Locator, type Page, type Route, expect, test } from 'playwright/test';
 // the sweep's tags (e2e/a11y/a11y.spec.ts AXE_TAGS; a spec file cannot import another spec)
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
 import { clippedText, obscuredFocus, phoneProblems } from '../a11y/checks.js';
@@ -44,6 +44,13 @@ test.afterAll(async () => {
 });
 
 const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
+/** A tap where the context has touch, else a click: by the context's touch support, not by width (helpers.ts tap()
+ *  goes by width, and the desktop project at 320 px has no touch, so a tap there throws). Counts like tap(). */
+async function press(page: Page, target: Locator, counter?: { taps: number }) {
+  if (await page.evaluate(() => navigator.maxTouchPoints > 0)) await target.tap();
+  else await target.click();
+  if (counter) counter.taps += 1;
+}
 /** module 45's error body (webContract.json errors), as the API sends it */
 const apiError = (status: number, code: string, details?: Record<string, unknown>) => ({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, requestId: '01900000-0000-7000-8000-0000000000ee', ...(details ? { details } : {}) } }) });
 const SECOND_GRANT = '01900000-0000-7000-8000-00000000f5a2';
@@ -134,10 +141,11 @@ test('R-PORTALWEB-11: every portal screen and state passes axe in both themes an
   {
     const size = p.viewportSize()!;
     await p.setViewportSize({ width: 320, height: size.height });
-    // at 320 px every project has the phone layout: the documents are behind their tab
+    // at 320 px every project has the phone layout: the documents are behind their tab (the desktop project has no
+    // touch at this width: press, not tap)
     const docsTab = p.getByRole('tab', { name: 'Documents' });
     await expect(docsTab).toBeVisible();
-    if ((await docsTab.getAttribute('aria-selected')) !== 'true') await tap(p, docsTab);
+    if ((await docsTab.getAttribute('aria-selected')) !== 'true') await press(p, docsTab);
     const word = p.getByText(LONG_TITLE, { exact: true });
     await expect(word).toBeVisible();
     const m = await word.evaluate((e) => {
@@ -166,11 +174,33 @@ test('R-PORTALWEB-11: every portal screen and state passes axe in both themes an
   await expect(p.locator('main').getByText('Nothing is shared with you right now.', { exact: false })).toBeVisible({ timeout: 20_000 });
   found.push(...(await check(p, 'nothing shared')));
   await p.unroute('**/api/portal/me');
-  // no longer shared (E712): the timeline answers 404 once
-  await p.route('**/api/portal/timeline**', (r) => r.fulfill(apiError(404, 'NOT_FOUND')), { times: 1 });
+  // no longer shared (E712): the grant is revoked between /me and its timeline. A revoke hides it from every later query
+  // (R-PORTAL-6, E125): 45 answers its timeline and documents 404 and /me no longer lists it (E711). So the first /me
+  // is the real one, every item read of the grant answers 404 (not one: the dev build's StrictMode mounts the grant
+  // twice and aborts the first read), and from the first 404 on, /me is the real answer without the grant.
+  let revoked = false;
+  let meWithout = 0;
+  const grantItems = (u: URL) => u.pathname === '/api/portal/timeline' || u.pathname === '/api/portal/documents';
+  const revokedItems = (r: Route) => {
+    revoked = true;
+    return r.fulfill(apiError(404, 'NOT_FOUND'));
+  };
+  await meWith(p, (g) => {
+    if (!revoked) return g;
+    meWithout += 1;
+    return g.filter((x) => x.id !== grantId);
+  });
+  await p.route(grantItems, revokedItems);
   await p.reload();
   await expect(p.locator('main').getByText('This is no longer shared with you.')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => meWithout, { message: '/me refetched after the 404', timeout: 20_000 }).toBeGreaterThan(0);
   found.push(...(await check(p, 'no longer shared')));
+  // Home's state after the refetch: the sentence stays, above "nothing shared", and nothing of the grant is left
+  await expect(p.locator('main').getByText('This is no longer shared with you.')).toBeVisible();
+  await expect(p.locator('main').getByText('Nothing is shared with you right now.', { exact: false })).toBeVisible();
+  await expect(p.getByText('Inspection', { exact: true })).toHaveCount(0);
+  await p.unroute(grantItems, revokedItems);
+  await p.unroute('**/api/portal/me');
   // a failed download (E713): the stream token answers 404 once
   await p.goto(portalUrl(stack, pw.slug));
   await h1('Your home purchase');
