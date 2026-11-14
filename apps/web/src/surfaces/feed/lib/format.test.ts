@@ -35,7 +35,7 @@ describe('format', () => {
     expect(formatMoney(null)).toBeNull();
     expect(formatLocalDate('2026-12-15')).toBe('Dec 15, 2026');
     expect(formatPhone('+14155550123')).toBe('(415) 555-0123');
-    expect(formatPhone('+442071838750')).toBe('+442071838750');
+    expect(formatPhone('+442079460958')).toBe('+442079460958');
     expect(firstName('Jane Doe')).toBe('Jane');
     expect(firstName(null)).toBe('They');
   });

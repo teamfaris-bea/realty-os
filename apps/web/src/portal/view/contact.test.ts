@@ -5,7 +5,7 @@ import { mailtoHref, smsHref } from './contact.js';
 describe('view/contact.ts (R-PORTALWEB-8)', () => {
   it('R-PORTALWEB-8: sms: only from E.164', () => {
     expect(smsHref('+15555550123')).toBe('sms:+15555550123');
-    expect(smsHref('+442071838750')).toBe('sms:+442071838750');
+    expect(smsHref('+442079460958')).toBe('sms:+442079460958');
     for (const v of ['5555550123', '+0555550123', '+1555', '+1 555 555 0123', '+1555555012３', '+١٥٥٥٥٥٥٠١٢٣', '+15555550123?body=hi', '+15555550123;ext=1', '+15555550123\r\n', 'javascript:alert(1)', 'sms:+15555550123', '', null, undefined]) {
       expect(smsHref(v as string | null), String(v)).toBeNull();
     }
