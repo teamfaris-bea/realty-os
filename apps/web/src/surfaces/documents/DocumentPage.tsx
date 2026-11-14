@@ -75,7 +75,8 @@ function Share({ d }: { d: DocumentView }) {
       <Button variant="secondary" className="self-start" pending={share.pending} onClick={() => void run()}>
         {d.portal.shared ? 'Stop marking for the client portal' : 'Mark for the client portal'}
       </Button>
-      {text ? <Notice tone="info">{text}</Notice> : null}
+      {/* the API's answer, unless it is the sentence the section already shows (a Mark answers with the new portal.text) */}
+      {text && text !== d.portal.text ? <Notice tone="info">{text}</Notice> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
     </div>
   );
@@ -207,8 +208,9 @@ export default function DocumentPage() {
 
       {d.scope.kind !== 'contact' ? (
         <Section title="Client portal">
-          <p className="text-[15px] text-ink">{d.portal.shared ? 'Marked for the client portal.' : 'Not marked for the client portal.'}</p>
-          {d.portal.text ? <p className="text-[14px] text-ink-muted">{d.portal.text}</p> : null}
+          {/* b15 (b14 low e): the API's sentence starts "Marked for the client portal.", so the page's own line shows only
+              when the API gives none (never three times with the Share notice) */}
+          {d.portal.text ? <p className="text-[15px] text-ink">{d.portal.text}</p> : <p className="text-[15px] text-ink">{d.portal.shared ? 'Marked for the client portal.' : 'Not marked for the client portal.'}</p>}
           {d.canShare && d.scan === 'clean' ? <Share d={d} /> : null}
         </Section>
       ) : null}

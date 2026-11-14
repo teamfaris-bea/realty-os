@@ -65,6 +65,27 @@ describe('the document page', () => {
     expect(m.textContent).not.toMatch(/clients? (can|now|will) see|visible to (the )?clients?|shared with (the )?clients?/i);
   });
 
+  it('b15 (b14 low e): "Marked for the client portal." is said once, on load and after Mark (the API\'s sentence carries it; no page line, no repeated notice)', async () => {
+    const times = (m: HTMLElement) => (m.textContent ?? '').split('Marked for the client portal.').length - 1;
+    for (const text of [COPY.sharedCleared, COPY.sharedNotCleared]) {
+      const shared = doc({ canShare: true, portal: { shared: true, portalCleared: text === COPY.sharedCleared, text } });
+      const loaded = open(new StaffFake().on(`GET /documents/${DOC}`, { status: 200, body: detail(shared) }));
+      const m = await main();
+      await within(m).findByText(text);
+      expect(times(m), text).toBe(1);
+      loaded.view.unmount();
+    }
+    const d = doc({ canShare: true });
+    const shared = doc({ canShare: true, portal: { shared: true, portalCleared: true, text: COPY.sharedCleared } });
+    const fake = new StaffFake().on(`GET /documents/${DOC}`, { status: 200, body: detail(d) }).on(`POST /documents/${DOC}/share`, { status: 200, body: { ...detail(shared), text: COPY.sharedCleared } });
+    open(fake);
+    const m = await main();
+    expect(within(m).getByText('Not marked for the client portal.')).toBeInTheDocument();
+    await userEvent.setup().click(within(m).getByRole('button', { name: 'Mark for the client portal' }));
+    await within(m).findByRole('button', { name: 'Stop marking for the client portal' });
+    expect(times(m)).toBe(1);
+  });
+
   it('R-STAFF-10: no Share for canShare false, a file not clean, or a contact document', async () => {
     for (const d of [doc({ canShare: false }), doc({ canShare: true, scan: 'checking', scanText: COPY.checking }), doc({ canShare: true, scope: { kind: 'contact', id: CONTACT } })]) {
       const fake = new StaffFake().on(`GET /documents/${DOC}`, { status: 200, body: detail(d) });
