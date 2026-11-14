@@ -1,5 +1,6 @@
 // module 46 (R-PORTALWEB-3, R-PORTALWEB-4; E700-E703, E719): the sign-in link and the team, read ONCE before the first
-// render (main.tsx calls readLink before createRoot).
+// render (boot.tsx calls readLink before createRoot), and again only when a new link arrives as a fragment change
+// (rereadLink, b15 audit P46-SEC-2).
 //
 // Token: only a fragment that is exactly `#token=` and 43 base64url characters is well-formed; any other fragment that
 // names a token is "incomplete" (no Sign in button, nothing posted). The fragment is removed from the address bar and
@@ -94,6 +95,19 @@ export function readLink(loc: Loc = window.location, hist: Hist = window.history
   }
   read = { link: h.kind, team };
   return read;
+}
+
+/**
+ * b15 audit P46-SEC-2: a sign-in link opened in a tab already on the portal is a fragment change only (no load). When
+ * the new fragment names a token, it is read in place exactly as readLink reads a first load: stripped from the address
+ * bar and from the history entry the fragment change made, before anything renders, the token kept in memory only.
+ * Returns null when the fragment names no token (the skip link's #main): nothing changes.
+ */
+export function rereadLink(loc: Loc = window.location, hist: Hist = window.history, store: Store | null = storage()): LinkRead | null {
+  if (classifyHash(loc.hash).kind === 'none') return null;
+  token = null;
+  read = null;
+  return readLink(loc, hist, store);
 }
 
 /** The well-formed token, while it has not been used (LinkLanding posts it on the tap only). */
