@@ -43,14 +43,48 @@ const WRITE_BUILDER = /\b(insertInto|updateTable|deleteFrom|mergeInto|replaceInt
 function firstWrite(code: string): string | null {
   return code.match(WRITE_SQL)?.[0] ?? code.match(SQL_UPDATE_KEYWORD)?.[0] ?? code.match(WRITE_BUILDER)?.[0] ?? null;
 }
-/** The routes `code` registers, as '<method> <path>', on ANY receiver (not only one named r or app): every verb call
- *  whose first argument is a literal path, plus any `.route(` and any POST/PUT/PATCH/ALL with a path in a variable,
- *  plus (b14 review F3) any GET/DELETE/HEAD/OPTIONS whose first argument is not a literal path and that takes a second
+/** The top-level arguments of the call whose '(' is at `open`, as source text (strings, templates and nesting skipped). */
+function callArgs(code: string, open: number): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i]!;
+    if (c === "'" || c === '"' || c === '`') {
+      for (i++; i < code.length && code[i] !== c; i++) if (code[i] === '\\') i++;
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      depth--;
+      if (depth === 0) {
+        const last = code.slice(start, i).trim();
+        if (last !== '' || args.length > 0) args.push(last);
+        return args;
+      }
+    } else if (c === ',' && depth === 1) {
+      args.push(code.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  return args;
+}
+/** The routes `code` registers, as '<method> <path>', on ANY receiver (not only one named r or app) and by dot or
+ *  bracket access (`r.get(` or `r['get'](`): every verb call whose first argument is a literal path, plus any route(
+ *  and any POST/PUT/PATCH/ALL whose path is not a literal, plus (b14 review F3; b15, b14 low d) any GET/DELETE/HEAD/
+ *  OPTIONS whose path is not a literal (a variable, a call such as pathOf('x') or String(P)) and that takes a second
  *  argument (a handler or options; a Map's or Headers' `.get(key)` takes one). */
 function routesIn(code: string): string[] {
-  const out = [...code.matchAll(/\.(get|post|put|patch|delete|head|options|all)\s*\(\s*(['"`]\/[^'"`]*['"`])/g)].map((m) => `${m[1]} ${m[2]}`);
-  for (const m of code.matchAll(/\.(route)\s*\(|\.(post|put|patch|all)\s*\(\s*(?!['"`]\/)/g)) out.push(`${m[1] ?? m[2]} (path not a literal)`);
-  for (const m of code.matchAll(/\.(get|delete|head|options)\s*\(\s*(?!['"`]\/)[^,()]+,/g)) out.push(`${m[1]} (path not a literal)`);
+  const out: string[] = [];
+  const VERB = 'get|post|put|patch|delete|head|options|all|route';
+  for (const m of code.matchAll(new RegExp(`(?:\\.\\s*(${VERB})|\\[\\s*(['"\`])(${VERB})\\2\\s*\\])\\s*\\(`, 'g'))) {
+    const verb = (m[1] ?? m[3])!;
+    const args = callArgs(code, m.index! + m[0].length - 1);
+    const first = args[0] ?? '';
+    if (verb === 'route') out.push('route (path not a literal)');
+    else if (/^['"`]\/[^'"`]*['"`]$/.test(first)) out.push(`${verb} ${first}`);
+    else if (!['get', 'delete', 'head', 'options'].includes(verb) || args.length >= 2) out.push(`${verb} (path not a literal)`);
+  }
   return out;
 }
 /** The S2 pin on EVERY import of a file (b14 review F3): each module specifier with the names taken from it, sorted;
@@ -184,6 +218,13 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
       'r.get(LIKELY_EXPORT, exportAll);',
       'r.delete(LIKELY_ITEM, dismiss);',
       "r.get('likely/export', { config: { auth: 'self' } }, h);",
+      // b15 (b14 low d): a path built by a call, and bracket access
+      "r.get(pathOf('likely/export'), h);",
+      'r.get(String(LIKELY_EXPORT), h);',
+      'r.delete(paths.item(id), dismiss);',
+      "r['get']('/likely/export', h);",
+      'r["delete"](LIKELY_ITEM, dismiss);',
+      "r[`post`]('/likely/:id/dismiss', h);",
     ];
     for (const x of routes) expect(routesIn(`r.get('/likely', h);\n${x}`), x).not.toEqual(["get '/likely'"]);
     // b14 review F3: a writer imported from a package (none of these is SQL in the file) changes the import pin
@@ -198,8 +239,8 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
       "export { enqueueJob } from '@realty/db';",
       "const m = await import('../comms/dispatch.js');",
     ]) expect(importPin(`${pinned}\n${planted}\n`), planted).not.toEqual(ROUTES_IMPORTS);
-    // a Map or Headers .get is not a route
-    expect(routesIn("r.get('/likely', h);\nconst v = byId.get(id) ?? req.headers.get('x-id');")).toEqual(["get '/likely'"]);
+    // a Map or Headers .get is not a route (one argument), even when its key is a call
+    expect(routesIn("r.get('/likely', h);\nconst v = byId.get(id) ?? req.headers.get('x-id') ?? byId.get(keyOf(a, b)) ?? m['get'](k);")).toEqual(["get '/likely'"]);
   });
 
   it('R-PRED-4: no SQL outside predict/** names contact_predictions or property_records, except the feed read (workspace/feed.ts)', () => {
