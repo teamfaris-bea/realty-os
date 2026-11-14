@@ -132,7 +132,18 @@ export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUs
           </ul>
           {dealLost && kind === 'deal' ? <p className="text-[15px] text-ink">{PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST}</p> : null}
           {canManage && primaryContact && primaryDeleted && !deletedLine ? <p className="text-[15px] text-ink">{STAFF_WORDS.contactDeleted(primaryContact.name)}</p> : null}
-          {canManage && primaryContact && !primaryDeleted && !(dealLost && kind === 'deal') ? (
+          {canManage && primaryContact && !primaryDeleted && !(dealLost && kind === 'deal') && !s.portalCleared ? (
+            // b18 item b (OQ-1114-7): while the portal is off an invite creates the account and grant and sends nothing,
+            // so the one action says so, first invite or repeat alike; it never reads as an earlier send. 45's answer
+            // (inviteNotSent) is unchanged.
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant={primaryLive ? 'secondary' : 'primary'} pending={invite.pending} onClick={() => void doInvite(primaryLive !== undefined)}>
+                {STAFF_WORDS.prepare}
+              </Button>
+              <p className="text-[14px] text-ink">{STAFF_WORDS.portalOffNothingSent}</p>
+            </div>
+          ) : null}
+          {canManage && primaryContact && !primaryDeleted && !(dealLost && kind === 'deal') && s.portalCleared ? (
             <div className="flex flex-wrap gap-2">
               {primaryLive ? (
                 <Button variant="secondary" pending={invite.pending} onClick={() => void doInvite(true)}>

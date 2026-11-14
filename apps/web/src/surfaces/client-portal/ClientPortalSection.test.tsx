@@ -92,6 +92,54 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
     expect(await within(s).findByText(off.text)).toBeInTheDocument();
   });
 
+  // b18 item b (OQ-1114-7, owner queued recommendation 2026-11-14): while the portal is off the action never implies an
+  // earlier send: it reads "Prepare invitation" beside a visible "Portal is off; nothing will be sent.", first invite or
+  // repeat alike, and 45's answer stays the honest "nothing was sent"; with the portal on the labels are unchanged
+  it('E721 (b18 OQ-1114-7): portal off, nobody invited: "Prepare invitation" and "Portal is off; nothing will be sent."; no Invite or Send the invite again; the answer says nothing was sent', async () => {
+    const off = F.notice({ sent: false, text: "Jane can't sign in until the client portal is turned on, so nothing was sent to them.", channel: null });
+    const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ portalCleared: false }))).on(INVITE, F.ok('POST /deals/:id/portal/invite', F.inviteBody(off)));
+    render(fake);
+    const s = await section();
+    const prepare = await within(s).findByRole('button', { name: STAFF_WORDS.prepare });
+    expect(STAFF_WORDS.prepare).toBe('Prepare invitation');
+    expect(within(s).getByText(STAFF_WORDS.portalOffNothingSent)).toBeVisible();
+    expect(STAFF_WORDS.portalOffNothingSent).toBe('Portal is off; nothing will be sent.');
+    expect(within(s).queryByRole('button', { name: /^(Invite|Send the invite again)/ })).toBeNull();
+    expect(s.textContent).not.toMatch(/again/i);
+    await userEvent.click(prepare);
+    expect(await within(s).findByText(off.text)).toBeInTheDocument();
+    const body = fake.callsTo(INVITE)[0]!.body as Record<string, unknown>;
+    expect(body.resend).toBeUndefined();
+  });
+
+  it('E721 (b18 OQ-1114-7): portal off with a grant already prepared: still "Prepare invitation" (a repeat, which sends nothing), never "Send the invite again"', async () => {
+    const off = F.notice({ sent: false, text: "Jane can't sign in until the client portal is turned on, so nothing was sent to them.", channel: null });
+    const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ portalCleared: false, accounts: [F.account()], grants: [F.grantStaff()] }))).on(INVITE, F.ok('POST /deals/:id/portal/invite', F.inviteBody(off)));
+    render(fake);
+    const s = await section();
+    await userEvent.click(await within(s).findByRole('button', { name: STAFF_WORDS.prepare }));
+    expect(within(s).getByText(STAFF_WORDS.portalOffNothingSent)).toBeVisible();
+    expect(within(s).queryByRole('button', { name: STAFF_WORDS.resend })).toBeNull();
+    expect(s.textContent).not.toContain(STAFF_WORDS.resend);
+    expect(await within(s).findByText(off.text)).toBeInTheDocument();
+    expect((fake.callsTo(INVITE)[0]!.body as Record<string, unknown>).resend).toBe(true);
+  });
+
+  it('E721 (b18 OQ-1114-7): portal on: the labels and answers are unchanged (Invite {name}, then Send the invite again) and no "Portal is off" line', async () => {
+    const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state()));
+    render(fake);
+    const s = await section();
+    expect(await within(s).findByRole('button', { name: 'Invite Jane Doe' })).toBeInTheDocument();
+    expect(within(s).queryByRole('button', { name: STAFF_WORDS.prepare })).toBeNull();
+    expect(within(s).queryByText(STAFF_WORDS.portalOffNothingSent)).toBeNull();
+    cleanup();
+    const live = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ accounts: [F.account()], grants: [F.grantStaff()] })));
+    render(live);
+    const s2 = await section();
+    expect(await within(s2).findByRole('button', { name: STAFF_WORDS.resend })).toBeInTheDocument();
+    expect(within(s2).queryByText(STAFF_WORDS.portalOffNothingSent)).toBeNull();
+  });
+
   it("an invite refusal shows 45's sentence, never a code", async () => {
     const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state())).on(INVITE, F.apiErr('PORTAL_LOGIN_POINT_MISSING'));
     render(fake);

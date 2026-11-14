@@ -36,6 +36,10 @@ export const STAFF_WORDS = {
   noOne: 'No one on this deal is invited yet.',
   theClient: 'the client',
   resend: 'Send the invite again',
+  /** b18 item b (OQ-1114-7): the invite action while the portal is off, first invite or repeat: never implies a send */
+  prepare: 'Prepare invitation',
+  /** b18 item b: shown beside "Prepare invitation" while the portal is off */
+  portalOffNothingSent: 'Portal is off; nothing will be sent.',
   revokeDone: 'Already stopped.',
   revokeBody: (name: string) => `${name} stops seeing this at once. You can invite again.`,
   stop: (name: string) => `Stop sharing with ${name}`,

@@ -32,8 +32,14 @@ test('E704, E693: uncleared, nothing is sent: the portal is not available, the d
   await page.goto(`${stack.webUrl}/deals/${pw.dealId}`);
   const s = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Client portal' }) });
   await expect(s.getByText(/Clients can't sign in, and invitations aren't sent\./)).toBeVisible({ timeout: 20_000 });
-  await tap(page, s.getByRole('button', { name: `Invite ${pw.jane.name}` }));
+  // b18 item b (OQ-1114-7, E721): while the portal is off the action reads "Prepare invitation", beside a visible
+  // "Portal is off; nothing will be sent."; no Invite or Send the invite again implies a send
+  await expect(s.getByText('Portal is off; nothing will be sent.')).toBeVisible();
+  await expect(s.getByRole('button', { name: /^(Invite|Send the invite again)/ })).toHaveCount(0);
+  await tap(page, s.getByRole('button', { name: 'Prepare invitation' }));
   await expect(s.getByText(/can't sign in until the client portal is turned on, so nothing was sent to them\./)).toBeVisible({ timeout: 20_000 });
+  await expect(s.getByRole('button', { name: 'Prepare invitation' })).toBeVisible();
+  await expect(s.getByRole('button', { name: 'Send the invite again' })).toHaveCount(0);
 
   const before = await stack.emailCount(pw.jane.email);
   const ctx = await newClientContext(browser, info);

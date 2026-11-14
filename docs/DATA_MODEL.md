@@ -1912,6 +1912,7 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E718 | Preview while the client can't see it; an ISA or another agent; a TC or a member agent who does not own the deal | A banner with 45's reason, inert controls; for an ISA or another agent, no section and not-found; for a TC or a member agent, the section read-only (no Invite, Resend or Stop sharing, which 45 refuses them) and who can | R-PORTALWEB-10 |
 | E719 | No `?team=` and none remembered, or an invalid slug | No form; "Open your invitation link…"; never guesses | R-PORTALWEB-4 |
 | E720 | A client's reply quotes the sign-in link: an SMS reaction "Liked “… <link>”", an email reply quoting the sign-in email by text, a Postmark reply with only an HTML body (an anchor, `&#35;`, a wrapper's percent-encoded link), an MMS text part | Stored with each token value replaced and the row labelled `portal_signin_token`; the thread says the message was not kept exactly; classification read the sent text (opt-out language beside a link still revokes); no copy or log line has the token | R-PORTAL-20 |
+| E721 | The staff deal section while the portal is off (b18, OQ-1114-7): nobody invited yet, or a grant already prepared | One action, "Prepare invitation", beside a visible "Portal is off; nothing will be sent."; no "Invite {name}" or "Send the invite again"; 45's answer stays "… so nothing was sent to them."; with the portal on, "Invite {name}" and "Send the invite again" and their answers are unchanged | R-PORTALWEB-10 |
 
 ---
 
