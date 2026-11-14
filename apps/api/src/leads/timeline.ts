@@ -10,6 +10,7 @@ import { messageStatusExtras } from '../comms/reachability.js';
 import { reactionExtras } from '../comms/reactions.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
+import { redactNullable } from '../portal/shared/redact.js';
 import { leadsTx } from './common.js';
 import { factsOf } from './contacts.js';
 import * as contacts from './repos/contacts.js';
@@ -52,22 +53,28 @@ export async function registerTimelineRoutes(app: FastifyInstance): Promise<void
       const page = rows.slice(0, limit);
       const last = page[page.length - 1];
       return {
-        items: page.map((t) => ({
-          id: t.item_id,
-          type: t.item_type,
-          occurredAt: t.occurred_at.toISOString(),
-          actor: t.actor_user_id ? { userId: t.actor_user_id, displayName: t.actor_name } : null,
-          detail: t.detail,
-          preview: t.preview,
-          note: t.note,
-          provenance: t.provenance,
-          status: t.status,
-          statusReason: extras.get(t.item_id)?.statusReason ?? null,
-          providerErrorCode: extras.get(t.item_id)?.providerErrorCode ?? null,
-          blockedBy: extras.get(t.item_id)?.blockedBy ?? null,
-          reaction: rx.reaction.get(t.item_id) ?? null,
-          reactedWith: rx.reactedWith.get(t.item_id) ?? null,
-        })),
+        items: page.map((t) => {
+          // b18 Q-PORTAL-16: a message stored with a quoted sign-in token removed says so ('stored'); one stored before
+          // the redaction existed is shown with the token hidden ('display') and its stored record is never rewritten
+          const shown = t.item_type === 'message' ? redactNullable(t.preview) : { text: t.preview, removed: 0 };
+          return {
+            id: t.item_id,
+            type: t.item_type,
+            occurredAt: t.occurred_at.toISOString(),
+            actor: t.actor_user_id ? { userId: t.actor_user_id, displayName: t.actor_name } : null,
+            detail: t.detail,
+            preview: shown.text,
+            redaction: t.content_redacted !== null ? ('stored' as const) : shown.removed > 0 ? ('display' as const) : null,
+            note: t.note,
+            provenance: t.provenance,
+            status: t.status,
+            statusReason: extras.get(t.item_id)?.statusReason ?? null,
+            providerErrorCode: extras.get(t.item_id)?.providerErrorCode ?? null,
+            blockedBy: extras.get(t.item_id)?.blockedBy ?? null,
+            reaction: rx.reaction.get(t.item_id) ?? null,
+            reactedWith: rx.reactedWith.get(t.item_id) ?? null,
+          };
+        }),
         nextCursor: rows.length > limit && last ? encodeCursor(last.at_text, last.item_id) : null,
       };
     },

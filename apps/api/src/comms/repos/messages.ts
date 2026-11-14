@@ -344,16 +344,19 @@ export interface InboundInsert {
   integrationConnectionId?: string | null;
   /** module 22 (R-GMAIL-12): platform inbound email's Message-ID hash, written by the system ingestion */
   rfcMessageIdSha256?: Buffer | null;
+  /** b18 Q-PORTAL-16 (0093): set when a quoted sign-in token was removed from subject or body before this insert */
+  contentRedacted?: 'portal_signin_token' | null;
 }
 
 export async function insertInbound(tx: Tx, m: InboundInsert): Promise<boolean> {
   const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, subject,
       body, status, initiator, is_auto_reply, opt_out_keyword, provider, provider_message_ref, occurred_at, integration_connection_id,
-      rfc_message_id_sha256)
+      rfc_message_id_sha256, content_redacted)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'inbound', ${m.phoneNumberId}, ${m.fromAddress},
       ${m.toAddress}, ${m.subject}, ${m.body.slice(0, 20000)}, 'received', 'client', ${m.isAutoReply}, ${m.optOutKeyword}, ${m.provider},
-      ${m.providerRef}, ${toIso(m.occurredAt)}::timestamptz, ${m.integrationConnectionId ?? null}::uuid, ${m.rfcMessageIdSha256 ?? null})
+      ${m.providerRef}, ${toIso(m.occurredAt)}::timestamptz, ${m.integrationConnectionId ?? null}::uuid, ${m.rfcMessageIdSha256 ?? null},
+      ${m.contentRedacted ?? null})
     ON CONFLICT DO NOTHING RETURNING id`.execute(tx);
   return r.rows.length === 1;
 }

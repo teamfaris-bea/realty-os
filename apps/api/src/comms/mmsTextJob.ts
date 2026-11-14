@@ -38,6 +38,7 @@ import * as msgs from './repos/messages.js';
 import { contactLabel, handlerOf, notifyUser } from './repos/notify.js';
 import { recordAgentAlertOptOut } from './telephonySafeguards.js';
 import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
+import { SIGNIN_TOKEN_REDACTION, redactSignInTokens } from '../portal/shared/redact.js';
 
 const REVOKING: ReadonlySet<InboundClassification['kind']> = new Set(['stop', 'opt_out_language', 'wrong_number']);
 
@@ -186,8 +187,11 @@ async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId:
 
   const { policy, tenant } = await resolvedPolicy(tx);
   const c = classifyInbound(f.text, policy.keywords, 'sms');
+  // b18 Q-PORTAL-16: classified as sent, stored with a quoted sign-in token value removed (and labelled, 0093)
+  const stored = redactSignInTokens(f.text);
   await sql`
-    UPDATE message_text_parts SET status = 'read', body = ${f.text}, classification = ${c.kind}, read_at = ${new Date(now).toISOString()}::timestamptz
+    UPDATE message_text_parts SET status = 'read', body = ${stored.text}, classification = ${c.kind}, read_at = ${new Date(now).toISOString()}::timestamptz,
+           content_redacted = ${stored.removed > 0 ? SIGNIN_TOKEN_REDACTION : null}
      WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND position = ${position}`.execute(tx);
   if (!REVOKING.has(c.kind)) return 'read'; // START, HELP, YES, anything else: a part never lifts or answers (E389)
 

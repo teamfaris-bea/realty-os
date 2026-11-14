@@ -196,6 +196,12 @@ export const TimelineItem = z.object({
   actor: z.object({ userId: Id, displayName: z.string().nullable() }).nullable(),
   detail: z.string().nullable(),
   preview: z.string().nullable(),
+  /**
+   * messages only (b18 Q-PORTAL-16): 'stored' when a quoted sign-in token was removed before the message was stored
+   * (the record is not the exact original); 'display' when the token is hidden here only (a message stored before the
+   * redaction existed; the stored record is unchanged); null otherwise
+   */
+  redaction: z.enum(['stored', 'display']).nullable(),
   note: z.string().nullable(),
   provenance: z.string(),
   /** messages only: the delivery status (sent, delivered, scheduled, blocked, failed, ...); null otherwise */

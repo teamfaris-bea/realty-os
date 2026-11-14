@@ -158,6 +158,11 @@ export interface TimelineItem {
   actor: { userId: string; displayName: string | null } | null;
   detail: string | null;
   preview: string | null;
+  /**
+   * messages only (b18 Q-PORTAL-16): 'stored' = a quoted sign-in token was removed before the message was stored (the
+   * record is not the exact original); 'display' = the token is hidden here only (an older record, unchanged)
+   */
+  redaction?: 'stored' | 'display' | null;
   note: string | null;
   provenance: string;
   /** messages only: the delivery status (sent, delivered, scheduled, blocked, failed, ...) */

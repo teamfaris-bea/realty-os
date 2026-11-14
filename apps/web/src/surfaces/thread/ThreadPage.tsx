@@ -232,6 +232,16 @@ export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusR
   return line ? { text: line.text, failed: line.tone === 'failed', held: line.tone === 'held' } : null;
 }
 
+/**
+ * b18 Q-PORTAL-16: the label of a message whose quoted sign-in link token is not shown. Honest about what was kept: a
+ * 'stored' message was saved without the token (so the history is not the exact original); a 'display' one is an older
+ * message whose stored copy still has it, hidden on this screen only.
+ */
+export const REDACTION_NOTE: Record<'stored' | 'display', string> = {
+  stored: 'A sign-in link in this message was not kept: its token was removed before the message was saved, so this is not the exact original.',
+  display: 'A sign-in link in this message is hidden here.',
+};
+
 export function MessageRow({ item, contact, loaded }: { item: TimelineItem; contact?: { id: string; name: string }; loaded?: ReadonlySet<string> }) {
   // module 76 (R-ISA-7): an AI message the turns route covers says the AI assistant's, with a verb its status supports
   const ai = useAiLabel(item);
@@ -255,6 +265,7 @@ export function MessageRow({ item, contact, loaded }: { item: TimelineItem; cont
   return (
     <li id={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${outbound ? 'self-end items-end' : 'self-start items-start'}`}>
       {outbound && !item.preview ? null : <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>}
+      {item.redaction ? <p className="px-1 text-[12px] text-ink-muted">{REDACTION_NOTE[item.redaction]}</p> : null}
       {/* the photos sit with the words they belong to, above the meta, the status and any Send anyway / Cancel; a photo
           text that did not go out carries the same outline as its bubble, words or none (b8 texting ui/F5) */}
       {contact ? <RowAttachments contactId={contact.id} item={item} notSent={st?.failed ? 'failed' : st?.held ? 'held' : null} /> : null}

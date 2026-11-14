@@ -47,6 +47,7 @@ import { emitIsaSendResultsInTx } from '../isa/sendResult.js';
 import { clientOwnText, isAcknowledgementOnly } from '../isa/coreSeam.js';
 import type { DkimVerdict } from '../leadEmail/trust.js';
 import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
+import { SIGNIN_TOKEN_REDACTION, redactNullable, redactSignInTokens } from '../portal/shared/redact.js';
 
 export type InboundEvent =
   | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant; optOutType?: string; textParts?: TextPartRef[] }
@@ -244,7 +245,10 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   const conversationId = await msgs.ensureConversation(tx, ids.next<'ConversationId'>(), target, null);
   let messageId: string | null = null;
   let callId: string | null = null;
+  // b18 Q-PORTAL-16: `body` is what is stored and copied anywhere (a quoted sign-in token value removed); `sentBody` is
+  // the message exactly as sent, read only by the opt-out / keyword classification and the reaction reading below
   let body = '';
+  let sentBody = '';
   let autoReply: { name: string; value: string } | null = null;
   let rfcHash: Buffer | null = null;
   let hasTextParts = false;
@@ -261,7 +265,10 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (r.rows.length === 0) return { kind: 'duplicate' };
   } else {
     messageId = ids.next<'MessageId'>();
-    body = e.kind === 'sms' || e.kind === 'web_chat' ? e.body : e.text;
+    sentBody = e.kind === 'sms' || e.kind === 'web_chat' ? e.body : e.text;
+    const redBody = redactSignInTokens(sentBody);
+    const redSubject = redactNullable(e.kind === 'email' ? e.subject : null);
+    body = redBody.text;
     autoReply = e.kind === 'email' ? autoReplyHeader(e.headers) : null;
     // R-GMAIL-12: platform inbound email's Message-ID hash, written here by the system ingestion (never a person)
     rfcHash = e.kind === 'email' ? rfcMessageIdSha256(messageIdHeader(e.headers)) : null;
@@ -273,8 +280,9 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       phoneNumberId: toNumber?.id ?? null,
       fromAddress: from,
       toAddress: e.kind === 'web_chat' ? `widget:${e.connectionId}` : e.to,
-      subject: e.kind === 'email' ? e.subject : null,
+      subject: redSubject.text,
       body,
+      contentRedacted: redBody.removed + redSubject.removed > 0 ? SIGNIN_TOKEN_REDACTION : null,
       isAutoReply: autoReply !== null,
       optOutKeyword: null,
       provider: e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'telephony',
@@ -296,8 +304,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
 
   // 5 consent side of the message (SMS and email bodies; a call has no text)
   const channel: Channel = e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'sms';
-  const rx = e.kind === 'sms' && (e.mediaCount ?? 0) === 0 ? await readReactionInTx(tx, actor, { messageId: messageId!, contactId: target, from, phoneNumberId: toNumber!.id, body, keywords: policy.keywords, occurredAt, ids }) : null;
-  let classification: InboundClassification = rx ? rx.classification : e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
+  const rx = e.kind === 'sms' && (e.mediaCount ?? 0) === 0 ? await readReactionInTx(tx, actor, { messageId: messageId!, contactId: target, from, phoneNumberId: toNumber!.id, body: sentBody, keywords: policy.keywords, occurredAt, ids }) : null;
+  let classification: InboundClassification = rx ? rx.classification : e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(sentBody, policy.keywords, channel);
   // R-TWL-7 (E383, E384): Twilio says the person opted out (OptOutType=STOP) and we did not read a revoke ourselves:
   // the usual STOP effects, with no platform reply (the provider sent its own). START / HELP / YES change nothing.
   const providerStop = e.kind === 'sms' && (e.optOutType ?? '').toUpperCase() === 'STOP' && !REVOKING.has(classification.kind);

@@ -1856,6 +1856,7 @@ export interface MessageTextPartsTable {
   classification: string | null;
   read_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  content_redacted: string | null;
 }
 
 /** public.messages (table) */
@@ -1901,6 +1902,7 @@ export interface MessagesTable {
   bulk_action_id: string | null;
   rfc_message_id_sha256: Buffer | null;
   email_dkim_aligned: boolean | null;
+  content_redacted: string | null;
 }
 
 /** public.mfa_recovery_codes (table) */

@@ -16,6 +16,8 @@ export interface TimelineRow {
   note: string | null;
   /** messages only: messages.status (null for other item types) */
   status: string | null;
+  /** messages only: messages.content_redacted (b18 Q-PORTAL-16, 0093); null otherwise */
+  content_redacted: string | null;
   /** occurred_at as Postgres text (keyset cursors keep microseconds) */
   at_text: string;
 }
@@ -27,7 +29,9 @@ export async function timeline(tx: Tx, contactId: string, limit: number, before:
            CASE WHEN t.item_type = 'ownership' THEN (SELECT e.note FROM lead_ownership_events e
                                                     WHERE e.tenant_id = t.tenant_id AND e.event_id = t.item_id) END AS note,
            CASE WHEN t.item_type = 'message' THEN (SELECT m.status FROM messages m
-                                                   WHERE m.tenant_id = t.tenant_id AND m.id = t.item_id) END AS status
+                                                   WHERE m.tenant_id = t.tenant_id AND m.id = t.item_id) END AS status,
+           CASE WHEN t.item_type = 'message' THEN (SELECT m.content_redacted FROM messages m
+                                                   WHERE m.tenant_id = t.tenant_id AND m.id = t.item_id) END AS content_redacted
       FROM contact_timeline t
       LEFT JOIN users u ON u.id = t.actor_user_id
      WHERE t.tenant_id = app.tenant_id() AND t.contact_id = ${contactId}::uuid

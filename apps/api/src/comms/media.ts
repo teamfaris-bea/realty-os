@@ -22,6 +22,7 @@ import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
 import { telephonyAccount } from './repos/credentials.js';
 import { asUser } from './runtime.js';
 import type { CommsDeps } from './types.js';
+import { redactNullable } from '../portal/shared/redact.js';
 
 export const MAX_MEDIA_ITEMS = 10;
 /** Twilio accepts up to 5 MB per MMS; nothing larger is kept. */
@@ -229,7 +230,7 @@ export async function contactAttachments(actor: UserActor, contactId: string, de
     const view = (id: string) => byMessage.get(id) ?? (byMessage.set(id, { messageId: id, media: [], skipped: [], textParts: [] }), byMessage.get(id)!);
     for (const x of media.rows) view(x.message_id).media.push({ position: x.position, contentType: x.content_type, byteSize: Number(x.byte_size), inline: mediaPresentation(x.content_type).inline, url: `/api/messages/${x.message_id}/media/${x.position}` });
     for (const x of skipped.rows) view(x.message_id).skipped.push({ position: x.position, reason: x.reason });
-    for (const x of parts.rows) view(x.message_id).textParts.push({ position: x.position, status: x.status, text: x.status === 'read' ? x.body : null });
+    for (const x of parts.rows) view(x.message_id).textParts.push({ position: x.position, status: x.status, text: x.status === 'read' ? redactNullable(x.body).text : null }); // b18 Q-PORTAL-16: a part stored before 0093 is shown with a quoted sign-in token hidden
     const vm = await sql<{ call_id: string; recording_id: string; duration_s: number | null; ready: boolean }>`
       SELECT c.id AS call_id, r.id AS recording_id, r.duration_s,
              EXISTS (SELECT 1 FROM transcripts t WHERE t.tenant_id = r.tenant_id AND t.recording_id = r.id AND t.status = 'ready') AS ready
