@@ -56,3 +56,23 @@ export const NO_AUTOMATED_CONTACT_CALL_REFUSAL = `"${NO_AUTOMATED_CONTACT_LABEL}
 
 /** The stop_reason of a plan the step runner stopped for such a person (assistant/enrollments.ts). */
 export const NO_AUTOMATED_CONTACT_STOP_REASON = 'source_no_automated_contact';
+
+/**
+ * b18 round 3 item 2: "Resume automation" (POST /contacts/:id/automation/resume) for such a person lifts only the
+ * conversation pause; their paused plans stay paused, and the answer says how many and why.
+ */
+export function notResumedSentence(plans: number): string {
+  return `${plans === 1 ? '1 plan was' : `${plans} plans were`} not resumed: "${NO_AUTOMATED_CONTACT_LABEL}" is on for this person's lead source (an Owner setting). Call, text or email them one to one.`;
+}
+
+/**
+ * Whether an error is one of 0098's invoker guards refusing a write (a check_violation whose message starts
+ * 'SOURCE_NO_AUTOMATED_CONTACT:'): app.playbook_enrollments_source_guard, app.messages_source_guard or
+ * app.calls_source_guard. A caller maps it to its own clear refusal (comms/dispatch.ts a deny, comms/consent.ts a 409),
+ * so a source marked between a check and a write is never a 500.
+ */
+export function isSourceGuardViolation(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const { code, message } = err as { code?: unknown; message?: unknown };
+  return code === '23514' && typeof message === 'string' && message.startsWith(`${SOURCE_NO_AUTOMATED_CONTACT}:`);
+}

@@ -60,7 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
-import { noAutomatedContact } from '../leads/automatedContact.js';
+import { isSourceGuardViolation, noAutomatedContact } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
@@ -350,9 +350,7 @@ export function isAutomatedContact(m: { initiator: string; actionCategory: strin
 
 /** 0098's app.messages_source_guard refusing a dispatch (a check_violation 'SOURCE_NO_AUTOMATED_CONTACT: ...'). */
 function sourceGuardRefusal(err: unknown): DispatchDenyReason | null {
-  if (typeof err !== 'object' || err === null) return null;
-  const { code, message } = err as { code?: unknown; message?: unknown };
-  return code === '23514' && typeof message === 'string' && message.startsWith('SOURCE_NO_AUTOMATED_CONTACT:') ? 'SOURCE_NO_AUTOMATED_CONTACT' : null;
+  return isSourceGuardViolation(err) ? 'SOURCE_NO_AUTOMATED_CONTACT' : null;
 }
 
 /** The kind of touch a gate-allowed human send on this channel is (R-OWN-14; calls are dial.ts's 'call'). */

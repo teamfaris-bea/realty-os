@@ -161,7 +161,8 @@ export const NotOptOutResponse = z.object({ restored: z.array(ConsentStateSchema
 export const LiftBody = z.strictObject({ reason: z.string().trim().min(3).max(500) });
 export const LiftResponse = z.object({ id: z.uuid(), liftedAt: z.string() });
 
-export const ResumeResponse = z.object({ resumedEnrollments: z.number().int() });
+/** b18 round 3 item 2: `notResumed` counts the paused plans left paused because the person's lead source is marked "No automated contact" */
+export const ResumeResponse = z.object({ resumedEnrollments: z.number().int(), notResumed: z.object({ enrollments: z.number().int(), code: z.literal('SOURCE_NO_AUTOMATED_CONTACT'), sentence: z.string() }).nullable() });
 
 export const StreamTokenBody = z.strictObject({ purpose: z.enum(['play', 'download']).default('play') });
 export const StreamTokenResponse = z.object({ token: z.string(), expiresAt: z.string(), url: z.string() });

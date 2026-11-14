@@ -51,16 +51,26 @@ export async function liveEnrollment(tx: Tx, contactId: string): Promise<{ id: s
   return r.rows[0] ?? null;
 }
 
-/** Human-only resume (DB guard RESUME_REQUIRES_HUMAN): clears the pause and resumes paused enrollments. */
-export async function resumeAutomation(tx: Tx, contactId: string, userId: string): Promise<{ resumed: number; wasPaused: boolean }> {
+/**
+ * Human-only resume (DB guard RESUME_REQUIRES_HUMAN): clears the pause and resumes paused enrollments. With
+ * `plans: false` (b18 round 3 item 2: the person's lead source is marked "No automated contact for leads from this
+ * source") only the conversation pause is lifted, and `notResumed` counts the paused plans left as they are.
+ */
+export async function resumeAutomation(tx: Tx, contactId: string, userId: string, o: { plans?: boolean } = {}): Promise<{ resumed: number; notResumed: number; wasPaused: boolean }> {
   const c = await sql`
     UPDATE conversations SET automation_paused_at = NULL, automation_pause_reason = NULL, automation_paused_by_message_id = NULL
      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND automation_paused_at IS NOT NULL`.execute(tx);
+  if (o.plans === false) {
+    const left = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM playbook_enrollments
+       WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state = 'paused' AND pause_reason IN ('client_reply','manual')`.execute(tx);
+    return { resumed: 0, notResumed: Number(left.rows[0]?.n ?? 0), wasPaused: Number(c.numAffectedRows ?? 0n) === 1 };
+  }
   const e = await sql`
     UPDATE playbook_enrollments SET state = 'active', pause_reason = NULL, paused_at = NULL, paused_by_message_id = NULL,
            resumed_by_user_id = ${userId}
      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND state = 'paused' AND pause_reason IN ('client_reply','manual')`.execute(tx);
-  return { resumed: Number(e.numAffectedRows ?? 0n), wasPaused: Number(c.numAffectedRows ?? 0n) === 1 };
+  return { resumed: Number(e.numAffectedRows ?? 0n), notResumed: 0, wasPaused: Number(c.numAffectedRows ?? 0n) === 1 };
 }
 
 // ---- assistant facts for dispatch ------------------------------------------------------------------

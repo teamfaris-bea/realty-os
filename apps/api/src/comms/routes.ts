@@ -11,6 +11,7 @@
 //   POST /consent-events/:id/not-opt-out   R-CONSENT-8 review                      consent.record
 //   POST /suppressions/:id/lift            Owner/Admin, 🔒                          suppression.lift
 //   POST /contacts/:id/automation/resume   human-only resume                       comms.send (as marketing)
+//                                          (a marked lead source: only the conversation pause lifts; notResumed counts the plans left paused)
 //   POST /recordings/:id/stream-token      60 s single-use token                   recording.play
 //   GET  /recordings/:id/stream?token=     audited playback                        recording.play
 //   GET  /recordings/:id/transcript        audited transcript view                 transcript.view

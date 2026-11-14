@@ -17,11 +17,11 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { runBulkAction } from '../bulk/run.js';
 import { confirm, draft, itemsOf, marketingReady } from '../bulk/testing.js';
 import { queueOutboundInTx } from '../comms/compose.js';
-import { type CommsWorld, call, commsWorld, decisionsFor, freshReauth, messageRow, ownedContact, randomEmail, randomPhone, sendText } from '../comms/testing.js';
+import { type CommsWorld, call, commsWorld, decisionsFor, freshReauth, inboundSms, messageRow, ownedContact, randomEmail, randomPhone, sendText } from '../comms/testing.js';
 import { closedDeal } from '../nurture/testing.js';
 import { changeStage, decisionsOf, enrollmentsOf, setStage } from '../stageAutomation/testing.js';
 import { systemActor } from '../worker/systemActor.js';
-import { NO_AUTOMATED_CONTACT_LABEL, SOURCE_NO_AUTOMATED_CONTACT } from './automatedContact.js';
+import { NO_AUTOMATED_CONTACT_LABEL, SOURCE_NO_AUTOMATED_CONTACT, isSourceGuardViolation, notResumedSentence } from './automatedContact.js';
 import { postIntake } from './testing.js';
 
 let h: ApiHarness;
@@ -156,6 +156,41 @@ describe('R-LSRC-8 B18S-5: "No automated contact for leads from this source" (ow
     await expect(withTenantTx(asUser(agent), (tx) => sql`UPDATE playbook_enrollments SET state = 'active', pause_reason = NULL, paused_at = NULL, resumed_by_user_id = app.user_id()
       WHERE tenant_id = app.tenant_id() AND id = ${p.body.enrollment.id}::uuid`.execute(tx), { db: h.database })).rejects.toThrow(/SOURCE_NO_AUTOMATED_CONTACT/);
     expect(await enrollmentRow(h, p.body.enrollment.id)).toMatchObject({ state: 'paused' });
+  });
+
+  it('B18S-5 E727 (round 3 item 2): "Resume automation" for such a person whose plan a reply paused lifts only the conversation pause; the plan stays paused and the answer says how many were not resumed and why (never a 500)', async () => {
+    const c = await ownedContact(agent);
+    const e = await enroll(agent, c.id);
+    expect(e.status).toBe(201);
+    expect((await inboundSms(h, c.phone, w.mainNumber, 'Yes, still looking. Can we talk later?')).statusCode).toBe(200);
+    expect(await enrollmentRow(h, e.body.enrollment.id)).toMatchObject({ state: 'paused', pause_reason: 'client_reply' });
+    await markLead(c.id);
+    const r = await call<{ resumedEnrollments: number; notResumed: { enrollments: number; code: string; sentence: string } | null }>(agent, 'POST', `/contacts/${c.id}/automation/resume`);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ resumedEnrollments: 0, notResumed: { enrollments: 1, code: SOURCE_NO_AUTOMATED_CONTACT, sentence: notResumedSentence(1) } });
+    expect(notResumedSentence(1)).toBe(`1 plan was not resumed: "${NO_AUTOMATED_CONTACT_LABEL}" is on for this person's lead source (an Owner setting). Call, text or email them one to one.`);
+    expect(notResumedSentence(2)).toMatch(/^2 plans were not resumed: /);
+    expect(await enrollmentRow(h, e.body.enrollment.id)).toMatchObject({ state: 'paused', pause_reason: 'client_reply' });
+    expect((await h.su.query<{ automation_paused_at: Date | null }>('SELECT automation_paused_at FROM conversations WHERE contact_id = $1', [c.id])).rows[0]!.automation_paused_at).toBeNull();
+    // the audit row says what was lifted and what was left
+    const au = (await h.su.query<{ reason: string }>("SELECT reason FROM audit_log WHERE action = 'automation.resumed' AND entity_id = $1 ORDER BY seq DESC LIMIT 1", [c.id])).rows[0];
+    expect(au?.reason).toBe('HUMAN_RESUME_CONVERSATION_ONLY');
+    // a second tap has nothing left to lift: the clear 409 the route always gave, not a 500
+    const again = await call(agent, 'POST', `/contacts/${c.id}/automation/resume`);
+    expect([again.status, again.code]).toEqual([409, 'AUTOMATION_NOT_PAUSED']);
+    // a source marked between the route's check and its write is refused by 0098's guard: the route maps exactly that error to 409
+    const guard = await withTenantTx(asUser(agent), (tx) => sql`UPDATE playbook_enrollments SET state = 'active', pause_reason = NULL, paused_at = NULL, resumed_by_user_id = app.user_id()
+      WHERE tenant_id = app.tenant_id() AND id = ${e.body.enrollment.id}::uuid`.execute(tx), { db: h.database }).then(() => null, (err: unknown) => err);
+    expect(isSourceGuardViolation(guard)).toBe(true);
+    expect(isSourceGuardViolation(new Error('SOURCE_NO_AUTOMATED_CONTACT: not from the database'))).toBe(false);
+    expect(isSourceGuardViolation({ code: '23514', message: 'RESUME_REQUIRES_HUMAN: another guard' })).toBe(false);
+    // a person not marked resumes as before
+    const d = await ownedContact(agent);
+    const p = await enroll(agent, d.id);
+    expect((await inboundSms(h, d.phone, w.mainNumber, 'Sounds good, talk soon.')).statusCode).toBe(200);
+    const ok = await call<{ resumedEnrollments: number; notResumed: unknown }>(agent, 'POST', `/contacts/${d.id}/automation/resume`);
+    expect([ok.status, ok.body]).toEqual([200, { resumedEnrollments: 1, notResumed: null }]);
+    expect(await enrollmentRow(h, p.body.enrollment.id)).toMatchObject({ state: 'active' });
   });
 
   it('B18S-5 E727: an automated message already queued for such a person is blocked at dispatch (SOURCE_NO_AUTOMATED_CONTACT, with the sentence); a system message too; the database guard refuses one moved to dispatching directly', async () => {

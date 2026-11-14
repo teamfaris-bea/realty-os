@@ -554,7 +554,11 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
     "useCase",
   ],
   "ResumeResponse": [
+    "code",
+    "enrollments",
+    "notResumed",
     "resumedEnrollments",
+    "sentence",
   ],
   "StreamTokenResponse": [
     "expiresAt",
