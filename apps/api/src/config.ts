@@ -144,7 +144,7 @@ export const ConfigSchema = z.object({
   s3: S3Schema.optional(),
   /** which inbound-email webhook formats are accepted besides the generic signed one */
   emailInbound: z.object({
-    formats: z.array(z.enum(['postmark', 'sendgrid', 'ses', 'mailgun'])),
+    formats: z.array(z.enum(['postmark', 'sendgrid', 'ses', 'mailgun', 'resend'])),
     /** HTTP Basic credentials embedded in the vendor webhook URL (Postmark; SendGrid Inbound Parse) */
     basicAuth: z.object({ username: z.string().min(1), password: z.string().min(16) }).optional(),
     /** SendGrid Event Webhook ECDSA public key (base64 DER, from the SendGrid console) */
@@ -153,6 +153,8 @@ export const ConfigSchema = z.object({
     sesSnsTopicArns: z.array(z.string().regex(SNS_TOPIC_ARN)).optional(),
     /** 'mailgun': the HTTP webhook signing key (MAILGUN_WEBHOOK_SIGNING_KEY, from the Mailgun console) */
     mailgunWebhookSigningKey: z.string().min(1).optional(),
+    /** b18 item i, 'resend': the webhook signing secret (RESEND_WEBHOOK_SECRET, `whsec_` + base64, from the Resend console; VERIFY) */
+    resendWebhookSecret: z.string().regex(/^whsec_[A-Za-z0-9+/]+={0,2}$/).optional(),
   }),
   /** api: how long /ready reports 503 before the server stops accepting (load balancer drain) */
   shutdownDrainMs: z.coerce.number().int().min(0).max(120_000).default(5_000),
@@ -383,7 +385,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     push: env.PUSH_PROVIDER === 'webpush' || env.PUSH_PROVIDER === 'real' ? ('real' as const) : ('fake' as const),
   };
   const allowFakeProviders = bool.parse(env.ALLOW_FAKE_PROVIDERS || undefined);
-  const formats = list(env.EMAIL_INBOUND_FORMATS).map((f) => pick('EMAIL_INBOUND_FORMATS', f, ['postmark', 'sendgrid', 'ses', 'mailgun'] as const, 'postmark'));
+  const formats = list(env.EMAIL_INBOUND_FORMATS).map((f) => pick('EMAIL_INBOUND_FORMATS', f, ['postmark', 'sendgrid', 'ses', 'mailgun', 'resend'] as const, 'postmark'));
 
   const wh = (key: string, label: string, requiredInProd: boolean): string => {
     const v = env[key];
@@ -444,6 +446,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (sesSnsTopicArns?.length === 0) missing.push('SES_SNS_TOPIC_ARNS');
   if (sesSnsTopicArns?.some((a) => !SNS_TOPIC_ARN.test(a))) invalid.push('SES_SNS_TOPIC_ARNS must list SNS topic ARNs (arn:aws:sns:<region>:<account id>:<topic>)');
   const mailgunWebhookSigningKey = formats.includes('mailgun') ? need('MAILGUN_WEBHOOK_SIGNING_KEY') : undefined;
+  // b18 item i: Resend's Standard Webhooks signing secret (whsec_ + base64), required once resend is accepted
+  const resendWebhookSecret = formats.includes('resend') ? need('RESEND_WEBHOOK_SECRET') : undefined;
+  if (resendWebhookSecret !== undefined && !/^whsec_[A-Za-z0-9+/]+={0,2}$/.test(resendWebhookSecret)) invalid.push('RESEND_WEBHOOK_SECRET must be the whsec_ signing secret from the Resend console');
   // bounces, complaints and unsubscribes must reach the app: an SES or Mailgun relay needs its event format
   // (or the generic signed format through a bridge, which needs its own EMAIL_WEBHOOK_SECRET)
   const relay = smtp?.vendor;
@@ -520,7 +525,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     twilio,
     smtp,
     s3,
-    emailInbound: { formats, ...(basicAuth ? { basicAuth } : {}), ...(sendgridEventPublicKey ? { sendgridEventPublicKey } : {}), ...(sesSnsTopicArns ? { sesSnsTopicArns } : {}), ...(mailgunWebhookSigningKey ? { mailgunWebhookSigningKey } : {}) },
+    emailInbound: { formats, ...(basicAuth ? { basicAuth } : {}), ...(sendgridEventPublicKey ? { sendgridEventPublicKey } : {}), ...(sesSnsTopicArns ? { sesSnsTopicArns } : {}), ...(mailgunWebhookSigningKey ? { mailgunWebhookSigningKey } : {}), ...(resendWebhookSecret ? { resendWebhookSecret } : {}) },
     shutdownDrainMs: env.SHUTDOWN_DRAIN_MS || undefined,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS || undefined,
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,

@@ -19,6 +19,8 @@
 //                     only from https://sns.<region>.amazonaws.com(.cn)/….pem, TopicArn in SES_SNS_TOPIC_ARNS,
 //                     Timestamp at most 1 hour old (SNS retries; see email/ses.ts)
 //     mailgun_hmac    Mailgun webhooks: hex HMAC-SHA256(signing key, timestamp + token), timestamp within ±5 min
+//     standard_webhooks  Resend (b18 item i; Svix): base64 HMAC-SHA256(whsec_ key, `${id}.${timestamp}.${rawBody}`) in
+//                     svix-signature (or webhook-signature), timestamp within ±5 min (email/resend.ts; VERIFY)
 //   email/lead X-Realty-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>,
 //              accepted while t is at most 5 minutes old and at most 30 s in the future (clock skew),
 //              so a captured delivery can be replayed for at most ~5.5 minutes; inside that window the
@@ -37,6 +39,7 @@ import { constantTimeEqual } from '../crypto/primitives.js';
 import { AppError } from '../errors.js';
 import { telephonyAccount } from '../comms/repos/credentials.js';
 import { verifyMailgunSignature } from './email/mailgun.js';
+import { RESEND_TOLERANCE_S, verifyStandardWebhook } from './email/resend.js';
 import { snsVerifier } from './email/ses.js';
 import { tagGuard } from '../rbac.js';
 import { verifyLeadSourceRequest } from '../leads/webhookAuth.js';
@@ -49,7 +52,7 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     webhookProvider?: WebhookProvider;
     /** a vendor email format's own authentication instead of the generic X-Realty-Signature */
-    webhookAuth?: 'basic' | 'sendgrid_ecdsa' | 'sns' | 'mailgun_hmac' | 'lead_source' | 'google_lead_key';
+    webhookAuth?: 'basic' | 'sendgrid_ecdsa' | 'sns' | 'mailgun_hmac' | 'standard_webhooks' | 'lead_source' | 'google_lead_key';
   }
   interface FastifyRequest {
     rawBody?: string;
@@ -172,6 +175,7 @@ export async function verifyRequest(provider: WebhookProvider, req: FastifyReque
   }
   if (provider === 'email' && auth === 'sns') return snsVerifier.verify(req.body, p.config.emailInbound.sesSnsTopicArns, p.clock.now());
   if (provider === 'email' && auth === 'mailgun_hmac') return verifyMailgunSignature(p.config.emailInbound.mailgunWebhookSigningKey, req.body, Math.floor(p.clock.now() / 1000), SIGNATURE_TOLERANCE_S);
+  if (provider === 'email' && auth === 'standard_webhooks') return verifyStandardWebhook(p.config.emailInbound.resendWebhookSecret, req.headers as Record<string, unknown>, req.rawBody, Math.floor(p.clock.now() / 1000), RESEND_TOLERANCE_S);
   if (provider === 'telephony' && p.config.providers.telephony === 'twilio') return verifyTwilioAccount(req);
   // module 22: a lead source's own signing secret (R-LSRC-3); without one, the deployment secret below
   if (provider === 'lead' && auth === 'lead_source') return verifyLeadSourceRequest(req);

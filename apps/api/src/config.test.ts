@@ -175,6 +175,25 @@ describe('FUB configuration (FUB_BASE_URL / FUB_ALLOWED_HOSTS, SECURITY §2.9)',
   });
 });
 
+describe('b18 item i: the Resend inbound format (EMAIL_INBOUND_FORMATS=resend)', () => {
+  it('E726: resend needs RESEND_WEBHOOK_SECRET in the whsec_ form (never echoed), and no Basic credentials', () => {
+    const noBasic = { EMAIL_WEBHOOK_BASIC_USER: undefined, EMAIL_WEBHOOK_BASIC_PASSWORD: undefined };
+    expect(() => loadConfig(prodEnv({ ...noBasic, EMAIL_INBOUND_FORMATS: 'resend' }))).toThrow(/missing RESEND_WEBHOOK_SECRET/);
+    let msg = '';
+    try {
+      loadConfig(prodEnv({ ...noBasic, EMAIL_INBOUND_FORMATS: 'resend', RESEND_WEBHOOK_SECRET: 'not-a-whsec-secret-value' }));
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/RESEND_WEBHOOK_SECRET must be the whsec_ signing secret/);
+    expect(msg).not.toContain('not-a-whsec-secret-value');
+    const secret = `whsec_${Buffer.from('a fake test signing key, never a real one').toString('base64')}`;
+    const c = loadConfig(prodEnv({ ...noBasic, EMAIL_INBOUND_FORMATS: 'resend', RESEND_WEBHOOK_SECRET: secret }));
+    expect(c.emailInbound).toEqual({ formats: ['resend'], resendWebhookSecret: secret });
+    expect(JSON.stringify(redactConfig(c))).not.toContain(secret);
+  });
+});
+
 describe('Amazon SES and Mailgun event formats (EMAIL_INBOUND_FORMATS=ses,mailgun)', () => {
   const ARN = 'arn:aws:sns:us-east-1:123456789012:ses-events';
   it('ses needs SES_SNS_TOPIC_ARNS (valid ARNs), mailgun needs MAILGUN_WEBHOOK_SIGNING_KEY; neither needs the Basic credentials', () => {

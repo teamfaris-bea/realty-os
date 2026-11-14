@@ -10,13 +10,20 @@
 //             results to inbound JSON, and its authserv-id.
 //   sendgrid  SendGrid Inbound Parse, default mode (multipart, Basic auth). DKIM verdict: the `dkim` form field
 //             SendGrid itself computes, e.g. `{@zillow.com : pass}`. VERIFY the exact field format.
+//   resend    Resend's `email.received` webhook event (b18 item i; Standard Webhooks / Svix signature,
+//             providers/email/resend.ts). DKIM verdict: NONE. This code believes no authentication result from Resend's
+//             payload (DKIM trust unchanged, R-LEM-3), so every Resend lead email is held for review (DKIM_MISSING)
+//             until a receiving-server verdict is confirmed and wired. VERIFY against a live account: the event name;
+//             the field names (data.email_id, from, to, cc, bcc, subject, text, html); whether the event carries the
+//             body at all or only metadata (then the email is fetched from Resend's received-emails API, which is not
+//             built: such an email arrives with no text and is held); and whether Resend reports DKIM results.
 // Attachments are never read, decoded, stored or fetched; links are never followed. HTML is converted to text by
 // the parser (linear, capped).
 import { createHash } from 'node:crypto';
 import { addressList, bareAddress, parseHeaderBlock } from '../providers/email/inbound.js';
 import { type DkimVerdict, normalizeDomain } from './trust.js';
 
-export type ProviderFormat = 'generic' | 'postmark' | 'sendgrid';
+export type ProviderFormat = 'generic' | 'postmark' | 'sendgrid' | 'resend';
 
 export interface LeadEmailInbound {
   format: ProviderFormat;
@@ -134,6 +141,25 @@ export function parseSendgridLeadEmail(fields: Record<string, string>): LeadEmai
   const mid = (headers['Message-ID'] ?? headers['Message-Id'] ?? headers['message-id'] ?? '').trim();
   const messageId = mid && mid.length <= 300 ? `sendgrid:${mid}` : `sendgrid:${digestId([from, recipients, fields.subject ?? '', (fields.text ?? '').slice(0, 10_000)])}`;
   return { format: 'sendgrid', messageId, from, recipients, subject: cap(fields.subject, 998), text: cap(fields.text), html: cap(fields.html), dkim: dkimFromSendgridField(fields.dkim ?? '') };
+}
+
+/**
+ * b18 item i: Resend's `email.received` event (VERIFY the shape, see the header). Null when it is not one, or when the
+ * email id or every recipient is missing. The From must be a single address (several: null, as the other formats).
+ */
+export function parseResendLeadEmail(body: unknown): LeadEmailInbound | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const b = body as Record<string, unknown>;
+  if (b.type !== 'email.received') return null;
+  const d = b.data;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+  const x = d as Record<string, unknown>;
+  const emailId = str(x.email_id).trim();
+  if (!emailId || emailId.length > 300) return null;
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.slice(0, 50).flatMap((a) => addressList(str(a).slice(0, 2000))) : typeof v === 'string' ? addressList(v.slice(0, 4000)) : []);
+  const recipients = uniq([...list(x.to), ...list(x.cc), ...list(x.bcc)]);
+  if (recipients.length === 0) return null;
+  return { format: 'resend', messageId: `resend:${emailId}`, from: singleFrom(str(x.from)), recipients, subject: cap(x.subject, 998), text: cap(x.text), html: cap(x.html), dkim: [] };
 }
 
 // ---- inbound addresses ---------------------------------------------------------------------------------

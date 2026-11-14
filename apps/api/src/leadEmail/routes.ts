@@ -3,6 +3,7 @@
 //   POST /webhooks/lead-email/inbound                  the generic signed format (fake provider; a bridge)   webhook (X-Realty-Signature)
 //   POST /webhooks/lead-email/postmark/inbound         Postmark inbound JSON (only when enabled)            webhook (Basic)
 //   POST /webhooks/lead-email/sendgrid/inbound         SendGrid Inbound Parse (only when enabled)           webhook (Basic)
+//   POST /webhooks/lead-email/resend/inbound           Resend email.received (only when enabled; b18)       webhook (Standard Webhooks / Svix)
 //   GET  /lead-sources/:id/lead-email                  the inbound address + allowed sender domains          integration.view (Owner/Admin)
 //   POST /lead-sources/:id/lead-email                  turn the address on                                  integration.manage 🔒
 //   POST /lead-sources/:id/lead-email/rotate           a new address; the old one stops working             integration.manage 🔒
@@ -25,7 +26,7 @@ import { actorOf, leadsTx, platformOf } from '../leads/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import type { Platform } from '../server.js';
-import { type LeadEmailInbound, parseGenericLeadEmail, parsePostmarkLeadEmail, parseSendgridLeadEmail } from './formats.js';
+import { type LeadEmailInbound, parseGenericLeadEmail, parsePostmarkLeadEmail, parseResendLeadEmail, parseSendgridLeadEmail } from './formats.js';
 import { type LeadEmailDeps, acceptReview, discardReview, enableInbox, getInbox, listReviews, receiveLeadEmail, resolveInbox, rotateKey, setSenderDomains } from './service.js';
 
 /** JSON lead emails are small; HTML bombs and attachments beyond this are refused with 413 before parsing. */
@@ -117,6 +118,16 @@ async function register(app: FastifyInstance): Promise<void> {
   r.post('/webhooks/lead-email/postmark/inbound', { ...vendor('postmark'), bodyLimit: LEAD_EMAIL_JSON_LIMIT, schema: { body: Json, response: { 200: WebhookResponse } } }, async (req) =>
     handle(req, parsePostmarkLeadEmail(req.body, platformOf(req).config.leadEmail.authservId)),
   );
+  // b18 item i: Resend's email.received (Standard Webhooks / Svix signature, providers/email/resend.ts), into the same
+  // pipeline; no DKIM verdict is believed from Resend (formats.ts), so its lead emails are held for review. VERIFY live.
+  r.post('/webhooks/lead-email/resend/inbound', {
+    config: { auth: 'webhook' as const, webhookProvider: 'email' as const, webhookAuth: 'standard_webhooks' as const },
+    preHandler: async (req: FastifyRequest) => {
+      if (!req.server.platform.config.emailInbound.formats.includes('resend')) throw new AppError('NOT_FOUND');
+    },
+    bodyLimit: LEAD_EMAIL_JSON_LIMIT,
+    schema: { body: Json, response: { 200: WebhookResponse } },
+  }, async (req) => handle(req, parseResendLeadEmail(req.body)));
   await app.register(async (scope) => {
     scope.addContentTypeParser('multipart/form-data', { parseAs: 'buffer', bodyLimit: LEAD_EMAIL_MULTIPART_LIMIT }, (req, body, done) => {
       const ct = req.headers['content-type'] ?? '';
