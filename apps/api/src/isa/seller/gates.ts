@@ -83,15 +83,24 @@ export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserAct
       w = { ...(w ?? ({} as WatchRow)), comps_suspended_at: carried, comps_resumed_at: null };
     }
   }
+  // b14 to-do (b13 final M1 residual), the conservative default: a lift by a share (cma_shared) stands only while a
+  // share made after that suspension still reached the lead (sent or delivered) or the owner prepared a CMA since. An
+  // email that later bounces (or turns undelivered or failed) never reached them, so the suspension is back: as the
+  // system, a new comps_suspended_at (a system column), audited once; a later share that reaches them lifts it again.
+  // The write re-checks the lift under the row lock (a concurrent read that already re-suspended writes nothing and
+  // audits nothing) and lands strictly after the lift, even for a transaction that started before the lift did.
+  if (!compsSuspended(w) && w?.comps_resumed_reason === 'cma_shared' && w.comps_suspended_at !== null
+      && (await liftBasisInTx(tx, a, w.comps_suspended_at)) === null) {
+    if (actor.kind === 'system') {
+      const r = await sql<{ assignment_id: string }>`UPDATE ai_isa_seller_watch SET comps_suspended_at = GREATEST(now(), comps_resumed_at + interval '1 millisecond')
+        WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND comps_resumed_reason = 'cma_shared' AND comps_resumed_at >= comps_suspended_at
+        RETURNING assignment_id`.execute(tx);
+      if (r.rows.length > 0) await audit(tx, actor, { action: 'ai_isa.comps_suspended', entity: { type: 'ai_isa_assignment', id: a.id }, reason: 'cma_share_not_delivered' });
+    }
+    return true;
+  }
   if (!compsSuspended(w)) return false;
-  const r = (await sql<{ prepared: boolean; shared: boolean }>`SELECT
-      EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.created_by_user_id = ${a.ownerUserId}
-                AND c.created_at > ${w!.comps_suspended_at}) AS prepared,
-      EXISTS (SELECT 1 FROM cma_reports c JOIN messages m ON m.tenant_id = c.tenant_id AND m.id = c.shared_message_id
-               WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${w!.comps_suspended_at}
-                 AND m.direction = 'outbound' AND m.dispatched_at IS NOT NULL AND m.status IN ('sent','delivered')
-                 AND m.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid))) AS shared`.execute(tx)).rows[0]!;
-  const reason = r.shared ? 'cma_shared' : r.prepared ? 'cma_prepared' : null;
+  const reason = await liftBasisInTx(tx, a, w!.comps_suspended_at!);
   if (reason === null) return true;
   if (actor.kind === 'system') {
     await sql`UPDATE ai_isa_seller_watch SET comps_resumed_at = now(), comps_resumed_reason = ${reason}, comps_resumed_by_user_id = ${a.ownerUserId}
@@ -100,6 +109,21 @@ export async function compsSuspendedNowInTx(tx: Tx, actor: SystemActor | UserAct
     await audit(tx, actor, { action: 'ai_isa.comps_resumed', entity: { type: 'ai_isa_assignment', id: a.id }, reason });
   }
   return false;
+}
+
+/**
+ * What lifts a suspension made at `since` (E502, b13 final M1): a share after it whose email reached the lead's own
+ * person as sent or delivered (cma_shared), else the owner's own CMA prepared after it (cma_prepared), else null.
+ */
+async function liftBasisInTx(tx: Tx, a: Pick<AssignmentRow, 'contactId' | 'ownerUserId'>, since: Date): Promise<'cma_shared' | 'cma_prepared' | null> {
+  const r = (await sql<{ prepared: boolean; shared: boolean }>`SELECT
+      EXISTS (SELECT 1 FROM cma_reports c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.created_by_user_id = ${a.ownerUserId}
+                AND c.created_at > ${since}) AS prepared,
+      EXISTS (SELECT 1 FROM cma_reports c JOIN messages m ON m.tenant_id = c.tenant_id AND m.id = c.shared_message_id
+               WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND c.shared_at > ${since}
+                 AND m.direction = 'outbound' AND m.dispatched_at IS NOT NULL AND m.status IN ('sent','delivered')
+                 AND m.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid))) AS shared`.execute(tx)).rows[0]!;
+  return r.shared ? 'cma_shared' : r.prepared ? 'cma_prepared' : null;
 }
 
 /**

@@ -471,6 +471,64 @@ describe('E502 (b13 review B13S-4): only a CMA share that reached the lead lifts
   });
 });
 
+describe('E502 (b14 to-do, b13 final M1 residual): a share that lifted a suspension and later bounced re-suspends (the conservative default)', () => {
+  it('E502: sent lifts it (cma_shared); the email then bounces: suspended again (a system action, audited cma_share_not_delivered); a later delivered share lifts it; a lift by the owner\'s own CMA is not undone by a bounce', async () => {
+    const w7 = await sellerWorld(h);
+    const l = await sellerLead(h, w7);
+    await confirm(w7, l);
+    expect((await call(w7.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
+    await asSystem(h, w7, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    const { sendText } = await import('../../comms/testing.js');
+    const toLead = (await sendText(w7.agents[0]!, l.id, 'A note from your agent.')).body.message!.id;
+    const setStatus = async (status: string) => {
+      await h.su.query(`SET session_replication_role = replica`);
+      try {
+        await h.su.query(`UPDATE messages SET status = $2, dispatched_at = COALESCE(dispatched_at, now()) WHERE id = $1`, [toLead, status]);
+      } finally {
+        await h.su.query(`SET session_replication_role = origin`);
+      }
+    };
+    const share = async () => {
+      await h.su.query(`SET session_replication_role = replica`);
+      try {
+        await h.su.query(`UPDATE cma_reports SET status = 'shared', shared_at = now() + interval '1 second', shared_by_user_id = $2, shared_message_id = $3 WHERE contact_id = $1`, [l.id, w7.agents[0]!.userId, toLead]);
+      } finally {
+        await h.su.query(`SET session_replication_role = origin`);
+      }
+    };
+    const suspendedNow = () => asSystem(h, w7, l, async (tx, a, actor) => compsSuspendedNowInTx(tx, actor, a, await watchOf(tx, a.id)));
+    await setStatus('sent');
+    await share();
+    expect(await suspendedNow()).toBe(false);
+    expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: 'cma_shared' });
+    // the email bounces after the lift: the share never reached them, so recent sales are suspended again
+    await setStatus('bounced');
+    expect(await suspendedNow(), 'sent, then bounced').toBe(true);
+    expect((await h.su.query(`SELECT comps_suspended_at > comps_resumed_at AS again FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ again: true });
+    expect((await h.su.query(`SELECT reason, actor_kind FROM audit_log WHERE entity_id = $1 AND action = 'ai_isa.comps_suspended' ORDER BY seq DESC LIMIT 1`, [l.assignmentId])).rows).toEqual([{ reason: 'cma_share_not_delivered', actor_kind: 'system' }]);
+    expect(await suspendedNow(), 'read again: still suspended, no second audit').toBe(true);
+    expect((await h.su.query(`SELECT count(*)::int AS n FROM audit_log WHERE entity_id = $1 AND action = 'ai_isa.comps_suspended' AND reason = 'cma_share_not_delivered'`, [l.assignmentId])).rows[0]).toEqual({ n: 1 });
+    // a later share delivered to the lead lifts it again
+    await setStatus('delivered');
+    await share();
+    expect(await suspendedNow(), 'delivered later').toBe(false);
+    // a lift by the owner's own CMA after a hold stands whatever happens to any email (the earlier share is aged so it
+    // predates the new hold)
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE cma_reports SET shared_at = shared_at - interval '1 hour' WHERE contact_id = $1 AND shared_at IS NOT NULL`, [l.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    await asSystem(h, w7, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    expect((await call(w7.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
+    expect(await suspendedNow()).toBe(false);
+    expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: 'cma_prepared' });
+    await setStatus('bounced');
+    expect(await suspendedNow(), 'cma_prepared lift, then a bounce').toBe(false);
+  });
+});
+
 describe('E502 (b13 review B13-MRG-5): a continuation keeps an unresolved pricing suspension', () => {
   it('E502: after Continue (the paused assignment ends, a new one continues from it) recent sales stay suspended until a CMA, a share or resume-comps', async () => {
     const w5 = await sellerWorld(h);
