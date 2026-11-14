@@ -174,32 +174,47 @@ test('R-PORTALWEB-11: every portal screen and state passes axe in both themes an
   await expect(p.locator('main').getByText('Nothing is shared with you right now.', { exact: false })).toBeVisible({ timeout: 20_000 });
   found.push(...(await check(p, 'nothing shared')));
   await p.unroute('**/api/portal/me');
-  // no longer shared (E712): the grant is revoked between /me and its timeline. A revoke hides it from every later query
-  // (R-PORTAL-6, E125): 45 answers its timeline and documents 404 and /me no longer lists it (E711). So the first /me
-  // is the real one, every item read of the grant answers 404 (not one: the dev build's StrictMode mounts the grant
-  // twice and aborts the first read), and from the first 404 on, /me is the real answer without the grant.
+  // no longer shared (E712): the grant is revoked while it is open. A revoke hides it from every later query (R-PORTAL-6,
+  // E125): 45 answers its timeline and documents 404 and /me no longer lists it (E711). b16: the timeline is read for
+  // real first (its "Inspection" is on screen, so "nothing of the grant is left" below means something), and the
+  // documents read is held until then and answers 404 (every documents read: the dev build's StrictMode mounts the
+  // grant twice and aborts the first). Whether a /me shows the revoke is decided when the request is made, so a /me
+  // asked before the 404 (StrictMode's first, which it aborts) never counts as the refetch.
   let revoked = false;
   let meWithout = 0;
-  const grantItems = (u: URL) => u.pathname === '/api/portal/timeline' || u.pathname === '/api/portal/documents';
-  const revokedItems = (r: Route) => {
+  let release!: () => void;
+  const held = new Promise<void>((res) => (release = res));
+  const timelineOf = (u: URL) => u.pathname === '/api/portal/timeline';
+  const documentsOf = (u: URL) => u.pathname === '/api/portal/documents';
+  const timelineRoute = (r: Route) => (revoked ? r.fulfill(apiError(404, 'NOT_FOUND')) : r.continue());
+  const documentsRoute = async (r: Route) => {
+    await held;
     revoked = true;
-    return r.fulfill(apiError(404, 'NOT_FOUND'));
+    await r.fulfill(apiError(404, 'NOT_FOUND')).catch(() => undefined); // an aborted read (StrictMode's first) is gone
   };
-  await meWith(p, (g) => {
-    if (!revoked) return g;
-    meWithout += 1;
-    return g.filter((x) => x.id !== grantId);
+  await p.route('**/api/portal/me', async (r) => {
+    const after404 = revoked; // decided when the request is made
+    const res = await r.fetch();
+    const me = (await res.json()) as { grants: Record<string, unknown>[] };
+    await r.fulfill({ response: res, json: after404 ? { ...me, grants: me.grants.filter((x) => x.id !== grantId) } : me });
+    if (after404) meWithout += 1; // counted once answered
   });
-  await p.route(grantItems, revokedItems);
+  await p.route(timelineOf, timelineRoute);
+  await p.route(documentsOf, documentsRoute);
   await p.reload();
+  await expect(p.getByText('Inspection', { exact: true })).toBeVisible({ timeout: 20_000 });
+  release();
   await expect(p.locator('main').getByText('This is no longer shared with you.')).toBeVisible({ timeout: 20_000 });
-  await expect.poll(() => meWithout, { message: '/me refetched after the 404', timeout: 20_000 }).toBeGreaterThan(0);
+  await expect.poll(() => meWithout, { message: '/me asked again after the 404', timeout: 20_000 }).toBeGreaterThan(0);
   found.push(...(await check(p, 'no longer shared')));
-  // Home's state after the refetch: the sentence stays, above "nothing shared", and nothing of the grant is left
+  // Home's state after the refetch: the sentence stays, above "nothing shared", and nothing of the grant is left (its
+  // title and its "Inspection" were on screen before the 404)
   await expect(p.locator('main').getByText('This is no longer shared with you.')).toBeVisible();
   await expect(p.locator('main').getByText('Nothing is shared with you right now.', { exact: false })).toBeVisible();
   await expect(p.getByText('Inspection', { exact: true })).toHaveCount(0);
-  await p.unroute(grantItems, revokedItems);
+  await expect(p.getByRole('heading', { name: 'Your home purchase' })).toHaveCount(0);
+  await p.unroute(timelineOf, timelineRoute);
+  await p.unroute(documentsOf, documentsRoute);
   await p.unroute('**/api/portal/me');
   // a failed download (E713): the stream token answers 404 once
   await p.goto(portalUrl(stack, pw.slug));
