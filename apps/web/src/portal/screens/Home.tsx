@@ -1,10 +1,13 @@
 // module 46 (R-PORTALWEB-5, R-PORTALWEB-6; E125, E127, E711, E712): what the signed-in client sees. GET /me lists the
 // live grants (a revoked one looks never granted). None: one sentence. One: it opens directly. Several: a one-tap list.
 // The open grant and tab are URL state (?grant=<uuid>&view=documents, pushState/popstate); an id not in /me is ignored.
-// Sign out posts /logout (CSRF), then the App clears the cache and tokens (not the team) and shows SignedOut.
+// Sign out posts /logout (CSRF). Only its 204 clears the HttpOnly portal cookie, so only then (or on a 401: the session
+// had already ended) does the App clear the cache and tokens (not the team) and show SignedOut. A CSRF_INVALID refetches
+// /me for a fresh token and retries once (E716); any other failure keeps the client signed in here, with the sentence
+// and Sign out (b15 review B15R-PORTAL-1: "You're signed out" over a live session on a shared phone was dishonest).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
-import { type PortalError, noBody } from '../api.js';
+import { PortalError, noBody } from '../api.js';
 import { COPY, sentenceFor } from '../copy.js';
 import { usePortal } from '../context.js';
 import { type GrantTab, type GrantView, type MeView, VIEW_WORDS, parseMe } from '../view/index.js';
@@ -58,6 +61,7 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
   const me = useMe();
   const [url, setUrl] = useState<UrlState>(() => readUrl());
   const [leaving, setLeaving] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [goneIds, setGoneIds] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
@@ -88,12 +92,30 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
   const signOut = async () => {
     if (leaving) return;
     setLeaving(true);
-    try {
-      await api.request('POST', '/api/portal/logout', noBody);
-    } catch {
-      // a session already gone is signed out all the same
+    setSignOutError(null);
+    const post = async (): Promise<unknown> => {
+      try {
+        await api.request('POST', '/api/portal/logout', noBody);
+        return null;
+      } catch (e) {
+        return e;
+      }
+    };
+    let failure = await post();
+    if (failure instanceof PortalError && failure.code === 'CSRF_INVALID') {
+      // E716 (a sign-in in another tab): /me for a fresh token (a 401 there signs out, through api.ts), then one retry
+      await qc.refetchQueries({ queryKey: ME_KEY, exact: true });
+      failure = api.hasCsrf() ? await post() : new PortalError('PORTAL_SESSION_REQUIRED', 401);
     }
-    onSignedOut();
+    if (failure === null || (failure instanceof PortalError && failure.code === 'PORTAL_SESSION_REQUIRED')) {
+      onSignedOut();
+      return;
+    }
+    // not signed out: the session cookie may still be valid (offline, a 5xx during a deploy, 429, CSRF_INVALID twice)
+    const text = failure instanceof PortalError && failure.code !== 'CSRF_INVALID' ? sentenceFor(failure.code) : COPY.generic;
+    setSignOutError(text);
+    announce(text);
+    setLeaving(false);
   };
 
   const grants = (me.data?.grants ?? []).filter((g) => !goneIds.has(g.id));
@@ -102,9 +124,12 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
   const open: GrantView | null = chosen ?? only;
 
   const signOutButton = (
-    <button type="button" onClick={() => void signOut()} disabled={leaving} className={secondaryButton}>
-      {COPY.signOut}
-    </button>
+    <>
+      <button type="button" onClick={() => void signOut()} disabled={leaving} className={secondaryButton}>
+        {COPY.signOut}
+      </button>
+      {signOutError ? <p className="w-full rounded-lg bg-warn-soft px-3 py-2 text-[16px] text-ink">{signOutError}</p> : null}
+    </>
   );
 
   if (me.isPending) return <Loading />;

@@ -281,6 +281,103 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(r.api.hasCsrf()).toBe(false);
   });
 
+  // b15 review B15R-PORTAL-1: only a 204 clears the HttpOnly portal cookie (45's POST /logout), so only a 204 (or a 401:
+  // already signed out) may say "You're signed out". Any other answer keeps Home, the CSRF token and the cache, shows
+  // the sentence (on screen and in the live region) and keeps Sign out; CSRF_INVALID refetches /me and retries once (E716).
+  const proxy502 = () => ({ status: 502, raw: new Response('<html>502 Bad Gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } }) });
+  const offline = () => {
+    throw new TypeError('Failed to fetch');
+  };
+  for (const [what, answer, sentence] of [
+    ['a network error', offline, COPY.network],
+    ['a 502 from the proxy (an API deploy)', proxy502, COPY.generic],
+    ['429 RATE_LIMITED', () => portalApiError('RATE_LIMITED'), API_SENTENCES.RATE_LIMITED],
+  ] as const) {
+    it(`B15R-PORTAL-1: sign out that fails with ${what}: still signed in, the sentence shown and announced, Sign out kept, tokens and cache kept`, async () => {
+      let n = 0;
+      const r = renderPortal({ routes: { ...signedIn, 'POST /portal/logout': () => (n++ === 0 ? answer() : { status: 204 }) } });
+      await screen.findByText('Inspection');
+      await userEvent.click(screen.getByRole('button', { name: COPY.signOut }));
+      expect(await screen.findByText(sentence, IGN)).toBeInTheDocument();
+      await waitFor(() => expect(live()).toHaveTextContent(sentence));
+      expect(screen.queryByRole('heading', { level: 1, name: COPY.signedOutTitle })).toBeNull();
+      expect(screen.queryByText(COPY.signedOutBody)).toBeNull();
+      expect(h1()).toHaveTextContent('Your home purchase');
+      expect(screen.getByText('Inspection')).toBeInTheDocument();
+      expect(r.api.hasCsrf()).toBe(true);
+      expect(r.queryClient.getQueryData(['portal', 'me'])).toBeDefined();
+      expect(r.keys().filter((k) => k === 'POST /portal/logout')).toHaveLength(1);
+      // Sign out is still there, and a tap the API answers 204 signs out
+      await userEvent.click(screen.getByRole('button', { name: COPY.signOut }));
+      expect(await screen.findByRole('heading', { level: 1, name: COPY.signedOutTitle })).toBeInTheDocument();
+      expect(r.keys().filter((k) => k === 'POST /portal/logout')).toHaveLength(2);
+      expect(r.api.hasCsrf()).toBe(false);
+    });
+  }
+
+  it('B15R-PORTAL-1, E716: sign out answered CSRF_INVALID (a sign-in in another tab): /me refetched, one retry with the fresh token, then signed out', async () => {
+    let rotated = false;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => ({ status: 200, body: F.me([F.grant()], rotated ? 'portal-csrf-token-2' : F.CSRF) }),
+        'POST /portal/logout': (x) => {
+          if (x.headers['x-csrf-token'] !== 'portal-csrf-token-2') {
+            rotated = true;
+            return portalApiError('CSRF_INVALID');
+          }
+          return { status: 204 };
+        },
+      },
+    });
+    await screen.findByText('Inspection');
+    const mesBefore = r.keys().filter((k) => k === 'GET /portal/me').length;
+    await userEvent.click(screen.getByRole('button', { name: COPY.signOut }));
+    expect(await screen.findByRole('heading', { level: 1, name: COPY.signedOutTitle })).toBeInTheDocument();
+    expect(r.seen.filter((x) => x.key === 'POST /portal/logout').map((x) => x.headers['x-csrf-token'])).toEqual([F.CSRF, 'portal-csrf-token-2']);
+    expect(r.keys().filter((k) => k === 'GET /portal/me').length).toBe(mesBefore + 1);
+  });
+
+  it('B15R-PORTAL-1, E716: CSRF_INVALID again after the retry: the generic sentence, still signed in, Sign out kept (no third post)', async () => {
+    const r = renderPortal({ routes: { ...signedIn, 'POST /portal/logout': () => portalApiError('CSRF_INVALID') } });
+    await screen.findByText('Inspection');
+    await userEvent.click(screen.getByRole('button', { name: COPY.signOut }));
+    expect(await screen.findByText(COPY.generic, IGN)).toBeInTheDocument();
+    await waitFor(() => expect(live()).toHaveTextContent(COPY.generic));
+    expect(screen.queryByRole('heading', { level: 1, name: COPY.signedOutTitle })).toBeNull();
+    expect(r.keys().filter((k) => k === 'POST /portal/logout')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: COPY.signOut })).toBeEnabled();
+    expect(r.api.hasCsrf()).toBe(true);
+  });
+
+  it('B15R-PORTAL-1, E716: CSRF_INVALID and the /me refetch answers 401: already signed out, so "You\'re signed out" (no second post)', async () => {
+    let ended = false;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => (ended ? portalApiError('PORTAL_SESSION_REQUIRED') : { status: 200, body: F.me() }),
+        'POST /portal/logout': () => {
+          ended = true;
+          return portalApiError('CSRF_INVALID');
+        },
+      },
+    });
+    await screen.findByText('Inspection');
+    await userEvent.click(screen.getByRole('button', { name: COPY.signOut }));
+    expect(await screen.findByRole('heading', { level: 1, name: COPY.signedOutTitle })).toBeInTheDocument();
+    expect(r.keys().filter((k) => k === 'POST /portal/logout')).toHaveLength(1);
+    expect(r.api.hasCsrf()).toBe(false);
+  });
+
+  it('B15R-PORTAL-1: sign out answered 401 PORTAL_SESSION_REQUIRED (the session had already ended): "You\'re signed out"', async () => {
+    const r = renderPortal({ routes: { ...signedIn, 'POST /portal/logout': () => portalApiError('PORTAL_SESSION_REQUIRED') } });
+    await screen.findByText('Inspection');
+    await userEvent.click(screen.getByRole('button', { name: COPY.signOut }));
+    expect(await screen.findByRole('heading', { level: 1, name: COPY.signedOutTitle })).toBeInTheDocument();
+    expect(r.api.hasCsrf()).toBe(false);
+    await waitFor(() => expect(r.queryClient.getQueryCache().getAll()).toEqual([]));
+  });
+
   it('E705: the session ends mid-use: the next 401 signs out, the cache is cleared, nothing stale is shown', async () => {
     let ended = false;
     const r = renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => (ended ? portalApiError('PORTAL_SESSION_REQUIRED') : { status: 200, body: F.documents() }), 'GET /portal/me': () => (ended ? portalApiError('PORTAL_SESSION_REQUIRED') : { status: 200, body: F.me() }) } });

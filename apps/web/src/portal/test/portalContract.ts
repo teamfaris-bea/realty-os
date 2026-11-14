@@ -129,6 +129,9 @@ export function portalContractFetch(
         const wrong = portalResponseViolations(key, a.body);
         if (wrong.length > 0) throw new Error(`the fake answered ${key} with a body the API never sends: ${wrong.join('; ')}`);
       }
+    } else if (a.raw && a.status >= 502 && a.status <= 504) {
+      // a gateway error from the proxy in front of the API (nginx during an API deploy): not the API's answer, so it
+      // carries no contract code (b15 review B15R-PORTAL-1)
     } else if (!a.raw || a.status !== 404) {
       const code = (a.body as { error?: { code?: unknown } } | undefined)?.error?.code;
       if (typeof code !== 'string' || portalContract.errors[code]?.status !== a.status) throw new Error(`the fake answered ${key} with ${a.status} ${String(code)}, which is not how the API answers that code`);
