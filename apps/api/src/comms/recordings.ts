@@ -137,8 +137,11 @@ export async function onRecordingReady(e: RecordingReady, deps: CommsDeps, actor
 const transcriptAad = (rowId: string) => ({ table: 'transcripts', column: 'segments_enc', rowId });
 
 /** comms.transcribe: provider transcription, stored encrypted (never logged, never searchable). */
-export async function transcribeRecording(recordingId: string, deps: CommsDeps, actor: SystemActor): Promise<'ready' | 'skipped'> {
+export async function transcribeRecording(recordingId: string, deps: CommsDeps, actor: SystemActor): Promise<'ready' | 'skipped' | 'not_configured'> {
   const tenantId = actor.tenantId as TenantId;
+  // b18 item h: no transcription vendor (production's UnconfiguredTranscription): the recording keeps no transcript, the
+  // audio is not even read, and the job ends here (no retry until a vendor appears)
+  if (!deps.providers.transcription.configured) return 'not_configured';
   const rec = await withTenantTx(actor, async (tx) => {
     const r = await sql<{ id: string; contact_id: string; status: string; storage_key: string; dek_wrapped: Buffer | null; content_type: string; object_id: string; has: boolean }>`
       SELECT r.id, r.contact_id, r.status, o.storage_key, o.dek_wrapped, o.content_type, o.id AS object_id,

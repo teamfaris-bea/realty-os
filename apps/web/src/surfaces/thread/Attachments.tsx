@@ -12,6 +12,9 @@ import { Button } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import type { TimelineItem } from '../feed/lib/types.js';
 
+
+/** b18 item h (E725): a voicemail on a deployment with no transcription vendor: honest, never "not ready yet" */
+export const NO_TRANSCRIPT = 'No transcript: transcription is not set up on this deployment.';
 export interface AttachmentsResponse {
   messages: {
     messageId: string;
@@ -20,7 +23,8 @@ export interface AttachmentsResponse {
     /** R-TWL-11: MMS text parts (absent from older servers) */
     textParts?: { position: number; status: 'read' | 'pending'; text: string | null }[];
   }[];
-  voicemails: { callId: string; recordingId: string; durationS: number | null; transcriptReady: boolean }[];
+  /** b18 item h: transcriptUnavailable = no transcript and none will come (no transcription vendor on this deployment) */
+  voicemails: { callId: string; recordingId: string; durationS: number | null; transcriptReady: boolean; transcriptUnavailable?: boolean }[];
 }
 
 export function useAttachments(contactId: string) {
@@ -162,7 +166,7 @@ function Voicemail({ vm }: { vm: AttachmentsResponse['voicemails'][number] }) {
           </Button>
         ) : null}
       </div>
-      {!vm.transcriptReady ? <p className="text-[13px] text-ink-muted">The transcript isn't ready yet.</p> : null}
+      {!vm.transcriptReady ? <p className="text-[13px] text-ink-muted">{vm.transcriptUnavailable ? NO_TRANSCRIPT : "The transcript isn't ready yet."}</p> : null}
       {transcript !== null ? <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl border border-line bg-surface px-3.5 py-2 text-[15px] text-ink">{transcript}</p> : null}
       {error ? (
         <p role="alert" className="text-[13px] font-medium text-danger">

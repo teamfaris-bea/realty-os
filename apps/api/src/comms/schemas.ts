@@ -307,5 +307,5 @@ export const AttachmentsResponse = z.object({
     /** R-TWL-11: MMS text/plain parts: read ones as plain text, pending ones without text (a skipped part is in `skipped`) */
     textParts: z.array(z.object({ position: z.number().int(), status: z.enum(['read', 'pending']), text: z.string().nullable() })),
   })),
-  voicemails: z.array(z.object({ callId: z.uuid(), recordingId: z.uuid(), durationS: z.number().int().nullable(), transcriptReady: z.boolean() })),
+  voicemails: z.array(z.object({ callId: z.uuid(), recordingId: z.uuid(), durationS: z.number().int().nullable(), transcriptReady: z.boolean(), transcriptUnavailable: z.boolean() })),
 });

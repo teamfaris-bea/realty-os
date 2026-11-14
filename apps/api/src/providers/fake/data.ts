@@ -13,6 +13,7 @@ import type {
   PushTarget,
   TranscriptionProvider,
 } from '../types.js';
+import { ProviderError } from '../types.js';
 
 const h = (s: string | Uint8Array) => createHash('sha256').update(s).digest();
 
@@ -83,6 +84,7 @@ export class FakeCarrier implements CarrierLookup {
 // ---- transcription ----------------------------------------------------------------------------
 
 export class FakeTranscription implements TranscriptionProvider {
+  readonly configured = true;
   async transcribe(r: { audio: Uint8Array; contentType: string; durationMs?: number; languageHint?: string }) {
     const d = h(Buffer.from(r.audio)).toString('hex').slice(0, 6);
     const end = Math.max(4_000, Math.min(r.durationMs ?? 8_000, 8_000));
@@ -93,6 +95,19 @@ export class FakeTranscription implements TranscriptionProvider {
         { startMs: Math.floor(end / 2), endMs: end, speaker: 'client', text: 'Sure. Can you call me back tomorrow afternoon?' },
       ],
     };
+  }
+}
+
+/**
+ * b18 item h (acceptance report finding, 2026-11-14): production's transcription while no vendor is procured. The fake
+ * above invents a canned transcript; production must never store one, because the call summary and call reviews read
+ * transcripts as the call's own words. This one refuses, so a recording gets no transcript and the summary and reviews
+ * say there is none (comms/recordings.ts transcribeRecording skips before reading the audio).
+ */
+export class UnconfiguredTranscription implements TranscriptionProvider {
+  readonly configured = false;
+  async transcribe(): Promise<never> {
+    throw new ProviderError('not_configured', 'TRANSCRIPTION_NOT_CONFIGURED');
   }
 }
 

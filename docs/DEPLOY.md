@@ -145,6 +145,7 @@ With `NODE_ENV=production` the configuration fails fast:
 - it reports **every** missing or invalid setting at once, by name and never by value;
 - it refuses fake providers, plain-http URLs, plaintext SMTP and dev-derived webhook secrets;
 - `ALLOW_FAKE_PROVIDERS=true` lifts the "no fakes" rule for a staging demo only.
+- the services with no procured vendor never run their fakes in production (each says it is not set up instead): Gmail sync, public records, the malware scanner and PDF reader, Google Ads, AI voice answering, Google Business Profile, and (batch 18) call transcription: a recording is stored but gets no transcript, so call summaries are skipped and call reviews are ineligible ("no transcript") until a real transcription adapter exists (DATA_MODEL E725).
 
 Choosing a real vendor without its credentials fails in every environment. The full list with comments is in `.env.example`.
 

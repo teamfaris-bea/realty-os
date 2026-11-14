@@ -206,6 +206,8 @@ export interface VoicemailView {
   recordingId: string;
   durationS: number | null;
   transcriptReady: boolean;
+  /** b18 item h: no transcript and none will come (no transcription vendor on this deployment) */
+  transcriptUnavailable: boolean;
 }
 
 /** Everything attached to a contact's thread that the caller may see (RLS decides; recordings: R-PERM-8 scope). */
@@ -239,7 +241,7 @@ export async function contactAttachments(actor: UserActor, contactId: string, de
          AND r.status = 'stored' ORDER BY c.started_at DESC LIMIT 100`.execute(tx);
     return {
       messages: [...byMessage.values()],
-      voicemails: vm.rows.map((v) => ({ callId: v.call_id, recordingId: v.recording_id, durationS: v.duration_s, transcriptReady: v.ready })),
+      voicemails: vm.rows.map((v) => ({ callId: v.call_id, recordingId: v.recording_id, durationS: v.duration_s, transcriptReady: v.ready, transcriptUnavailable: !v.ready && !deps.providers.transcription.configured })),
     };
   });
 }

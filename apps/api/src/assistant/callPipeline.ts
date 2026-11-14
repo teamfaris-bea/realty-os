@@ -56,7 +56,8 @@ export async function summarizeCall(actor: SystemActor, callId: string, deps: As
     return { ...c, done: existing !== null, ownerUserId: r.rows[0]?.owner_user_id ?? null };
   }, { db: deps.db });
   if (!pre) return { kind: 'skipped', reason: 'CALL_MISSING' };
-  if (!pre.ready) return { kind: 'skipped', reason: 'TRANSCRIPT_NOT_READY' };
+  // b18 item h: with no transcription vendor (production) there never will be a transcript: say so, never "not ready"
+  if (!pre.ready) return { kind: 'skipped', reason: deps.providers.transcription.configured ? 'TRANSCRIPT_NOT_READY' : 'NO_TRANSCRIPT' };
   const forUser = pre.agentUserId ?? pre.ownerUserId;
   if (!forUser) return { kind: 'skipped', reason: 'NO_AGENT' };
   const trigger = { kind: 'call_ready' as const, callId };

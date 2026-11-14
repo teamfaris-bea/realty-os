@@ -13,7 +13,7 @@ import type { Clock } from '@realty/core/foundation';
 import type { Config } from '../config.js';
 import { anthropicAi } from './anthropic.js';
 import { FakeAi } from './fake/ai.js';
-import { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription } from './fake/data.js';
+import { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, UnconfiguredTranscription } from './fake/data.js';
 import { FakeAccountMailer, FakeEmail } from './fake/email.js';
 import { FakeTelephony } from './fake/telephony.js';
 import { SmtpAccountMailer, SmtpEmail } from './email/smtp.js';
@@ -49,7 +49,7 @@ import { FakeGbp } from '../gbp/testing.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
-export { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, FAKE_MLS_LISTINGS } from './fake/data.js';
+export { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, FAKE_MLS_LISTINGS, UnconfiguredTranscription } from './fake/data.js';
 export { FakeAccountMailer, FakeEmail } from './fake/email.js';
 export { FakeTelephony, type FakeFailure } from './fake/telephony.js';
 export { LocalFsStorage, MemoryStorage, StorageKeyError, assertStorageKey } from './storage.js';
@@ -222,5 +222,8 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const voiceAgent: VoiceAgentProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredVoiceAgent() : fakes.voiceAgent;
   // module 53: no Google app or Business Profile API access (N15); production reads and posts nothing unless fakes are allowed
   const gbp: GbpProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGbp() : fakes.gbp;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent, gbp };
+  // b18 item h: no transcription vendor is procured; production never stores the fake's invented transcript (the call
+  // summary and call reviews would read it as the call's words), so it gets none unless fakes are allowed
+  const transcription: TranscriptionProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTranscription() : fakes.transcription;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent, gbp, transcription };
 }

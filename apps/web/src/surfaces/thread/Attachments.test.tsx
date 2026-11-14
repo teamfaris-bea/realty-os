@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiClient } from '../../shell/api.js';
 import { SESSION_KEY, ShellProvider } from '../../shell/context.js';
 import { FakeFetch, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
-import { type AttachmentsResponse, RowAttachments, formatBytes, skippedSentence } from './Attachments.js';
+import { type AttachmentsResponse, NO_TRANSCRIPT, RowAttachments, formatBytes, skippedSentence } from './Attachments.js';
 
 const C = '01900000-0000-7000-8000-0000000000c1';
 const M = '01900000-0000-7000-8000-0000000000d1';
@@ -25,7 +25,7 @@ const DATA: AttachmentsResponse = {
     ],
     skipped: [{ position: 1, reason: 'TYPE_NOT_ALLOWED' }],
   }],
-  voicemails: [{ callId: CALL, recordingId: REC, durationS: 74, transcriptReady: true }],
+  voicemails: [{ callId: CALL, recordingId: REC, durationS: 74, transcriptReady: true, transcriptUnavailable: false }],
 };
 
 function mount(fake: FakeFetch, children: ReactNode) {
@@ -68,6 +68,24 @@ describe('thread attachments', () => {
     expect(screen.getByText("Attachment 2 of 3 wasn't saved: this kind of file isn't accepted.")).toBeTruthy();
     const r = await axe.run(view.container);
     expect(r.violations).toEqual([]);
+  });
+
+  // b18 item h (E725): on a deployment with no transcription vendor a voicemail never gets a transcript, so the thread
+  // says so instead of "not ready yet", and offers no Read transcript
+  it('E725: a voicemail with no transcription on this deployment says so, never that the transcript is not ready yet', async () => {
+    const body: AttachmentsResponse = { ...DATA, voicemails: [{ callId: CALL, recordingId: REC, durationS: 74, transcriptReady: false, transcriptUnavailable: true }] };
+    mount(new FakeFetch().on(`GET /contacts/${C}/attachments`, { status: 200, body }), <li><RowAttachments contactId={C} item={{ id: CALL, type: 'call' }} /></li>);
+    expect(await screen.findByText(NO_TRANSCRIPT)).toBeInTheDocument();
+    expect(NO_TRANSCRIPT).toBe('No transcript: transcription is not set up on this deployment.');
+    expect(screen.queryByText("The transcript isn't ready yet.")).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Read transcript' })).toBeNull();
+  });
+
+  it('E725: a voicemail whose transcript is still coming keeps "not ready yet"', async () => {
+    const body: AttachmentsResponse = { ...DATA, voicemails: [{ callId: CALL, recordingId: REC, durationS: 74, transcriptReady: false, transcriptUnavailable: false }] };
+    mount(new FakeFetch().on(`GET /contacts/${C}/attachments`, { status: 200, body }), <li><RowAttachments contactId={C} item={{ id: CALL, type: 'call' }} /></li>);
+    expect(await screen.findByText("The transcript isn't ready yet.")).toBeInTheDocument();
+    expect(screen.queryByText(NO_TRANSCRIPT)).toBeNull();
   });
 
   it('plays a voicemail only after a tap (single-use stream token) and shows the transcript on a second tap', async () => {

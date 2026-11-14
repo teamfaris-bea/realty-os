@@ -181,6 +181,11 @@ export interface TranscriptSegment {
 }
 
 export interface TranscriptionProvider {
+  /**
+   * b18 item h: false for UnconfiguredTranscription (production with no vendor procured: no transcript is ever made);
+   * true for an adapter that really transcribes (in this build only the test fake)
+   */
+  readonly configured: boolean;
   transcribe(r: { audio: Uint8Array; contentType: string; durationMs?: number; languageHint?: string }): Promise<{ segments: TranscriptSegment[]; language: string }>;
 }
 
