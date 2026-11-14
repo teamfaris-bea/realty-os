@@ -12,6 +12,8 @@ export const PORTAL_STAFF_MESSAGES: Readonly<Record<string, string>> = {
   PORTAL_GRANT_REVOKED: 'This access was already revoked.',
   PORTAL_ACCOUNT_DISABLED: 'This account is already disabled. Invite the client again to give access back.',
   CONTACT_MERGED: 'This contact was merged into another record. Open that record instead.',
+  /** b15 review L1: 45 refuses an invite (and a resend) on a lost deal; the section shows it in place of Invite */
+  PORTAL_DEAL_LOST: "This deal is marked lost, so its client can't be invited to the portal.",
 };
 
 /**

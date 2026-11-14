@@ -1,11 +1,12 @@
 // Deals and listings in jsdom: stage moves carry the row version, attribution is shown as captured,
 // commission is hidden when the server refuses it (R-PERM-10 display), and listing counts show
 // their denominator (R-ACC-4 display half).
-import { screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, IDS, agentApp, err, iso } from '../feed/lib/testing.js';
 import type { DealDetailView, ListingDetailView } from '../feed/lib/types.js';
+import { PORTAL_STAFF_MESSAGES } from '../client-portal/words.js';
 import { nextStage } from './DealsPages.js';
 import type { DealMilestones } from './milestones.js';
 
@@ -35,6 +36,9 @@ function deal(over: Partial<DealDetailView> = {}): DealDetailView {
     ...over,
   };
 }
+
+/** GET /deals/:id/portal (module 45): cleared, nobody invited yet. */
+const portalState = () => ({ portalCleared: true, portalText: null, channels: { email: 'test', sms: 'test', text: [] }, accounts: [], grants: [], items: [] });
 
 /** GET /deals/:id/milestones for the deal (module 39): no templates, no dates. */
 function milestones(over: Partial<DealMilestones> = {}): DealMilestones {
@@ -78,6 +82,28 @@ describe('Deals', () => {
     await waitFor(() => expect(fake.callsTo(`GET /deals/${IDS.deal}/financials`).length).toBeGreaterThan(0));
     expect(screen.queryByRole('heading', { name: 'Commission' })).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('E690 (b15 review L1): a lost deal passes its stage to the client portal section: no Invite, the reason in its place', async () => {
+    const fake = new FakeFetch()
+      .on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal({ stage: 'lost', lostReason: 'went elsewhere' }) } })
+      .on(`GET /deals/${IDS.deal}/financials`, err(404, 'NOT_FOUND'))
+      .on(`GET /deals/${IDS.deal}/milestones`, { status: 200, body: milestones() })
+      .on(`GET /deals/${IDS.deal}/portal`, { status: 200, body: portalState() });
+    agentApp(fake, `/deals/${IDS.deal}`);
+    const section = (await screen.findByRole('heading', { name: 'Client portal' })).closest('section') as HTMLElement;
+    expect(await within(section).findByText(PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST!)).toBeInTheDocument();
+    expect(within(section).queryByRole('button', { name: /^Invite/ })).toBeNull();
+    // an open deal still offers Invite
+    cleanup();
+    const open = new FakeFetch()
+      .on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal() } })
+      .on(`GET /deals/${IDS.deal}/financials`, err(404, 'NOT_FOUND'))
+      .on(`GET /deals/${IDS.deal}/milestones`, { status: 200, body: milestones() })
+      .on(`GET /deals/${IDS.deal}/portal`, { status: 200, body: portalState() });
+    agentApp(open, `/deals/${IDS.deal}`);
+    expect(await screen.findByRole('button', { name: 'Invite Jane Doe' })).toBeInTheDocument();
+    expect(screen.queryByText(PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST!)).toBeNull();
   });
 
   it('a stage move that lost a race says so in words', async () => {

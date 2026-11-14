@@ -456,6 +456,7 @@ export const ERROR_STATUS = {
   PORTAL_SOURCE_INVALID: 422, // the source id is malformed or the source is not readable as a portal source
   PORTAL_TEXT_TOO_LONG: 422, // verbatim text over 4,000 characters (never cut)
   PORTAL_TEXT_NOT_PLAIN: 422, // verbatim text with a control character
+  PORTAL_DEAL_LOST: 409, // the deal is lost: an invite (or resend) would make a grant the next portal.sync ends at once, and a note about it (b15 review L1)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

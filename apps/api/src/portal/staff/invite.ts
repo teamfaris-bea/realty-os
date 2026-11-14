@@ -1,6 +1,8 @@
 // Invite a client to the portal (R-PORTAL-13; E690-E693). One transaction as the person, serialized on the contact
 // (app.lock_contact: two taps make one account and one live grant): the visible deal or listing (else 404), the contact
-// not merged away (CONTACT_MERGED), a party (else PORTAL_NOT_A_PARTY), the live account reused or created (login point:
+// not merged away (CONTACT_MERGED), a deal that is not lost (else PORTAL_DEAL_LOST, resend included: portal.sync ends a
+// lost deal's grant at once, so each tap made another grant and another note about a purchase the client could never
+// see; b15 review L1), a party (else PORTAL_NOT_A_PARTY), the live account reused or created (login point:
 // the one asked for, else the first active email, else the first active phone, else PORTAL_LOGIN_POINT_MISSING), the
 // unrevoked, unexpired grant reused or created with its display copy, and a portal.sync pass enqueued.
 //
@@ -59,13 +61,14 @@ interface Invited {
 
 async function partyRole(tx: Tx, scope: Scope, contactId: string): Promise<{ role: PartyRole; side: string; agent: string | null; line1: string } | null> {
   if (scope.kind === 'deal') {
-    const r = await sql<{ side: string; owner: string | null; primary: string | null; role: string | null }>`
-      SELECT d.side, d.owner_user_id AS owner, d.primary_contact_id AS primary,
+    const r = await sql<{ side: string; stage: string; owner: string | null; primary: string | null; role: string | null }>`
+      SELECT d.side, d.stage, d.owner_user_id AS owner, d.primary_contact_id AS primary,
              (SELECT dc.role FROM deal_contacts dc WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id AND dc.contact_id = ${contactId}
                  AND dc.role IN ('buyer','seller','co_buyer','co_seller')) AS role
         FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.id = ${scope.id}`.execute(tx);
     const d = r.rows[0];
     if (!d) throw new AppError('NOT_FOUND');
+    if (d.stage === 'lost') throw new AppError('PORTAL_DEAL_LOST');
     const role = (d.role as PartyRole | null) ?? (d.primary === contactId ? 'primary' : null);
     return role ? { role, side: d.side, agent: d.owner, line1: '' } : null;
   }

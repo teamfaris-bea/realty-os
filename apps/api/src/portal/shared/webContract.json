@@ -2699,6 +2699,10 @@
       "status": 409,
       "sentence": "This account is already disabled. Invite the client again to give access back."
     },
+    "PORTAL_DEAL_LOST": {
+      "status": 409,
+      "sentence": "This deal is marked lost, so its client can't be invited to the portal."
+    },
     "PORTAL_GRANT_INACTIVE": {
       "status": 409,
       "sentence": "This client access was revoked or has ended, so nothing new can be shared to it."

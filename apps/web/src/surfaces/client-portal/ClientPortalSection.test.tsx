@@ -1,7 +1,7 @@
 // module 46 (R-PORTALWEB-10; E693, E718): the deal's client portal section and "What {name} sees", in jsdom, on
 // fixtures checked against module 45's contract.
 import type { Role } from '@realty/core/foundation';
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { contractSentence, copyEntry } from '../../portal/test/portalContract.js';
@@ -15,8 +15,8 @@ import { PORTAL_STAFF_MESSAGES, STAFF_WORDS, mayManagePortal } from './words.js'
 
 const JANE = { id: F.JANE, name: 'Jane Doe' };
 // the deal as DealsPages passes it: its owner and its members (DocumentsSection's facts). ME is the signed-in user.
-const dealHost = (ownerUserId: string | null, memberUserIds: readonly string[] = []): SurfaceModule => ({
-  pages: [{ path: '/t/deal', title: 'Deal', roles: 'all', component: () => <ClientPortalSection dealId={F.DEAL} primaryContact={JANE} ownerUserId={ownerUserId} memberUserIds={memberUserIds} /> }],
+const dealHost = (ownerUserId: string | null, memberUserIds: readonly string[] = [], dealLost = false): SurfaceModule => ({
+  pages: [{ path: '/t/deal', title: 'Deal', roles: 'all', component: () => <ClientPortalSection dealId={F.DEAL} primaryContact={JANE} ownerUserId={ownerUserId} memberUserIds={memberUserIds} dealLost={dealLost} /> }],
 });
 const host = dealHost(ME);
 const render = (fake: FakeFetch, path = '/t/deal', role: Role = 'agent', h: SurfaceModule = host) => app(fake, path, role, surface, h);
@@ -89,6 +89,35 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
     const s = await section();
     await userEvent.click(await within(s).findByRole('button', { name: 'Invite Jane Doe' }));
     expect(await within(s).findByText(PORTAL_STAFF_MESSAGES.PORTAL_LOGIN_POINT_MISSING!)).toBeInTheDocument();
+    expect(s.textContent).not.toMatch(/[A-Z]+_[A-Z_]+/);
+  });
+
+  // b15 review L1: 45 refuses an invite on a lost deal (PORTAL_DEAL_LOST: portal.sync ends its grant at once), so the
+  // section offers no Invite or Resend there and says why in 45's words; Stop sharing stays (the grant may still be live
+  // until the next sync)
+  it('E690 (b15 review L1): a lost deal: no Invite (nobody invited) and no Resend (a live grant before the sync), 45\'s sentence instead; Stop sharing kept', async () => {
+    const lostHost = dealHost(ME, [], true);
+    const none = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state()));
+    render(none, '/t/deal', 'agent', lostHost);
+    let s = await section();
+    expect(await within(s).findByText(PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST!)).toBeInTheDocument();
+    expect(within(s).queryByRole('button', { name: /^(Invite|Send the invite again)/ })).toBeNull();
+    cleanup();
+    const live = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ accounts: [F.account()], grants: [F.grantStaff()] })));
+    render(live, '/t/deal', 'agent', lostHost);
+    s = await section();
+    expect(await within(s).findByText(PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST!)).toBeInTheDocument();
+    expect(within(s).queryByRole('button', { name: /^(Invite|Send the invite again)/ })).toBeNull();
+    expect(within(s).getByRole('button', { name: 'Stop sharing with Jane Doe' })).toBeInTheDocument();
+    expect(live.calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  it("E690 (b15 review L1): an invite 45 refuses because the deal was lost meanwhile (a stale page) shows 45's sentence", async () => {
+    const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state())).on(INVITE, F.apiErr('PORTAL_DEAL_LOST'));
+    render(fake);
+    const s = await section();
+    await userEvent.click(await within(s).findByRole('button', { name: 'Invite Jane Doe' }));
+    expect(await within(s).findByText(PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST!)).toBeInTheDocument();
     expect(s.textContent).not.toMatch(/[A-Z]+_[A-Z_]+/);
   });
 

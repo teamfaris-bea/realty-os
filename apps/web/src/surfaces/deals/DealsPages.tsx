@@ -154,7 +154,7 @@ export function DealPage() {
       <MilestoneTimeline dealId={d.id} />
       <DocumentsSection kind="deal" id={d.id} ownerUserId={d.ownerUserId} memberUserIds={d.members.map((m) => m.userId)} />
       {/* module 46: the client portal (invite, what the client sees, stop sharing) */}
-      <ClientPortalSection dealId={d.id} primaryContact={d.primaryContact} ownerUserId={d.ownerUserId} memberUserIds={d.members.map((m) => m.userId)} />
+      <ClientPortalSection dealId={d.id} primaryContact={d.primaryContact} ownerUserId={d.ownerUserId} memberUserIds={d.members.map((m) => m.userId)} dealLost={d.stage === 'lost'} />
 
       <Section title="Where this deal came from">
         <p className="text-[15px] text-ink">

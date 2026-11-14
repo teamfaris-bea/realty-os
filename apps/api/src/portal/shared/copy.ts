@@ -90,6 +90,7 @@ export const CODE_SENTENCES = {
   PORTAL_SOURCE_INVALID: 'That item could not be read. Reload and try again.',
   PORTAL_TEXT_TOO_LONG: 'That text is over 4,000 characters; shorten it before sharing.',
   PORTAL_TEXT_NOT_PLAIN: 'That text has characters the portal cannot show; edit it before sharing.',
+  PORTAL_DEAL_LOST: "This deal is marked lost, so its client can't be invited to the portal.",
   PORTAL_PERSON_ONLY: 'Only a person can share this.',
   PORTAL_RULE_MILESTONES_ONLY: 'Only confirmed dates are shared automatically.',
 } as const satisfies Partial<Record<ErrorCode | 'PORTAL_PERSON_ONLY' | 'PORTAL_RULE_MILESTONES_ONLY', string>>;

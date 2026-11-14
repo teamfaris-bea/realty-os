@@ -5,7 +5,8 @@
 // idempotency key per tap) with 45's dispatch-gated notice, blocked included, never a send-anyway, and Stop sharing
 // (a confirm dialog; final). It always says what cannot be shared from the app yet. Invite, Resend and Stop sharing are
 // shown only to a viewer 45 lets manage (b15 audit F1: mayManagePortal mirrors portal.manage); a TC or a member agent
-// who does not own the deal sees the section read-only, with who can.
+// who does not own the deal sees the section read-only, with who can. On a lost deal (b15 review L1) 45 refuses an invite
+// and a resend (PORTAL_DEAL_LOST: portal.sync ends the grant at once), so 45's sentence stands in place of both.
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -25,6 +26,8 @@ export interface ClientPortalSectionProps {
   ownerUserId?: string | null;
   /** the deal's members: they may view the section, never manage it (portal.manage has no deal scope) */
   memberUserIds?: readonly string[];
+  /** the deal is lost: 45 refuses Invite and Resend (PORTAL_DEAL_LOST), so neither is offered (b15 review L1) */
+  dealLost?: boolean;
 }
 
 function NoticeView({ notice }: { notice: InviteNotice }) {
@@ -36,7 +39,7 @@ function NoticeView({ notice }: { notice: InviteNotice }) {
   );
 }
 
-export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUserId = null, memberUserIds = [] }: ClientPortalSectionProps) {
+export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUserId = null, memberUserIds = [], dealLost = false }: ClientPortalSectionProps) {
   const kind = dealId ? 'deal' : 'listing';
   const id = (dealId ?? listingId)!;
   const api = useApi();
@@ -124,7 +127,8 @@ export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUs
               );
             })}
           </ul>
-          {canManage && primaryContact && !primaryDeleted ? (
+          {dealLost && kind === 'deal' ? <p className="text-[15px] text-ink">{PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST}</p> : null}
+          {canManage && primaryContact && !primaryDeleted && !(dealLost && kind === 'deal') ? (
             <div className="flex flex-wrap gap-2">
               {primaryLive ? (
                 <Button variant="secondary" pending={invite.pending} onClick={() => void doInvite(true)}>

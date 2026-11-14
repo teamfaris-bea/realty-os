@@ -51,6 +51,43 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     expect((await call(agent(), 'POST', `/deals/${d}/contacts`, { contactId: stranger.id, role: 'co_buyer' })).status).toBe(200);
   });
 
+  it('E690 (b15 review L1): a lost deal is 409 PORTAL_DEAL_LOST, resend too: no account, grant, audit or note (its grant would lapse at the next sync)', async () => {
+    const lose = async (d: string) => {
+      const dv = await call<{ deal: { rowVersion: number } }>(agent(), 'GET', `/deals/${d}`);
+      expect((await call(agent(), 'POST', `/deals/${d}/stage`, { rowVersion: dv.body.deal.rowVersion, stage: 'lost', lostReason: 'went elsewhere' })).status).toBe(200);
+    };
+    const notes = async (contactId: string) =>
+      (await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM messages WHERE contact_id = $1 AND direction = 'outbound' AND idempotency_key LIKE '%portal_invite%'`, [contactId])).rows[0]!.n;
+    // never invited: nothing is created
+    const lou = await client(agent(), { firstName: 'Lou' });
+    const d = await deal(agent(), lou.id);
+    await lose(d);
+    for (const extra of [{}, { resend: true }]) {
+      const r = await invite(agent(), d, lou.id, extra);
+      expect(r.status).toBe(409);
+      expect(r.code).toBe('PORTAL_DEAL_LOST');
+    }
+    const made = await h.su.query<{ accounts: number; grants: number; audits: number }>(
+      `SELECT (SELECT count(*) FROM portal_accounts WHERE contact_id = $1)::int AS accounts, (SELECT count(*) FROM portal_grants WHERE deal_id = $2)::int AS grants,
+              (SELECT count(*) FROM audit_log WHERE action IN ('portal.granted','portal.invited')
+                  AND entity_id IN (SELECT id FROM portal_accounts WHERE contact_id = $1 UNION SELECT id FROM portal_grants WHERE deal_id = $2))::int AS audits`,
+      [lou.id, d],
+    );
+    expect(made.rows[0]).toEqual({ accounts: 0, grants: 0, audits: 0 });
+    expect(await notes(lou.id)).toBe(0);
+    // invited while open, then lost: Resend sends no second note, and after the sync Invite makes no new grant
+    const max = await client(agent(), { firstName: 'Max' });
+    const d2 = await deal(agent(), max.id);
+    expect((await invite(agent(), d2, max.id)).status).toBe(200);
+    expect(await notes(max.id)).toBe(1);
+    await lose(d2);
+    expect((await invite(agent(), d2, max.id, { resend: true })).code).toBe('PORTAL_DEAL_LOST');
+    await sync();
+    expect((await invite(agent(), d2, max.id)).code).toBe('PORTAL_DEAL_LOST');
+    expect(await notes(max.id)).toBe(1);
+    expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM portal_grants WHERE deal_id = $1`, [d2])).rows[0]!.n).toBe(1);
+  });
+
   it('E691: no active email or phone is 409 PORTAL_LOGIN_POINT_MISSING; a login point later removed makes the staff view say sign-in is impossible', async () => {
     const c = await client(agent(), { firstName: 'Nopo' });
     const d = await deal(agent(), c.id);
