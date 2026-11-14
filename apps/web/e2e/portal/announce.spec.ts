@@ -3,7 +3,7 @@
 // projects. b17 (b16 review): jsdom has no focus fix-up rule, and the unit tests' act() flushed the live region's clear
 // and set apart, so these run where only a browser shows them:
 //   FA-1  a failed Try again (a Grant panel, and HomeError) announces the same sentence again: the region is read
-//         after two failures and holds it twice
+//         after two failures and holds it twice; the first /me's error screen keeps its focused Try again meanwhile
 // Where the real stack cannot fail on cue, the browser answers with module 45's own error body (a 500 INTERNAL_ERROR).
 import { type BrowserContext, type Page, type Route, expect, test } from 'playwright/test';
 import { newClientContext, openLinkAndSignIn, requestLink } from './common.js';
@@ -111,5 +111,7 @@ test('FA-1: HomeError (a first /me that fails) announces its sentence again afte
   await expect.poll(() => reads.n).toBeGreaterThan(before);
   await expect(again).not.toHaveAttribute('aria-disabled', 'true');
   await expect.poll(() => times(GENERIC), { message: 'the failed retry is announced again', timeout: 5_000 }).toBe(2);
+  // b17: the error screen stayed while /me was read again (it was swapped for "Loading", and focus fell to <body>)
+  await expect(again).toBeFocused();
 });
 

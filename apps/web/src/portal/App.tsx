@@ -138,17 +138,30 @@ function Screens({ link }: { link: LinkRead }) {
   return <Checked lead={lead} onIn={() => (wasIn.current = true)} onSignedOut={signedOut} onUnavailable={unavailable} />;
 }
 
+/** What a /me with no data last settled on: signed out (the sign-in form), or a failure and its sentence. */
+type Settled = { signIn: true } | { signIn: false; sentence: string };
+
 /** GET /me decides: home when signed in, else the sign-in form (or the no-team state). */
 function Checked({ lead, onIn, onSignedOut, onUnavailable }: { lead: string | null; onIn(): void; onSignedOut(): void; onUnavailable(): void }) {
   const me = useMe();
+  // b17 (found with b16 review FA-1's browser test): a read of /me with no data puts the query back to 'pending' and
+  // clears its error (TanStack), so the screen /me had settled on was swapped for "Loading" while /me was read again:
+  // on the error screen's Try again, and on the sign-in form each time the tab is shown again (refetchOnWindowFocus).
+  // The focused Try again, or the field and what was typed, went, and focus fell to <body>. That screen now stays
+  // until /me answers (Try again is aria-disabled meanwhile, as Grant's panels since b16). Set during render from the
+  // query's own state, so a StrictMode second render sets the same value.
+  const settled = useRef<Settled | null>(null);
+  if (me.data !== undefined) settled.current = null;
+  else if (me.isError) settled.current = me.error.code === 'PORTAL_SESSION_REQUIRED' ? { signIn: true } : { signIn: false, sentence: sentenceFor(me.error.code) };
+  const shown = me.data === undefined && (me.isError || me.errorUpdateCount > 0) ? settled.current : null;
   useEffect(() => {
     if (me.data) onIn();
   }, [me.data, onIn]);
-  if (me.isError && me.error.code === 'PORTAL_SESSION_REQUIRED') return <SignIn lead={lead} onUnavailable={onUnavailable} />;
+  if (shown?.signIn) return <SignIn lead={lead} onUnavailable={onUnavailable} />;
   // b15 audit F11: a first /me that fails for another reason (a network error, an unreadable answer) is shown here, with
   // Try again and no Sign out (whether the client is signed in is not known). Falling through to Home looped: Home's
   // observer refetched on mount, the query went back to pending, and this screen unmounted Home again.
-  if (me.isError && me.data === undefined) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} retrying={me.isFetching} failedAt={me.errorUpdatedAt} signOut={null} />;
+  if (shown) return <HomeError sentence={shown.sentence} onRetry={() => void me.refetch()} retrying={me.isFetching} failedAt={me.errorUpdatedAt} signOut={null} />;
   if (me.isPending)
     return (
       <main id="main" className="mx-auto max-w-[640px] px-4 pt-6">
