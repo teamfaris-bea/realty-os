@@ -120,7 +120,8 @@ export function scoreboardLines(s: Scoreboard): MetricLine[] {
   const median = stl.medianSeconds === null ? 'No first touches yet' : `Median ${formatDuration(stl.medianSeconds)} (of ${plural(stl.responded, 'first touch', 'first touches')})`;
   return [
     {
-      label: 'Speed to lead',
+      // b18 review F2 (E724): a first touch is the first attempt (R-OWN-14: a call answered or not, a text, email or chat reply)
+      label: 'Speed to lead (first attempt)',
       text: `${stl.withinSla} of ${stl.total} within the first-touch window`,
       detail: stl.pending > 0 ? `${median} · ${stl.pending} still waiting` : median,
     },

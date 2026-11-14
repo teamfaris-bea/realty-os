@@ -103,7 +103,7 @@ export async function recipientFor(tx: Tx, a: Pick<AssignmentRow, 'id' | 'contac
 
 /**
  * b13 review B13S-3 / F4-ui: why a post-handoff appointment confirmation did not go out, as the web must say it.
- * 'not_needed': a person on the team reached them first (ISA_HANDOFF_CLOSED; the card says so, nothing to do);
+ * 'not_needed': a person on the team called, texted or emailed them first, an attempt (ISA_HANDOFF_CLOSED; the card says so, nothing to do);
  * 'unreachable': D1 leaves the person no text, call or email now, so it cannot be confirmed by hand (keep or cancel the
  * appointment; AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE); 'by_hand': confirm it by hand. null when no confirmation
  * failed (none planned, still pending, sent, or the pending message is a holding line). Read now, under the reader's
@@ -552,12 +552,13 @@ async function sweepFailedInTx(tx: Tx, actor: SystemActor, failed: { id: string;
  * call or email, a hand confirmation is impossible: the card says so (AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE, keep or
  * cancel the appointment), the notification reads "Appointment not confirmed", and no deadline is set or pulled in; a
  * handoff with no deadline (sla_class 'none') never gets one (b13 integration). `closed` (ISA_HANDOFF_CLOSED: a person
- * reached them first): the card says so, nothing hot. Codes only; never message content.
+ * called, texted or emailed them first, an attempt answered or not: b18 review F2): the card says so, nothing hot. Codes
+ * only; never message content.
  */
 export async function confirmationNotSentInTx(tx: Tx, ids: IdGenerator, h: { id: string; assignmentId: string; contactId: string; recipientUserId: string | null }, kind: 'not_sent' | 'closed', now: Instant): Promise<void> {
   const label = (await contactLabel(tx, h.contactId)) ?? 'A lead';
   if (kind === 'closed') {
-    await sql`UPDATE priority_feed_items SET reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_NEEDED', text: 'Someone on the team reached them first, so the AI confirmation was not sent.' }])}::jsonb,
+    await sql`UPDATE priority_feed_items SET reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_NEEDED', text: 'Someone on the team called, texted or emailed them first (an attempt, answered or not), so the AI confirmation was not sent.' }])}::jsonb,
         updated_at = now() WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
     return;
   }

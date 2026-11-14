@@ -965,7 +965,7 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     const s = await sendText(agent(), l.id, 'Hi, this is your agent: confirming our consultation personally.');
     expect([200, 201]).toContain(s.status);
     await runIsa(h, bw.tenantId, 2, { beforeTick: holdConfirmations });
-    // now let the confirmation's dispatch run: the guard refuses it (a person reached them first)
+    // now let the confirmation's dispatch run: the guard refuses it (a person's attempt came first)
     await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND kind = 'comms.dispatch' AND status = 'pending'`, [bw.tenantId]);
     await runIsa(h, bw.tenantId, 3);
     const m = (await aiMessages(h, l.id)).find((x) => x.id === ho.pending_message_id)!;
@@ -973,8 +973,10 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect([m.status, m.status_reason]).toEqual(['blocked', 'ISA_HANDOFF_CLOSED']);
     const notes = await h.su.query<{ kind: string }>(`SELECT kind FROM notifications WHERE subject_id = $1 AND dedupe_key LIKE 'ai_isa_confirmation_not_sent:%'`, [l.id]);
     expect(notes.rows).toHaveLength(0);
-    const card = (await h.su.query<{ reasons: { code: string }[] }>(`SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff'`, [l.id])).rows[0]!;
+    const card = (await h.su.query<{ reasons: { code: string; text: string }[] }>(`SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff'`, [l.id])).rows[0]!;
     expect(card.reasons[0]!.code).toBe('AI_ISA_CONFIRMATION_NOT_NEEDED');
+    // b18 review F2 (E724): a person's touch is an attempt (R-OWN-14), so the card never says they were reached
+    expect(card.reasons[0]!.text).toBe('Someone on the team called, texted or emailed them first (an attempt, answered or not), so the AI confirmation was not sent.');
     // nothing hot: no confirmation-not-sent notification (`notes` above) and the card is not re-scored
     expect(card.reasons.map((r) => r.code)).not.toContain('AI_ISA_CONFIRMATION_NOT_SENT');
     expect((await handoffOf(h, l.id))[0]!.confirmation_status).toBe('refused');
