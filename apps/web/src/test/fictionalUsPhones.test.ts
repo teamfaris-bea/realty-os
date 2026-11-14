@@ -22,6 +22,10 @@
 //   followed by a template hole or a concatenation. It passes only when its digits already reach 555-01
 //   ("+1843555013" then a hole) or, for "+1" and fewer than eight digits, when its line spells 55501 after the hole
 //   ("+1", the area code's hole, then 55501). Numbers built entirely at run time are checked by their generators' tests.
+// - b17 round 2 (M1): a generator with neither "+1" nor a separator: a string (or a tel: link) that starts with an area
+//   code, or 1 and one, and up to six more digits, before a hole or a concatenation (`NXX555${n}`, '1NXX' + n,
+//   'NXX555' || lpad(...) in SQL, written here with letters). It passes when its digits reach 555-01, or when it is
+//   the area code alone and its line spells 55501 after it ('415' + area + '55501' + nn).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -63,6 +67,10 @@ const TEL = /(?<!\w)tel:(?:1[\s.-]?)?(?:\(([2-9]\d{2})\)|([2-9]\d{2}))[\s.-]?(\d
 const HOLE = String.raw`(?=\$\{|['"\x60]\s*(?:\+|\|\|))`;
 const GENERATOR = new RegExp(String.raw`(?<![\w+])\+1(\d{0,9})` + HOLE, 'g');
 const WRITTEN_GENERATORS = [new RegExp(String.raw`\(([2-9]\d{2})\)[\s.-]?([\d\s.-]{0,8})` + HOLE, 'g'), new RegExp(String.raw`(?<![\w+$.:/-])([2-9]\d{2})-(\d[\d-]{0,7})` + HOLE, 'g')];
+// b17 round 2 (M1): a string that starts with an area code (or 1 and one), and up to six more digits, before a hole or
+// a concatenation. A literal compared (code === '23514' || …) or one inside a concatenation (… || '55501' || …) starts
+// no number.
+const DIGIT_GENERATOR = new RegExp(String.raw`(?<=['"\x60]|tel:)(?<!(?:[=!]=|\+|\|\|)\s*['"\x60])1?([2-9]\d{2,8})` + HOLE, 'gi');
 const REACHES_FICTION = /^[2-9]\d{2}55501\d?$/;
 
 /** Every +1 or NANP-formatted number in `text`, and every number generator, with whether it is fictional. */
@@ -90,6 +98,10 @@ export function usNumbers(text: string): Found[] {
         const d = `${m[1]}${m[2]!.replace(/\D/g, '')}`;
         add(m, d, REACHES_FICTION.test(d));
       }
+    }
+    for (const m of l.matchAll(DIGIT_GENERATOR)) {
+      const d = m[1]!;
+      add(m, d, REACHES_FICTION.test(d) || (d.length === 3 && l.slice(m.index! + m[0].length).includes('55501')));
     }
     for (const m of l.matchAll(TEL)) {
       const ten = `${m[1] ?? m[2]}${m[3]}${m[4]}`;
@@ -151,6 +163,7 @@ export const ALLOWED: Record<string, Record<string, string>> = {
   },
   'apps/api/src/load/generate.ts': {
     '2147483647': "not a phone number: 2^31 - 1, the mask that keeps the load generator's SQL hash positive",
+    '946': "not a phone number: the ZIP code prefix (946xx, Oakland) the load generator's SQL builds inquiry postal codes from",
   },
   'apps/api/src/transactions/adversarial.test.ts': {
     '4417123456': 'not a phone number: the account number of a forged wire-instruction label the test proves never reaches a message',
@@ -164,6 +177,10 @@ export const ALLOWED: Record<string, Record<string, string>> = {
   },
   'packages/db/test/riOrderFixture.ts': {
     '4294967295': 'not a phone number: the comment names the largest Postgres oid, 2^32 - 1',
+  },
+  // b17 round 2 (M1): strings the digit-led generator read finds
+  'apps/api/src/providers/email/mailgun.test.ts': {
+    '529006854': "not a phone number: the 1 and these digits are the Unix timestamp of Mailgun's documented signature example, which the test signs with its token",
   },
 };
 
@@ -236,6 +253,23 @@ describe('b17 (B17R-2): US phone numbers in apps, packages and docs are fictiona
     ]);
     const planted = 'apps/web/src/planted.html';
     expect(outsideRange(planted, `<p><a href="tel:(${sample('415')})${line('21')}">Call</a></p>`)).toEqual([`${planted}:1: tel:(${sample('415')})${line('21')}`]);
+  });
+
+  it('b17 round 2 (M1): a generator that starts a string with an area code (or 1 and one) and more digits, then a hole or a concatenation, is read', () => {
+    const text = [
+      `const a = \`${sample('415055')}\${n}\`; const b = '${sample('1415')}' + n; const c = "${sample('415')}" + String(n);`,
+      `const d = \`41555501\${nn}\`; const e = '415' + area + '55501' + nn; const f = \`tel:${sample('415055')}\${n}\`;`,
+      `sql: '${sample('415055')}' || lpad(n::text, 4, '0'), '+1' || a || '55501' || lpad(l::text, 2, '0');`,
+      // a literal compared, one in the middle of a concatenation and digits after a hole or a letter start no number
+      `not generators: code === '${sample('23514')}' || x, e.code !== '${sample('40001')}' || y, \`limit=${sample('200')}\${q}\`, \`\${a}${sample('415')}\${b}\``,
+    ].join('\n');
+    expect(usNumbers(text).map((f) => [f.line, f.digits, f.ok])).toEqual([
+      [1, sample('415055'), false], [1, '415', false], [1, '415', false],
+      [2, '41555501', true], [2, '415', true], [2, sample('415055'), false],
+      [3, '', true], [3, sample('415055'), false],
+    ]);
+    const planted = 'apps/api/src/planted.ts';
+    expect(outsideRange(planted, `export const g = (n: number) => \`${sample('415', '055')}\${String(n).padStart(4, '0')}\`;`)).toEqual([`${planted}:1: ${sample('415055')}`]);
   });
 
   it('every +1 or NANP number under apps, packages and docs is in 555-0100..0199 or allowed with a reason', () => {
