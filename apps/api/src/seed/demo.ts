@@ -405,7 +405,7 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
     for (const stage of d.stages) v = (await c.must<{ deal: { rowVersion: number } }>('POST', `/deals/${r.deal.id}/stage`, { rowVersion: v, stage, ...(stage === 'lost' && d.lostReason ? { lostReason: d.lostReason } : {}) })).deal.rowVersion;
     return r.deal.id;
   };
-  await deal(agent1, noah.id, { side: 'buy', priceCents: 69_000_000, close: '2026-12-18', stages: ['agreement_signed', 'active', 'under_contract'] });
+  const noahDeal = await deal(agent1, noah.id, { side: 'buy', priceCents: 69_000_000, close: '2026-12-18', stages: ['agreement_signed', 'active', 'under_contract'] });
   await deal(agent1, ava.id, { side: 'sell', priceCents: 81_500_000, close: '2026-10-30', stages: ['agreement_signed', 'active', 'under_contract', 'closed'] });
   await deal(agent1, jane.id, { side: 'buy', priceCents: 65_000_000, close: '2027-02-15', stages: [], listingId: oak.listing.id });
   await deal(agent2, b2.id, { side: 'sell', priceCents: 61_000_000, close: '2027-01-20', stages: ['agreement_signed', 'active'] });
@@ -413,6 +413,14 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
   await deal(agent3, c1.id, { side: 'sell', priceCents: 89_900_000, close: '2027-03-01', stages: ['agreement_signed'] });
   await deal(agent3, c2.id, { side: 'buy', priceCents: 58_000_000, close: '2027-01-10', stages: ['agreement_signed', 'active'] });
   log('5 listings, 7 deals (prospect → closed, one lost)');
+
+  // ---- 14b. one invited portal client (b17) ----------------------------------------------------------
+  // Avery invites Noah to the client portal on his purchase, through the staff route, so the deal's "What Noah Bennett
+  // sees" preview has a grant to show. platform:portal is not cleared here (D11: only counsel's recorded review clears
+  // it, per deployment), so the invite stands and its notice is not sent; no sign-in link exists.
+  const invited = await agent1.must<{ grant: { id: string }; notice: { sent: boolean } }>('POST', `/deals/${noahDeal}/portal/invite`, { contactId: noah.id, idempotencyKey: `seed-portal-${randomUUID()}` });
+  if (invited.notice.sent) throw new SeedError('the portal invite notice was sent: platform:portal must stay uncleared in the demo');
+  log(`portal: ${noah.name} invited on his purchase (one grant); platform:portal is not cleared, so nothing was sent`);
 
   // ---- 15. an approved team nurture playbook, and enrollments -------------------------------------
   const DAY = 86_400;
@@ -541,7 +549,7 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
         password: DEMO_PASSWORD,
         ownerTotpSecret: totpSecret,
         users: Object.fromEntries(Object.entries(PEOPLE).map(([k, p]) => [k, { email: p.email, name: p.name, role: k === 'owner' ? 'owner' : roles[k as Exclude<PersonKey, 'owner'>] }])),
-        contacts: { optedOut: owen.name, californiaAddress: grace.name, drafts: [jane.name, lena.name], failedSend: liam.name, savedSearch: sophia.name },
+        contacts: { optedOut: owen.name, californiaAddress: grace.name, drafts: [jane.name, lena.name], failedSend: liam.name, savedSearch: sophia.name, portalClient: noah.name },
         untouchedLeads: untouched.map((u) => ({ name: u.name, owner: nameOf.get(u.owner.userId) })),
         averyOffers: averyOffers.map((o) => o.name),
       },

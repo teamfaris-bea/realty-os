@@ -192,6 +192,43 @@ describe('pnpm seed: the demo tenant', () => {
     }
   });
 
+  // b17: one invited portal client on one deal, so the staff "What {name} sees" preview has a grant to show. platform:portal
+  // stays uncleared (D11: only counsel's recorded review clears it), so the invite stands and its notice is not sent.
+  it('b17: Noah Bennett is invited to the portal on Avery’s purchase: one account and one live grant, platform:portal not cleared, no notice sent; Avery’s preview shows the grant and why Noah can’t see it', async () => {
+    const noah = await contactId('Noah Bennett');
+    const avery = await userId('avery@demo.realty-os.test');
+    const grants = await q<{ grant_id: string; deal_id: string | null; status: string; invited_by: string; granted_by: string; revoked: boolean; contact_id: string; side: string; stage: string }>(
+      `SELECT g.id AS grant_id, g.deal_id, a.status, a.invited_by_user_id AS invited_by, g.granted_by_user_id AS granted_by, g.revoked_at IS NOT NULL AS revoked, a.contact_id, d.side, d.stage
+         FROM portal_grants g JOIN portal_accounts a ON a.tenant_id = g.tenant_id AND a.id = g.portal_account_id JOIN deals d ON d.tenant_id = g.tenant_id AND d.id = g.deal_id
+        WHERE g.tenant_id = $1`,
+      [tenantId],
+    );
+    expect(grants).toEqual([{ grant_id: expect.any(String), deal_id: expect.any(String), status: 'invited', invited_by: avery, granted_by: avery, revoked: false, contact_id: noah, side: 'buy', stage: 'under_contract' }]);
+    expect((await q<{ ok: boolean }>(`SELECT app.platform_cleared('platform:portal') AS ok`))[0]!.ok).toBe(false);
+    // nothing was sent to Noah about the portal (no message names it), and no sign-in link exists
+    expect(await q(`SELECT 1 FROM messages WHERE tenant_id = $1 AND contact_id = $2 AND direction = 'outbound' AND body ILIKE '%portal%'`, [tenantId, noah])).toEqual([]);
+    expect(await q(`SELECT 1 FROM portal_login_tokens WHERE tenant_id = $1`, [tenantId])).toEqual([]);
+    expect(lines).toContain('portal: Noah Bennett invited on his purchase (one grant); platform:portal is not cleared, so nothing was sent');
+
+    const database = createDatabase({ url: db.appUserUrl, max: 3, applicationName: 'seed-portal-preview' });
+    configureDatabase(database);
+    const clock = { now: () => instant(Date.now()) };
+    const ids = uuidv7Generator(clock, (n) => new Uint8Array(randomBytes(n)));
+    const app = buildServer(opts.config, { providers: createFakeProviders({ clock }), clock, ids, db: database });
+    await app.ready();
+    try {
+      const c = new SeedClient(app, TEST_ORIGIN, '203.0.113.73', 'avery@demo.realty-os.test');
+      await c.must('POST', '/auth/login', { email: 'avery@demo.realty-os.test', password: DEMO_PASSWORD });
+      const preview = await c.must<{ visibleNow: boolean; why: string[]; grant: { id: string; title: string } }>('GET', `/portal-grants/${grants[0]!.grant_id}/preview`);
+      expect(preview.grant.id).toBe(grants[0]!.grant_id);
+      expect(preview.visibleNow).toBe(false);
+      expect(preview.why.join(' ')).toMatch(/not turned on/);
+    } finally {
+      await app.close();
+      await database.close();
+    }
+  });
+
   it('refuses a second run: it says how to start over and changes nothing', async () => {
     const counts = async () =>
       (
