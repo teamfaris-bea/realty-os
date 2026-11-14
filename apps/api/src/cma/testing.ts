@@ -115,9 +115,28 @@ let seq = 0;
 /** Feed modification times: one second apart, in creation order (a later record is newer, as in a real feed). */
 const BASE_MODIFIED = Date.now() - 86_400_000;
 
-/** Today's date (UTC) minus `days`, as YYYY-MM-DD. */
+/**
+ * Today's date (UTC) minus `days`, as YYYY-MM-DD. Never use it as "today" for a check the server makes in the tenant's
+ * zone (batch 13 to-do, b14 round 2): from UTC midnight until the tenant's midnight it is a day ahead of a tenant west
+ * of UTC. Use tenantDaysAgo for that.
+ */
 export function daysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * The tenant's own date minus `days` (negative: ahead), as YYYY-MM-DD: the database clock read in
+ * tenant_settings.default_timezone, which is what the CMA checks compare with (service.ts checkInspectedOn:
+ * localDateOf(now, zoneOf(tx)), `now` the transaction's clock_timestamp()). It never reads this process's clock, so a
+ * pinned test clock does not move it.
+ */
+export async function tenantDaysAgo(h: ApiHarness, tenantId: string, days: number): Promise<string> {
+  const r = await h.su.query<{ d: string }>(
+    `SELECT to_char((clock_timestamp() AT TIME ZONE s.default_timezone)::date - $2::int, 'YYYY-MM-DD') AS d FROM tenant_settings s WHERE s.tenant_id = $1`,
+    [tenantId, days],
+  );
+  if (!r.rows[0]) throw new Error(`tenantDaysAgo: no tenant_settings row for ${tenantId}`);
+  return r.rows[0].d;
 }
 
 const RESO_STATUS: Record<NonNullable<Sale['status']>, string> = { sold: 'Closed', active: 'Active', pending: 'Pending', coming_soon: 'Coming Soon', withdrawn: 'Withdrawn', expired: 'Expired' };

@@ -1,11 +1,11 @@
 // V2-A deliverable 2 against real Postgres: the inspection date and agent-text checks (E607, VERIFY 1), the view's
 // disclosure list (E606), its new fields, and readinessOf (the view's readiness is unchanged by the refactor).
 import { withTenantTx } from '@realty/db';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { getCma } from './repos.js';
 import { readinessOf } from './service.js';
-import { type CmaBody, type CmaWorld, address, call, cmaWorld, contact, daysAgo, localSales, mlsSale, oneTap } from './testing.js';
+import { type CmaBody, type CmaWorld, address, call, cmaWorld, contact, daysAgo, localSales, mlsSale, oneTap, tenantDaysAgo } from './testing.js';
 
 let h: ApiHarness;
 let w: CmaWorld;
@@ -50,7 +50,7 @@ describe('E607 R-CMA-8: the inspection date', () => {
 
   it('E607: a date after today or before 1900 is refused (out_of_range); a date with inspection none is refused (no_inspection), never dropped', async () => {
     const id = await draft();
-    const future = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    const future = await tenantDaysAgo(h, w.tenantId, -3); // the tenant's date, as the check (b14 round 2)
     const f = await patch(id, { inspection: 'exterior', inspectedOn: future });
     expect([f.status, issues(f)]).toEqual([422, [{ path: '/inspectedOn', code: 'out_of_range' }]]);
     expect(issues(await patch(id, { inspection: 'exterior', inspectedOn: '1899-12-31' }))).toEqual([{ path: '/inspectedOn', code: 'out_of_range' }]);
@@ -62,10 +62,12 @@ describe('E607 R-CMA-8: the inspection date', () => {
     expect([q.status, issues(q)]).toEqual([422, [{ path: '/inspectedOn', code: 'no_inspection' }]]);
   });
 
-  it('E607: switching to none clears the stored date; today is accepted', async () => {
+  it('E607: switching to none clears the stored date; today (the tenant\'s date) is accepted', async () => {
     const id = await draft();
-    const today = (await patch(id, { inspection: 'interior_and_exterior', inspectedOn: daysAgo(0) })).body;
-    expect(view(today).inspectedOn).not.toBeNull();
+    // b14 round 2: "today" is the tenant's date (tenant_settings.default_timezone), as checkInspectedOn reads it; the UTC
+    // date (daysAgo(0)) was the tenant's tomorrow from UTC midnight until the tenant's midnight, and this failed with 422
+    const today = (await patch(id, { inspection: 'interior_and_exterior', inspectedOn: await tenantDaysAgo(h, w.tenantId, 0) })).body;
+    expect(view(today).inspectedOn).toBe(await tenantDaysAgo(h, w.tenantId, 0));
     const none = await patch(id, { inspection: 'none' });
     expect([none.status, view(none.body).inspectedOn]).toEqual([200, null]);
     expect((await h.su.query('SELECT inspected_on FROM cma_reports WHERE id = $1', [id])).rows[0].inspected_on).toBeNull();
@@ -78,6 +80,34 @@ describe('E607 R-CMA-8: the inspection date', () => {
       expect([bad, (await patch(id, { disclosure: { intendedUsers: `x ${bad} y` } })).status]).toEqual([bad, 422]);
     }
     expect((await patch(id, { notes: 'line one\nline two' })).status).toBe(200);
+  });
+});
+
+describe('E607 the clock boundary (batch 13 to-do; b14 round 2): "today" is the tenant\'s date, never the UTC date', () => {
+  it('E607: with this process\'s clock pinned to 00:30 UTC and the tenant on another date than UTC\'s, the tenant\'s today is accepted and its tomorrow refused; the UTC date is refused when it is the tenant\'s tomorrow', async () => {
+    const utcDate = new Date().toISOString().slice(0, 10);
+    const zoneBefore = (await h.su.query<{ z: string }>('SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.z;
+    // the database clock decides: before 12:00 UTC a tenant at UTC-12 is still on the previous date, after it one at
+    // UTC+14 is already on the next one, so the tenant's date always differs from the UTC date here
+    const hour = (await h.su.query<{ h: number }>("SELECT extract(hour FROM clock_timestamp() AT TIME ZONE 'UTC')::int AS h")).rows[0]!.h;
+    const behind = hour < 12;
+    const id = await draft();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(`${utcDate}T00:30:00Z`));
+      await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, behind ? 'Etc/GMT+12' : 'Etc/GMT-14']);
+      const today = await tenantDaysAgo(h, w.tenantId, 0);
+      expect(today).not.toBe(daysAgo(0));
+      const ok = await patch(id, { inspection: 'exterior', inspectedOn: today });
+      expect([ok.status, view(ok.body).inspectedOn]).toEqual([200, today]);
+      expect(issues(await patch(id, { inspection: 'exterior', inspectedOn: await tenantDaysAgo(h, w.tenantId, -1) }))).toEqual([{ path: '/inspectedOn', code: 'out_of_range' }]);
+      // the old test's "today", the UTC date: the tenant's tomorrow when it is behind (refused: the batch 13 failure),
+      // its yesterday when it is ahead (accepted)
+      expect((await patch(id, { inspection: 'exterior', inspectedOn: daysAgo(0) })).status).toBe(behind ? 422 : 200);
+    } finally {
+      vi.useRealTimers();
+      await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, zoneBefore]);
+    }
   });
 });
 
