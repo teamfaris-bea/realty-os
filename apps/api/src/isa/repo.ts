@@ -278,11 +278,11 @@ export async function evaluateChain(tx: Tx, a: AssignmentRow, env: ChainEnv): Pr
   // ISA-3 H5: link 10 "Seller home" (R-ISA-26) for a seller- or both-side assignment
   const home = await sellerSubjectLinkInTx(tx, a);
   if (home !== null) links.push(home);
-  // b18 item f: link 11 "Lead source": a person from a source the Owner marked "No AI care for leads from this source"
+  // b18 item f / B18S-5: link 11 "Lead source": a person from a source the Owner marked "No automated contact for leads from this source"
   // pauses (source_no_ai_care); the resume and the database refuse to clear it while the setting is on
   links.push((await personNoAiCareSource(tx, a.contactId))
     ? L(11, 'Lead source', 'pause', 'AI_ISA_SOURCE_NO_AI_CARE', 'source_no_ai_care', SOURCE_NO_AI_CARE_SENTENCE)
-    : L(11, 'Lead source', 'ok', null, null, 'No lead source that sent them is marked "No AI care for leads from this source".'));
+    : L(11, 'Lead source', 'ok', null, null, 'No lead source that sent them is marked "No automated contact for leads from this source".'));
   let worst: LinkResult | null = null;
   for (const l of links) if (l.effect !== 'ok' && (worst === null || RANK[l.effect] > RANK[worst.effect])) worst = l;
   return { links, effect: worst?.effect ?? 'ok', worst };
@@ -290,7 +290,7 @@ export async function evaluateChain(tx: Tx, a: AssignmentRow, env: ChainEnv): Pr
 
 /**
  * b18 item f: whether any record of the person (the merge tree, past the caller's RLS) came from a lead source marked
- * "No AI care for leads from this source", by its original source or (b18 review B18S-1, 0096) by any inquiry of it
+ * "No automated contact for leads from this source" (b18 review B18S-5; first named "No AI care"), by its original source or (b18 review B18S-1, 0096) by any inquiry of it
  * the intake attached later (app.person_no_ai_care_source, a definer returning one boolean).
  */
 export async function personNoAiCareSource(tx: Tx, contactId: string): Promise<boolean> {

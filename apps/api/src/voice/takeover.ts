@@ -22,6 +22,7 @@ import type { ContactId } from '@realty/core/foundation';
 import { lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { sayAndHangupTwiml } from '../providers/twilio/voiceTwiml.js';
+import { NO_AUTOMATED_CONTACT_CALL_REFUSAL, noAutomatedContact } from '../leads/automatedContact.js';
 import { voicemailFor } from './effects.js';
 import { type AnswerFacts, callRow, loadAnswerFacts, loadSessionFacts } from './facts.js';
 import { type NextResult, type VoiceSessionContext, type VoiceTransport } from './provider.js';
@@ -43,6 +44,8 @@ export const TAKEOVER_REFUSALS = {
   VOICE_AFTER_HOURS_ONLY: 'AI answering is set to after hours only, and this call came in during routing hours.',
   VOICE_SETTINGS_INVALID: 'the AI answering settings are not valid.',
   CALL_NOT_RINGING: 'the call was no longer ringing.',
+  // b18 review B18S-5 (owner boundary 2026-11-14): an AI-answered call is automated contact
+  SOURCE_NO_AUTOMATED_CONTACT: NO_AUTOMATED_CONTACT_CALL_REFUSAL,
 } as const;
 export type TakeoverRefusal = keyof typeof TAKEOVER_REFUSALS;
 export const refusalSentence = (code: string | null): string =>
@@ -54,7 +57,7 @@ export interface TakeoverDecision {
   answerAfterSeconds: number;
 }
 
-const DB_CODES = ['VOICE_PLAYBOOK_NOT_APPROVED', 'VOICE_ANSWERING_OFF', 'VOICE_NOT_CLEARED'] as const;
+const DB_CODES = ['VOICE_PLAYBOOK_NOT_APPROVED', 'VOICE_ANSWERING_OFF', 'VOICE_NOT_CLEARED', 'SOURCE_NO_AUTOMATED_CONTACT'] as const;
 
 /** R-VOICE-12: the checks core cannot see, in order; then core's own predicates name its refusal. */
 export function refusalOf(f: AnswerFacts, deps: Pick<VoiceDeps, 'voiceAgent' | 'telephonyProvider' | 'telephonyLiveRequests'>, now: Instant): TakeoverRefusal | null {
@@ -92,7 +95,9 @@ export async function planTakeover(actor: SystemActor, deps: VoiceDeps, callSid:
     if (prior) return prior;
     if (c.handledBy !== 'human' || c.status !== 'ringing' || c.answeredAt) return null;
     const f = await loadAnswerFacts(tx, c);
-    const code = refusalOf(f, deps, now);
+    // b18 review B18S-5: a caller a source marked "No automated contact for leads from this source" sent is never answered
+    // by the assistant (0098's app.calls_source_guard refuses the takeover too, if the setting changes before it)
+    const code = refusalOf(f, deps, now) ?? ((await noAutomatedContact(tx, c.contactId)) ? 'SOURCE_NO_AUTOMATED_CONTACT' : null);
     const takeoverAt = code === null ? (immediate ? now : (shouldAnswer(f.call, f.settings, f.hours, now)!.takeoverAt as Instant)) : null;
     const d: TakeoverDecision = { at: takeoverAt === null ? null : toIso(takeoverAt), code, answerAfterSeconds: f.settings.answerAfterSeconds };
     await sql`

@@ -8,12 +8,13 @@ export const STATE_SENTENCES = {
 } as const;
 
 /**
- * b18 item f (owner product boundary, 2026-11-14): why a person whose original lead source is marked "No AI care for
- * leads from this source" gets no AI care: the start refusal, chain link 11 and the pause note all say it.
+ * b18 item f (owner product boundary, 2026-11-14), renamed by b18 review B18S-5: why a person a lead source marked "No
+ * automated contact for leads from this source" sent gets no AI care: the start refusal, Continue, chain link 11 and the
+ * pause note all say it.
  */
-export const SOURCE_NO_AI_CARE_SENTENCE = "No AI care for leads from this source: the Owner turned this on for this person's lead source, so the AI assistant does not care for them.";
+export const SOURCE_NO_AI_CARE_SENTENCE = "No automated contact for leads from this source: the Owner turned this on for this person's lead source, so the AI assistant does not care for them (nothing automatic goes to them; call, text or email them one to one).";
 /** The pause note's body (notifications.body is at most 240 characters). */
-export const SOURCE_NO_AI_CARE_NOTE = 'No AI care for leads from this source is on for their lead source (an Owner setting). AI care stays paused and cannot be resumed while it is on.';
+export const SOURCE_NO_AI_CARE_NOTE = 'No automated contact for leads from this source is on for their lead source (an Owner setting). AI care stays paused and cannot be resumed or continued while it is on.';
 
 const START_REFUSALS: Record<string, string> = {
   AI_ISA_OFF: 'The AI assistant is off for your team.',

@@ -184,7 +184,7 @@ export const ACTIONS = [
   'cma.share', // module 71 (D9 V2-A): share a CMA, preview it, download its report (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; creator only for share and preview; R-CMA-9)
   'portal.view', // module 45: a deal's or listing's portal state, a grant's client-view preview, an item preview (DATA_MODEL §8 split row)
   'portal.manage', // module 45: invite, publish, retract, revoke, disable, change the login point (Owner, Admin, TL T, agent own)
-  'lead_source.ai_care', // b18 item f: "No AI care for leads from this source" on a lead source (the Owner only; 🔒 when turning it off; DB guard)
+  'lead_source.ai_care', // b18 item f / B18S-5: "No automated contact for leads from this source" on a lead source (the Owner only; 🔒 when turning it off; DB guard)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];

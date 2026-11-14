@@ -21,6 +21,7 @@ import { visibleSurvivorOf } from '../comms/repos/contacts.js';
 import type { CommsDeps } from '../comms/types.js';
 import { AppError } from '../errors.js';
 import { assertLivePasses } from './pieces.js';
+import { NO_AUTOMATED_CONTACT_LABEL, noAutomatedContact } from '../leads/automatedContact.js';
 import * as repo from './repo.js';
 
 export const MAX_INVITE_RECIPIENTS = 1000;
@@ -38,9 +39,11 @@ export interface InviteSendResult {
   text: string;
   alreadyInvited: number;
   merged: number;
+  /** b18 review B18S-5: left out because their lead source is marked "No automated contact for leads from this source" */
+  noAutomatedContact: number;
   recipients: {
     contactId: string;
-    outcome: 'sent' | 'opted_out' | 'blocked' | 'no_email' | 'already_invited' | 'merged';
+    outcome: 'sent' | 'opted_out' | 'blocked' | 'no_email' | 'already_invited' | 'merged' | 'no_automated_contact';
     messageId: string | null;
     mergedInto?: { contactId: string; name: string } | null;
   }[];
@@ -94,7 +97,12 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
       const already = await sql<{ contact_id: string }>`SELECT DISTINCT contact_id FROM messages WHERE tenant_id = app.tenant_id() AND marketing_piece_id = ${pieceId}
          AND contact_id = ANY (${unique}::uuid[]) AND status NOT IN ('canceled','blocked','failed','undelivered','bounced')`.execute(tx);
       const mergedIds = new Set(merged.rows.map((x) => x.id));
+      // b18 review B18S-5 (owner boundary 2026-11-14): an invite is a mass send, so a person a source marked "No automated
+      // contact for leads from this source" sent is left out and counted (dispatch and 0098 refuse such a send anyway)
+      const noAuto = new Set<string>();
+      for (const id of unique) if (!mergedIds.has(id) && (await noAutomatedContact(tx, id))) noAuto.add(id);
       return {
+        noAuto,
         subject,
         body: r.text,
         withEmail: new Set(withEmail.rows.map((x) => x.contact_id).filter((x) => !mergedIds.has(x))),
@@ -111,6 +119,10 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
     for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
       if (prep.merged.has(id)) {
         recipients.push({ contactId: id, outcome: 'merged', messageId: null, mergedInto: await mergedIntoOf(deps, actor, id) });
+        continue;
+      }
+      if (prep.noAuto.has(id)) {
+        recipients.push({ contactId: id, outcome: 'no_automated_contact', messageId: null });
         continue;
       }
       if (prep.already.has(id)) {
@@ -137,15 +149,19 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, unique.length) }, worker));
   const alreadyInvited = recipients.filter((r) => r.outcome === 'already_invited').length;
-  const counted = recipients.filter((r) => r.outcome !== 'no_email' && r.outcome !== 'already_invited' && r.outcome !== 'merged').map((r) => ({ outcome: r.outcome as 'sent' | 'opted_out' | 'blocked' }));
+  const counted = recipients.filter((r) => r.outcome !== 'no_email' && r.outcome !== 'already_invited' && r.outcome !== 'merged' && r.outcome !== 'no_automated_contact').map((r) => ({ outcome: r.outcome as 'sent' | 'opted_out' | 'blocked' }));
   const s = inviteSendSummary(counted);
   const noEmail = recipients.filter((r) => r.outcome === 'no_email').length;
   const merged = recipients.filter((r) => r.outcome === 'merged').length;
-  // core's words ("Sent 41 of 45; 4 opted out"); recipients without an email address and merged-away records count in the total too
-  let text = noEmail + merged > 0 ? s.text.replace(/^Sent (\d+) of \d+/, `Sent $1 of ${s.total + noEmail + merged}`) : s.text;
+  const noAutomated = recipients.filter((r) => r.outcome === 'no_automated_contact').length;
+  // core's words ("Sent 41 of 45; 4 opted out"); recipients without an email address, merged-away records and people
+  // left out by their lead source's "No automated contact" setting count in the total too
+  const extra = noEmail + merged + noAutomated;
+  let text = extra > 0 ? s.text.replace(/^Sent (\d+) of \d+/, `Sent $1 of ${s.total + extra}`) : s.text;
   if (noEmail > 0) text = `${text}; ${noEmail} without an email address`;
   if (merged > 0) text = `${text}; ${merged} merged into another record (invite the record they were merged into)`;
+  if (noAutomated > 0) text = `${text}; ${noAutomated} left out (${NO_AUTOMATED_CONTACT_LABEL.replace('this source', 'their source')})`;
   if (alreadyInvited > 0) text = `${text}; ${alreadyInvited} already invited earlier`;
   await withTenantTx(actor, (tx) => audit(tx, actor, { action: 'marketing.invites_sent', entity: { type: 'marketing_piece', id: pieceId }, changes: redactSnapshot({ sent: s.sent, total: s.total, opted_out: s.optedOut, blocked: s.blocked, no_email: noEmail }), reason: 'SENT' }), { db: deps.db });
-  return { sent: s.sent, total: s.total + noEmail + merged, optedOut: s.optedOut, blocked: s.blocked, noEmail, merged, alreadyInvited, text, recipients };
+  return { sent: s.sent, total: s.total + extra, optedOut: s.optedOut, blocked: s.blocked, noEmail, merged, noAutomatedContact: noAutomated, alreadyInvited, text, recipients };
 }

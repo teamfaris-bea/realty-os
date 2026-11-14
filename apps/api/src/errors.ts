@@ -124,6 +124,7 @@ export const ERROR_STATUS = {
   CANNOT_BE_REACHED: 409, // B9 R-PAR-16 D1: they can't be messaged: every channel this plan messages on is opted out (or do-not-contact) or has no address, so it could never send; nothing was enrolled (details.reason = stage automation's skip reason cannot_be_reached, details.playbookId)
   ENROLLMENT_NOT_LIVE: 409, // the enrollment already ended
   ENROLLMENT_NOT_RESUMABLE: 409, // opt-out, wrong number or revoked approval pauses are not resumed here (details.pauseReason)
+  SOURCE_NO_AUTOMATED_CONTACT: 409, // b18 review B18S-5: the person's lead source is marked "No automated contact for leads from this source"; no plan starts or resumes for them, even by hand (OQ-B18-S5); call, text or email them one to one (details.reason source_no_automated_contact)
   SAVED_SEARCH_INVALID: 422, // the reviewed criteria are empty or invalid
   SAVED_SEARCH_STATE: 409, // wrong state for this saved-search command (details.status)
   SENDER_UNAVAILABLE: 409, // no sending number / email identity for this channel
@@ -396,7 +397,7 @@ export const ERROR_STATUS = {
   AI_ISA_CALENDAR_REQUIRED: 409, // book_appointments needs a live calendar
   AI_ISA_FIRST_TOUCH_PENDING: 409, // the human first touch is not recorded yet
   AI_ISA_PERSON_DECLINED: 409, // a person block (opt-out, complaint, declined AI)
-  AI_ISA_SOURCE_NO_AI_CARE: 409, // b18 item f: the person's original lead source is marked "No AI care for leads from this source"
+  AI_ISA_SOURCE_NO_AI_CARE: 409, // b18 item f / B18S-5: a lead source that sent the person is marked "No automated contact for leads from this source"
   AI_ISA_HANDBACK_STALE: 409, // the handback is no longer current or its reply was queued
   AI_ISA_UNDO_EXPIRED: 409, // the 10-second undo window has passed
   AI_ISA_BOOKING_IN_PROGRESS: 409, // ISA-2b: the AI assistant is booking an agreed time; resume after it finishes

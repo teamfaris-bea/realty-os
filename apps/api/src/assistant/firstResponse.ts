@@ -13,7 +13,8 @@
 //   - module 22 (R-INBOX-4): an approved step with channel `inbound_channel` replies where the lead wrote: in the
 //     lead's open website chat (through its widget) when there is one; otherwise core decides (email fallback).
 //     Nothing automated ever goes to a phone or email the visitor only typed into chat (E154): those are not points.
-// When nothing may be sent, nothing is sent, and the lead's open feed card says why. The first response
+// When nothing may be sent, nothing is sent, and the lead's open feed card says why. A lead a source marked "No
+// automated contact for leads from this source" sent (b18 review B18S-5) gets none (SOURCE_NO_AUTOMATED_CONTACT). The first response
 // never counts as a touch (R-AST-15): it is an assistant message, and only gate-allowed HUMAN sends are
 // touches (dispatch records them).
 import { type PlaybookStep, PlaybookStepSchema, planEnroll, planFirstResponse, stepForChannel } from '@realty/core/assistant';
@@ -25,6 +26,7 @@ import { sql } from 'kysely';
 import { resolvedPolicy } from '../comms/gateInput.js';
 import { chatFanoutHmacs, consentRows, contactPoints, optOutFanoutPhoneHmacs, suppressionRows } from '../comms/repos/gate.js';
 import { chatRoutes } from '../channels/repos/webchat.js';
+import { NO_INSTANT_REPLY_SENTENCE, SOURCE_NO_AUTOMATED_CONTACT, noAutomatedContact } from '../leads/automatedContact.js';
 import { enqueueStep } from './enrollments.js';
 import { contactCore } from './repos/context.js';
 import * as P from './repos/playbooks.js';
@@ -52,6 +54,12 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
   await lockContact(tx, contactId as ContactId);
   const c = await contactCore(tx, contactId);
   if (!c || c.deleted) return { kind: 'noop', reason: 'CONTACT_MISSING' };
+  // b18 review B18S-5 (owner boundary 2026-11-14): a lead the source marked "No automated contact for leads from this
+  // source" sent gets no instant reply, by text, email or chat; the lead card says why (dispatch and 0098 back this)
+  if (await noAutomatedContact(tx, contactId)) {
+    await explainOnLeadCard(tx, contactId, SOURCE_NO_AUTOMATED_CONTACT, NO_INSTANT_REPLY_SENTENCE);
+    return { kind: 'not_sent', reason: SOURCE_NO_AUTOMATED_CONTACT, explanation: NO_INSTANT_REPLY_SENTENCE };
+  }
   const pb = await P.teamPlaybookOfKind(tx, 'new_lead_response');
   const version = pb ? await P.approvedVersionOf(tx, pb.id) : null;
   const raw = version?.steps[0];

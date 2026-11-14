@@ -1010,7 +1010,7 @@
                 "link": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 9
+                  "maximum": 11
                 },
                 "name": {
                   "type": "string"
@@ -3208,6 +3208,7 @@
     "AI_ISA_CALENDAR_REQUIRED": 409,
     "AI_ISA_FIRST_TOUCH_PENDING": 409,
     "AI_ISA_PERSON_DECLINED": 409,
+    "AI_ISA_SOURCE_NO_AI_CARE": 409,
     "AI_ISA_HANDBACK_STALE": 409,
     "AI_ISA_UNDO_EXPIRED": 409,
     "AI_ISA_BOOKING_IN_PROGRESS": 409,

@@ -1,4 +1,5 @@
-// b18 item f (PHASE2_3_PLAN product boundaries, owner 2026-11-14): an Owner-only lead-source setting, "No AI care for
+// b18 item f (PHASE2_3_PLAN product boundaries, owner 2026-11-14; renamed "No automated contact for leads from this source"
+// by b18 review B18S-5): an Owner-only lead-source setting, first named "No AI care for
 // leads from this source". AI care start, Continue and resume refuse AI_ISA_SOURCE_NO_AI_CARE for a person whose
 // original lead source has it set (any record of the person), the panel says why, and care already running pauses with
 // an honest note (pause reason source_no_ai_care, chain link 11). The source here is a made-up test source: no partner
@@ -65,7 +66,7 @@ describe('b18 item f: "No AI care for leads from this source" (Owner-only, R-ISA
     const on = await setNoAiCare(w.owner, true);
     expect(on.status).toBe(200);
     expect(on.body.source.noAiCare).toBe(true);
-    expect(on.body.source.noAiCareSentence).toMatch(/No AI care for leads from this source/);
+    expect(on.body.source.noAiCareSentence).toMatch(/No automated contact for leads from this source/);
     expect((await h.su.query("SELECT 1 FROM audit_log WHERE tenant_id = $1 AND entity_id = $2 AND reason = 'LEAD_SOURCE_NO_AI_CARE_ON'", [w.tenantId, source])).rows).toHaveLength(1);
     const ov = await call<{ sources: { id: string; noAiCare: boolean }[] }>(admin, 'GET', '/lead-sources/overview');
     expect(ov.body.sources.find((s) => s.id === source)!.noAiCare).toBe(true);
@@ -85,7 +86,7 @@ describe('b18 item f: "No AI care for leads from this source" (Owner-only, R-ISA
       const p = await panel(w.agents[0]!, l.id);
       expect(p.body.canStart).toBe(false);
       expect(p.body.startRefusal!.code).toBe('AI_ISA_SOURCE_NO_AI_CARE');
-      expect(p.body.startRefusal!.sentence).toMatch(/No AI care for leads from this source/);
+      expect(p.body.startRefusal!.sentence).toMatch(/No automated contact for leads from this source/);
       // a merged-in record from that source counts for the person too
       const survivor = await isaLead(h, w.agents[0]!);
       await fromSource(survivor.id, other);
@@ -117,14 +118,14 @@ describe('b18 item f: "No AI care for leads from this source" (Owner-only, R-ISA
     expect(a.pause_reason).toBe('source_no_ai_care');
     const note = (await h.su.query<{ title: string; body: string | null }>("SELECT title, body FROM notifications WHERE tenant_id = $1 AND user_id = $2 AND kind = 'ai_isa_paused' AND subject_id = $3 ORDER BY created_at DESC LIMIT 1", [w.tenantId, w.agents[0]!.userId, l.id])).rows[0]!;
     expect(note.title).toMatch(/^AI care paused/);
-    expect(note.body).toMatch(/No AI care for leads from this source/);
+    expect(note.body).toMatch(/No automated contact for leads from this source/);
     const p = await panel(w.agents[0]!, l.id);
     expect(p.status, JSON.stringify(p.body).slice(0, 400)).toBe(200);
     expect(p.body.assignment!.pauseReason).toBe('source_no_ai_care');
     expect(p.body.canResume).toBe(false);
     const link = p.body.chain.find((x) => x.link === 11)!;
     expect(link).toMatchObject({ effect: 'pause', code: 'AI_ISA_SOURCE_NO_AI_CARE' });
-    expect(link.sentence).toMatch(/No AI care for leads from this source/);
+    expect(link.sentence).toMatch(/No automated contact for leads from this source/);
     const resume = await call(w.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/resume`, {});
     expect(resume.status).toBe(409);
     expect(resume.code).toBe('AI_ISA_SOURCE_NO_AI_CARE');

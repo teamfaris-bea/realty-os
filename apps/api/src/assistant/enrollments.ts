@@ -12,7 +12,9 @@
 // actions on the enrollment; resume is human-only (DB guard) and audited. A human never enrolls a person
 // the plan cannot reach (B9): the stage entry's rule, through the same function (stageAutomation/reach.ts).
 // Nothing ever enrolls a merged-away record (F2: the stage entry's person_removed): not the direct route, not
-// the post-closing path, and the step runner stops one that is live anyway.
+// the post-closing path, and the step runner stops one that is live anyway. Nothing enrolls (or resumes) a person a
+// source marked "No automated contact for leads from this source" sent either (b18 review B18S-5): the direct route
+// refuses SOURCE_NO_AUTOMATED_CONTACT, the post-closing path skips them, and the step runner stops a live plan.
 import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, planNextStep, type StopCondition } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { plusMs } from '@realty/core/foundation';
@@ -26,6 +28,7 @@ import { AppError } from '../errors.js';
 import { reachableForVersion } from '../stageAutomation/reach.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
+import { NO_AUTOMATED_CONTACT_STOP_REASON, noAutomatedContact } from '../leads/automatedContact.js';
 import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
@@ -129,6 +132,15 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
     // (a race the merge could not see) stops here the same way, before any step is built for the loser
     await P.endEnrollment(tx, e.id, 'stopped', 'merged', now);
     return { kind: 'stopped', reason: 'merged' };
+  }
+  if (await noAutomatedContact(tx, e.contactId)) {
+    // b18 review B18S-5: the person turned out to come from a source marked "No automated contact for leads from this
+    // source" (the Owner turned it on, or the source sent them again): the plan stops, and its unsent steps are canceled
+    const pending = (await P.stepRunsOf(tx, e.id)).filter((r) => r.status === 'scheduled');
+    const canceled = await P.cancelStepMessages(tx, pending.map((r) => r.id), 'SOURCE_NO_AUTOMATED_CONTACT');
+    for (const r of pending) if (r.messageId === null || canceled.includes(r.messageId)) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
+    await P.endEnrollment(tx, e.id, 'stopped', NO_AUTOMATED_CONTACT_STOP_REASON, now);
+    return { kind: 'stopped', reason: NO_AUTOMATED_CONTACT_STOP_REASON };
   }
   if (playbook.scope === 'agent' && playbook.ownerUserId !== contact.ownerUserId) {
     // an agent playbook speaks for its agent only (R-AST-8 owner_change; dispatch would refuse it anyway)
@@ -253,6 +265,10 @@ export async function enrollContact(actor: UserActor, contactId: string, input: 
     }
     const pb = await P.playbookById(tx, input.playbookId);
     if (!pb || pb.status !== 'active') throw new AppError('NOT_FOUND');
+    // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact, so a person the source marked "No
+    // automated contact for leads from this source" sent is not enrolled even by hand (OQ-B18-S5's conservative
+    // default); refused before anything is written (0098's playbook_enrollments_source_guard refuses it too)
+    if (await noAutomatedContact(tx, contactId)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
     const v = await P.approvedVersionOf(tx, pb.id);
     // an agent playbook speaks for its agent: only for contacts that agent owns (dispatch re-checks)
     if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
@@ -337,6 +353,8 @@ export async function resumeEnrollment(actor: UserActor, enrollmentId: string, d
     if (!pb || !c) throw new AppError('NOT_FOUND');
     if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
     if (!(await P.approvedVersionOf(tx, pb.id))) throw new AppError('PLAYBOOK_NOT_APPROVED');
+    // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
+    if (await noAutomatedContact(tx, e.contactId)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
     if (reason === 'client_reply') await resumeAutomation(tx, e.contactId, actor.userId);
     await P.resumeEnrollment(tx, e.id, actor.userId, now);
     await enqueueStep(tx, e.id, now);
@@ -367,6 +385,8 @@ export async function enrollOnDealClosedInTx(tx: Tx, deps: AssistantDeps, dealId
     const c = await contactCore(tx, contactId);
     // F2: a merged-away record keeps its deals (a merge moves none) but is never enrolled (decide.ts person_removed)
     if (!c || c.deleted || c.merged) continue;
+    // b18 review B18S-5: no post-closing plan for a person a source marked "No automated contact" sent
+    if (await noAutomatedContact(tx, contactId)) continue;
     const pb = await P.playbookForContact(tx, 'post_closing', c.ownerUserId);
     if (!pb || (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId)) continue;
     const v = await P.approvedVersionOf(tx, pb.id);

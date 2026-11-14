@@ -25,6 +25,7 @@ import type { IdGenerator, Instant } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
 import { type Tx, hmacBytes } from '@realty/db';
 import { sql } from 'kysely';
+import { NO_AUTOMATED_CONTACT_DENY_SENTENCE } from '../leads/automatedContact.js';
 import * as g from './repos/gate.js';
 import type { DecisionView, OutboundIntent } from './types.js';
 
@@ -170,6 +171,8 @@ export const DISPATCH_DENY_SENTENCES = {
   ISA_QUIET_HOURS: 'It is outside quiet hours in one of their time zones; the AI assistant waits.',
   ISA_MIN_GAP: 'AI assistant messages are spaced at least two minutes apart.',
   ISA_CAP_REACHED: 'The daily limit of AI assistant messages is reached.',
+  // b18 review B18S-5 (owner boundary 2026-11-14): the Owner's lead-source setting (leads/automatedContact.ts)
+  SOURCE_NO_AUTOMATED_CONTACT: NO_AUTOMATED_CONTACT_DENY_SENTENCE,
 } as const;
 export type DispatchDenyReason = keyof typeof DISPATCH_DENY_SENTENCES;
 

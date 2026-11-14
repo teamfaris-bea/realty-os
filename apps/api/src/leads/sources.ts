@@ -21,6 +21,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { enqueueStep } from '../assistant/enrollments.js';
 import { firstResponseWouldQueue } from '../assistant/firstResponse.js';
 import { audit, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
@@ -31,6 +32,7 @@ import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
+import { noAutomatedContactSentence } from './automatedContact.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
 import { AiCareBody, AiCareResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
@@ -113,15 +115,11 @@ interface SourceRow {
 }
 
 /**
- * b18 item f (owner product boundary, 2026-11-14): the lead source's "No AI care for leads from this source" line, the
- * same words on the sources screen, the Owner's answer and the AI care panel (isa/sentences.ts).
+ * b18 item f, renamed by b18 review B18S-5 (owner product boundary, 2026-11-14): the lead source's "No automated contact
+ * for leads from this source" line (leads/automatedContact.ts), the same words on the sources screen, the Owner's
+ * answer and the AI care panel (isa/sentences.ts). The column, the API field noAiCare and the route keep their names.
  */
-export const NO_AI_CARE_LABEL = 'No AI care for leads from this source';
-export function noAiCareSentence(on: boolean): string {
-  return on
-    ? `${NO_AI_CARE_LABEL}: on. AI care cannot start for leads from this source (any record of the person), and care already running for them is paused and cannot be resumed. Only the Owner changes this.`
-    : `${NO_AI_CARE_LABEL}: off. A lead's owner may start AI care as usual. Only the Owner changes this.`;
-}
+export const noAiCareSentence = noAutomatedContactSentence;
 
 export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.infer<typeof OverviewResponse>> {
   return asSystem(deps.db, actor, async (tx, sys) => {
@@ -348,7 +346,9 @@ export async function preview(tx: Tx, id: string, body: z.infer<typeof PreviewBo
   );
   const nameOf = (u: string) => names.get(u) ?? 'A former member';
   const considered = p.considered.map((c) => ({ userId: c.userId, name: nameOf(c.userId), eligible: c.eligible, reason: c.skipReason ? `${nameOf(c.userId)} ${SKIP_WORDS[c.skipReason]}.` : null }));
-  const queued = await firstResponseWouldQueue(tx, now);
+  // b18 review B18S-5: a source marked "No automated contact for leads from this source" never gets the instant reply
+  const marked = (await sql<{ v: boolean }>`SELECT no_ai_care AS v FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx)).rows[0]?.v === true;
+  const queued = !marked && (await firstResponseWouldQueue(tx, now));
   const ruleOut = p.rule ? { id: p.rule.id, name: p.rule.name ?? 'Unnamed rule' } : null;
   if (p.kind === 'offer') {
     return { rule: ruleOut, outcome: { kind: 'offer', userId: p.userId, name: nameOf(p.userId) }, considered, sentence: `If a lead came in now, it would be offered to ${nameOf(p.userId)}.`, firstResponse: queued ? 'queued' : 'off' };
@@ -405,19 +405,21 @@ async function register(app: FastifyInstance): Promise<void> {
     });
   });
 
-  // b18 item f: the Owner-only "No AI care for leads from this source" (🔒 when turning it off: that re-allows AI care).
-  // Turning it on also asks each live AI care of the source's people for a turn now, whose chain (link 11) pauses it
-  // source_no_ai_care with the note; dispatch TX1 refuses any AI message still queued for them meanwhile (the chain).
+  // b18 item f / B18S-5: the Owner-only "No automated contact for leads from this source" (🔒 when turning it off: that
+  // re-allows automated contact). Turning it on also asks each live AI care of the source's people for a turn now, whose
+  // chain (link 11) pauses it source_no_ai_care with the note, and each of their active plans for a step now, which
+  // stops it (source_no_automated_contact); dispatch TX1 refuses any automated message still queued for them meanwhile.
   r.put('/lead-sources/:id/ai-care', {
     config: { auth: 'lead_source.ai_care' },
     preHandler: authorize('lead_source.ai_care', (req) => ({ loosening: (req.body as { noAiCare?: unknown } | undefined)?.noAiCare !== true })),
     schema: { params: Params, body: AiCareBody, response: { 200: AiCareResponse } },
   }, async (req) =>
-    leadsTx(req, async (tx, _now, actor) => {
+    leadsTx(req, async (tx, now, actor) => {
       const s = await sourceRow(tx, req.params.id);
       if (!s) throw new AppError('NOT_FOUND');
       const was = (await sql<{ v: boolean }>`SELECT no_ai_care AS v FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid FOR UPDATE`.execute(tx)).rows[0]!.v;
       let pausing = 0;
+      let stopping = 0;
       if (was !== req.body.noAiCare) {
         await sql`UPDATE lead_sources SET no_ai_care = ${req.body.noAiCare}, no_ai_care_changed_at = now(), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
         await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id: s.id }, changes: redactSnapshot({ noAiCare: { from: was, to: req.body.noAiCare } }, { entity: 'lead_source' }), reason: req.body.noAiCare ? 'LEAD_SOURCE_NO_AI_CARE_ON' : 'LEAD_SOURCE_NO_AI_CARE_OFF' });
@@ -430,8 +432,12 @@ async function register(app: FastifyInstance): Promise<void> {
           await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
         }
         pausing = live.rows.length;
+        const plans = await sql<{ id: string }>`SELECT e.id FROM playbook_enrollments e
+           WHERE e.tenant_id = app.tenant_id() AND e.state = 'active' AND app.person_no_ai_care_source(e.tenant_id, e.contact_id) ORDER BY e.id`.execute(tx);
+        for (const e of plans.rows) await enqueueStep(tx, e.id, now);
+        stopping = plans.rows.length;
       }
-      return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, pausing };
+      return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, pausing, stopping };
     }),
   );
 

@@ -55,6 +55,7 @@ import { addressText, estimateOfRow } from './avm.js';
 import { DIGEST_SUBJECT, type RunSkipReason, apiSkip, decideBatch, digestTemplate, draftExplanation, firingOfRow, literal } from './decide.js';
 import { localToday } from './detect.js';
 import { aiIsaLive } from '../isa/liveCare.js';
+import { noAutomatedContact } from '../leads/automatedContact.js';
 import * as R from './repos.js';
 import type { NurtureDeps } from './types.js';
 import { KIND_TEXT } from '../transactions/types.js';
@@ -241,6 +242,12 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
   if (await aiIsaLive(tx, lead.contactId)) {
     await R.skipRun(tx, lead.id, 'AI_ISA_ACTIVE');
     return { kind: 'skipped', runIds: [lead.id], reasons: ['AI_ISA_ACTIVE'] };
+  }
+  // b18 review B18S-5 (owner boundary 2026-11-14): no trigger message for a person a source marked "No automated contact
+  // for leads from this source" sent; skipped visibly (each firing's own job meets this too; dispatch and 0098 back it)
+  if (await noAutomatedContact(tx, lead.contactId)) {
+    await R.skipRun(tx, lead.id, 'SOURCE_NO_AUTOMATED_CONTACT');
+    return { kind: 'skipped', runIds: [lead.id], reasons: ['SOURCE_NO_AUTOMATED_CONTACT'] };
   }
   const leadFiring = firingOfRow(lead);
   if (leadFiring === null) {

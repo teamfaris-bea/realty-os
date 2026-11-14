@@ -60,6 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
+import { noAutomatedContact } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
@@ -126,7 +127,7 @@ export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts:
     try {
       return await once();
     } catch (e) {
-      const refused = guardOptOutRefusal(e) ?? (isaGuardRefusal(e) as DispatchDenyReason | null);
+      const refused = guardOptOutRefusal(e) ?? (isaGuardRefusal(e) as DispatchDenyReason | null) ?? sourceGuardRefusal(e);
       if (refused === null || guardDeny.includes(refused)) throw e;
       guardDeny.push(refused);
       return once();
@@ -237,6 +238,10 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   const isaRef = { id: m.id, contactId: m.contactId, conversationId: m.conversationId, channel, assistantActionId: m.assistantActionId };
   const isaTx1 = isaMsg ? await aiIsaGateFacts(tx, { db: c.deps.db, ids: c.deps.ids, providers: c.deps.providers, aiIsaLiveOff: c.deps.aiIsaLiveOff }, isaRef, addressHmac, now, c.actor) : null;
   if (isaTx1) extra.push(...(isaTx1.extra as DispatchDenyReason[]));
+  // b18 review B18S-5 (owner boundary 2026-11-14): "No automated contact for leads from this source" (leads/automatedContact.ts).
+  // An automated or bulk message to a person the marked source sent never goes; a person's one-to-one message does. AI ISA
+  // messages are refused by their own chain (link 11). 0098's app.messages_source_guard refuses the same in the database.
+  if (!isaMsg && isAutomatedContact(m, gateInitiator) && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
 
   const intent: OutboundIntent = {
     contactId: m.contactId,
@@ -323,6 +328,31 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     if (purpose === 'marketing') headers = { ...headers, ...listUnsubscribeHeaders(unsubscribeUrl(c.deps.publicBaseUrl, c.deps.linkSecret, c.tenantId, m.id)) };
   }
   return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel: channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'sms', emailFrom, replyTo, headers }, decision: { id: null, ...verdict } };
+}
+
+/**
+ * b18 review B18S-5: the system messages that answer the person and are not outreach: the keyword replies they asked for
+ * by texting STOP or HELP, and a client's own portal sign-in link (0098's app.messages_source_guard lists the same).
+ */
+const SOURCE_EXEMPT_SYSTEM_CATEGORIES: ReadonlySet<string> = new Set(['opt_out_confirmation', 'help_reply', 'portal_login_link']);
+
+/**
+ * Whether a message is automated contact (B18S-5): an assistant message no person approved (`gateInitiator` stays
+ * 'assistant' or 'system'; an approved draft or handback reply has the approving human as its sender), a system
+ * message other than the exempt answers, or a person's bulk send or open-house invite. A person's one-to-one text,
+ * email or chat reply is not.
+ */
+export function isAutomatedContact(m: { initiator: string; actionCategory: string; bulkActionId: string | null; marketingPieceId: string | null }, gateInitiator: Initiator): boolean {
+  if (m.initiator === 'human') return m.bulkActionId !== null || m.marketingPieceId !== null;
+  if (m.initiator === 'system') return !SOURCE_EXEMPT_SYSTEM_CATEGORIES.has(m.actionCategory);
+  return gateInitiator !== 'human';
+}
+
+/** 0098's app.messages_source_guard refusing a dispatch (a check_violation 'SOURCE_NO_AUTOMATED_CONTACT: ...'). */
+function sourceGuardRefusal(err: unknown): DispatchDenyReason | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const { code, message } = err as { code?: unknown; message?: unknown };
+  return code === '23514' && typeof message === 'string' && message.startsWith('SOURCE_NO_AUTOMATED_CONTACT:') ? 'SOURCE_NO_AUTOMATED_CONTACT' : null;
 }
 
 /** The kind of touch a gate-allowed human send on this channel is (R-OWN-14; calls are dial.ts's 'call'). */
