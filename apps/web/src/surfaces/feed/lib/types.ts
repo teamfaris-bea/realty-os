@@ -404,7 +404,8 @@ export interface DealView {
   side: DealSide;
   stage: DealStage;
   stageEnteredAt: string;
-  primaryContact: { id: string; name: string } | null;
+  /** `deleted`: soft-deleted (only an Owner or Admin sees one; for anyone else the contact is null) */
+  primaryContact: { id: string; name: string; deleted: boolean } | null;
   ownerUserId: string;
   listingId: string | null;
   priceCents: number | null;

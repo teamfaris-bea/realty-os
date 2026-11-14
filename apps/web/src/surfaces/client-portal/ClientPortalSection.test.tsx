@@ -230,6 +230,29 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
     expect(within(s).queryAllByRole('button', { name: /^(Invite|Send the invite again|Stop sharing)/ })).toEqual([]);
   });
 
+  // b16 (b15 assembly): a soft-deleted primary contact with no grant yet. The deal says so (primaryContact.deleted; only
+  // an Owner or Admin sees a deleted contact), 45 would refuse the invite (not found), so the section offers no Invite
+  // and says why
+  it('b16: a soft-deleted primary contact with no grant: no Invite, and the section says the record must be restored first', async () => {
+    const deletedHost: SurfaceModule = {
+      pages: [{ path: '/t/deal', title: 'Deal', roles: 'all', component: () => <ClientPortalSection dealId={F.DEAL} primaryContact={{ ...JANE, deleted: true }} ownerUserId={ME} /> }],
+    };
+    for (const role of ['owner', 'admin'] as const) {
+      const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state()));
+      const v = render(fake, '/t/deal', role, deletedHost);
+      const s = await section();
+      expect(await within(s).findByText(STAFF_WORDS.contactDeleted('Jane Doe')), role).toBeInTheDocument();
+      expect(within(s).queryAllByRole('button', { name: /^(Invite|Send the invite again)/ }), role).toEqual([]);
+      expect(fake.callsTo(INVITE)).toEqual([]);
+      v.view.unmount();
+    }
+    // the same deal with the contact restored offers Invite again
+    const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state()));
+    render(fake, '/t/deal', 'owner', { pages: [{ path: '/t/deal', title: 'Deal', roles: 'all', component: () => <ClientPortalSection dealId={F.DEAL} primaryContact={{ ...JANE, deleted: false }} ownerUserId={ME} /> }] });
+    expect(await within(await section()).findByRole('button', { name: 'Invite Jane Doe' })).toBeInTheDocument();
+    expect(screen.queryByText(STAFF_WORDS.contactDeleted('Jane Doe'))).toBeNull();
+  });
+
   it('a listing form reads the listing route (the follow-up mounts it)', async () => {
     const LISTING = '01900000-0000-7000-8000-00000000f001';
     const fake = new FakeFetch().on(`GET /listings/${LISTING}/portal`, F.ok('GET /listings/:id/portal', F.state()));

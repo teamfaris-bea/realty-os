@@ -16,7 +16,7 @@ const CONFIRM_WHO = "Only the deal's agent or TC, their Team Lead, or an Owner/A
 
 function deal(): DealDetailView {
   return {
-    id: IDS.deal, name: 'Jane Doe · buy', side: 'buy', stage: 'under_contract', stageEnteredAt: iso(-1), primaryContact: { id: IDS.jane, name: 'Jane Doe' }, ownerUserId: IDS.me, listingId: null,
+    id: IDS.deal, name: 'Jane Doe · buy', side: 'buy', stage: 'under_contract', stageEnteredAt: iso(-1), primaryContact: { id: IDS.jane, name: 'Jane Doe', deleted: false }, ownerUserId: IDS.me, listingId: null,
     priceCents: null, expectedCloseDate: null, agreementSignedAt: null, underContractAt: null, closedAt: null, lostReason: null,
     attribution: { leadSourceId: null, leadSourceName: null, campaignRef: null, adRef: null, sourceInquiryId: null }, rowVersion: 1, createdAt: iso(-1), dates: [], members: [], contacts: [], history: [],
   };

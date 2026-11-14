@@ -635,6 +635,9 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
               {
                 "additionalProperties": false,
                 "properties": {
+                  "deleted": {
+                    "type": "boolean",
+                  },
                   "id": {
                     "format": "uuid",
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -647,6 +650,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 "required": [
                   "id",
                   "name",
+                  "deleted",
                 ],
                 "type": "object",
               },
@@ -853,6 +857,9 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "deleted": {
+                      "type": "boolean",
+                    },
                     "id": {
                       "format": "uuid",
                       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -865,6 +872,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   "required": [
                     "id",
                     "name",
+                    "deleted",
                   ],
                   "type": "object",
                 },

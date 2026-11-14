@@ -163,7 +163,8 @@ export const DealSchema = z.object({
   side: DealSide,
   stage: DealStage,
   stageEnteredAt: z.string(),
-  primaryContact: z.object({ id: uuid, name: z.string() }).nullable(),
+  /** `deleted`: the contact is soft-deleted (only an Owner or Admin sees one; for anyone else it is null) */
+  primaryContact: z.object({ id: uuid, name: z.string(), deleted: z.boolean() }).nullable(),
   ownerUserId: uuid,
   listingId: uuid.nullable(),
   priceCents: z.number().int().nullable(),

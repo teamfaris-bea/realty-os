@@ -1,5 +1,6 @@
 // Deals over real Postgres as app_user (BUILD_PLAN module 14: attribution copied at create, stage history,
 // commission capture; A7d, R-PERM-10, R-PERM-4 E50, R-PERM-5).
+import { randomUUID } from 'node:crypto';
 import { type TenantId } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -160,5 +161,25 @@ describe('deals', () => {
     expect((await call(w.teamLead!, 'GET', `/deals/${d.id}`)).status).toBe(200);
     const isaContact = await contactOf(isa);
     expect((await call(isa, 'POST', '/deals', { primaryContactId: isaContact.id, side: 'buy' })).code).toBe('NOT_FOUND');
+  });
+
+  // b16 (b15 assembly: the client portal section offered "Invite {name}" for a soft-deleted primary contact, which 45
+  // refuses): the deal says whether its primary contact is deleted. Only a tenant-wide reader sees a deleted contact
+  // (contacts_select), so an Owner or Admin reads deleted: true; the agent who owns the deal no longer sees the contact
+  it('b16: the deal says its primary contact is deleted (Owner and Admin); the owning agent no longer sees the contact', async () => {
+    const a = w.agents[0]!;
+    const c = await contactOf(a);
+    const d = await newDeal(a, c.id);
+    type Read = { deal: { primaryContact: { id: string; name: string; deleted: boolean } | null } };
+    expect((await call<Read>(w.owner, 'GET', `/deals/${d.id}`)).body.deal.primaryContact).toMatchObject({ id: c.id, deleted: false });
+    expect((await call<Read>(a, 'GET', `/deals/${d.id}`)).body.deal.primaryContact).toMatchObject({ id: c.id, deleted: false });
+    const del = await call(w.owner, 'POST', `/leads/${c.id}/delete`, { commandId: randomUUID() });
+    expect(del.status).toBeLessThan(300);
+    expect((await call<Read>(w.owner, 'GET', `/deals/${d.id}`)).body.deal.primaryContact).toMatchObject({ id: c.id, deleted: true });
+    const listed = await call<{ deals: { id: string; primaryContact: { deleted: boolean } | null }[] }>(w.owner, 'GET', '/deals');
+    expect(listed.body.deals.find((x) => x.id === d.id)?.primaryContact).toMatchObject({ deleted: true });
+    const mine = await call<Read>(a, 'GET', `/deals/${d.id}`);
+    if (mine.status === 200) expect(mine.body.deal.primaryContact).toBeNull();
+    else expect(mine.code).toBe('NOT_FOUND');
   });
 });

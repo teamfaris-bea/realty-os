@@ -60,6 +60,7 @@ interface DealRow {
   stage_entered_at: Date;
   primary_contact_id: string;
   contact_name: string | null;
+  contact_deleted: boolean | null;
   owner_user_id: string;
   listing_id: string | null;
   price_cents: string | null;
@@ -78,7 +79,8 @@ interface DealRow {
 }
 
 const SELECT = sql`
-  SELECT d.id, d.name, d.side, d.stage, d.stage_entered_at, d.primary_contact_id, c.display_name AS contact_name, d.owner_user_id, d.listing_id,
+  SELECT d.id, d.name, d.side, d.stage, d.stage_entered_at, d.primary_contact_id, c.display_name AS contact_name, c.deleted_at IS NOT NULL AS contact_deleted,
+         d.owner_user_id, d.listing_id,
          d.price_cents, d.expected_close_date::text AS expected_close_date, d.agreement_signed_at, d.under_contract_at, d.closed_at, d.lost_reason,
          d.lead_source_id, ls.name AS lead_source_name, d.campaign_ref, d.ad_ref, d.source_inquiry_id, d.row_version, d.created_at
     FROM deals d
@@ -92,7 +94,9 @@ function view(r: DealRow): DealView {
     side: r.side,
     stage: r.stage,
     stageEnteredAt: iso(r.stage_entered_at),
-    primaryContact: r.contact_name ? { id: r.primary_contact_id, name: r.contact_name } : null,
+    // b16: `deleted` (a soft-deleted contact is seen only by a tenant-wide reader, contacts_select): the client portal
+    // section offers no Invite for it (45 refuses it until the record is restored)
+    primaryContact: r.contact_name ? { id: r.primary_contact_id, name: r.contact_name, deleted: r.contact_deleted === true } : null,
     ownerUserId: r.owner_user_id,
     listingId: r.listing_id,
     priceCents: r.price_cents === null ? null : Number(r.price_cents),

@@ -17,7 +17,7 @@ function deal(over: Partial<DealDetailView> = {}): DealDetailView {
     side: 'buy',
     stage: 'agreement_signed',
     stageEnteredAt: iso(-86_400_000),
-    primaryContact: { id: IDS.jane, name: 'Jane Doe' },
+    primaryContact: { id: IDS.jane, name: 'Jane Doe', deleted: false },
     ownerUserId: IDS.me,
     listingId: null,
     priceCents: 85_000_000,

@@ -45,5 +45,7 @@ export const STAFF_WORDS = {
   previewTitle: 'What the client sees',
   loading: 'Loading',
   notSent: 'Not sent',
+  /** b16: a soft-deleted primary contact with no grant line saying so: 45 refuses the invite until the record is restored */
+  contactDeleted: (name: string) => `${name}'s record is deleted, so they can't be invited until it is restored.`,
   readOnly: (kind: 'deal' | 'listing') => `Only the agent who owns this ${kind}, their Team Lead, an Owner or an Admin can invite the client or stop sharing.`,
 } as const;

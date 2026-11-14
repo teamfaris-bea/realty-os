@@ -21,7 +21,8 @@ export const portalKey = (kind: 'deal' | 'listing', id: string) => ['client-port
 export interface ClientPortalSectionProps {
   dealId?: string;
   listingId?: string;
-  primaryContact: { id: string; name: string } | null;
+  /** `deleted`: the deal's primary contact is soft-deleted (the deal detail says so to an Owner or Admin, b16) */
+  primaryContact: { id: string; name: string; deleted?: boolean } | null;
   /** the deal's (or listing's) owner, as DocumentsSection takes it: the agent who owns it may manage the portal */
   ownerUserId?: string | null;
   /** the deal's members: they may view the section, never manage it (portal.manage has no deal scope) */
@@ -64,8 +65,10 @@ export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUs
   const isPrimary = (g: GrantStaff) => !!s && !!primaryContact && s.accounts.some((a) => a.id === g.accountId && a.contactId === primaryContact.id);
   const primaryLive = s ? s.grants.find((g) => g.state === 'live' && isPrimary(g)) : undefined;
   // b15 (b14 low f): a soft-deleted client is refused an invite (45: not found) until the record is restored; the
-  // grant's line says so in 45's words, so no Invite or Resend is offered
-  const primaryDeleted = s ? s.grants.some((g) => g.state === 'contact_deleted' && isPrimary(g)) : false;
+  // grant's line says so in 45's words, so no Invite or Resend is offered. b16: with no grant yet, the deal detail says
+  // the contact is deleted (primaryContact.deleted), and the section says why there is no Invite
+  const deletedLine = s ? s.grants.some((g) => g.state === 'contact_deleted' && isPrimary(g)) : false;
+  const primaryDeleted = deletedLine || primaryContact?.deleted === true;
 
   const doInvite = async (resend: boolean) => {
     if (!primaryContact) return;
@@ -128,6 +131,7 @@ export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUs
             })}
           </ul>
           {dealLost && kind === 'deal' ? <p className="text-[15px] text-ink">{PORTAL_STAFF_MESSAGES.PORTAL_DEAL_LOST}</p> : null}
+          {canManage && primaryContact && primaryDeleted && !deletedLine ? <p className="text-[15px] text-ink">{STAFF_WORDS.contactDeleted(primaryContact.name)}</p> : null}
           {canManage && primaryContact && !primaryDeleted && !(dealLost && kind === 'deal') ? (
             <div className="flex flex-wrap gap-2">
               {primaryLive ? (
