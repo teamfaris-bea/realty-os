@@ -24,6 +24,15 @@ export function createPortalQueryClient(): QueryClient {
 
 type Mode = 'landing' | 'incomplete' | 'check' | 'signedOut' | 'unavailable' | 'unavailableAtTap';
 
+/**
+ * How long the live region stays empty before it is given the sentence. b17 (b16 review FA-1): the clear and the set
+ * must be separate commits. announce() is mostly called from passive effects, and React gave the clear and the
+ * microtask's set one Default-lane render, so a region that already held the sentence never changed: a failed Try
+ * again was never heard in a browser (act() in the unit tests flushed them apart). A timer is a later task, so the
+ * empty region is committed first and a screen reader sees the sentence arrive again.
+ */
+export const ANNOUNCE_GAP_MS = 100;
+
 export interface PortalAppProps {
   link: LinkRead;
   api?: PortalApi;
@@ -34,16 +43,18 @@ export interface PortalAppProps {
 export function PortalApp({ link, api: given, queryClient, save }: PortalAppProps) {
   const api = useMemo(() => given ?? portalApi(), [given]);
   const qc = useMemo(() => queryClient ?? createPortalQueryClient(), [queryClient]);
-  const [live, setLive] = useState('');
+  // `n` keys the region's text: each announcement is a new text node, even if a clear and a set were ever batched
+  const [live, setLive] = useState<{ n: number; text: string }>({ n: 0, text: '' });
   const seq = useRef(0);
   const announce = useCallback((msg: string) => {
-    // the same sentence twice is still announced (the region is cleared first)
+    // the same sentence twice is still announced: the region is emptied, then given the sentence a task later (FA-1);
+    // a newer announcement replaces one still waiting, so only the last is said
     seq.current += 1;
     const n = seq.current;
-    setLive('');
-    queueMicrotask(() => {
-      if (seq.current === n) setLive(msg);
-    });
+    setLive({ n, text: '' });
+    window.setTimeout(() => {
+      if (seq.current === n) setLive({ n, text: msg });
+    }, ANNOUNCE_GAP_MS);
   }, []);
   const ctx = useMemo(() => ({ api, team: link.team, announce, ...(save ? { save } : {}) }), [api, link.team, announce, save]);
   return (
@@ -54,7 +65,7 @@ export function PortalApp({ link, api: given, queryClient, save }: PortalAppProp
         </a>
         <Screens link={link} />
         <div role="status" aria-live="polite" aria-atomic="true" className="sr-only" data-testid="portal-live">
-          {live}
+          {live.text ? <span key={live.n}>{live.text}</span> : null}
         </div>
       </QueryClientProvider>
     </PortalContext.Provider>
