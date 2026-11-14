@@ -27,8 +27,9 @@ describe('Thread', () => {
       timelineItem({ occurredAt: iso(-600_000) }),
     ];
     agentApp(threadFake(items), `/contacts/${IDS.jane}/thread`);
-    const convo = await screen.findByRole('list', { name: 'Conversation' });
-    await waitFor(() => expect(within(convo).getAllByRole('listitem').length).toBe(3));
+    // b16 (b15 review): the thread's load can take longer than findBy's default 1 s under full-suite load
+    const convo = await screen.findByRole('list', { name: 'Conversation' }, { timeout: 10_000 });
+    await waitFor(() => expect(within(convo).getAllByRole('listitem').length).toBe(3), { timeout: 10_000 });
     const rows = within(convo).getAllByRole('listitem').map((li) => li.textContent ?? '');
     expect(rows[0]).toContain('does saturday work?');
     expect(rows[1]).toContain('Ava Agent');

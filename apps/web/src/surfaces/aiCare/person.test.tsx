@@ -20,16 +20,18 @@ function person(p: PanelResponse, o: { live?: boolean; hold?: string | null } = 
   return fake;
 }
 const announced = () => screen.getByTestId('announcer').textContent ?? '';
+/** b16 (b15 review): the data load can take longer than findBy's default 1 s under full-suite load */
+const LOAD = { timeout: 10_000 };
 
 describe('the AI care panel and strip (module 76)', () => {
   it('R-ISA-22: live care for the owner: the strip says so with Pause and Take over; the panel says what it may do and needs, in words', async () => {
     isaApp(person(panel()), `/contacts/${IDS.jane}`, 'agent');
-    const strip = await screen.findByTestId('ai-strip');
+    const strip = await screen.findByTestId('ai-strip', {}, LOAD);
     expect(within(strip).getByText('AI assistant is handling this conversation')).toBeInTheDocument();
     expect(within(strip).getByText('Calling or texting them yourself pauses AI care.')).toBeInTheDocument();
     expect(within(strip).getAllByRole('button', { name: 'Pause' }).length).toBeGreaterThan(0);
     expect(within(strip).getAllByRole('button', { name: 'Take over' }).length).toBeGreaterThan(0);
-    expect(await screen.findByText('What it may do')).toBeInTheDocument();
+    expect(await screen.findByText('What it may do', {}, LOAD)).toBeInTheDocument();
     expect(screen.getByText('Talk with them by text and email: yes.')).toBeInTheDocument();
     // b13 review B13S-2: every capability this tree builds is said as allowed or not in the opt-in, never "not available yet"
     expect(screen.getByText('Share listings that fit their search: no. Not in your opt-in or the team policy.')).toBeInTheDocument();
