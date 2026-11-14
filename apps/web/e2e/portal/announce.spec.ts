@@ -13,6 +13,8 @@
 //   FA-5  (phone) a failure behind the hidden tab is announced only when its tab shows it, and once
 //   FA-4  the sign-in submit, Download and the link's Sign in keep focus while busy and after a failure (a `disabled`
 //         button loses it: the browser's focus fix-up)
+//   F1    (b17 review, E713's main case) a Download of a document the agent has taken back: the documents' refetch
+//         drops its row and the focused button, and focus moves to the failure sentence, never <body>
 // Where the real stack cannot fail on cue, the browser answers with module 45's own error body (a 500 INTERNAL_ERROR).
 import { type BrowserContext, type Page, type Route, expect, test } from 'playwright/test';
 import { newClientContext, openLinkAndSignIn, requestLink } from './common.js';
@@ -36,6 +38,7 @@ let pw: PortalWorld;
 let ctx: BrowserContext;
 let p: Page;
 let link = '';
+let grantId = '';
 
 /**
  * Every text the live region holds, recorded from the page's start (an init script, so a reload keeps recording): one
@@ -81,6 +84,7 @@ test.beforeAll(async ({ browser }, info) => {
   await stack.setCleared(true);
   const inv = await stack.api<{ grant: { id: string } }>('a.agent0', 'POST', `/deals/${pw.dealId}/portal/invite`, { contactId: pw.jane.id, idempotencyKey: 'announceinvite' + Date.now() });
   expect(inv.status, JSON.stringify(inv.body)).toBe(200);
+  grantId = inv.body.grant.id;
   await stack.publishDocument(inv.body.grant.id, pw.documentId);
   await stack.jobs();
   ctx = await newClientContext(browser, info);
@@ -230,6 +234,29 @@ test('FA-4, L16-5: Download keeps focus while busy, after a failed download and 
   await saved;
   await expect(dl).not.toHaveAttribute('aria-disabled', 'true');
   await expect(dl).toBeFocused();
+});
+
+test('F1 (E713): a Download of a document the agent took back moves focus to the failure sentence when its row goes', async () => {
+  const name = `Retracted notice ${isPhone() ? 'phone' : 'desktop'}.pdf`;
+  await stack.publishNewDocument(pw.dealId, grantId, name);
+  await home();
+  if (isPhone()) await p.getByRole('tab', { name: 'Documents' }).tap();
+  const dl = p.locator('main').getByRole('button', { name: `Download ${name}`, exact: true });
+  await expect(dl).toBeVisible({ timeout: 20_000 });
+  // the agent takes it back (the real staff route); the page still lists it until its documents are read again
+  const listed = await p.evaluate(async (g) => (await (await fetch(`/api/portal/documents?grantId=${encodeURIComponent(g)}`, { credentials: 'same-origin' })).json()) as { documents: { itemId: string; title: string }[] }, grantId);
+  const item = listed.documents.find((d) => d.title === name);
+  expect(item, JSON.stringify(listed)).toBeTruthy();
+  const back = await stack.api('a.agent0', 'POST', `/portal-items/${item!.itemId}/retract`, {});
+  expect(back.status, JSON.stringify(back.body)).toBe(200);
+  await resetLive();
+  await press(`Download ${name}`);
+  const sentence = p.locator('main').getByText(FILE_UNAVAILABLE, { exact: false });
+  await expect(sentence).toBeVisible({ timeout: 20_000 });
+  await expect(dl).toHaveCount(0, { timeout: 20_000 }); // the refetched list no longer has it
+  await expect(sentence).toBeFocused(); // before the fix: <body>
+  expect(await p.evaluate(() => document.activeElement === document.body)).toBe(false);
+  expect((await liveLog()).filter((t) => t.startsWith(FILE_UNAVAILABLE))).toHaveLength(1);
 });
 
 test('FA-5, L16-3: phone, a failure behind the hidden Documents tab is announced only when its tab shows it', async () => {

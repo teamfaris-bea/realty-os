@@ -7,7 +7,7 @@ import { PortalError } from '../api.js';
 import { COPY } from '../copy.js';
 import { usePortal } from '../context.js';
 import { downloadDocument } from '../download.js';
-import { type DocumentView, type DocumentsView, GrantBody, type GrantTab, type GrantView, PANEL_HEADING_ID, type TimelineView, VIEW_WORDS, parseDocuments, parseTimeline } from '../view/index.js';
+import { type DocumentView, type DocumentsView, FILE_ERROR_ID, GrantBody, type GrantTab, type GrantView, PANEL_HEADING_ID, type TimelineView, VIEW_WORDS, parseDocuments, parseTimeline } from '../view/index.js';
 import { Page, secondaryButton, useFocusHeading } from './common.js';
 import { ME_KEY } from './Home.js';
 
@@ -136,12 +136,27 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     }
   }, [tlLoaded, docLoaded]);
 
+  // b17 (b17 review F1, E713's main case): a download that failed because the item is no longer shared refetches the
+  // documents, and the refetched list no longer has the item: its row goes, the focused Download button with it, and
+  // focus fell to <body>. Focus moves to the failure sentence then (tabIndex -1), which a screen reader reads; only
+  // when focus was lost, so a client who moved on keeps it. While the item is still listed its button keeps focus.
+  const failedDownload = useRef<string | null>(null);
+  const docList = documents.data;
+  useLayoutEffect(() => {
+    const id = failedDownload.current;
+    if (id === null || docList === undefined || docList.documents.some((x) => x.itemId === id)) return;
+    failedDownload.current = null;
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (lost) document.getElementById(FILE_ERROR_ID)?.focus();
+  }, [docList]);
+
   if (isGone) return null;
 
   const download = async (d: DocumentView) => {
     if (busy) return;
     setBusy(d.itemId);
     setFileError(null);
+    failedDownload.current = null;
     try {
       const r = await downloadDocument(
         api,
@@ -154,6 +169,7 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
       );
       if (!r.ok && r.reason !== 'session') {
         const text = r.reason === 'csrf' ? COPY.generic : VIEW_WORDS.fileUnavailable;
+        failedDownload.current = d.itemId;
         setFileError(text);
         announce(text);
         void qc.invalidateQueries({ queryKey: ['portal', 'documents', grant.id] });

@@ -343,6 +343,63 @@ describe('b17 FA-4, L16-5: busy buttons are aria-disabled, never disabled (a dis
   });
 });
 
+describe('b17 review F1 (E713): a Download of a document no longer shared', () => {
+  for (const wide of [true, false]) {
+    it(`${wide ? 'desktop' : 'phone'}: the refetched list drops the item and its focused button; focus moves to the failure sentence, never <body>, and it is said once`, async () => {
+      let retracted = false;
+      const r = renderPortal({
+        wide,
+        routes: {
+          ...signedIn,
+          'GET /portal/documents': (x) => ({ status: 200, body: retracted ? { ...F.documents(x.query.grantId), documents: [] } : F.documents(x.query.grantId) }),
+          'POST /portal/documents/:itemId/stream-token': () => {
+            retracted = true; // the agent took it back: the API answers 404 for an item the client can no longer see
+            return portalApiError('NOT_FOUND');
+          },
+        },
+      });
+      if (!wide) await userEvent.click(await screen.findByRole('tab', { name: VIEW_WORDS.documents }));
+      const seen = liveLog();
+      const dl = await screen.findByRole('button', { name: 'Download Purchase contract.pdf' });
+      await userEvent.click(dl);
+      await waitFor(() => expect(count(r, 'GET /portal/documents')).toBe(2));
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Download Purchase contract.pdf' })).toBeNull());
+      expect(await within(docs()).findByText(VIEW_WORDS.noDocuments)).toBeInTheDocument();
+      const sentence = within(docs()).getByText(VIEW_WORDS.fileUnavailable);
+      expect(sentence).toHaveFocus();
+      expect(document.activeElement).not.toBe(document.body);
+      await waitFor(() => expect(said(seen, VIEW_WORDS.fileUnavailable)).toBe(1));
+    });
+  }
+
+  it('a client who moved on keeps focus where they put it when the item goes', async () => {
+    let retracted = false;
+    const g = gate();
+    renderPortal({
+      wide: true,
+      routes: {
+        ...signedIn,
+        'GET /portal/documents': async (x) => {
+          if (retracted) await g.held;
+          return { status: 200, body: retracted ? { ...F.documents(x.query.grantId), documents: [] } : F.documents(x.query.grantId) };
+        },
+        'POST /portal/documents/:itemId/stream-token': () => {
+          retracted = true;
+          return portalApiError('NOT_FOUND');
+        },
+      },
+    });
+    const dl = await screen.findByRole('button', { name: 'Download Purchase contract.pdf' });
+    await userEvent.click(dl);
+    expect(await within(docs()).findByText(VIEW_WORDS.fileUnavailable)).toBeInTheDocument();
+    const heading = panelHeading(VIEW_WORDS.timeline);
+    heading.focus();
+    await act(async () => g.release());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Download Purchase contract.pdf' })).toBeNull());
+    expect(heading).toHaveFocus();
+  });
+});
+
 describe('b17 FA-5, L16-3: phone, a failure behind the hidden tab', () => {
   it('FA-5: is announced only once its tab shows it, and once only', async () => {
     const r = renderPortal({ routes: { ...signedIn, 'GET /portal/documents': offline } });

@@ -68,6 +68,11 @@ export function NextSteps({ steps }: { steps: readonly ItemView[] }) {
  * (tabIndex -1) when its section's data replaces the focused Try again, which would otherwise drop focus to <body>.
  */
 export const PANEL_HEADING_ID = { timeline: 'portal-timeline', documents: 'portal-documents' } as const;
+/**
+ * The id of the sentence after a failed download. b17 (b17 review F1, E713): it takes focus (tabIndex -1) when the
+ * documents' refetch drops the item, and the focused Download button with it.
+ */
+export const FILE_ERROR_ID = 'portal-file-error';
 const panelHeading = `${sectionHeading} outline-none`;
 
 /** Dated items in the API's order: no done mark, no grouping (R-PORTALWEB-5; Q-PORTALWEB-5). */
@@ -111,7 +116,11 @@ export function Documents({ documents, mode, headingId = PANEL_HEADING_ID.docume
       <h2 id={headingId} tabIndex={-1} className={panelHeading}>
         {VIEW_WORDS.documents}
       </h2>
-      {error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-[15px] text-ink">{error}</p> : null}
+      {error ? (
+        <p id={FILE_ERROR_ID} tabIndex={-1} className="rounded-lg bg-danger-soft px-3 py-2 text-[15px] text-ink outline-none">
+          {error}
+        </p>
+      ) : null}
       {documents.length === 0 ? (
         <p className="text-[15px] text-ink-muted">{VIEW_WORDS.noDocuments}</p>
       ) : (
