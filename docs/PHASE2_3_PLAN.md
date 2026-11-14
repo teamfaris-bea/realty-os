@@ -791,7 +791,7 @@ Separate Vite entry; phone-first timeline, documents, next steps; "Message {agen
 | Contract keywords | All in `KNOWN` | `src/test/contract.ts` unchanged |
 | `portal.sync` in e2e | The invite enqueues it; `/jobs` drains it | `e2e/portal/stack.ts` |
 | A seller update carrying a value | Published verbatim; 45 does not refuse it | VERIFY 8 stands (the publish side must refuse it) |
-| Edge-case ids | 45 took E680–E699 | Module 46's cases are E700–E719 (same order); the brief's 45 references E645/E649/E653/E659 are 45's E700 (46's own), E689, E693, E699 |
+| Edge-case ids | 45 took E680–E699 | Module 46's cases are E700–E719 (same order); the brief's 45 references are 45's ids as built: E645→E685 (46's own tap-only case is E700), E649→E689, E653→E693, E659→E699 (b15 audit F10) |
 
 - **Cuts.** Cut 1 only: `perf.spec.ts` (the bundle budgets stay; Lighthouse is VERIFY 4). Nothing else on the cut list was cut.
 - **Defaults.** Q-PORTALWEB-1…13 at their defaults (§2.2).

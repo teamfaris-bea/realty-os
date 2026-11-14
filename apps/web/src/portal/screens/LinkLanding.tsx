@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-3; E700, E700, E701, E704): the page a sign-in link opens. Nothing is posted on load, focus,
+// module 46 (R-PORTALWEB-3; E700, E685, E701, E704): the page a sign-in link opens. Nothing is posted on load, focus,
 // visibility, pageshow or reload: only the Sign in button's activation posts POST /api/portal/session {token}, once
 // (disabled while pending). Success: the cache is cleared, the token dropped, and home opens. 401: 45's link sentence,
 // then GET /me decides (home if signed in, else the form or the no-team state). 503: not available. 429 and a network

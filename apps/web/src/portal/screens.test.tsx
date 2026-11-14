@@ -20,7 +20,7 @@ const h1 = () => screen.getByRole('heading', { level: 1 });
 const withToken = () => readLink({ pathname: '/portal.html', search: '', hash: `#token=${F.TOKEN}` }, { state: null, replaceState: () => undefined }, null);
 
 describe('LinkLanding (R-PORTALWEB-3)', () => {
-  it('E700, E700: nothing is posted on load, focus, visibility or pageshow; the Sign in tap posts the token once, even on a double tap', async () => {
+  it('E700, E685: nothing is posted on load, focus, visibility or pageshow; the Sign in tap posts the token once, even on a double tap', async () => {
     withToken();
     const r = renderPortal({ link: { link: 'token' }, routes: { ...signedIn, 'POST /portal/session': () => ({ status: 200, body: F.session() }) } });
     expect(h1()).toHaveTextContent('Sign in');
