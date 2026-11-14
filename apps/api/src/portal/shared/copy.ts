@@ -58,6 +58,9 @@ export const NOT_VISIBLE = {
   DISABLED: 'The client portal account is disabled.',
 } as const;
 export type NotVisibleReason = keyof typeof NOT_VISIBLE;
+/** A live grant's state line: "Live.", or, while the portal is off (D7/D11), what the client will see and when (b15 review B15-45x46-2). */
+export const LIVE = 'Live.';
+export const LIVE_PORTAL_OFF = 'Shared; the client sees it once the client portal is turned on.';
 
 export const CHANNEL_WORDS = {
   email: { real: null, test: 'Sign-in links by email use the test provider (test deployments only).', off: "Clients can't get sign-in links by email: email sending is not set up on this deployment." },

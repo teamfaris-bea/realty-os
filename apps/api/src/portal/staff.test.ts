@@ -199,6 +199,24 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     expect(notes()).toBe(1);
   });
 
+  it('E693 (b15 review B15-45x46-2): while the portal is off a live grant never reads "Live." (the client sees nothing): the invite answer and the staff view say it is shared and seen once the portal is on; cleared, it reads "Live."', async () => {
+    const c = await client(agent(), { firstName: 'Opal' });
+    const d = await deal(agent(), c.id);
+    const OFF = 'Shared; the client sees it once the client portal is turned on.';
+    await setPortalCleared(h, false);
+    try {
+      const inv = await invite(agent(), d, c.id);
+      expect(inv.body.grant).toMatchObject({ state: 'live', stateText: OFF });
+      const view = await call<{ portalCleared: boolean; grants: { state: string; stateText: string }[] }>(agent(), 'GET', `/deals/${d}/portal`);
+      expect(view.body.portalCleared).toBe(false);
+      expect(view.body.grants).toMatchObject([{ state: 'live', stateText: OFF }]);
+    } finally {
+      await setPortalCleared(h, true);
+    }
+    const on = await call<{ grants: { state: string; stateText: string }[] }>(agent(), 'GET', `/deals/${d}/portal`);
+    expect(on.body.grants).toMatchObject([{ state: 'live', stateText: 'Live.' }]);
+  });
+
   it('E692 (b14 to-do, priorNotices anchored by the contact): a sent message to someone else that carries the grant\'s invite key never counts as this person\'s note', async () => {
     const c = await client(agent(), { firstName: 'Kit' });
     const d = await deal(agent(), c.id);

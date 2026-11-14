@@ -4,7 +4,7 @@
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { hint } from '../../comms/dispatch.js';
-import { ITEM_STILL_LISTED_UNSHARED, NOT_VISIBLE, type NotVisibleReason, RETRACTED_BY_SYNC, RETRACTED_NOT_SELLER_SIDE } from '../shared/copy.js';
+import { ITEM_STILL_LISTED_UNSHARED, LIVE, LIVE_PORTAL_OFF, NOT_VISIBLE, type NotVisibleReason, RETRACTED_BY_SYNC, RETRACTED_NOT_SELLER_SIDE } from '../shared/copy.js';
 import { type PortalItemRow, grantContent, grantView } from '../shared/view.js';
 import { isoOrNull, portalClearedInTx } from './common.js';
 
@@ -91,13 +91,15 @@ function stateOf(g: GrantRow): { state: GrantStaffView['state']; reason: NotVisi
   return { state: 'live', reason: null };
 }
 
-const toStaff = (g: GrantRow): GrantStaffView => {
+// b15 review B15-45x46-2: a live grant reads "Live." only while the portal is cleared; while it is off the client sees
+// nothing, so its line says when they will
+const toStaff = (cleared: boolean) => (g: GrantRow): GrantStaffView => {
   const s = stateOf(g);
   return {
     id: g.id,
     accountId: g.portal_account_id,
     state: s.state,
-    stateText: s.reason ? NOT_VISIBLE[s.reason] : 'Live.',
+    stateText: s.reason ? NOT_VISIBLE[s.reason] : cleared ? LIVE : LIVE_PORTAL_OFF,
     grantedAt: g.granted_at.toISOString(),
     expiresAt: isoOrNull(g.expires_at),
     revokedAt: isoOrNull(g.revoked_at),
@@ -108,7 +110,7 @@ const toStaff = (g: GrantRow): GrantStaffView => {
 
 export async function grantStaffViews(tx: Tx, ids: readonly string[]): Promise<GrantStaffView[]> {
   if (ids.length === 0) return [];
-  return (await grantRows(tx, sql`g.id = ANY (${ids as string[]}::uuid[])`)).map(toStaff);
+  return (await grantRows(tx, sql`g.id = ANY (${ids as string[]}::uuid[])`)).map(toStaff(await portalClearedInTx(tx)));
 }
 
 export interface ItemStaffView {
@@ -152,9 +154,9 @@ export async function itemStaffViews(tx: Tx, grantIds: readonly string[]): Promi
 
 /** GET /deals/:id/portal, /listings/:id/portal: accounts, grants and items of that deal or listing. */
 export async function scopeState(tx: Tx, scope: { kind: 'deal' | 'listing'; id: string }) {
-  const grants = (await grantRows(tx, scope.kind === 'deal' ? sql`g.deal_id = ${scope.id}::uuid` : sql`g.listing_id = ${scope.id}::uuid`)).map(toStaff);
-  const accountIds = [...new Set(grants.map((g) => g.accountId))];
   const cleared = await portalClearedInTx(tx);
+  const grants = (await grantRows(tx, scope.kind === 'deal' ? sql`g.deal_id = ${scope.id}::uuid` : sql`g.listing_id = ${scope.id}::uuid`)).map(toStaff(cleared));
+  const accountIds = [...new Set(grants.map((g) => g.accountId))];
   return {
     portalCleared: cleared,
     portalText: cleared ? null : NOT_VISIBLE.PORTAL_OFF,
