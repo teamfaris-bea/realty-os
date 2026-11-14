@@ -19,7 +19,7 @@ Notation used below:
 - **Timestamps.** `updated_at` is maintained by trigger on every table that has it.
 - **Optimistic concurrency.** `row_version` / `version` columns are app-managed: `UPDATE … WHERE row_version = $v`.
 - **Search.** `*_search_tsv` / `search_tsv` are generated `tsvector` columns (`simple` config) with GIN indexes, plus pg_trgm GIN on names, addresses and contact-point addresses.
-- **Ledgers.** Ledgers (`lead_ownership_events`, `consent_events`, `gate_decisions`, `audit_log`) have **no FK to mutable entities** and hold **no PII**, so they survive purge and erasure.
+- **Ledgers.** Ledgers (`lead_ownership_events`, `consent_events`, `gate_decisions`, `audit_log`) have **no FK to mutable entities** and hold **no PII in their payloads** (ids, codes, HMACs), so they survive purge and erasure. One exception is recorded, not changed (b14 review F2, owner question Q-PORTAL-18): `audit_log.ip` and `audit_log.user_agent` hold the requester's IP address and user agent, for staff and for clients alike (the portal's sign-in, sign-out, stream-token and download rows; the email unsubscribe), and erasure leaves them until R-AUDIT-9's 7-year sweep, keyed by a deleted account or contact id.
 
 ---
 
