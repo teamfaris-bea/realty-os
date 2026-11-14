@@ -40,7 +40,9 @@ test('J5 E511: the planned next AI message is said in the viewer\'s time with th
   expect(Date.parse(t[0]!.not_before!)).toBeGreaterThan(Date.now());
   await expect(next).toContainText(/Next AI message planned for .+ \(.+, their time\)/);
   await expect(next).toContainText(/Next AI message planned for [^(]+ E[SD]T \(/);
-  await expect(next).not.toContainText('UTC');
+  // the viewer's part never says UTC; their part may (from 01:00 to 01:59 UTC, closedZone() is 'UTC' itself, the first
+  // fixed-offset zone at 01:00-04:59, so their time correctly reads "(9:00 AM UTC, their time)")
+  await expect(next).not.toContainText(/planned for [^(]*UTC/);
   await expect(page.locator('main')).toContainText(`Their time zone was set on the person: ${lead.zone}`);
   expect(await axe(page)).toEqual([]);
   await page.goto(`${stack.webUrl}/contacts/${lead.id}/thread`);
