@@ -219,4 +219,20 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('apps/web/src/widget/widget.test.ts', "import { describe } from 'vitest';\nexport const d = describe;\n")).not.toContain('realty/isolated-bundle');
     expect(await lint('apps/web/src/surfaces/thread/ThreadPage.tsx', "import { Button } from '../../design/index.js';\nexport const b = Button;\n")).not.toContain('realty/isolated-bundle');
   });
+  it('module 46 (R-PORTALWEB-1): the client portal imports only itself, react, react-dom and @tanstack/react-query; its tests and the staff app are not restricted', async () => {
+    /** @type {[string, string][]} */
+    const refused = [
+      ['apps/web/src/portal/api.ts', "import { ApiClient } from '../shell/api.js';\nexport const a = ApiClient;\n"],
+      ['apps/web/src/portal/view/components.tsx', "import { Button } from '../../design/index.js';\nexport const b = Button;\n"],
+      ['apps/web/src/portal/App.tsx', "import { Link } from 'react-router-dom';\nexport const l = Link;\n"],
+      ['apps/web/src/portal/view/dates.ts', "import { x } from '@realty/core';\nexport const y = x;\n"],
+      ['apps/web/src/portal/copy.ts', "import type { X } from '@realty/api';\nexport type Y = X;\n"],
+    ];
+    for (const [file, src] of refused) expect(await lint(file, src), `${file}: ${src}`).toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/portal/main.tsx', "import { createRoot } from 'react-dom/client';\nexport const r = createRoot;\n")).not.toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/portal/screens/Home.tsx', "import { parseMe } from '../view/index.js';\nexport const p = parseMe;\n")).not.toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/portal/App.tsx', "import { useQuery } from '@tanstack/react-query';\nexport const q = useQuery;\n")).not.toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/portal/link.test.ts', "import { describe } from 'vitest';\nexport const d = describe;\n")).not.toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/surfaces/client-portal/PreviewPage.tsx', "import { Button } from '../../design/index.js';\nexport const b = Button;\n")).not.toContain('realty/isolated-bundle');
+  });
 });

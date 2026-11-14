@@ -73,6 +73,8 @@ COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
 # generated from apps/web/security-headers.ts (node deploy/render-security-headers.mjs); included by nginx.conf
 COPY deploy/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY deploy/widget-security-headers.conf /etc/nginx/snippets/widget-security-headers.conf
+# module 46: the client portal's /portal.html headers (its own CSP), generated the same way
+COPY deploy/portal-security-headers.conf /etc/nginx/snippets/portal-security-headers.conf
 # the client's address behind the load balancer (set_real_ip_from the private ranges); included by nginx.conf
 COPY deploy/real-ip.conf /etc/nginx/snippets/real-ip.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html

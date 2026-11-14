@@ -128,6 +128,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/likely', roles: NOT_TC, url: at('/likely') },
   // module 55 (phase3-staff): Coaching trends (the sweep world shows whatever state its settings give: a state sentence or counts)
   { path: '/coaching/trends', roles: NOT_TC, url: at('/coaching/trends') },
+  // module 46 (web/portal): What the client sees, for a grant that does not exist (its not-found state); the portal
+  // e2e (e2e/portal/a11y.spec.ts) sweeps a real preview, visible and not
+  { path: '/client-portal/:grantId', roles: ['owner', 'admin', 'team_lead', 'agent', 'tc'], url: at('/client-portal/00000000-0000-7000-8000-000000000000') },
 ];
 
 /** Screens outside the app frame (signed out). */
@@ -141,6 +144,8 @@ export const SIGNED_OUT_PAGES: readonly { url: string; h1: string; widget?: 'clo
   // seeded widget's key (signedOutUrl fills it in), talking to module 22's real public chat routes
   { url: '/src/widget/preview.html?key=:widgetKey', h1: 'Chat widget preview', widget: 'closed' },
   { url: '/src/widget/preview.html?key=:widgetKey#realty-chat-open', h1: 'Chat widget preview', widget: 'open' },
+  // module 46: the client portal (a separate entry), signed out, with a team slug
+  { url: '/portal.html?team=harbor', h1: 'Sign in to your client portal' },
 ];
 
 /** A signed-out page's address, with the seeded widget key where it names one. */

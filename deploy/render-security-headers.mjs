@@ -1,15 +1,17 @@
-// Writes deploy/security-headers.conf and deploy/widget-security-headers.conf from apps/web/security-headers.ts, the
+// Writes deploy/security-headers.conf, deploy/widget-security-headers.conf and (module 46) deploy/portal-security-headers.conf from apps/web/security-headers.ts, the
 // single definition of the web app's security headers. Run after changing that policy and commit the result:
 //   node deploy/render-security-headers.mjs           write the files
 //   node deploy/render-security-headers.mjs --check   exit 1 when a committed file is stale (CI)
 // Node 22.18+ loads the .ts module directly (type stripping). apps/web/src/security-headers.nginx.test.ts
 // also fails on drift, and checks that every content location of deploy/nginx.conf sends exactly these headers.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { nginxSecurityHeadersConf, nginxWidgetHeadersConf } from '../apps/web/security-headers.ts';
+import { nginxPortalHeadersConf, nginxSecurityHeadersConf, nginxWidgetHeadersConf } from '../apps/web/security-headers.ts';
 
 const files = [
   ['deploy/security-headers.conf', new URL('./security-headers.conf', import.meta.url), nginxSecurityHeadersConf()],
   ['deploy/widget-security-headers.conf', new URL('./widget-security-headers.conf', import.meta.url), nginxWidgetHeadersConf()],
+  // module 46: the client portal's /portal.html location
+  ['deploy/portal-security-headers.conf', new URL('./portal-security-headers.conf', import.meta.url), nginxPortalHeadersConf()],
 ];
 if (process.argv.includes('--check')) {
   let stale = false;

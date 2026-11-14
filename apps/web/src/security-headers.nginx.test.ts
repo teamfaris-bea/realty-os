@@ -1,7 +1,8 @@
 // The deployable web server (deploy/nginx.conf, run by the Dockerfile `web` stage) must send exactly
 // `webSecurityHeaders` on every response it serves for the web app (SECURITY §2.1), except the chat widget's
 // script (/widget/chat.js, module 37), which brokerages' websites load cross-origin and so gets
-// `widgetScriptHeaders` (the same set with Cross-Origin-Resource-Policy: cross-origin). This test parses the
+// `widgetScriptHeaders` (the same set with Cross-Origin-Resource-Policy: cross-origin), and the client portal's page
+// (/portal.html, module 46), which gets `portalSecurityHeaders` (its own CSP). This test parses the
 // nginx config, expands its `include`s through the files the Dockerfile copies into the image, applies
 // nginx's add_header inheritance rule (a level with any add_header of its own inherits none), and compares
 // the effective header set of every location with the single definition in security-headers.ts. It also checks
@@ -11,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { nginxSecurityHeadersConf, nginxWidgetHeadersConf, webSecurityHeaders, widgetScriptHeaders } from '../security-headers.js';
+import { nginxPortalHeadersConf, nginxSecurityHeadersConf, nginxWidgetHeadersConf, portalSecurityHeaders, webSecurityHeaders, widgetScriptHeaders } from '../security-headers.js';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const read = (rel: string) => readFileSync(resolve(repo, rel), 'utf8');
@@ -135,8 +136,12 @@ function locations(server: Directive): LocationView[] {
 
 /** The one location that serves the chat widget's script to other websites (module 37). */
 const WIDGET_SCRIPT = '= /widget/chat.js';
-/** The header set a content location must send: the widget's script gets widgetScriptHeaders, every other webSecurityHeaders. */
-const expectedFor = (path: string): Readonly<Record<string, string>> => (path === WIDGET_SCRIPT ? widgetScriptHeaders : webSecurityHeaders);
+/** module 46: the one location that serves the client portal's page (its own CSP, R-PORTALWEB-2). */
+const PORTAL_PAGE = '= /portal.html';
+/** The header set a content location must send: the widget's script gets widgetScriptHeaders, the portal page
+ *  portalSecurityHeaders (module 46), every other webSecurityHeaders. */
+const expectedFor = (path: string): Readonly<Record<string, string>> => (path === WIDGET_SCRIPT ? widgetScriptHeaders : path === PORTAL_PAGE ? portalSecurityHeaders : webSecurityHeaders);
+const expectedName = (path: string) => (path === WIDGET_SCRIPT ? 'widgetScriptHeaders' : path === PORTAL_PAGE ? 'portalSecurityHeaders' : 'webSecurityHeaders');
 
 /** Problems with one nginx config: an empty list means every location sends exactly its expected header set. */
 function headerProblems(conf: Directive[]): string[] {
@@ -166,7 +171,7 @@ function headerProblems(conf: Directive[]): string[] {
         const h = seen.get(k);
         if (!h) problems.push(`${l.path}: missing ${k}`);
         else {
-          if (h.value !== v) problems.push(`${l.path}: ${k} differs from ${l.path === WIDGET_SCRIPT ? 'widgetScriptHeaders' : 'webSecurityHeaders'}`);
+          if (h.value !== v) problems.push(`${l.path}: ${k} differs from ${expectedName(l.path)}`);
           if (!h.always) problems.push(`${l.path}: ${k} lacks "always" (error responses would miss it)`);
         }
       }
@@ -189,22 +194,24 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     expect(files.get('/etc/nginx/templates/default.conf.template')).toBe('deploy/nginx.conf');
     expect([...files.values()]).toContain('deploy/security-headers.conf');
     expect([...files.values()]).toContain('deploy/widget-security-headers.conf');
+    expect(files.get('/etc/nginx/snippets/portal-security-headers.conf')).toBe('deploy/portal-security-headers.conf'); // module 46
     expect(files.get('/etc/nginx/snippets/real-ip.conf')).toBe('deploy/real-ip.conf');
   });
 
   it('deploy/security-headers.conf and deploy/widget-security-headers.conf are exactly the text generated from security-headers.ts (node deploy/render-security-headers.mjs)', () => {
     expect(read('deploy/security-headers.conf')).toBe(nginxSecurityHeadersConf());
     expect(read('deploy/widget-security-headers.conf')).toBe(nginxWidgetHeadersConf());
+    expect(read('deploy/portal-security-headers.conf')).toBe(nginxPortalHeadersConf()); // module 46
   });
 
   it('every content location (HTML, assets, SPA fallback, health) has the full header set, names and values, with always', () => {
     expect(headerProblems(conf)).toEqual([]);
     const locs = locations(conf.find((d) => d.name === 'server')!);
     const content = locs.filter((l) => !l.proxied);
-    expect(content.map((l) => l.path).sort()).toEqual(['/', '/assets/', '= /healthz', WIDGET_SCRIPT]);
+    expect(content.map((l) => l.path).sort()).toEqual(['/', '/assets/', '= /healthz', PORTAL_PAGE, WIDGET_SCRIPT]);
     for (const l of content) {
       const csp = l.headers.find((h) => h.name === 'Content-Security-Policy')!.value;
-      expect(csp).toBe(webSecurityHeaders['Content-Security-Policy']);
+      expect(csp).toBe(expectedFor(l.path)['Content-Security-Policy']);
       expect(csp).toContain("frame-ancestors 'none'");
       expect(csp).not.toMatch(/unsafe-inline|unsafe-eval/);
     }
@@ -220,7 +227,7 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     const server = conf.find((d) => d.name === 'server')!;
     const corp = (l: LocationView) => l.headers.find((h) => h.name.toLowerCase() === 'cross-origin-resource-policy')?.value;
     const content = locations(server).filter((l) => !l.proxied);
-    expect(Object.fromEntries(content.map((l) => [l.path, corp(l)]))).toEqual({ '= /healthz': 'same-origin', [WIDGET_SCRIPT]: 'cross-origin', '/assets/': 'same-origin', '/': 'same-origin' });
+    expect(Object.fromEntries(content.map((l) => [l.path, corp(l)]))).toEqual({ '= /healthz': 'same-origin', [WIDGET_SCRIPT]: 'cross-origin', [PORTAL_PAGE]: 'same-origin', '/assets/': 'same-origin', '/': 'same-origin' });
     expect(widgetScriptHeaders).toEqual({ ...webSecurityHeaders, 'Cross-Origin-Resource-Policy': 'cross-origin' });
     const widget = server.block!.find((d) => d.name === 'location' && d.args.join(' ') === WIDGET_SCRIPT)!.block!;
     // a missing script is a 404, never index.html served as a script
@@ -260,6 +267,40 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     expect(headerProblems(leaky)).toEqual(expect.arrayContaining(['server-level add_header (would reach /api/)', expect.stringMatching(/^\/api\/: proxied location adds Content-Security-Policy/)]));
     const noAlways = parse(`server { location / { include x; } }`, () => snippet.replace(/ always;$/gm, ';'));
     expect(headerProblems(noAlways)).toContain('/: content-security-policy lacks "always" (error responses would miss it)');
+  });
+});
+
+describe('module 46 (R-PORTALWEB-2): /portal.html alone is served with portalSecurityHeaders', () => {
+  const conf = parse(read('deploy/nginx.conf'), includeFromImage);
+  const server = conf.find((d) => d.name === 'server')!;
+  const block = (p: string) => server.block!.find((d) => d.name === 'location' && d.args.join(' ') === p)?.block;
+
+  it('the exact-match location sends the portal set (its own CSP, Referrer-Policy same-origin), no-store, and a missing file is a 404, never the SPA fallback', () => {
+    const loc = locations(server).find((l) => l.path === PORTAL_PAGE)!;
+    expect(loc).toBeDefined();
+    const csp = loc.headers.find((h) => h.name === 'Content-Security-Policy')!.value;
+    expect(csp).toBe(portalSecurityHeaders['Content-Security-Policy']);
+    expect(csp).toContain("form-action 'none'");
+    expect(csp).toContain("require-trusted-types-for 'script'");
+    expect(csp).not.toContain('blob:');
+    expect(loc.headers.find((h) => h.name === 'Referrer-Policy')?.value).toBe('same-origin');
+    expect(loc.headers.find((h) => h.name === 'Cache-Control')?.value).toBe('no-store');
+    expect(block(PORTAL_PAGE)!.find((d) => d.name === 'try_files')?.args).toEqual(['$uri', '=404']);
+    // includes are expanded by the parser: the raw text names the snippet in this location only
+    expect(/location = \/portal\.html \{[^}]*include \/etc\/nginx\/snippets\/portal-security-headers\.conf;[^}]*\}/.test(read('deploy/nginx.conf'))).toBe(true);
+  });
+
+  it('the portal set is the staff set with only the CSP and Referrer-Policy changed; no other location includes the portal snippet, and /portal is no location of its own (the staff app)', () => {
+    expect({ ...portalSecurityHeaders, 'Content-Security-Policy': webSecurityHeaders['Content-Security-Policy'], 'Referrer-Policy': webSecurityHeaders['Referrer-Policy'] }).toEqual(webSecurityHeaders);
+    expect(read('deploy/nginx.conf').match(/include [^;]*portal-security-headers\.conf;/g)).toHaveLength(1);
+    expect(locations(server).map((l) => l.path).filter((p) => /portal/.test(p))).toEqual([PORTAL_PAGE]);
+  });
+
+  it('the checker catches drift: the staff snippet in the portal location', () => {
+    const staff = parse(`server { location = /portal.html { include x; } location / { include x; } }`, () => nginxSecurityHeadersConf());
+    expect(headerProblems(staff)).toContain('= /portal.html: content-security-policy differs from portalSecurityHeaders');
+    const ok = parse(`server { location = /portal.html { include p; } location / { include s; } }`, (f) => (f === 'p' ? nginxPortalHeadersConf() : nginxSecurityHeadersConf()));
+    expect(headerProblems(ok)).toEqual([]);
   });
 });
 
