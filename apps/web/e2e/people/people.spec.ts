@@ -85,8 +85,9 @@ async function axeViolations(page: Page): Promise<string[]> {
   });
 }
 
+/** b17 (B17R-2): a fictional number the stack has not handed out: Oregon's 971, 555-0100 to 555-0199 (the stack's DB is new each run). */
 function uniquePhone(seed: number): string {
-  return `(415) ${String(200 + (seed % 700)).padStart(3, '0')}-${String(1000 + ((Date.now() + seed) % 8999)).padStart(4, '0')}`;
+  return `(971) 555-01${String(seed % 100).padStart(2, '0')}`;
 }
 
 test('add a person: + → Save = 2 on a phone, + → ↵ = 1 on desktop; a duplicate warns first (+1)', async ({ page }) => {

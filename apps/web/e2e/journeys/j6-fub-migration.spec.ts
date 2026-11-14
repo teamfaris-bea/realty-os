@@ -24,7 +24,7 @@ let w: WorldInfo;
 const ROUTES = String.raw`
   async '/fub-load'(b) {
     const key = 'fub-j6-' + randomUUID().slice(0, 12);
-    const ph = (n) => '(415) 58' + (n % 10) + '-' + String(1000 + n + b.seed).slice(-4);
+    const ph = (n) => writtenBulkPhone(20000 + 100 * b.seed + n); // b17 (B17R-2): fictional
     fub.add(key, {
       users: [{ id: 11, name: 'Alex Agent' }],
       people: [

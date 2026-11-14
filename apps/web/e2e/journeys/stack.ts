@@ -51,6 +51,7 @@ import { createWorker } from './src/worker/loop.ts';
 import { silentLogger } from './src/worker/observability.ts';
 import { commsWorld, call, inboundSms, randomEmail } from './src/comms/testing.ts';
 import { postIntake, randomPhone, setOfferExpiry, setPeriodDeadlines, suFixture } from './src/leads/testing.ts';
+import { writtenBulkPhone } from './src/imports/testing.ts';
 import { freshReauth } from './src/admin/testing.ts';
 ${imports}
 (async () => {

@@ -32,7 +32,7 @@ const CHILD = String.raw`
 import http from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
-import { commsWorld, call, freshReauth, inboundSms, randomEmail } from './src/comms/testing.ts';
+import { commsWorld, call, freshReauth, inboundSms, randomEmail, randomPhone } from './src/comms/testing.ts';
 import { acceptLead } from './src/channels/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
@@ -46,9 +46,8 @@ const apiPort = h.app.server.address().port;
 let w = null;
 let agent = null;
 let widget = null;
-let seq = 0;
 let ipSeq = 0;
-const phone = () => { seq += 1; return '+1415' + String(2000000 + ((Date.now() % 1000000) * 7 + seq * 7919) % 7999999).padStart(7, '0'); };
+const phone = randomPhone; // b17 (B17R-2): fictional, +1 NXX 555-0100 to 555-0199 (src/leads/testing.ts)
 const visitorIp = () => { ipSeq += 1; return '198.51.100.' + ((ipSeq % 250) + 1); };
 const must = (r, what) => { if (r.status >= 300) throw new Error(what + ': ' + r.status + ' ' + JSON.stringify(r.body)); return r.body; };
 const body = (req) => new Promise((ok) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => ok(s ? JSON.parse(s) : {})); });

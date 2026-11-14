@@ -27,7 +27,7 @@ const ROUTES = String.raw`
   async '/m1-migrate'(b) {
     const key = 'fub-m1-' + randomUUID().slice(0, 12);
     const p = b.prefix;
-    const ph = (n) => '(415) 7' + (b.seed % 10) + (n % 10) + '-' + String(1000 + b.seed * 10 + n).slice(-4);
+    const ph = (n) => writtenBulkPhone(20000 + 100 * b.seed + n); // b17 (B17R-2): fictional
     const recUrl = 'https://fub.example/rec/' + p + '?token=secret';
     fub.add(key, {
       users: [{ id: 11, name: 'Alex Agent' }],

@@ -29,7 +29,7 @@ import { routeModules } from './src/routes.ts';
 import { FakeFub } from './src/imports/fub.ts';
 import { makeImportHandlers } from './src/imports/handlers.ts';
 import { makeImportsRoutes } from './src/imports/routes.ts';
-import { approve, batchOf, commitStage, importWorld, stageOf } from './src/imports/testing.ts';
+import { approve, batchOf, commitStage, importWorld, stageOf, writtenBulkPhone } from './src/imports/testing.ts';
 import { HandlerRegistry } from './src/worker/registry.ts';
 import { createWorker } from './src/worker/loop.ts';
 import { silentLogger } from './src/worker/observability.ts';
@@ -90,7 +90,7 @@ const routes = {
   async '/import'() {
     imp = await importWorld(ih);
     const key = 'fub-e2e-' + randomUUID().slice(0, 8);
-    const ph = (n) => '(415) 57' + (n % 10) + '-' + String(1000 + n).slice(-4);
+    const ph = (n) => writtenBulkPhone(20000 + n); // b17 (B17R-2): fictional
     fub.add(key, {
       users: [{ id: 11, name: 'Alex Agent' }],
       people: [

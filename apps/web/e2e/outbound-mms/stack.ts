@@ -18,7 +18,7 @@ const CHILD = String.raw`
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
-import { commsWorld, call, inboundSms, randomEmail } from './src/comms/testing.ts';
+import { commsWorld, call, inboundSms, randomEmail, randomPhone } from './src/comms/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
 const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN], trustProxy: 'loopback' } });
@@ -26,8 +26,7 @@ await h.app.listen({ port: 0, host: '127.0.0.1' });
 const apiPort = h.app.server.address().port;
 let w = null;
 let agent = null;
-let seq = 0;
-const phone = () => { seq += 1; return '+1415' + String(3000000 + ((Date.now() % 1000000) * 7 + seq * 7919) % 6999999).padStart(7, '0'); };
+const phone = randomPhone; // b17 (B17R-2): fictional, +1 NXX 555-0100 to 555-0199 (src/leads/testing.ts)
 const must = (r, what) => { if (r.status >= 300) throw new Error(what + ': ' + r.status + ' ' + JSON.stringify(r.body)); return r.body; };
 const body = (req) => new Promise((ok) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => ok(s ? JSON.parse(s) : {})); });
 const sms = async (from, text) => { const r = await inboundSms(h, from, w.mainNumber, text); if (r.statusCode >= 300) throw new Error('inbound: ' + r.statusCode + ' ' + r.body); };
