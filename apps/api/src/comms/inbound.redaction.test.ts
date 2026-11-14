@@ -319,6 +319,32 @@ describe('R-PORTAL-20 a quoted sign-in token is not stored in an inquiry either 
     expect(p).toMatchObject({ message: 'Is it still available?', content_redacted: null });
   });
 
+  it('R-PORTAL-20 B18S-2 (b18 review item 5b): a token only in the source detail and the name is not kept in those plain columns either (the inquiry, the contact\'s first-source detail, the name), so the "stored" label is true; the person page shows neither', async () => {
+    const [t1, t2] = [newToken(), newToken()];
+    const r = await postIntake(h, w.token, { inquiryType: 'buy', fullName: `Kim ${origin}/portal.html#token=${t2}`, emails: [`kim.b18s2.${randomUUID().slice(0, 8)}@example.test`], message: 'Is it still available?',
+      sourceDetail: { landing: `${origin}/portal.html#token=${t1}`, utm_source: 'partner' } });
+    expect([200, 201]).toContain(r.statusCode);
+    const contactId = (JSON.parse(r.body) as { contactId: string }).contactId;
+    const [i] = await inquiriesOf(contactId);
+    expect(i!.message).toBe('Is it still available?');
+    expect(i!.content_redacted).toBe('portal_signin_token');
+    const rows = (await h.su.query<{ d: unknown; od: unknown; name: string; first: string | null; last: string | null }>(`SELECT i.source_detail AS d, c.original_source_detail AS od, c.display_name AS name, c.first_name AS first, c.last_name AS last
+      FROM lead_inquiries i JOIN contacts c ON c.tenant_id = i.tenant_id AND c.id = i.contact_id WHERE i.id = $1`, [i!.id])).rows[0]!;
+    for (const v of [JSON.stringify(rows.d), JSON.stringify(rows.od), rows.name, rows.first ?? '', rows.last ?? '']) {
+      expect(v).not.toContain(t1);
+      expect(v).not.toContain(t2);
+    }
+    expect((rows.d as { landing: string; utm_source: string })).toEqual({ landing: `${origin}/portal.html#token=${SIGNIN_TOKEN_PLACEHOLDER}`, utm_source: 'partner' });
+    expect(rows.name.startsWith('Kim ')).toBe(true);
+    const raw = await rawOf(i!);
+    expect(raw).not.toContain(t1);
+    expect(raw).not.toContain(t2);
+    const page = await call<{ contact: { displayName: string; inquiries: { redaction: string | null; sourceDetail?: unknown }[] } }>(w.owner, 'GET', `/contacts/${contactId}`);
+    expect(JSON.stringify(page.body)).not.toContain(t1);
+    expect(JSON.stringify(page.body)).not.toContain(t2);
+    expect(page.body.contact.inquiries[0]!.redaction).toBe('stored');
+  });
+
   it('R-PORTAL-20 B18S-2: an inquiry stored before the redaction existed is shown on the person page and given to the assistant with the token hidden ("display") and never rewritten; the label is fixed once written (0097)', async () => {
     const r = await postIntake(h, w.token, { inquiryType: 'buy', fullName: 'Kim Example', emails: [`kim.b18s2.${randomUUID().slice(0, 8)}@example.test`], message: 'Hello' });
     const contactId = (JSON.parse(r.body) as { contactId: string }).contactId;

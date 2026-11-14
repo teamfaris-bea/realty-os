@@ -56,7 +56,7 @@ import { z } from 'zod';
 import { audit, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
-import { SIGNIN_TOKEN_REDACTION, redactNullable, redactSignInTokens } from '../portal/shared/redact.js';
+import { SIGNIN_TOKEN_REDACTION, redactSignInTokens } from '../portal/shared/redact.js';
 import { authorize } from '../rbac.js';
 import { systemActor } from '../worker/systemActor.js';
 import { leadsTx, platformOf } from './common.js';
@@ -284,16 +284,32 @@ export async function intakeLockKeys(tx: Tx, envelope: EnvelopeService, tenantId
  * (encrypted), as module 22 does for the message row. `redacted` is the row's label (0097).
  */
 function redactInquiryInput(input: InquiryInput): { i: InquiryInput; rawPayload: string; redacted: boolean } {
-  const message = redactNullable(input.message ?? null);
-  const propertyText = redactNullable(input.propertyText ?? null);
+  let removed = 0;
+  const text = <T extends string | undefined>(v: T): T => {
+    if (v === undefined) return v;
+    const r = redactSignInTokens(v);
+    removed += r.removed;
+    return r.text as T;
+  };
+  // b18 review item 5b: every free-text field that reaches a plain column is redacted, not only the message and the
+  // property text: the names (contacts.display_name, first_name, last_name), the campaign and ad references and each
+  // string of the source detail (lead_inquiries.source_detail, contacts.original_source_detail). So the 'stored' label
+  // is true of every column the inquiry writes, and no token reaches the person page through them.
+  const detail = input.sourceDetail === undefined ? undefined : Object.fromEntries(Object.entries(input.sourceDetail).map(([k, v]) => [k, typeof v === 'string' ? text(v) : v]));
   const i: InquiryInput = {
     ...input,
-    ...(input.message !== undefined ? { message: message.text ?? undefined } : {}),
-    ...(input.propertyText !== undefined ? { propertyText: propertyText.text ?? undefined } : {}),
+    ...(input.message !== undefined ? { message: text(input.message) } : {}),
+    ...(input.propertyText !== undefined ? { propertyText: text(input.propertyText) } : {}),
+    ...(input.fullName !== undefined ? { fullName: text(input.fullName) } : {}),
+    ...(input.firstName !== undefined ? { firstName: text(input.firstName) } : {}),
+    ...(input.lastName !== undefined ? { lastName: text(input.lastName) } : {}),
+    ...(input.campaignRef !== undefined ? { campaignRef: text(input.campaignRef) } : {}),
+    ...(input.adRef !== undefined ? { adRef: text(input.adRef) } : {}),
+    ...(detail !== undefined ? { sourceDetail: detail as InquiryInput['sourceDetail'] } : {}),
   };
-  // any other field (a name, a source detail) is covered in the raw payload; the regex never crosses a JSON quote
+  // anything else (a field no plain column keeps) is covered in the raw payload; the regex never crosses a JSON quote
   const raw = redactSignInTokens(JSON.stringify({ ...i, leadSourceId: undefined }));
-  return { i, rawPayload: raw.text, redacted: message.removed + propertyText.removed + raw.removed > 0 };
+  return { i, rawPayload: raw.text, redacted: removed + raw.removed > 0 };
 }
 
 async function ingestInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
