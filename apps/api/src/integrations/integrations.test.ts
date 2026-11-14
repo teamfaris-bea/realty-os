@@ -35,6 +35,10 @@ const AVM_ALSO = 'In-house home-value notes from recent MLS sales also need the 
 // need platform:cma and the MLS licence pack's permission (cma/gates.ts readiness use 'ai_isa': both packs, ai_isa_comps)
 const SELLER_LINE = "The assistant's recent-sales emails";
 const SELLER_ALSO = 'Recent sales from the assistant also need the Client CMAs, seller value ranges and in-house home-value notes pack';
+// b16 (B16S-1): every AI ISA message waits on platform:ai_isa (isa/repo.ts tenantIsaFacts, chain link 1), so the
+// recent-sales line names it too, after platform:cma; until batch 16 the line read as complete without it
+const ISA_PACK = "the assistant's ISA texts and emails pack";
+const ISA_LINE = "The assistant's ISA texts and emails";
 const SELLER_LICENCE = "Your MLS licence pack must also allow sold data in the assistant's emails to seller leads. An Owner or Admin records this from your MLS agreement on the MLS admin page, under Valuation use.";
 // b15 (b14 low g) added "The emails also wait for the statement rules to be connected, so none is sent in this version."
 // while isa/seller/cmaSeam.ts refused every statement; batch 16 connected cma/statement.ts there, so the line ends with
@@ -119,13 +123,13 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
   it('b14 round 2 (b12 review ui-1; R-INT-6, R-ISA-18): the recent-sales emails pack says they are held, never "not built" (ISA-3 built them in batch 13): it stays off until counsel review is recorded, names platform:cma and the MLS licence pack beside it, and says cleared only for the pack once reviewed; since batch 16 (statement rules connected) it names only counsel and the licence as holding them; the AI ISA pack lines name "the assistant", never "AI"', async () => {
     // ISA-3's 0084 publishes platform:ai_isa_seller_data@2026.11.1 (unreviewed) and retires 2026.11.0 (batch 13)
     const before = (await list()).platformPacks;
-    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(`${SELLER_LINE} stays off: awaiting counsel review (pack 2026.11.1, not yet reviewed). ${SELLER_ALSO} (not reviewed yet). ${SELLER_LICENCE}`);
+    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(`${SELLER_LINE} stays off: awaiting counsel review (pack 2026.11.1, not yet reviewed). ${SELLER_ALSO} (not reviewed yet), and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}`);
     expect(before.find((x) => x.key === 'platform:ai_isa')!.sentence).toBe("The assistant's ISA texts and emails stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed).");
     for (const p of before) expect(p.sentence, p.key).not.toMatch(/\bAI\b/);
     try {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-01T00:00:00Z' WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
       const p = (await list()).platformPacks.find((x) => x.key === 'platform:ai_isa_seller_data')!;
-      expect(p).toMatchObject({ reviewed: true, sentence: `${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO} (not reviewed yet). ${SELLER_LICENCE}` });
+      expect(p).toMatchObject({ reviewed: true, sentence: `${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO} (not reviewed yet), and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}` });
       expect(p.sentence).not.toMatch(/not built/);
       // b16: the line no longer says the emails wait for the statement rules, because cmaSeam.ts applies V2-A's
       // cma/statement.ts: a printable statement at 12 pt is carried, and one the PDF would substitute is still refused
@@ -135,10 +139,45 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       expect(seam.emailStatementRendering({ statements: [{ text: 'Not an appraisal™.', minPointSize: 12 }], attributions: [], disclaimers: [] })).toMatchObject({ ok: false, code: 'CMA_STATEMENT_NOT_RENDERABLE' });
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-02T00:00:00Z' WHERE key = 'platform:cma' AND status = 'published'");
       expect((await list()).platformPacks.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(
-        `${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO}, which counsel reviewed on 2026-12-02. ${SELLER_LICENCE}`,
+        `${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO}, which counsel reviewed on 2026-12-02, and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}`,
       );
     } finally {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key IN ('platform:ai_isa_seller_data', 'platform:cma') AND status = 'published'");
+    }
+  });
+
+  it('b16 B16S-1 (R-INT-6, R-ISA-18, R-ISA-25; Honest UI): with both AI ISA packs, platform:cma and the licence recorded, the two lines say cleared and name nothing else, which is now true: every AI email carries the unsubscribe line, so it passes check 4, and the only hold left is the deployment switch AI_ISA_LIVE_SENDS, which the AI care hold banner names; the recent-sales line names the assistant\'s own pack until it is reviewed', async () => {
+    const line = async (key: string) => (await list()).platformPacks.find((x) => x.key === key)!.sentence;
+    // the behaviour the lines rest on (batch 16, UNSUBSCRIBE_MISSING): an AI email body carries nurture's unsubscribe
+    // line, which check 4 reads as an unsubscribe; the text hint alone is not one
+    const { EMAIL_UNSUBSCRIBE_LINE, containsOptOutHint } = await import('@realty/core/compliance');
+    const { ISA_OPT_OUT_HINT, composeMessage } = await import('@realty/core/isa');
+    const email = composeMessage({ body: 'Thanks for writing.', who: { agentFirstName: 'Alex', teamName: 'Test Team', brokerageName: 'Test Brokerage LLC' }, firstInThread: true, optOutHint: true, channel: 'email', postalAddress: '1 Sample St, Oakland, CA 94110' });
+    expect(email.split('\n\n').at(-1)).toBe(EMAIL_UNSUBSCRIBE_LINE);
+    expect(containsOptOutHint(email, 'email')).toBe(true);
+    expect(containsOptOutHint(email.replace(EMAIL_UNSUBSCRIBE_LINE, ''), 'email')).toBe(false);
+    expect(containsOptOutHint(ISA_OPT_OUT_HINT, 'email')).toBe(false);
+    try {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-01T00:00:00Z' WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-02T00:00:00Z' WHERE key = 'platform:cma' AND status = 'published'");
+      // the seller-data and CMA packs reviewed, the assistant's own pack not: the line says what still holds the emails
+      expect(await line('platform:ai_isa_seller_data')).toBe(`${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO}, which counsel reviewed on 2026-12-02, and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}`);
+      expect(await line('platform:ai_isa')).toBe(`${ISA_LINE} stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed).`);
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-03T00:00:00Z' WHERE key = 'platform:ai_isa' AND status = 'published'");
+      const seller = await line('platform:ai_isa_seller_data');
+      const isa = await line('platform:ai_isa');
+      expect(seller).toBe(`${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO}, which counsel reviewed on 2026-12-02, and ${ISA_PACK}, which counsel reviewed on 2026-12-03. ${SELLER_LICENCE}`);
+      expect(isa).toBe(`${ISA_LINE}: cleared by counsel on 2026-12-03 (pack 2026.11.0).`);
+      for (const s of [seller, isa]) {
+        expect(s).not.toMatch(/none is sent|not built|statement rules|unsubscribe/i);
+        expect(s).not.toMatch(/\bAI\b/);
+      }
+      // what is left is the deployment switch, which every AI care surface's hold banner names (isa/settings.ts, routes.ts)
+      const admin = await call<{ packCleared: boolean; liveSends: boolean; holdSentence: string | null }>(owner, 'GET', '/admin/ai-isa');
+      expect(admin.body).toMatchObject({ packCleared: true, liveSends: false, holdSentence: 'AI assistant sending is off on this deployment.' });
+      expect((await call<{ holdSentence: string | null }>(owner, 'GET', '/ai-isa/assignments')).body.holdSentence).toBe('AI assistant sending is off on this deployment.');
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key IN ('platform:ai_isa_seller_data', 'platform:cma', 'platform:ai_isa') AND status = 'published'");
     }
   });
 

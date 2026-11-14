@@ -160,12 +160,15 @@ export const PACK_GATES: Record<string, string> = {
  * b13 audit V2B-1 (R-CMA-10, R-INT-6): in-house home-value notes (production's AvmProvider, InHouseAvm) need both
  * platform:avm and platform:cma, so each pack's line names the other and says whether counsel has reviewed it. Without
  * it, "Home-value notes: cleared" (platform:avm alone) would read as notes going out while InHouseAvm requests nothing.
+ * A capability that needs several other packs names each, in order.
  */
-export const PACK_ALSO_NEEDS: Readonly<Record<string, { pack: string; what: string }>> = {
-  'platform:cma': { pack: 'platform:avm', what: 'In-house home-value notes' },
-  'platform:avm': { pack: 'platform:cma', what: 'In-house home-value notes from recent MLS sales' },
-  // b14 round 2 (R-ISA-18; cma/gates.ts readiness use 'ai_isa' needs both packs): ISA-3's recent-sales emails
-  'platform:ai_isa_seller_data': { pack: 'platform:cma', what: 'Recent sales from the assistant' },
+export const PACK_ALSO_NEEDS: Readonly<Record<string, { packs: readonly string[]; what: string }>> = {
+  'platform:cma': { packs: ['platform:avm'], what: 'In-house home-value notes' },
+  'platform:avm': { packs: ['platform:cma'], what: 'In-house home-value notes from recent MLS sales' },
+  // b14 round 2 (R-ISA-18; cma/gates.ts readiness use 'ai_isa' needs both packs): ISA-3's recent-sales emails. Batch 16
+  // (B16S-1): they are AI ISA messages, which all wait on platform:ai_isa too (isa/repo.ts tenantIsaFacts, chain link 1),
+  // so the line names it, and never reads as complete with platform:cma alone
+  'platform:ai_isa_seller_data': { packs: ['platform:cma', 'platform:ai_isa'], what: 'Recent sales from the assistant' },
 };
 
 /**
@@ -182,8 +185,12 @@ export const PACK_ALSO_LICENCE: Readonly<Record<string, string>> = {
  * b15 (b14 low g): what else holds a pack's capability back in this version, said without "not built" (the capability
  * is built and held). Empty since batch 16: platform:ai_isa_seller_data's line said the recent-sales emails waited for
  * the statement rules to be connected (isa/seller/cmaSeam.ts refused every statement), and cmaSeam.ts now applies V2-A's
- * cma/statement.ts as V2-A's share email does, so that line names only counsel's reviews and the MLS licence
- * (integrations.test.ts pins the line and the connected rules together).
+ * cma/statement.ts as V2-A's share email does. Batch 16 also fixed UNSUBSCRIBE_MISSING (every AI email now carries the
+ * unsubscribe line and the postal address, core isa/lines.ts composeMessage), which had refused every AI ISA email at
+ * check 4, so nothing in code holds the emails beyond the packs the line names, the MLS licence, the tenant's postal
+ * address and verified sending domain (as for every marketing email) and the deployment switch AI_ISA_LIVE_SENDS, which
+ * the AI care hold banner names ("AI assistant sending is off on this deployment."). integrations.test.ts pins the lines
+ * with the connected rules and the unsubscribe line.
  */
 export const PACK_ALSO_HELD: Readonly<Record<string, string>> = {};
 
@@ -218,17 +225,22 @@ export const PER_USER_SERVICES = [
  * The pack's state in words, matching what the database clears (`app.platform_cleared`, R-INT-6): it says
  * "cleared" only when the pack is, so a vendor-checked pack stays off until `rules.vendor_ready_at` is set even
  * after counsel review, and a never-cleared pack (D2) never reads as awaiting review or as cleared. A pack in
- * PACK_ALSO_NEEDS adds the second pack its capability needs, with that pack's review state when `all` holds it.
+ * PACK_ALSO_NEEDS adds each other pack its capability needs, with that pack's review state when `all` holds it.
  */
 export function packSentence(p: PlatformPack, all: readonly PlatformPack[] = []): string {
   const base = packStateSentence(p);
   const licence = (Object.hasOwn(PACK_ALSO_LICENCE, p.key) ? ` ${PACK_ALSO_LICENCE[p.key]!}` : '') + (Object.hasOwn(PACK_ALSO_HELD, p.key) ? ` ${PACK_ALSO_HELD[p.key]!}` : '');
   const also = PACK_ALSO_NEEDS[p.key];
   if (also === undefined) return `${base}${licence}`;
-  const other = all.find((x) => x.key === also.pack);
-  const otherName = PACK_GATES[also.pack] ?? also.pack;
-  const state = other === undefined ? ' reviewed by counsel' : other.reviewedByCounselAt === null ? ' (not reviewed yet)' : `, which counsel reviewed on ${other.reviewedByCounselAt.slice(0, 10)}`;
-  return `${base} ${also.what} also need the ${otherName} pack${state}.${licence}`;
+  const needs = also.packs.map((key) => {
+    const other = all.find((x) => x.key === key);
+    const name = PACK_GATES[key] ?? key;
+    const state = other === undefined ? ' reviewed by counsel' : other.reviewedByCounselAt === null ? ' (not reviewed yet)' : `, which counsel reviewed on ${other.reviewedByCounselAt.slice(0, 10)}`;
+    // "the Client CMAs … pack", "the assistant's ISA texts and emails pack" (a name that starts with "The" keeps one)
+    return `${name.startsWith('The ') ? `the ${name.slice(4)}` : `the ${name}`} pack${state}`;
+  });
+  const list = needs.length === 1 ? needs[0]! : `${needs.slice(0, -1).join(', ')}, and ${needs.at(-1)!}`;
+  return `${base} ${also.what} also need ${list}.${licence}`;
 }
 
 function packStateSentence(p: PlatformPack): string {
