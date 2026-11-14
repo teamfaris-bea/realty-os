@@ -5,7 +5,7 @@
 // audit rows, RLS and invariants are the real ones; and the seed must refuse a second run without changing anything.
 // Slow: the whole seed runs once (beforeAll).
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
@@ -227,6 +227,25 @@ describe('pnpm seed: the demo tenant', () => {
       await app.close();
       await database.close();
     }
+  });
+
+  it('b17 (B17R-2): every phone number the demo holds, logs or writes to the credentials file is fictional (+1 NXX 555-0100 to 555-0199)', async () => {
+    const tables = await q<{ table_name: string }>(
+      `SELECT DISTINCT c.table_name FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+        WHERE c.table_schema = 'public' AND c.column_name = 'tenant_id' AND t.table_type = 'BASE TABLE' ORDER BY 1`,
+    );
+    const found: [where: string, ten: string][] = [];
+    const read = (where: string, text: string) => {
+      for (const m of text.matchAll(/\+1[\s.-]?\(?(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})(?!\d)/g)) found.push([where, `${m[1]}${m[2]}${m[3]}`]);
+    };
+    for (const { table_name: t } of tables) {
+      for (const r of await q<{ j: string }>(`SELECT row_to_json(x)::text AS j FROM public.${t} x WHERE tenant_id = $1`, [tenantId])) read(t, r.j);
+    }
+    read('log', lines.join('\n'));
+    read('credentials file', readFileSync(opts.credentialsPath, 'utf8'));
+    expect([...new Set(found.map(([where]) => where))]).toEqual(expect.arrayContaining(['contact_points', 'phone_numbers', 'messages', 'calls', 'portal_grants', 'log']));
+    expect(new Set(found.map(([, ten]) => ten)).size).toBeGreaterThan(10);
+    expect(found.filter(([, ten]) => !/^[2-9]\d{2}55501\d{2}$/.test(ten)).map(([where, ten]) => `${where}: ${ten}`)).toEqual([]);
   });
 
   it('refuses a second run: it says how to start over and changes nothing', async () => {

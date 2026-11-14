@@ -67,10 +67,17 @@ const PEOPLE = {
 } as const;
 type PersonKey = keyof typeof PEOPLE;
 
-// Boston numbers (tenant zone America/New_York), a block nobody is assigned in this demo; the fake
-// telephony provider never sends anything.
+// Boston numbers (tenant zone America/New_York), fictional (b17 B17R-2: the repository is public): 555-0100 to
+// 555-0149 in 617, then 857 and 781 (the area code is the second dimension once one runs out). The fake telephony
+// provider sells the team number from 555-0150 up and never sends anything.
+const BOSTON_AREAS = ['617', '857', '781'] as const;
 let phoneSeq = 0;
-const phone = () => `+1617201${String(1000 + ++phoneSeq).padStart(4, '0')}`;
+const phone = () => {
+  const n = phoneSeq++;
+  const area = BOSTON_AREAS[Math.floor(n / 50)];
+  if (area === undefined) throw new Error(`demo seed: more than ${BOSTON_AREAS.length * 50} contact phones`);
+  return `+1${area}55501${String(n % 50).padStart(2, '0')}`;
+};
 const email = (first: string, last: string) => `${first}.${last}`.toLowerCase().replace(/[^a-z.]/g, '') + '@example.com';
 
 // ---- run ---------------------------------------------------------------------------------------------
@@ -587,7 +594,7 @@ async function recordedCall(su: pg.Pool, deps: ReturnType<typeof depsFromPlatfor
     conv = randomUUID();
     await su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3)', [tenantId, conv, contactId]);
   }
-  const addr = (await su.query<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' LIMIT 1", [contactId])).rows[0]?.address ?? '+16172019999';
+  const addr = (await su.query<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' LIMIT 1", [contactId])).rows[0]?.address ?? '+16175550199';
   await su.query(
     `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, agent_user_id, client_address, initiator, status, started_at, answered_at, ended_at,
        duration_s, recording_mode, recording_announced_at, recording_decision)
