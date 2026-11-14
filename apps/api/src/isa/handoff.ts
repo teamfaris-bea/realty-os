@@ -2,7 +2,7 @@
 // and verified client quotes only; the hash is computed by Postgres over the stored jsonb so the CHECK holds), a
 // pinned card and a notification, and a response deadline in business minutes that only a human touch clears. Once
 // the handoff is done, the system closes its card and executes its action (b12 recheck R13, closeHandoffInTx).
-import { pointBlocks } from '@realty/core/compliance';
+import { type ReachBlock, type SuppressionReason, pointBlocks } from '@realty/core/compliance';
 import type { IdGenerator, Instant, UserId } from '@realty/core/foundation';
 import { phoneCallbackAllowed } from '@realty/core/voice';
 import { type Tx, loadPeople, unownedHandbackTarget } from '@realty/db';
@@ -123,9 +123,10 @@ export async function confirmationNotSentOf(tx: Tx, h: { contactId: string; conf
 }
 
 /** Why D1 leaves the person no human channel (b14 to-do; b14 review B14-OWN-4): they opted out (a person-level
- *  do-not-contact, or an opt-out on every blocked channel of their live points), none of their details works (a bounced
- *  or invalid address, a wrong number, a landline for texts, a suppression; nothing opted out), both, or they have no
- *  live phone or email at all (every point removed). */
+ *  do-not-contact, or an opt-out on every blocked channel of their live points: a revoked consent, or a suppression for a
+ *  spam complaint, a do-not-contact list or the provider's opt-out), none of their details works (a bounced or invalid
+ *  address, a wrong number, a landline for texts, any other suppression; nothing opted out), both, or they have no live
+ *  phone or email at all (every point removed). */
 export type UnreachableWhy = 'opted_out' | 'no_working_contact' | 'opted_out_or_not_working' | 'no_contact_details';
 /** How a card says it, in parentheses after "no text, call or email can reach them now" (short: booking/book.ts's
  *  card is cut at 200 characters, and its slot can take 40). */
@@ -136,8 +137,15 @@ export const UNREACHABLE_WHY_WORDS: Record<UnreachableWhy, string> = {
   no_contact_details: 'no contact details',
 };
 
-/** The opt-out blocks (core pointBlocks): the person said no. Every other block is a detail that does not work. */
+/** The opt-out blocks (core pointBlocks): the person said no. Every other block is a detail that does not work, except
+ *  a SUPPRESSED block whose suppression is itself an opt-out (OPT_OUT_SUPPRESSIONS). */
 const OPT_OUT_BLOCKS: ReadonlySet<string> = new Set(['CONSENT_REVOKED', 'PERSON_DO_NOT_CONTACT']);
+/** b15 (b14 low a): the suppression reasons that record the person's (or the team's) no: a spam complaint, the team's
+ *  or an import's do-not-contact list, the provider's opt-out. A bounce, an undeliverable or wrong number, a landline
+ *  for texts, an admin or platform block are details that do not work. */
+const OPT_OUT_SUPPRESSIONS: ReadonlySet<SuppressionReason> = new Set<SuppressionReason>(['spam_complaint', 'internal_dnc', 'import_dnc', 'provider_opt_out']);
+/** Whether a block records the person's no (an opt-out), rather than a detail that does not work. */
+export const blockIsOptOut = (b: Pick<ReachBlock, 'reason' | 'suppressions'>): boolean => OPT_OUT_BLOCKS.has(b.reason) || (b.reason === 'SUPPRESSED' && b.suppressions.some((x) => OPT_OUT_SUPPRESSIONS.has(x.reason)));
 
 /** Whether D1 leaves any human channel to the person (a text or call to a phone, an email): its reachability, and why
  *  not when none is left, from the blocks themselves. */
@@ -148,7 +156,7 @@ export async function humanReachable(tx: Tx, contactId: string): Promise<{ any: 
   const any = blocks.some((b) => b.length === 0);
   if (any) return { any, callback: phoneCallbackAllowed(o, null), why: null };
   if (blocks.length === 0) return { any, callback: phoneCallbackAllowed(o, null), why: 'no_contact_details' };
-  const optedOut = blocks.map((b) => b.some((x) => OPT_OUT_BLOCKS.has(x.reason)));
+  const optedOut = blocks.map((b) => b.some(blockIsOptOut));
   const why: UnreachableWhy = optedOut.every(Boolean) ? 'opted_out' : optedOut.some(Boolean) ? 'opted_out_or_not_working' : 'no_working_contact';
   return { any, callback: phoneCallbackAllowed(o, null), why };
 }

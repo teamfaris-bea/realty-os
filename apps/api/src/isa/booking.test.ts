@@ -713,6 +713,34 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     for (const ch of ['sms', 'voice']) await revoke(c.id, ch);
     await h.su.query(`UPDATE contact_points SET status = 'invalid' WHERE contact_id = $1 AND kind = 'email'`, [c.id]);
     expect(await why(c.id)).toBe('opted_out_or_not_working');
+    // b15 (b14 low a): a suppression is an opt-out when its reason is one (a spam complaint, the team's or an import's
+    // do-not-contact list, the provider's opt-out); a bounce or a wrong number is a detail that does not work
+    const suppress = async (id: string, reason: string) => {
+      for (const p of (await h.su.query<{ kind: string; address_hmac: Buffer }>(`SELECT kind, address_hmac FROM contact_points WHERE contact_id = $1 AND status <> 'removed'`, [id])).rows) {
+        await h.su.query(`INSERT INTO suppressions (tenant_id, id, address_kind, address_hmac, address_hint, channel, reason, source_ref) VALUES ($1, gen_random_uuid(), $2, $3, 'x', 'all', $4, '{}'::jsonb)`, [bw.tenantId, p.kind, p.address_hmac, reason]);
+      }
+    };
+    // (import_dnc needs an import record; the pure check below covers it)
+    for (const reason of ['spam_complaint', 'internal_dnc', 'provider_opt_out']) {
+      const d = await isaLead(h, agent());
+      await suppress(d.id, reason);
+      expect(await why(d.id), reason).toBe('opted_out');
+    }
+    const e = await isaLead(h, agent());
+    await suppress(e.id, 'hard_bounce');
+    expect(await why(e.id)).toBe('no_working_contact');
+    // a suppressed email (internal do-not-contact) beside phones that are wrong numbers: mixed
+    const f = await isaLead(h, agent());
+    const fe = (await h.su.query<{ address_hmac: Buffer }>(`SELECT address_hmac FROM contact_points WHERE contact_id = $1 AND kind = 'email'`, [f.id])).rows[0]!;
+    await h.su.query(`INSERT INTO suppressions (tenant_id, id, address_kind, address_hmac, address_hint, channel, reason, source_ref) VALUES ($1, gen_random_uuid(), 'email', $2, 'x', 'all', 'internal_dnc', '{}'::jsonb)`, [bw.tenantId, fe.address_hmac]);
+    await h.su.query(`UPDATE contact_points SET status = 'wrong_number' WHERE contact_id = $1 AND kind = 'phone'`, [f.id]);
+    expect(await why(f.id)).toBe('opted_out_or_not_working');
+    // every suppression reason, classified (pure)
+    const { blockIsOptOut } = await import('./handoff.js');
+    const sup = (reason: string) => blockIsOptOut({ reason: 'SUPPRESSED', suppressions: [{ reason, channel: 'all', liftedAt: null, id: 'x', addressHmac: 'x' }] as never });
+    const reasons = ['hard_bounce', 'spam_complaint', 'undeliverable', 'landline_no_sms', 'internal_dnc', 'admin_block', 'wrong_number', 'provider_opt_out', 'import_dnc', 'platform_blocked'];
+    expect(reasons.filter(sup)).toEqual(['spam_complaint', 'internal_dnc', 'provider_opt_out', 'import_dnc']);
+    expect(blockIsOptOut({ reason: 'SUPPRESSED', suppressions: [] })).toBe(false);
   });
 
   it('R-ISA-13 R-ISA-15 (batch 13 audit ISA2B-13): booked but the machine did not end care (a core regression, stubbed) → care is paused check_this, never live, and the card says to confirm or cancel it', async () => {
