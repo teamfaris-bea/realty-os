@@ -52,7 +52,9 @@ function Mine({ me }: { me: MeView }) {
       {me.optIn ? <p className="text-[15px] text-ink">AI care for {me.underCare} of your leads.</p> : null}
       <HoldBanner hold={hold} replies={false} first="your leads" />
       {!me.policy ? (
-        <p className="text-[15px] text-ink">Your team has no approved AI assistant policy yet. Nothing is sent for your leads.</p>
+        // b14 round 2: the API's sentence above already says the team has no approved policy (isa/settings.ts), so
+        // the page adds only what follows from it instead of saying it twice
+        <p className="text-[15px] text-ink">Nothing is sent for your leads.</p>
       ) : (
         <>
           {me.needsReattest ? <Reattest me={me} /> : null}

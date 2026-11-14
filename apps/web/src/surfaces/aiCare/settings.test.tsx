@@ -69,9 +69,12 @@ describe('My AI assistant (/settings/ai-assistant)', () => {
     expect(document.body.textContent).not.toMatch(/AI_ISA_/);
   });
 
-  it('R-ISA-32: no policy, no form; pause all and turn off say what they do', async () => {
+  it('R-ISA-32 b14 round 2: no policy, no form, and the page says so once (the API\'s sentence, then "Nothing is sent for your leads."); pause all and turn off say what they do', async () => {
     const v = isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView({ policy: null, attestationText: null, sentence: 'Your team has no approved AI assistant policy yet.' }) }), '/settings/ai-assistant', 'agent');
-    expect(await screen.findByText('Your team has no approved AI assistant policy yet. Nothing is sent for your leads.')).toBeInTheDocument();
+    expect(await screen.findByText('Your team has no approved AI assistant policy yet.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing is sent for your leads.')).toBeInTheDocument();
+    const main = v.view.container.textContent ?? '';
+    expect(main.match(/no approved AI assistant policy/g)).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     v.view.unmount();
     const fake = new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView({ optIn: optIn(), underCare: 2, sentence: 'You are opted in.' }) }).on('POST /me/ai-isa/pause-all', { status: 200, body: { paused: 2 } });
