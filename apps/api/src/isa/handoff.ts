@@ -122,23 +122,35 @@ export async function confirmationNotSentOf(tx: Tx, h: { contactId: string; conf
   return (await humanReachable(tx, root)).any ? 'by_hand' : 'unreachable';
 }
 
-/** Why D1 leaves the person no human channel (b14 to-do): they opted out (a person-level do-not-contact, or every
- *  channel of their live points), or they have no live phone or email at all (every point removed). */
-export type UnreachableWhy = 'opted_out' | 'no_contact_details';
-/** How a card says it, in parentheses after "no text, call or email can reach them now". */
+/** Why D1 leaves the person no human channel (b14 to-do; b14 review B14-OWN-4): they opted out (a person-level
+ *  do-not-contact, or an opt-out on every blocked channel of their live points), none of their details works (a bounced
+ *  or invalid address, a wrong number, a landline for texts, a suppression; nothing opted out), both, or they have no
+ *  live phone or email at all (every point removed). */
+export type UnreachableWhy = 'opted_out' | 'no_working_contact' | 'opted_out_or_not_working' | 'no_contact_details';
+/** How a card says it, in parentheses after "no text, call or email can reach them now" (short: booking/book.ts's
+ *  card is cut at 200 characters, and its slot can take 40). */
 export const UNREACHABLE_WHY_WORDS: Record<UnreachableWhy, string> = {
   opted_out: 'they opted out',
+  no_working_contact: 'none of their details work',
+  opted_out_or_not_working: 'opted out or not working',
   no_contact_details: 'no contact details',
 };
 
+/** The opt-out blocks (core pointBlocks): the person said no. Every other block is a detail that does not work. */
+const OPT_OUT_BLOCKS: ReadonlySet<string> = new Set(['CONSENT_REVOKED', 'PERSON_DO_NOT_CONTACT']);
+
 /** Whether D1 leaves any human channel to the person (a text or call to a phone, an email): its reachability, and why
- *  not when none is left. */
+ *  not when none is left, from the blocks themselves. */
 export async function humanReachable(tx: Tx, contactId: string): Promise<{ any: boolean; callback: boolean; why: UnreachableWhy | null }> {
   const o = await optOutFactsOf(tx, contactId);
   if (o.personDoNotContact) return { any: false, callback: false, why: 'opted_out' };
-  const any = o.reach.points.some((p) => (p.kind === 'phone' ? (['sms', 'voice'] as const) : (['email'] as const))
-    .some((ch) => pointBlocks(o.reach, p, ch, 'informational').length === 0));
-  return { any, callback: phoneCallbackAllowed(o, null), why: any ? null : o.reach.points.length === 0 ? 'no_contact_details' : 'opted_out' };
+  const blocks = o.reach.points.flatMap((p) => (p.kind === 'phone' ? (['sms', 'voice'] as const) : (['email'] as const)).map((ch) => pointBlocks(o.reach, p, ch, 'informational')));
+  const any = blocks.some((b) => b.length === 0);
+  if (any) return { any, callback: phoneCallbackAllowed(o, null), why: null };
+  if (blocks.length === 0) return { any, callback: phoneCallbackAllowed(o, null), why: 'no_contact_details' };
+  const optedOut = blocks.map((b) => b.some((x) => OPT_OUT_BLOCKS.has(x.reason)));
+  const why: UnreachableWhy = optedOut.every(Boolean) ? 'opted_out' : optedOut.some(Boolean) ? 'opted_out_or_not_working' : 'no_working_contact';
+  return { any, callback: phoneCallbackAllowed(o, null), why };
 }
 
 export interface HandoffInput {

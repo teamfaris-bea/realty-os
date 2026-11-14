@@ -683,6 +683,38 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(view).toEqual({ confirmationStatus: 'refused', confirmationNotSent: 'unreachable' });
   });
 
+  it('R-ISA-14 E523 (b14 review B14-OWN-4): booked while paused when every point bounced or is a wrong number → the card says their details do not work, never "they opted out"', async () => {
+    const { card } = await bookedWhilePaused(async (l) => {
+      await h.su.query(`UPDATE contact_points SET status = CASE kind WHEN 'email' THEN 'invalid' ELSE 'wrong_number' END WHERE contact_id = $1 AND status <> 'removed'`, [l.id]);
+    });
+    expect(card.map((c) => c.code)).toEqual(['AI_ISA_CONFIRMATION_NOT_SENT_UNREACHABLE']);
+    expect(card[0]!.text).toBe('The appointment confirmation was not sent, and no text, call or email can reach them now (none of their details work), so it cannot be confirmed by hand: keep or cancel the appointment.');
+  });
+
+  it('R-ISA-14 (b14 review B14-OWN-4): humanReachable says why from the blocks: opted out only when opt-outs block every channel; not working when nothing was opted out; both when it is mixed', async () => {
+    const { humanReachable } = await import('./handoff.js');
+    const why = async (id: string) => (await withTenantTx(systemActor(bw.tenantId as never, 'assistant'), (tx) => humanReachable(tx, id), { db: h.database })).why;
+    const pts = async (id: string) => (await h.su.query<{ id: string; kind: string }>(`SELECT id, kind FROM contact_points WHERE contact_id = $1 AND status <> 'removed'`, [id])).rows;
+    const revoke = async (id: string, channel: string) => {
+      for (const p of (await pts(id)).filter((x) => (channel === 'email') === (x.kind === 'email'))) {
+        expect((await call(agent(), 'POST', `/contacts/${id}/consent`, { kind: 'revoke', pointId: p.id, channel, purpose: 'all', evidence: { note: 'asked' } })).status).toBe(200);
+      }
+    };
+    // every point not working, nobody opted out
+    const a = await isaLead(h, agent());
+    await h.su.query(`UPDATE contact_points SET status = CASE kind WHEN 'email' THEN 'invalid' ELSE 'wrong_number' END WHERE contact_id = $1`, [a.id]);
+    expect(await why(a.id)).toBe('no_working_contact');
+    // every channel opted out
+    const b = await isaLead(h, agent());
+    for (const ch of ['sms', 'voice', 'email']) await revoke(b.id, ch);
+    expect(await why(b.id)).toBe('opted_out');
+    // texts and calls opted out, the email bounced
+    const c = await isaLead(h, agent());
+    for (const ch of ['sms', 'voice']) await revoke(c.id, ch);
+    await h.su.query(`UPDATE contact_points SET status = 'invalid' WHERE contact_id = $1 AND kind = 'email'`, [c.id]);
+    expect(await why(c.id)).toBe('opted_out_or_not_working');
+  });
+
   it('R-ISA-13 R-ISA-15 (batch 13 audit ISA2B-13): booked but the machine did not end care (a core regression, stubbed) → care is paused check_this, never live, and the card says to confirm or cancel it', async () => {
     const { l, o } = await offered();
     coreStub.bookingDoesNotEnd = true;
