@@ -16,7 +16,7 @@ describe('Google Ads page', () => {
   it('R-STAFF-1 R-STAFF-3: every API sentence shows as written, the pack through packName, totals against the cap and ceiling, and no raw code', async () => {
     const o = overview({
       uncheckedSentence: 'Google Ads spend was not checked for 3 hours.',
-      doubleCount: { leadSourceIds: ['01900000-0000-7000-8000-0000000ad5c1'], sentence: '1 lead source has both a cost typed in by hand and Google Ads spend for 2026-11: the owner view counts both.' },
+      doubleCount: { leadSourceIds: ['01900000-0000-7000-8000-0000000ad5c1'], sentence: '1 lead source has both a cost typed in by hand and Google Ads spend for November 2026: the owner view counts both.' },
       unmanagedSentence: '$25.00 a day of budgets on campaigns not managed here.',
     });
     adsApp(adsFake(o));

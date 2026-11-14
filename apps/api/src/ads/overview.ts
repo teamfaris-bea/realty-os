@@ -6,7 +6,7 @@ import { type CampaignCounts, countedDailyCents, tenantDailyTotal } from '@realt
 import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { packSentence } from '../integrations/catalog.js';
-import { spendMonth } from './caps.js';
+import { monthWords, spendMonth } from './caps.js';
 import * as repo from './repo.js';
 import {
   CAP_COUNTS_EVERY_CAMPAIGN, LEDGER_PER_CAMPAIGN, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK, OVERSPEND_NOTE_MANAGED_ONLY, OVERSPEND_NOTE_NO_LEAD_SOURCE, OVERSPEND_NOTE_NOT_CONNECTED,
@@ -158,11 +158,12 @@ export async function buildOverview(tx: Tx, now: Instant, o: OverviewOptions = {
     // Q-ADS-3 "no" (b11 ads-7): the stored figure covers every campaign recorded here, the cap only the linked ones
     monthToDate: {
       month: month.slice(0, 7), zone, spentCents: spent, capCents: cap?.monthlyCapCents ?? null,
+      // b16: the month written out ("November 2026"), in the zone the spend is counted in (spendMonth)
       sentence: !cap
-        ? `${dollars(spent)} spent in ${month.slice(0, 7)}; no monthly cap set.`
+        ? `${dollars(spent)} spent in ${monthWords(month)}; no monthly cap set.`
         : countEvery
-          ? `${dollars(spent)} of your ${dollars(cap.monthlyCapCents)} monthly cap spent in ${month.slice(0, 7)}.`
-          : `${dollars(spent)} spent in ${month.slice(0, 7)} on the campaigns recorded here; your ${dollars(cap.monthlyCapCents)} monthly cap counts only the campaigns linked to a listing here.`,
+          ? `${dollars(spent)} of your ${dollars(cap.monthlyCapCents)} monthly cap spent in ${monthWords(month)}.`
+          : `${dollars(spent)} spent in ${monthWords(month)} on the campaigns recorded here; your ${dollars(cap.monthlyCapCents)} monthly cap counts only the campaigns linked to a listing here.`,
     },
     dailyTotal: { countedCents: managedTotal, ceilingCents: cap?.dailyCeilingCents ?? null, sentence: cap ? `Daily budgets total ${dollars(managedTotal)} against your ${dollars(cap.dailyCeilingCents)} daily ceiling.` : `Daily budgets total ${dollars(managedTotal)}.` },
     // b11 api-ui/F4: the pause runs only while the pack is cleared and a connection is live (the reconcile reads no other),
@@ -181,7 +182,7 @@ export async function buildOverview(tx: Tx, now: Instant, o: OverviewOptions = {
     unmanagedDailyCents: unmanagedDaily,
     unmanagedSentence: `${dollars(unmanagedDaily)} a day of budgets on campaigns not managed here.`,
     doubleCount: doubles.length > 0
-      ? { leadSourceIds: doubles, sentence: `${doubles.length} ${doubles.length === 1 ? 'lead source has' : 'lead sources have'} both a cost typed in by hand and Google Ads spend for ${month.slice(0, 7)}: the owner view counts both.` }
+      ? { leadSourceIds: doubles, sentence: `${doubles.length} ${doubles.length === 1 ? 'lead source has' : 'lead sources have'} both a cost typed in by hand and Google Ads spend for ${monthWords(month)}: the owner view counts both.` }
       : null,
     pendingProposal: shown(pending),
     latestHold: latestHold && (!pending || Date.parse(latestHold.createdAt) > Date.parse(pending.createdAt)) ? shown(latestHold) : null,

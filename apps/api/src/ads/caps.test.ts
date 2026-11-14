@@ -109,7 +109,7 @@ describe('GET /ads (R-ADS-5, R-AST-13)', () => {
       expect(ov.overspendNote).toBe(OVERSPEND_NOTE);
       expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day; Realty OS pauses every campaign once month-to-date spend reaches your monthly cap.');
       expect(ov.dailyTotal.sentence).toBe('Daily budgets total $0.00 against your $100.00 daily ceiling.');
-      expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in \d{4}-\d{2}\.$/);
+      expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in (?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4}\.$/);
     });
     const text = JSON.stringify(ov);
     expect(text).not.toMatch(/confidence|probabilit|likelihood|score/i);

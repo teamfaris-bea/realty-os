@@ -21,6 +21,17 @@ export interface CapInput {
   attestation: string;
 }
 
+const MONTH_WORDS = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+/**
+ * b16: a spend month ('2026-11' or '2026-11-01', already the month in its zone: spendMonth) as people read it,
+ * "November 2026". Formatted at UTC midnight of its first day, so no zone moves it to another month.
+ */
+export function monthWords(month: string): string {
+  const m = /^(\d{4})-(\d{2})/.exec(month);
+  if (!m) throw new Error(`monthWords: not a month: ${month}`);
+  return MONTH_WORDS.format(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1));
+}
+
 /** The account-zone month (first day) of `now`: the first live connection's zone at its last sync, else the tenant's. */
 export async function spendMonth(tx: Tx, now: Instant): Promise<{ month: string; zone: string }> {
   const live = (await repo.adsConnections(tx)).find((c) => c.snapshot !== null && (c.status === 'connected' || c.status === 'degraded'));

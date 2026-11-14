@@ -110,7 +110,7 @@ export function overview(over: Partial<OverviewResponse> = {}): OverviewResponse
     packSentence: 'Changing Google Ads budgets: counsel reviewed the pack on 2026-11-01 and the vendor check is done (pack 1.0.0).',
     cleared: true,
     cap: { id: ADS_IDS.cap, versionNo: 1, monthlyCapCents: 300_000, dailyCeilingCents: 12_000, effectiveFrom: '2026-11-01T00:00:00.000Z' },
-    monthToDate: { month: '2026-11', zone: 'Etc/UTC', spentCents: 123_456, capCents: 300_000, sentence: '$1,234.56 of your $3,000.00 monthly cap spent in 2026-11.' },
+    monthToDate: { month: '2026-11', zone: 'Etc/UTC', spentCents: 123_456, capCents: 300_000, sentence: '$1,234.56 of your $3,000.00 monthly cap spent in November 2026.' },
     dailyTotal: { countedCents: 9_000, ceilingCents: 12_000, sentence: 'Daily budgets total $90.00 against your $120.00 daily ceiling.' },
     overspendNote: 'Google Ads may spend more than a daily budget on a given day; Realty OS pauses every campaign once month-to-date spend reaches your monthly cap.',
     asOf: 'as reported by Google Ads at 2026-11-13T10:00:00.000Z',

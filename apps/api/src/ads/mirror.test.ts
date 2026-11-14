@@ -13,6 +13,7 @@ import { connectFlow } from '../integrations/testing.js';
 import { createProviders } from '../providers/index.js';
 import { installNetworkTripwire } from '../providers/integrations/spark.testing.js';
 import { campaignName, mapTargeting, runReconcile } from './mirror.js';
+import { monthWords } from './caps.js';
 import { buildOverview } from './overview.js';
 import { ADS_NOT_SET_UP, FakeAds, UnconfiguredAds } from './provider.js';
 import { GOOGLE_ADS_SCOPES } from '../integrations/catalog.js';
@@ -403,12 +404,25 @@ describe('the owner-question answers on GET /ads (Q-ADS-1, Q-ADS-3; b11 ads-7)',
       expect(ov.overspendNote).toBe(OVERSPEND_NOTE_MANAGED_ONLY);
       expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day. Realty OS counts only the campaigns linked to a listing here toward your monthly cap and pauses those it manages once their month-to-date spend reaches it: pause the others in Google Ads.');
       expect(ov.overspendNote).not.toMatch(/pauses every campaign/);
-      expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 spent in \d{4}-\d{2} on the campaigns recorded here; your \$3,000\.00 monthly cap counts only the campaigns linked to a listing here\.$/);
+      expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 spent in (?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4} on the campaigns recorded here; your \$3,000\.00 monthly cap counts only the campaigns linked to a listing here\.$/);
       // the default answer keeps its sentences
       const def = await overviewAt(w);
       expect(def.overspendNote).toMatch(/pauses every campaign/);
-      expect(def.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in \d{4}-\d{2}\.$/);
+      expect(def.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in (?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4}\.$/);
     });
+  });
+
+  // b16: the month is written out ("November 2026"), and it is the month in the zone the spend is counted in: the
+  // account zone when an account is live (E450), else the tenant zone. 03:00 UTC on 1 December is still 30 November in
+  // a tenant zone of America/New_York
+  it('b16: the month-to-date sentence writes the month out, in the tenant zone (no account: 03:00 UTC on 1 December is November there)', async () => {
+    const w = await adsWorld(h, { clockMs: Date.UTC(2026, 11, 1, 3, 0) });
+    expect((await h.su.query("UPDATE tenant_settings SET default_timezone = 'America/New_York' WHERE tenant_id = $1", [w.tenantId])).rowCount).toBe(1);
+    const ov = await overviewAt(w);
+    expect(ov.monthToDate).toMatchObject({ month: '2026-11', zone: 'America/New_York' });
+    expect(ov.monthToDate.sentence).toBe('$0.00 spent in November 2026; no monthly cap set.');
+    expect(ov.monthToDate.sentence).not.toMatch(/\d{4}-\d{2}/);
+    expect([monthWords('2026-11'), monthWords('2026-01-01'), monthWords('2027-12')]).toEqual(['November 2026', 'January 2026', 'December 2027']);
   });
 });
 
