@@ -80,7 +80,7 @@ describe('GET /likely (module 55; R-STAFF-7)', () => {
     expect(kept.rows[0].n).toBeGreaterThan(0);
   });
 
-  it('R-STAFF-7: the route is a SELECT only (predict/architecture.test.ts scans predict/routes.ts on its own) and writes no row: the feed cards, the predictions and the audit log are the same, row versions included', async () => {
+  it('R-STAFF-7: the route is a SELECT only (predict/architecture.test.ts scans predict/routes.ts on its own) and writes no row: the feed cards, the predictions, the audit log, the jobs and the consent events are the same, row versions included (b14 review F3: jobs and consent events)', async () => {
     // a ready list, so the read reaches the feed and prediction rows (after the withdrawal above it would stop at no_model)
     const def = await approvedModel(h, FIRST_PARTY_MODEL);
     const a = w.agents[0]!;
@@ -93,7 +93,9 @@ describe('GET /likely (module 55; R-STAFF-7)', () => {
         await h.su.query<{ t: string; rows: unknown }>(
           `SELECT 'priority_feed_items' AS t, coalesce(jsonb_agg(jsonb_build_object('xmin', f.xmin::text, 'row', to_jsonb(f)) ORDER BY f.id), '[]') AS rows FROM priority_feed_items f WHERE f.tenant_id = $1
            UNION ALL SELECT 'contact_predictions', coalesce(jsonb_agg(jsonb_build_object('xmin', p.xmin::text, 'row', to_jsonb(p)) ORDER BY p.contact_id, p.model_version), '[]') FROM contact_predictions p WHERE p.tenant_id = $1
-           UNION ALL SELECT 'audit_log', to_jsonb(count(*)) FROM audit_log WHERE tenant_id = $1`,
+           UNION ALL SELECT 'audit_log', to_jsonb(count(*)) FROM audit_log WHERE tenant_id = $1
+           UNION ALL SELECT 'jobs', coalesce(jsonb_agg(jsonb_build_object('xmin', j.xmin::text, 'id', j.id) ORDER BY j.id), '[]') FROM jobs j WHERE j.tenant_id = $1
+           UNION ALL SELECT 'consent_events', to_jsonb(count(*)) FROM consent_events WHERE tenant_id = $1`,
           [w.tenantId],
         )
       ).rows;

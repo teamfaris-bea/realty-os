@@ -44,12 +44,50 @@ function firstWrite(code: string): string | null {
   return code.match(WRITE_SQL)?.[0] ?? code.match(SQL_UPDATE_KEYWORD)?.[0] ?? code.match(WRITE_BUILDER)?.[0] ?? null;
 }
 /** The routes `code` registers, as '<method> <path>', on ANY receiver (not only one named r or app): every verb call
- *  whose first argument is a literal path, plus any `.route(` and any POST/PUT/PATCH/ALL with a path in a variable. */
+ *  whose first argument is a literal path, plus any `.route(` and any POST/PUT/PATCH/ALL with a path in a variable,
+ *  plus (b14 review F3) any GET/DELETE/HEAD/OPTIONS whose first argument is not a literal path and that takes a second
+ *  argument (a handler or options; a Map's or Headers' `.get(key)` takes one). */
 function routesIn(code: string): string[] {
   const out = [...code.matchAll(/\.(get|post|put|patch|delete|head|options|all)\s*\(\s*(['"`]\/[^'"`]*['"`])/g)].map((m) => `${m[1]} ${m[2]}`);
   for (const m of code.matchAll(/\.(route)\s*\(|\.(post|put|patch|all)\s*\(\s*(?!['"`]\/)/g)) out.push(`${m[1] ?? m[2]} (path not a literal)`);
+  for (const m of code.matchAll(/\.(get|delete|head|options)\s*\(\s*(?!['"`]\/)[^,()]+,/g)) out.push(`${m[1]} (path not a literal)`);
   return out;
 }
+/** The S2 pin on EVERY import of a file (b14 review F3): each module specifier with the names taken from it, sorted;
+ *  a namespace import is '* as X', a default import 'default X'; a re-export, require() or dynamic import() is listed
+ *  under its own key, so it can never be added unseen. */
+function importPin(code: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const add = (key: string, names: readonly string[]) => (out[key] = [...(out[key] ?? []), ...names].sort());
+  for (const m of code.matchAll(/^\s*import\s+(?:type\s+)?([^'";]*?)\s+from\s+['"]([^'"]+)['"]/gm)) {
+    const clause = m[1]!;
+    const names: string[] = [];
+    const braces = /\{([^}]*)\}/.exec(clause);
+    if (braces) for (const n of braces[1]!.split(',').map((x) => x.trim()).filter(Boolean)) names.push(n.replace(/^type\s+/, ''));
+    const rest = clause.replace(/\{[^}]*\}/, '').replace(/,/g, ' ').trim();
+    const ns = /\*\s+as\s+([A-Za-z_$][\w$]*)/.exec(rest);
+    if (ns) names.push(`* as ${ns[1]}`);
+    else if (rest) names.push(`default ${rest}`);
+    add(m[2]!, names);
+  }
+  for (const m of code.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gm)) add(`side effect ${m[1]}`, []);
+  for (const m of code.matchAll(/^\s*export\s[^'";]*from\s+['"]([^'"]+)['"]/gm)) add(`re-export ${m[1]}`, []);
+  for (const m of code.matchAll(/\b(import|require)\s*\(\s*([^)]*)\)/g)) add(`${m[1]}() ${m[2]!.trim()}`, []);
+  return out;
+}
+/** predict/routes.ts's imports as signed off (batch 14 audit S2; b14 review F3): of @realty/db only withTenantTx, so a
+ *  writer exported there (enqueueJob, insertAuditRow, lockContact, recordConsentEvent …) cannot be imported unseen. */
+const ROUTES_IMPORTS: Record<string, string[]> = {
+  '@realty/core/foundation': ['UserActor'],
+  '@realty/core/predict': ['backtestText'],
+  '@realty/db': ['withTenantTx'],
+  fastify: ['FastifyInstance'],
+  'fastify-type-provider-zod': ['ZodTypeProvider'],
+  kysely: ['sql'],
+  zod: ['z'],
+  '../admin/common.js': ['actorOf'],
+  '../routes.js': ['RouteModule'],
+};
 
 describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
   it('the scans are not vacuous: the prediction module and the rest of apps/api are read', () => {
@@ -76,7 +114,7 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
   it('R-PRED-4: predict/** imports nothing from comms, channels, leads, assistant, ownership, ads, portal, nurture or marketing, and names no send, dial, publish, budget or ownership command', () => {
     const FORBIDDEN_DIRS = ['comms', 'channels', 'leads', 'assistant', 'ownership', 'ads', 'portal', 'nurture', 'marketing', 'mailSync', 'coaching'].map((d) => join(API_SRC, d));
     const FORBIDDEN_SPECS = /(^@realty\/db\/.*ownership|packages\/db\/src\/ownership|\/ownership(\/|\.js$)|@realty\/core\/(coaching|ownership|routing|ads|portal))/;
-    const FORBIDDEN_NAMES = /\b(dispatchOutbound|dialOutbound|deliverChannelMessage|publishPost|postReviewReply|applyBudgetChange|applyOwnershipCommand|sendSms|sendEmail|dialCall|enqueueTyped|createNotification|notify)\b/;
+    const FORBIDDEN_NAMES = /\b(dispatchOutbound|dialOutbound|deliverChannelMessage|publishPost|postReviewReply|applyBudgetChange|applyOwnershipCommand|sendSms|sendEmail|dialCall|enqueueTyped|enqueueJob|insertAuditRow|recordConsentEvent|lockContact|createNotification|notify)\b/;
     for (const f of PREDICT_RUNTIME) {
       const specs = importsOf(f);
       expect(specs.filter((s) => FORBIDDEN_DIRS.some((d) => resolvesInto(f, s, d)) || FORBIDDEN_SPECS.test(s)), rel(f)).toEqual([]);
@@ -115,6 +153,8 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
     expect(routesIn(code)).toEqual(["get '/likely'"]);
     // and its own relative imports cannot reach a writer: the actor helper and the RouteModule type
     expect(importsOf(file).filter((s) => s.startsWith('.')).sort()).toEqual(['../admin/common.js', '../routes.js']);
+    // b14 review F3: every import, package ones included, with the names it takes (no writer of @realty/db)
+    expect(importPin(code)).toEqual(ROUTES_IMPORTS);
   });
 
   it('R-PRED-4 R-STAFF-7 (b14 to-do): the S2 pin\'s patterns fire on planted writes and routes, aliased, CTE and any receiver included', () => {
@@ -140,8 +180,24 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
       "fastify.delete(`/likely/${id}`, handler);",
       "instance.route({ method: 'POST', url: '/likely/x', handler });",
       'scope.put(LIKELY_PATH, handler);',
+      // b14 review F3: a GET or DELETE whose path is in a variable, or a literal without the leading slash
+      'r.get(LIKELY_EXPORT, exportAll);',
+      'r.delete(LIKELY_ITEM, dismiss);',
+      "r.get('likely/export', { config: { auth: 'self' } }, h);",
     ];
     for (const x of routes) expect(routesIn(`r.get('/likely', h);\n${x}`), x).not.toEqual(["get '/likely'"]);
+    // b14 review F3: a writer imported from a package (none of these is SQL in the file) changes the import pin
+    const pinned = readFileSync(join(PREDICT, 'routes.ts'), 'utf8');
+    expect(importPin(pinned)).toEqual(ROUTES_IMPORTS);
+    for (const planted of [
+      "import { enqueueJob, withTenantTx } from '@realty/db';",
+      "import { insertAuditRow } from '@realty/db';",
+      "import { lockContact as lc } from '@realty/db';",
+      "import * as db from '@realty/db';",
+      "import { recordConsentEvent } from '@realty/db';",
+      "export { enqueueJob } from '@realty/db';",
+      "const m = await import('../comms/dispatch.js');",
+    ]) expect(importPin(`${pinned}\n${planted}\n`), planted).not.toEqual(ROUTES_IMPORTS);
     // a Map or Headers .get is not a route
     expect(routesIn("r.get('/likely', h);\nconst v = byId.get(id) ?? req.headers.get('x-id');")).toEqual(["get '/likely'"]);
   });
