@@ -2,7 +2,8 @@
 // module 46 (R-PORTALWEB-1, R-PORTALWEB-2, R-PORTALWEB-11): the PRODUCTION build (vite.config.ts, both HTML entries) is
 // read as a module graph. The portal's entry chunk is found from portal.html's own module script (cross-checked with
 // isEntry and facadeModuleId), and its closure over `imports` and `dynamicImports` must hold only src/portal and the
-// three allowed packages (react, react-dom with scheduler, @tanstack/react-query with query-core), no staff API path,
+// three allowed packages (react, react-dom with scheduler, @tanstack/react-query with query-core) and no portal test
+// helper (src/portal/**/test/**, **/testing/**, *.test.*; b15 audit P46-SEC-1), no staff API path,
 // staff cookie name, session call or env value; its CSS comes from portal.css only. The staff closure holds no
 // src/portal module outside view/**. Each HTML file carries its own meta CSP before every script and stylesheet.
 // Budgets: portal JS ≤ 100 kB and CSS ≤ 15 kB gzip. Re-run after every staging merge (VERIFY 7).
@@ -73,7 +74,8 @@ describe('the client portal bundle (R-PORTALWEB-1)', () => {
       if (m === resolve(webRoot, 'portal.html')) return false;
       const pkg = packageOf(m);
       if (pkg) return !PACKAGES.has(pkg);
-      return !m.startsWith(portalDir);
+      // b15 audit P46-SEC-1: a test helper under src/portal is not shipped code (lint and the source scans exempt it)
+      return !m.startsWith(portalDir) || /(^|\/)(test|testing)\//.test(m.slice(portalDir.length)) || /\.test\.[cm]?[jt]sx?$/.test(m);
     });
     expect(outside).toEqual([]);
   });

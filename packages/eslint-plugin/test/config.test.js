@@ -234,5 +234,8 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('apps/web/src/portal/App.tsx', "import { useQuery } from '@tanstack/react-query';\nexport const q = useQuery;\n")).not.toContain('realty/isolated-bundle');
     expect(await lint('apps/web/src/portal/link.test.ts', "import { describe } from 'vitest';\nexport const d = describe;\n")).not.toContain('realty/isolated-bundle');
     expect(await lint('apps/web/src/surfaces/client-portal/PreviewPage.tsx', "import { Button } from '../../design/index.js';\nexport const b = Button;\n")).not.toContain('realty/isolated-bundle');
+    // b15 audit P46-SEC-1: shipped portal code never pulls in a test helper (exempt from lint and the source scan)
+    expect(await lint('apps/web/src/portal/api.ts', "export * from './test/fixtures.js';\n")).toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/portal/api.ts', 'export const m = () => import(`../shell/api.js`);\n')).toContain('realty/isolated-bundle');
   });
 });

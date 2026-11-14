@@ -303,6 +303,33 @@ describe('realty/isolated-bundle (PHASE2_3_PLAN §5.3, module 37: the chat widge
   });
 });
 
+describe('realty/isolated-bundle, b15 audit P46-SEC-1: no test helper and no unreadable import in the shipped bundle', () => {
+  const at = (p) => new URL(`../../../apps/web/src/portal/${p}`, import.meta.url).pathname;
+  const opts = [{ dir: 'portal', allow: ['react'] }];
+  tester.run('isolated-bundle', rules['isolated-bundle'], {
+    valid: [
+      { code: "import { parseMe } from './view/index.js'", filename: at('api.ts'), options: opts },
+      { code: 'const m = await import(`./view/index.js`)', filename: at('api.ts'), options: opts },
+      // a name that merely contains "test" is not test code
+      { code: "import { x } from './testids.js'", filename: at('api.ts'), options: opts },
+      { code: "import { x } from './contest/x.js'", filename: at('api.ts'), options: opts },
+      // test code may import test code (eslint.config.js exempts test files from the portal block anyway)
+      { code: "import { renderPortal } from './render.js'", filename: at('test/fixtures.ts'), options: opts },
+      { code: "import { me } from './test/fixtures.js'", filename: at('screens.test.tsx'), options: opts },
+    ],
+    invalid: [
+      { code: "export * from './test/fixtures.js'", filename: at('api.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import { me } from '../test/fixtures.js'", filename: at('screens/Home.tsx'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import { h } from './testing/helpers.js'", filename: at('view/parse.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import { t } from './link.test.js'", filename: at('App.tsx'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: 'const m = await import(`./test/fixtures.js`)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: 'const m = await import(`../shell/api.js`)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'outside' }] },
+      { code: 'const m = await import(`./${name}.js`)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'computed' }] },
+      { code: 'const m = await import(name)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'computed' }] },
+    ],
+  });
+});
+
 describe('realty/mail-sync-boundary (R-GMAIL-14, module 68)', () => {
   const inMailSync = new URL('../../../apps/api/src/mailSync/sync.ts', import.meta.url).pathname;
   const inAssistant = new URL('../../../apps/api/src/assistant/drafts.ts', import.meta.url).pathname;

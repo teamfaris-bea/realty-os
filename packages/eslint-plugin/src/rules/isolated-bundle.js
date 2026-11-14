@@ -3,6 +3,10 @@
 // staff surface, no shell, no design system, no staff-only package. A relative import must stay inside the
 // bundle's own directory (`dir`, a directory name under some src/), and a package import must be on `allow`.
 // The files it applies to are configured in eslint.config.js.
+// b15 audit P46-SEC-1: shipped bundle code never imports test code (a `test/` or `testing/` directory, or a
+// `*.test.*` file), which eslint.config.js and the source scans exempt, so a helper there could carry staff code or an
+// env value into the bundle; and a dynamic import must name its module as a string (a template literal without
+// expressions counts), so the rule can read it.
 
 /** @typedef {import('eslint').Rule.RuleModule} RuleModule */
 import { dirname, resolve, sep } from 'node:path';
@@ -22,6 +26,8 @@ const rule = {
     ],
     messages: {
       outside: 'Import "{{source}}" leaves {{dir}}/: this bundle ships on its own and may not import staff-app code.',
+      testCode: 'Import "{{source}}" is test code: shipped {{dir}}/ code may not import a test/ or testing/ helper or a .test file.',
+      computed: 'A dynamic import in {{dir}}/ must name its module as a plain string, so its target can be checked.',
       pkg: 'Import "{{source}}" is not allowed in {{dir}}/: this bundle ships on its own (allowed packages: {{allowed}}).',
     },
   },
@@ -35,11 +41,15 @@ const rule = {
     const at = filename.lastIndexOf(marker);
     if (at < 0) return {};
     const root = filename.slice(0, at + marker.length);
+    /** @param {string} p a path under root */
+    const isTestCode = (p) => /(^|[\\/])(test|testing)[\\/]/.test(p.slice(root.length)) || /\.test\.[cm]?[jt]sx?$/.test(p);
+    const importerIsTest = isTestCode(filename);
     /** @param {any} node @param {string} source */
     function check(node, source) {
       if (source.startsWith('.') || source.startsWith('/')) {
         const target = resolve(dirname(filename), source);
         if (!`${target}${sep}`.startsWith(root) && !target.startsWith(root)) context.report({ node, messageId: 'outside', data: { source, dir } });
+        else if (!importerIsTest && isTestCode(target)) context.report({ node, messageId: 'testCode', data: { source, dir } });
         return;
       }
       const bare = source.split('?')[0] ?? source;
@@ -54,7 +64,13 @@ const rule = {
       ImportDeclaration: fromSource,
       ExportNamedDeclaration: fromSource,
       ExportAllDeclaration: fromSource,
-      ImportExpression: fromSource,
+      /** @param {any} node */
+      ImportExpression(node) {
+        const src = node.source;
+        if (src?.type === 'Literal' && typeof src.value === 'string') check(src, src.value);
+        else if (src?.type === 'TemplateLiteral' && src.expressions.length === 0) check(src, src.quasis[0]?.value.cooked ?? '');
+        else context.report({ node, messageId: 'computed', data: { dir } });
+      },
       /** @param {any} node */
       TSImportType(node) {
         const raw = 'source' in node && node.source ? node.source : node.argument;

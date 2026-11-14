@@ -1,7 +1,9 @@
 // @vitest-environment node
 // module 46 (R-PORTALWEB-1, R-PORTALWEB-9, R-PORTALWEB-10; E717): the trust boundary in the source, both ways.
 //   - portal code names only /api/portal/ API paths, and never document.cookie, the staff cookie, /auth/, raw HTML
-//     sinks, eval, sessionStorage, console or import.meta.env; localStorage only in link.ts (the team slug);
+//     sinks, eval, sessionStorage, console or import.meta (env, glob, url); localStorage only in link.ts (the team slug);
+//   - shipped portal code imports no test helper (test/, testing/, *.test.*: exempt from lint and from these scans, so
+//     a helper could carry staff code or an env value into the bundle) and no computed dynamic import (b15 audit P46-SEC-1);
 //   - view/** (what staff code may import) imports only react and itself, and touches no window, document, fetch,
 //     location or history;
 //   - only surfaces/client-portal/** imports from src/portal, and only src/portal/view/index.ts;
@@ -76,6 +78,16 @@ export function importsOf(src: string): string[] {
   return out;
 }
 
+/** b15 audit P46-SEC-1: whether a relative specifier from `file` names test code (a test/ or testing/ directory, or a .test file). */
+export function intoTestCode(file: string, spec: string): boolean {
+  if (!spec.startsWith('.')) return false;
+  const to = relative(SRC, resolve(dirname(file), spec)).replaceAll('\\', '/');
+  return /(^|\/)(test|testing)(\/|$)/.test(to) || /\.test\.[cm]?[jt]sx?$/.test(to);
+}
+
+/** b15 audit P46-SEC-1: a dynamic import whose module is not a plain string (a computed specifier no scan can read). */
+export const computedImport = (src: string): boolean => /\bimport\s*\((?!\s*(?:'[^'\n]*'|"[^"\n]*"|`[^`$]*`)\s*[,)])/.test(src);
+
 const code = (f: string) => stripComments(readFileSync(f, 'utf8'));
 const FORBIDDEN: [string, RegExp][] = [
   ['document.cookie', /document\s*\.\s*cookie/],
@@ -87,7 +99,7 @@ const FORBIDDEN: [string, RegExp][] = [
   ['new Function', /new\s+Function\s*\(/],
   ['sessionStorage', /\bsessionStorage\b/],
   ['console', /\bconsole\s*\./],
-  ['import.meta.env', /import\.meta\.env/],
+  ['import.meta (env, glob or url)', /import\.meta\b/],
 ];
 
 describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
@@ -97,6 +109,23 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     expect(STAFF_FILES.length).toBeGreaterThan(200);
     expect(stripComments("const a = '//x'; // gone\n/* gone */ const b = `/*y*/`;")).toBe("const a = '//x'; \n const b = `/*y*/`;");
     expect(importsOf("import { a } from './a.js';\nexport * from '../b.js';\nconst c = await import('./c.js');\nimport './d.css';")).toEqual(['./a.js', '../b.js', './c.js', './d.css']);
+    // b15 audit P46-SEC-1: the test-helper and computed-import checks catch what they must, and only that
+    const api = join(PORTAL, 'api.ts');
+    const home = join(PORTAL, 'screens', 'Home.tsx');
+    expect(['./test/fixtures.js', './testing/x.js', './link.test.js', './view/../test/render.js'].map((s) => intoTestCode(api, s))).toEqual([true, true, true, true]);
+    expect([intoTestCode(home, '../test/fixtures.js'), intoTestCode(home, './test'), intoTestCode(api, './testids.js'), intoTestCode(api, './contest/x.js'), intoTestCode(api, './view/index.js'), intoTestCode(api, 'react')]).toEqual([true, true, false, false, false, false]);
+    expect(['import(name)', 'import(`./${n}.js`)', "import('./a' + b)", 'import (x)'].map(computedImport)).toEqual([true, true, true, true]);
+    expect(["import('./a.js')", 'import("./a.js")', 'import(`./a.js`)', "import('./a.js', { with: {} })", "import { a } from './a.js'", 'imported(x)'].map(computedImport)).toEqual([false, false, false, false, false, false]);
+  });
+
+  it('b15 audit P46-SEC-1: shipped portal code imports no test helper (test/, testing/, *.test.*) and no computed module', () => {
+    const problems: string[] = [];
+    for (const f of PORTAL_FILES) {
+      const src = code(f);
+      for (const s of importsOf(src)) if (intoTestCode(f, s)) problems.push(`${rel(f)} imports test code ${s}`);
+      if (computedImport(src)) problems.push(`${rel(f)} has a computed dynamic import`);
+    }
+    expect(problems).toEqual([]);
   });
 
   it('R-PORTALWEB-1, R-PORTALWEB-9: portal code names only /api/portal/ API paths and no staff cookie, auth path, raw HTML sink, eval, sessionStorage, console or env', () => {
