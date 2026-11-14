@@ -477,7 +477,7 @@ test.describe('Documents', () => {
     const shares = watch(page, /\/share$|^\/api\/portal|^\/p\//);
     // platform:portal is not cleared: marking is still allowed and the API says plainly that clients see nothing
     await tap(page, page.getByRole('button', { name: 'Mark for the client portal' }), n);
-    await expect(main(page).getByText('Marked for the client portal. Clients see nothing until the portal is turned on.').first()).toBeVisible({ timeout: 15_000 });
+    await expect(main(page).getByText('Marked for the client portal. Clients see nothing until the portal is turned on, and then only once it is published to their portal.').first()).toBeVisible({ timeout: 15_000 });
     expect(n.taps).toBe(2);
     expect(shares).toEqual([`POST /api/documents/${contractId}/share`]);
     await pageChecks(page);

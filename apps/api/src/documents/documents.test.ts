@@ -394,9 +394,30 @@ describe('share, hold and retention (R-DOC-4, R-DOC-9, R-DOC-10)', () => {
     expect(previousVersionSharedText(2)).toBe('Version 1 is still shared to the client portal. When this version passes the virus check, share it and stop sharing version 1.');
     expect((await call(w.agents[0]!, 'POST', `/documents/${v2.body.document.id}/share`, { shared: true })).code).toBe('DOCUMENT_NOT_SHAREABLE');
     const un = await call<DocBody>(w.agents[0]!, 'POST', `/documents/${v1}/share`, { shared: false });
-    expect(un.body.text).toBe(COPY.unshared);
+    // b14 review F4: while the portal is dark no client sees any list, so the sentence claims none
+    expect(un.body.text).toBe(COPY.unsharedNotCleared);
     const audits = await rowsOf("SELECT action FROM audit_log WHERE tenant_id = $1 AND entity_id = $2 AND action IN ('document.shared','document.unshared') ORDER BY occurred_at", [w.tenantId, v1]);
     expect(audits.map((a) => a.action)).toEqual(['document.shared', 'document.unshared']);
+  });
+
+  it('R-DOC-9 R-STAFF-10 (b14 review F4): the portal sentences follow module 45: marking needs a publish to a client\'s portal too, and unmarking says the sync removes it, never "until it is retracted there"', async () => {
+    // dark: marking says clients see nothing yet, and that a publish is needed even after
+    expect(COPY.sharedNotCleared).toBe('Marked for the client portal. Clients see nothing until the portal is turned on, and then only once it is published to their portal.');
+    expect(COPY.unsharedNotCleared).toBe('No longer marked for the client portal.');
+    const v = await uploadClean();
+    await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:portal' AND status = 'published'`);
+    try {
+      const s = await call<DocBody>(w.agents[0]!, 'POST', `/documents/${v}/share`, { shared: true });
+      expect(s.status).toBe(200);
+      expect(s.body.text).toBe('Marked for the client portal. A client sees it only once it is published to their portal.');
+      expect(s.body.document.portal).toEqual({ shared: true, portalCleared: true, text: COPY.sharedCleared });
+      const un = await call<DocBody>(w.agents[0]!, 'POST', `/documents/${v}/share`, { shared: false });
+      expect(un.body.text).toBe("Downloads stop now. If it was published to a client's portal, it is removed from there within a few minutes.");
+      expect(un.body.text).toBe(COPY.unshared);
+      expect(un.body.document.portal).toEqual({ shared: false, portalCleared: true, text: null });
+    } finally {
+      await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:portal' AND status = 'published'`);
+    }
   });
 
   it('E411 R-DOC-9: the TC and the ISA cannot share (404); a contact document and a pending document are DOCUMENT_NOT_SHAREABLE; canShare says who may', async () => {

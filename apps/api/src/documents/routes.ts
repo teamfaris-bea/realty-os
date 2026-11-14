@@ -191,7 +191,8 @@ async function register(app: FastifyInstance): Promise<void> {
   r.post('/documents/:id/share', { config: { auth: 'document.share' }, preHandler: shareAuth, schema: { params: S.IdParams, body: S.ShareBody, response: { 200: S.ShareResponse } } }, async (req) => {
     await docTx(req, (tx, actor) => setShared(tx, actor, req.params.id, req.body.shared));
     const d = await detail(req, req.params.id);
-    return { ...d, text: req.body.shared ? (d.platform.portalCleared ? null : COPY.sharedNotCleared) : COPY.unshared };
+    const on = d.platform.portalCleared;
+    return { ...d, text: req.body.shared ? (on ? COPY.sharedCleared : COPY.sharedNotCleared) : on ? COPY.unshared : COPY.unsharedNotCleared };
   });
 
   const ownerAdmin = (req: FastifyRequest) => {

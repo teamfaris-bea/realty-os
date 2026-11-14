@@ -166,7 +166,7 @@ for (const [name, vp] of Object.entries(VIEWPORTS)) {
     await go(`/documents/${contractId}`);
     await shoot('document-page');
     await page.getByRole('button', { name: 'Mark for the client portal' }).click();
-    await page.locator('main').getByText('Marked for the client portal. Clients see nothing until the portal is turned on.').first().waitFor();
+    await page.locator('main').getByText('Marked for the client portal. Clients see nothing until the portal is turned on, and then only once it is published to their portal.').first().waitFor();
     await shoot('document-page-marked');
 
     // ---- Google Business Profile: dark, cleared with a draft, the Approvals card

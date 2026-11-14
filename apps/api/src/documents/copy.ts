@@ -16,8 +16,13 @@ export const COPY = {
   photo: 'Photos and scans are not read. Enter the dates by hand.',
   relativeDeadline: 'Deadlines written as a number of days are not read here; plan them from the acceptance date.',
   needsReview: 'Not found in the document as quoted: enter this date by hand if it is right.',
-  sharedNotCleared: 'Marked for the client portal. Clients see nothing until the portal is turned on.',
-  unshared: "Downloads stop now. The client's portal still lists it until it is retracted there.",
+  // b14 review F4: worded against module 45. A client sees a marked document only once it is published to their
+  // portal (a grant and a publish, which portal.sync never does for documents), and only while the portal is on;
+  // portal.sync retracts an unmarked document's item within one pass (DOCUMENT_NOT_SHARED). R-STAFF-10.
+  sharedNotCleared: 'Marked for the client portal. Clients see nothing until the portal is turned on, and then only once it is published to their portal.',
+  sharedCleared: 'Marked for the client portal. A client sees it only once it is published to their portal.',
+  unsharedNotCleared: 'No longer marked for the client portal.',
+  unshared: "Downloads stop now. If it was published to a client's portal, it is removed from there within a few minutes.",
   /** E159, verbatim R-DOC-2 */
   noText: 'No text found in this PDF; enter the dates by hand',
   noDates: 'No dates found next to the labels we read. Enter the dates by hand.',

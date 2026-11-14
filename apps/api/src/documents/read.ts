@@ -155,7 +155,7 @@ export async function documentView(tx: Tx, d: R.DocRow, ctx: ReadCtx, portal: bo
     blockedReason: reason,
     legalHold: d.legal_hold,
     retentionUntil: d.retention_until === null ? null : d.retention_until.toISOString(),
-    portal: { shared: d.shared_to_portal, portalCleared: portal, text: d.shared_to_portal && !portal ? COPY.sharedNotCleared : null },
+    portal: { shared: d.shared_to_portal, portalCleared: portal, text: d.shared_to_portal ? (portal ? COPY.sharedCleared : COPY.sharedNotCleared) : null },
     extraction: await extractionSummary(tx, d, ctx.extractor.configured),
     canShare: sf !== null && ctx.can('document.share', sf),
     canHold: ctx.can('document.hold', {}),
