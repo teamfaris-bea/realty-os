@@ -1,6 +1,7 @@
 // module 46: the words of the client's view (R-PORTALWEB-5, R-PORTALWEB-6, R-PORTALWEB-8, R-PORTALWEB-10). The client
 // portal and the staff preview render the same sentences. Plain, calm, no code, no "AI", no urgency. VERIFY WITH
-// COUNSEL (C10, VERIFY 1): "You can see this until {date}", "Shared {date}", the preview banner, dates with no done mark.
+// COUNSEL (C10, VERIFY 1): "You can see this until {date}", "Shared {date}", the preview banner, dates with no done mark;
+// the full list is in PHASE2_3_PLAN #### 46 and DEPLOY §10.1, pinned to these words by test/verify1.test.ts.
 
 export const VIEW_WORDS = {
   portalTitle: 'Your client portal',
