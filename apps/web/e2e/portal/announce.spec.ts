@@ -256,7 +256,12 @@ test('F1 (E713): a Download of a document the agent took back moves focus to the
   await expect(dl).toHaveCount(0, { timeout: 20_000 }); // the refetched list no longer has it
   await expect(sentence).toBeFocused(); // before the fix: <body>
   expect(await p.evaluate(() => document.activeElement === document.body)).toBe(false);
-  expect((await liveLog()).filter((t) => t.startsWith(FILE_UNAVAILABLE))).toHaveLength(1);
+  // said once: the live region sets it a moment after clearing (ANNOUNCE_GAP_MS), and nothing says it again later
+  const said = async () => (await liveLog()).filter((t) => t.startsWith(FILE_UNAVAILABLE)).length;
+  await expect.poll(said, { message: 'the failure is announced' }).toBe(1);
+  await p.waitForTimeout(500);
+  expect(await said()).toBe(1);
+  await expect(sentence).toBeFocused();
 });
 
 test('FA-5, L16-3: phone, a failure behind the hidden Documents tab is announced only when its tab shows it', async () => {
