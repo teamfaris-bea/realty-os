@@ -203,14 +203,32 @@ export interface GrantBodyProps {
   headingLevel?: 1 | 2;
   headingRef?: Ref<HTMLHeadingElement>;
   documentsProps?: Omit<DocumentsProps, 'documents' | 'mode'>;
-  /** shown in place of a section that is still loading or failed */
-  placeholder?: ReactNode;
+  /**
+   * Shown in a section that is still loading or failed, under that section's heading. Each section has its own (b16,
+   * b15 review UI-2 follow-up: with one shared placeholder, desktop showed two identical Try again buttons when both
+   * reads failed, each reading both parts again).
+   */
+  placeholders?: Partial<Record<GrantTab, ReactNode>>;
+}
+
+/** A section with no data yet: its heading, then the screen's placeholder (loading, or a failure and Try again). */
+function PanelPlaceholder({ panel, children }: { panel: GrantTab; children: ReactNode }) {
+  const id = panel === 'timeline' ? 'portal-timeline' : 'portal-documents';
+  return (
+    <section aria-labelledby={id} className={card}>
+      <h2 id={id} className={sectionHeading}>
+        {panel === 'timeline' ? VIEW_WORDS.timeline : VIEW_WORDS.documents}
+      </h2>
+      {children}
+    </section>
+  );
 }
 
 /** One grant: header, next steps, the contact card, then the timeline and documents (tabs on a phone, two columns on desktop). */
-export function GrantBody({ grant, timeline, documents, mode, layout, tab = 'timeline', onTab, headingLevel = 1, headingRef, documentsProps, placeholder = null }: GrantBodyProps) {
-  const timelinePanel = timeline ? <Timeline items={timeline.items} /> : placeholder;
-  const documentsPanel = documents ? <Documents documents={documents} mode={mode} {...documentsProps} /> : placeholder;
+export function GrantBody({ grant, timeline, documents, mode, layout, tab = 'timeline', onTab, headingLevel = 1, headingRef, documentsProps, placeholders = {} }: GrantBodyProps) {
+  const pending = (panel: GrantTab) => (placeholders[panel] == null ? null : <PanelPlaceholder panel={panel}>{placeholders[panel]}</PanelPlaceholder>);
+  const timelinePanel = timeline ? <Timeline items={timeline.items} /> : pending('timeline');
+  const documentsPanel = documents ? <Documents documents={documents} mode={mode} {...documentsProps} /> : pending('documents');
   const tabs: { id: GrantTab; label: string }[] = [
     { id: 'timeline', label: VIEW_WORDS.timeline },
     { id: 'documents', label: VIEW_WORDS.documents },

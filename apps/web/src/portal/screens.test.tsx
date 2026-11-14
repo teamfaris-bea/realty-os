@@ -689,6 +689,48 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(live()).not.toHaveTextContent(COPY.generic);
   });
 
+  // b16 (b15 review UI-2 follow-up): on desktop, a timeline and a documents read that both fail each get their own
+  // placeholder, in their own section, and each Try again reads only its own part again
+  it('b16: desktop, timeline and documents both fail: each section has its own sentence and Try again, which reads only that part', async () => {
+    let tlDown = true;
+    let docDown = true;
+    const r = renderPortal({
+      wide: true,
+      routes: {
+        ...signedIn,
+        'GET /portal/timeline': (x) => {
+          if (tlDown) throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.timeline(x.query.grantId) };
+        },
+        'GET /portal/documents': (x) => {
+          if (docDown) throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.documents(x.query.grantId) };
+        },
+      },
+    });
+    const tl = await screen.findByRole('region', { name: VIEW_WORDS.timeline });
+    const docs = screen.getByRole('region', { name: VIEW_WORDS.documents });
+    await waitFor(() => expect(within(docs).getByText(COPY.generic)).toBeInTheDocument());
+    expect(within(tl).getByText(COPY.generic)).toBeInTheDocument();
+    expect(within(tl).getAllByRole('button', { name: COPY.tryAgain })).toHaveLength(1);
+    expect(within(docs).getAllByRole('button', { name: COPY.tryAgain })).toHaveLength(1);
+    const count = (k: string) => r.keys().filter((x) => x === k).length;
+    tlDown = false;
+    await userEvent.click(within(tl).getByRole('button', { name: COPY.tryAgain }));
+    expect(await screen.findByText('Inspection')).toBeInTheDocument();
+    expect(count('GET /portal/timeline')).toBe(2);
+    expect(count('GET /portal/documents')).toBe(1);
+    // the documents section still says it failed, with its own Try again
+    const docs2 = screen.getByRole('region', { name: VIEW_WORDS.documents });
+    expect(within(docs2).getByText(COPY.generic)).toBeInTheDocument();
+    docDown = false;
+    await userEvent.click(within(docs2).getByRole('button', { name: COPY.tryAgain }));
+    expect(await screen.findByText('Purchase contract.pdf')).toBeInTheDocument();
+    expect(count('GET /portal/timeline')).toBe(2);
+    expect(count('GET /portal/documents')).toBe(2);
+    expect(screen.queryByRole('button', { name: COPY.tryAgain })).toBeNull();
+  });
+
   it('R-PORTALWEB-6: no screen shows a code', async () => {
     renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => portalApiError('VALIDATION_FAILED') } });
     await screen.findByText('Inspection');

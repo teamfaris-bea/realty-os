@@ -69,7 +69,6 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
 
   const tlFailed = failing(timeline);
   const docFailed = failing(documents);
-  const failed = tlFailed || docFailed;
   // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
   // which reads the failed parts again (busy while they run; aria-disabled keeps focus). Only a panel that shows the
   // failure counts (b16): a loaded panel's failed background refetch is not announced.
@@ -106,22 +105,19 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     }
   };
 
-  const retrying = timeline.isFetching || documents.isFetching;
-  const retry = () => {
-    if (retrying) return;
-    if (tlFailed) void timeline.refetch();
-    if (docFailed) void documents.refetch();
+  // b16: each section has its own placeholder, and its Try again reads only that part again
+  const placeholder = (read: UseQueryResult<unknown, PortalError>, failedHere: boolean) => {
+    if (!failedHere) return <p className="text-[15px] text-ink-muted">{COPY.loading}</p>;
+    const retrying = read.isFetching;
+    return (
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-[16px] text-ink">{COPY.generic}</p>
+        <button type="button" onClick={() => (retrying ? undefined : void read.refetch())} aria-disabled={retrying || undefined} className={`${secondaryButton} ${retrying ? 'opacity-60' : ''}`}>
+          {COPY.tryAgain}
+        </button>
+      </div>
+    );
   };
-  const placeholder = failed ? (
-    <div className="flex flex-col items-start gap-2">
-      <p className="text-[16px] text-ink">{COPY.generic}</p>
-      <button type="button" onClick={retry} aria-disabled={retrying || undefined} className={`${secondaryButton} ${retrying ? 'opacity-60' : ''}`}>
-        {COPY.tryAgain}
-      </button>
-    </div>
-  ) : (
-    <p className="text-[15px] text-ink-muted">{COPY.loading}</p>
-  );
 
   return (
     <Page wide={wide}>
@@ -144,7 +140,7 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
         tab={tab}
         onTab={onTab}
         headingRef={h}
-        placeholder={placeholder}
+        placeholders={{ timeline: placeholder(timeline, tlFailed), documents: placeholder(documents, docFailed) }}
         documentsProps={{ onDownload: (d) => void download(d), busyId: busy, error: fileError }}
       />
     </Page>
