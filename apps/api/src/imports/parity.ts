@@ -26,6 +26,7 @@ import {
 } from '@realty/core/import';
 import { type Tx, withTenantTx } from '@realty/db';
 import { AppError } from '../errors.js';
+import { type ImportLabelRow, labelMappings, labelRows, tallyLabels } from '../leads/importLabels.js';
 import * as brepo from './repos/batches.js';
 import * as prepo from './repos/parity.js';
 import { stageSource } from './stages.js';
@@ -70,6 +71,8 @@ export interface ParityView {
   report: ReturnType<typeof parityReport>;
   /** the live custom fields an import field can map onto */
   existingFields: { id: string; key: string; label: string; type: FieldType }[];
+  /** b18 round 3 item 1 (E728): the source labels found, each with the lead source it means and whether that source is marked */
+  sourceLabels: ImportLabelRow[];
 }
 
 async function viewIn(deps: ImportDeps, tx: Tx, tenantId: TenantId, b: brepo.BatchRow): Promise<ParityView> {
@@ -82,6 +85,7 @@ async function viewIn(deps: ImportDeps, tx: Tx, tenantId: TenantId, b: brepo.Bat
     lines: parityLines(summary, b.source === 'csv' ? 'your file' : 'Follow Up Boss'),
     report: parityReport(summary),
     existingFields: ctx.defs.filter((d) => !d.archived).map((d) => ({ id: d.id, key: d.key, label: d.label, type: d.field_type })),
+    sourceLabels: labelRows(tallyLabels(contacts.map((c) => c.leadSourceLabel)), await labelMappings(tx)),
   };
 }
 

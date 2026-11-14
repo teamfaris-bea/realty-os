@@ -2418,6 +2418,47 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
         },
         "type": "array",
       },
+      "sourceLabels": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+            },
+            "leadSourceId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "leadSourceName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "noAutomatedContact": {
+              "type": "boolean",
+            },
+            "people": {
+              "type": "number",
+            },
+            "sentence": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "label",
+            "people",
+            "leadSourceId",
+            "leadSourceName",
+            "noAutomatedContact",
+            "sentence",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
       "stages": {
         "items": {
           "additionalProperties": false,
@@ -2536,6 +2577,7 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
       "blockers",
       "lines",
       "report",
+      "sourceLabels",
     ],
     "type": "object",
   },
@@ -3161,9 +3203,51 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
       "source": {
         "type": "string",
       },
+      "sourceLabels": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+            },
+            "leadSourceId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "leadSourceName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "noAutomatedContact": {
+              "type": "boolean",
+            },
+            "people": {
+              "type": "number",
+            },
+            "sentence": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "label",
+            "people",
+            "leadSourceId",
+            "leadSourceName",
+            "noAutomatedContact",
+            "sentence",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
     },
     "required": [
       "source",
+      "sourceLabels",
       "categories",
       "parity",
       "notImported",

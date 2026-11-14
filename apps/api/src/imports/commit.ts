@@ -76,6 +76,7 @@ import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { TRANSCRIBE_JOB } from '../comms/recordings.js';
 import { AppError } from '../errors.js';
+import { importLabelOf } from '../leads/importLabels.js';
 import { addContactTags, ensureFieldDef, ensureTags, setFieldValue } from '../lists/index.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
@@ -442,7 +443,8 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
         intent: n.intent,
         stage,
         importBatchId: c.batch.id,
-        originalSourceDetail: n.leadSourceLabel ? { import_source: n.leadSourceLabel.slice(0, 120), import_system: c.system } : { import_system: c.system },
+        // b18 round 3 item 1: the label exactly as stored here is the one the Owner maps to a lead source (leads/importLabels.ts)
+        originalSourceDetail: importLabelOf(n.leadSourceLabel) !== null ? { import_source: importLabelOf(n.leadSourceLabel), import_system: c.system } : { import_system: c.system },
       },
     });
     await setOwnershipCommand(c.tx, null);

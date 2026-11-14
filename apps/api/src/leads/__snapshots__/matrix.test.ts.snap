@@ -312,6 +312,20 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                     "receivedAt": {
                       "type": "string",
                     },
+                    "redaction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "stored",
+                            "display",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
                     "source": {
                       "type": [
                         "string",
@@ -332,6 +346,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                     "propertyText",
                     "message",
                     "outcome",
+                    "redaction",
                   ],
                   "type": "object",
                 },
@@ -1013,6 +1028,20 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                     "receivedAt": {
                       "type": "string",
                     },
+                    "redaction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "stored",
+                            "display",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
                     "source": {
                       "type": [
                         "string",
@@ -1033,6 +1062,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                     "propertyText",
                     "message",
                     "outcome",
+                    "redaction",
                   ],
                   "type": "object",
                 },
@@ -2591,6 +2621,9 @@ exports[`route table and schemas > every leads route declares its authorization 
   "HEAD /api/lead-sources/overview → settings.routing",
   "PATCH /api/lead-sources/:id → settings.routing",
   "PUT /api/lead-sources/:id/ai-care → lead_source.ai_care",
+  "GET /api/lead-sources/import-labels → settings.routing",
+  "HEAD /api/lead-sources/import-labels → settings.routing",
+  "PUT /api/lead-sources/import-labels → lead_source.ai_care",
   "POST /api/lead-sources/:id/off → integration.manage",
   "POST /api/lead-sources/:id/on → integration.manage",
   "POST /api/lead-sources/:id/webhook → integration.manage",

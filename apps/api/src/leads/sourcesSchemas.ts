@@ -61,6 +61,13 @@ export const AiCareBody = z.strictObject({ noAiCare: z.boolean() });
 /** `pausing`: live AI care of the source's people that this change sends to its chain now, to pause (on only) */
 export const AiCareResponse = z.object({ source: z.object({ id: Id, name: z.string(), noAiCare: z.boolean(), noAiCareSentence: z.string() }), pausing: z.number().int(), stopping: z.number().int() });
 
+/** b18 round 3 item 1 (E728): one imported source label, the people it labels, the source it means and whether that source is marked */
+export const ImportLabel = z.object({ label: z.string(), people: z.number().int(), leadSourceId: Id.nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), sentence: z.string() });
+export const ImportLabelsResponse = z.object({ labels: z.array(ImportLabel), canChange: z.boolean() });
+/** the label exactly as the import stored it (at most 120 characters); leadSourceId null unmaps it */
+export const ImportLabelBody = z.strictObject({ label: z.string().min(1).max(120), leadSourceId: Id.nullable() });
+export const ImportLabelResponse = z.object({ label: ImportLabel, pausing: z.number().int(), stopping: z.number().int() });
+
 export const PatchBody = z.strictObject({ name: z.string().trim().min(1).max(80).optional(), consentDisclosure: ConsentDisclosureInput.optional() });
 
 export const PreviewBody = z.strictObject({
@@ -80,4 +87,4 @@ export const PreviewResponse = z.object({
   firstResponse: z.enum(['queued', 'off']),
 });
 
-export const LEAD_SOURCES_RESPONSE_SCHEMAS = { OverviewResponse, SourceResponse, OnOffResponse, WebhookRotatedResponse, PreviewResponse };
+export const LEAD_SOURCES_RESPONSE_SCHEMAS = { OverviewResponse, SourceResponse, OnOffResponse, WebhookRotatedResponse, PreviewResponse, ImportLabelsResponse, ImportLabelResponse };

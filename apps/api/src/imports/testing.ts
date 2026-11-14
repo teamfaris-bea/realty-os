@@ -21,7 +21,8 @@ import { BULK_FICTIONAL_PHONES, bulkFictionalPhone, written } from '@realty/core
 /**
  * b17 (B17R-2): the i-th bulk fictional number (packages/core/src/testing/phones.ts: NANP 555-0100 to 555-0199 area
  * code by area code, then the UK drama ranges) as people write it, (989) 555-0100. Fixtures keep to their own ranges
- * of i: fubFixture 0-999, migration journeys 1,000-1,999, parity 2,000-2,999, secreview 3,000-3,999, csvOf from
+ * of i: fubFixture 0-999, migration journeys 1,000-1,999, parity 2,000-2,999, secreview 3,000-3,999, the imported source
+ * labels test (noAutomatedContact.test.ts, b18 round 3) 4,000-4,099, csvOf from
  * 5,000, the load smoke's FUB export from 10,000, the web e2e journeys from 20,000.
  */
 export const writtenBulkPhone = (i: number): string => written(bulkFictionalPhone(i % BULK_FICTIONAL_PHONES));

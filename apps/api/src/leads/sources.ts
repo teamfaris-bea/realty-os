@@ -33,8 +33,9 @@ import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
 import { noAutomatedContactSentence } from './automatedContact.js';
+import { type ImportLabelRow, labelRows, tenantLabels } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
-import { AiCareBody, AiCareResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
+import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
 
@@ -120,6 +121,50 @@ interface SourceRow {
  * answer and the AI care panel (isa/sentences.ts). The column, the API field noAiCare and the route keep their names.
  */
 export const noAiCareSentence = noAutomatedContactSentence;
+
+/**
+ * The people a source marked "No automated contact for leads from this source" sent, made safe now: each of their live
+ * AI care is asked for a turn now, whose chain (link 11) pauses it source_no_ai_care, and each of their active plans for a
+ * step now, which stops it (assistant/enrollments.ts, before any due check). Only this source's people are counted
+ * (app.person_from_lead_source, 0099).
+ */
+export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<{ pausing: number; stopping: number }> {
+  const live = await sql<{ id: string; epoch: number }>`SELECT a.id, a.epoch FROM ai_isa_assignments a
+     WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
+       AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${sourceId}::uuid) ORDER BY a.id`.execute(tx);
+  for (const a of live.rows) {
+    await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
+  }
+  const plans = await sql<{ id: string }>`SELECT e.id FROM playbook_enrollments e
+     WHERE e.tenant_id = app.tenant_id() AND e.state = 'active' AND app.person_from_lead_source(e.tenant_id, e.contact_id, ${sourceId}::uuid) ORDER BY e.id`.execute(tx);
+  for (const e of plans.rows) await enqueueStep(tx, e.id, now);
+  return { pausing: live.rows.length, stopping: plans.rows.length };
+}
+
+/** PUT /lead-sources/import-labels: the Owner maps a label to a source (moving it off any other), or unmaps it. */
+export async function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow; pausing: number; stopping: number }> {
+  // the sources that hold the label now and the target, locked in one order (the ai-care route locks a source the same way)
+  const held = await sql<{ id: string; no_ai_care: boolean; has: boolean }>`
+    SELECT id, no_ai_care, ${label} = ANY (import_labels) AS has FROM lead_sources
+     WHERE tenant_id = app.tenant_id() AND (${label} = ANY (import_labels) OR id = ${leadSourceId}::uuid) ORDER BY id FOR UPDATE`.execute(tx);
+  if (leadSourceId !== null && !held.rows.some((s) => s.id === leadSourceId)) throw new AppError('NOT_FOUND');
+  const from = held.rows.filter((s) => s.has && s.id !== leadSourceId);
+  for (const s of from) await sql`UPDATE lead_sources SET import_labels = array_remove(import_labels, ${label}), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
+  const target = held.rows.find((s) => s.id === leadSourceId) ?? null;
+  const added = target !== null && !target.has;
+  if (added) await sql`UPDATE lead_sources SET import_labels = array_append(import_labels, ${label}), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${target.id}::uuid`.execute(tx);
+  if (from.length > 0 || added) {
+    await audit(tx, actor, {
+      action: 'routing.changed',
+      entity: { type: 'lead_source', id: target?.id ?? from[0]!.id },
+      changes: redactSnapshot({ importLabel: { from: from.map((s) => s.id), to: target?.id ?? null } }, { entity: 'lead_source' }),
+      reason: target ? 'LEAD_SOURCE_IMPORT_LABEL_MAPPED' : 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED',
+    });
+  }
+  const safe = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : { pausing: 0, stopping: 0 };
+  const row = (await tenantLabels(tx)).find((r) => r.label === label) ?? labelRows(new Map([[label, 0]]), new Map())[0]!;
+  return { label: row, ...safe };
+}
 
 export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.infer<typeof OverviewResponse>> {
   return asSystem(deps.db, actor, async (tx, sys) => {
@@ -440,6 +485,19 @@ async function register(app: FastifyInstance): Promise<void> {
       return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, pausing, stopping };
     }),
   );
+
+  // b18 round 3 item 1 (E728): imported source labels. Anyone who manages routing sees every label in the CRM and the source
+  // it means; only the Owner maps, moves or unmaps one (core lead_source.ai_care, 🔒 every time: a move can loosen the
+  // setting for the people it labels; app.lead_sources_import_labels_guard in the database). A label mapped to a source
+  // with "No automated contact for leads from this source" on stops its people's plans and pauses their AI care now.
+  r.get('/lead-sources/import-labels', { ...routing, schema: { response: { 200: ImportLabelsResponse } } }, async (req) =>
+    leadsTx(req, async (tx, _now, actor) => ({ labels: await tenantLabels(tx), canChange: actor.role === 'owner' })),
+  );
+  r.put('/lead-sources/import-labels', {
+    config: { auth: 'lead_source.ai_care' },
+    preHandler: authorize('lead_source.ai_care', () => ({ loosening: true })),
+    schema: { body: ImportLabelBody, response: { 200: ImportLabelResponse } },
+  }, async (req) => leadsTx(req, (tx, now, actor) => setImportLabel(tx, actor, req.body.label, req.body.leadSourceId, now)));
 
   r.post('/lead-sources/:id/off', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, false)));
   r.post('/lead-sources/:id/on', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, true)));

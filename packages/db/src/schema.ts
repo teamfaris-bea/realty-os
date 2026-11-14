@@ -1574,6 +1574,7 @@ export interface LeadSourcesTable {
   active_changed_at: Timestamp | null;
   no_ai_care: Generated<boolean>;
   no_ai_care_changed_at: Timestamp | null;
+  import_labels: Generated<string[]>;
 }
 
 /** public.listing_contacts (table) */

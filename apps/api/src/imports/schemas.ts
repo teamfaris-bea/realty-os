@@ -69,6 +69,8 @@ const FieldActionView = z.union([
   z.object({ action: z.literal('create'), type: FieldTypeEnum, label: z.string() }),
   z.object({ action: z.literal('existing'), fieldId: z.string() }),
 ]);
+/** b18 round 3 item 1 (E728): one source label found in the import, with the lead source it means and whether that source is marked */
+const SourceLabel = z.object({ label: z.string(), people: z.number(), leadSourceId: z.string().nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), sentence: z.string() });
 export const ParityResponse = z.object({
   options: z.object({ stageMap: z.record(z.string(), Stage8), keepStageAsTag: z.boolean(), fields: z.record(z.string(), FieldActionView) }),
   stages: z.array(z.object({ label: z.string(), people: z.number(), suggested: Stage8.nullable(), mapped: Stage8.nullable() })),
@@ -90,6 +92,7 @@ export const ParityResponse = z.object({
   blockers: z.array(z.string()),
   lines: z.array(z.string()),
   report: z.array(ParityRow),
+  sourceLabels: z.array(SourceLabel),
 });
 export const RevertBody = z.strictObject({ category: CategoryParam.optional() });
 
@@ -182,6 +185,7 @@ export const VerificationResponse = z.object({
 });
 export const ReportResponse = z.object({
   source: z.string(),
+  sourceLabels: z.array(SourceLabel),
   categories: z.array(
     z.object({
       category: CategoryParam,

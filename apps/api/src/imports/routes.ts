@@ -17,15 +17,19 @@
 //   POST /imports/:id/stages/:category/skip           a stage the team does not import
 //   POST /imports/:id/revert                          { category? } (R-IMPORT-10)
 //   POST /imports/:id/abandon                         purge the FUB key now (R-IMPORT-11)
-//   GET|PUT /imports/:id/parity                     stage map, keep-stage-as-tag, typed custom fields (R-PAR-46; resets the contacts dry run)
+//   GET|PUT /imports/:id/parity                     stage map, keep-stage-as-tag, typed custom fields (R-PAR-46; resets the contacts dry run);
+//                                                     GET also lists the source labels found and which are marked (E728;
+//                                                     the Owner maps a label with PUT /lead-sources/import-labels)
 //   GET  /imports/:id/report                          per category source | imported | needs review | rejected | duplicate;
-//                                                     the people the ownership commit brought in unassigned (owner decision B4)
+//                                                     the people the ownership commit brought in unassigned (owner decision B4);
+//                                                     the source labels found and which are marked (b18 round 3 item 1, E728)
 import type { UserActor } from '@realty/core/foundation';
 import { type Category } from '@realty/core/import';
 import { withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../errors.js';
+import { stageLabels } from '../leads/importLabels.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import type { Platform } from '../server.js';
@@ -162,6 +166,7 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
         blockers: v.summary.blockers,
         lines: v.lines,
         report: v.report.map((r) => ({ category: r.category, source: r.source, imported: r.imported, needsReview: r.needs_review, rejected: r.rejected, duplicate: r.duplicate })),
+        sourceLabels: v.sourceLabels,
       });
       r.get('/imports/:id/parity', { ...auth, schema: { params: S.IdParams, response: { 200: S.ParityResponse } } }, async (req) => parityResponse(await getParity(deps(req), actorOf(req), req.params.id)));
       r.put('/imports/:id/parity', { ...auth, schema: { params: S.IdParams, body: S.ParityBody, response: { 200: S.ParityResponse } } }, async (req) =>
@@ -252,7 +257,9 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
             const named = unassigned.flatMap((u) => [u.issue && 'userId' in u.issue ? u.issue.userId : null, u.asked_again_offered_to]).filter((x): x is string => typeof x === 'string');
             const names = await brepo.memberNames(tx, named);
             const zone = unassigned.some((u) => u.asked_again_at !== null) ? await brepo.tenantZone(tx) : 'UTC';
-            return reportView(b, stages, { unassigned, names, zone });
+            // b18 round 3 item 1 (E728): the source labels of the contacts records, each with its lead source and mark
+            const contacts = stages.find((s) => s.category === 'contacts');
+            return { ...reportView(b, stages, { unassigned, names, zone }), sourceLabels: contacts ? await stageLabels(tx, contacts.id) : [] };
           },
           { db: deps(req).db },
         ),

@@ -3,7 +3,8 @@
 // A referral partner is not an AI cohort, and its first-week email introduction does not permit this CRM's autonomous
 // texting, calling or mass enrolment. The Owner marks that partner's lead source in the app (0094's
 // lead_sources.no_ai_care; the repository never names a partner). For every person the source sent (any record of
-// the person, any inquiry: app.person_no_ai_care_source, 0094 and 0096) nothing automatic goes out:
+// the person, any inquiry, and any imported person whose source label the Owner mapped to it: app.person_no_ai_care_source
+// over app.person_from_lead_source, 0094, 0096 and 0099; leads/importLabels.ts) nothing automatic goes out:
 //   - the 60-second first response (assistant/firstResponse.ts, speed_to_lead_reply), by text or email;
 //   - every plan enrolment: a stage entry, a closed deal, a bulk enroll, and a person enrolling one lead by hand
 //     (counted as automated contact: OQ-B18-S5's conservative default); a running plan stops at its next step and a
@@ -26,7 +27,7 @@ export const NO_AUTOMATED_CONTACT_LABEL = 'No automated contact for leads from t
 
 /**
  * Whether the person (any record of them, any inquiry) came from a source marked "No automated contact for leads from
- * this source": app.person_no_ai_care_source (a definer returning one boolean; 0094, 0096), in the caller's
+ * this source": app.person_no_ai_care_source (a definer returning one boolean; 0094, 0096, 0099: imported people by their mapped label too), in the caller's
  * transaction and tenant.
  */
 export async function noAutomatedContact(tx: Tx, contactId: string): Promise<boolean> {
@@ -37,7 +38,7 @@ export async function noAutomatedContact(tx: Tx, contactId: string): Promise<boo
 /** The Owner's sentence for the setting, on the sources screen and in the Owner's answer (leads/sources.ts). */
 export function noAutomatedContactSentence(on: boolean): string {
   return on
-    ? `${NO_AUTOMATED_CONTACT_LABEL}: on. Nothing automatic reaches leads from this source (any record of the person): no instant reply, no plan, no bulk text, email or invite, no AI care and no AI-answered call. Plans and AI care already running for them stop or pause. People on the team can still call, text and email them one to one. Only the Owner changes this.`
+    ? `${NO_AUTOMATED_CONTACT_LABEL}: on. Nothing automatic reaches leads from this source (any record of the person): no instant reply, no plan, no bulk text, email or invite, no AI care and no AI-answered call. Plans and AI care already running for them stop or pause. People an import brought in count once the Owner maps their imported source label to this source. People on the team can still call, text and email them one to one. Only the Owner changes this.`
     : `${NO_AUTOMATED_CONTACT_LABEL}: off. Leads from this source get the team's automatic replies, plans and AI care as usual. Only the Owner changes this.`;
 }
 
