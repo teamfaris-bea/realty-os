@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
 import { ESTIMATE_SENTENCE } from '../../cma/gates.js';
 import { type ReportInput, buildReport, refusalFor } from '../../cma/report.js';
-import { TEST_STATEMENT } from '../../cma/testing.js';
+import { TEST_STATEMENT, localSales } from '../../cma/testing.js';
 import { suFixture } from '../../leads/testing.js';
 import { TEST_ATTRIBUTION, TEST_DISCLAIMER } from '../../mls/testing.js';
 import type { FakeEmail } from '../../providers/fake/email.js';
@@ -18,7 +18,7 @@ import { call, grantInitiated, initiatedDayNow, openZone, runIsa } from '../test
 import { EMAIL_MAX_STATEMENT_POINT_SIZE, type LicenceStatement, type StatementRendering, emailStatementRendering } from './cmaSeam.js';
 import { buildCompsInTx } from './comps.js';
 import { sellerFactsCurrentInTx } from './index.js';
-import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, queueFactsAs, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
+import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, queueFactsAs, secondFeed, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 
 // ---- pure: the seam against V2-A's share email ---------------------------------------------------------------------
 
@@ -231,6 +231,59 @@ describe('B16S-2 R-ISA-18 E537 (batch 16): dispatch TX1 (H3) re-checks the queue
     // the licence's statement back as queued: nothing changed under the message
     expect(await h3()).toEqual({ codes: [], licenceOk: true });
     expect((await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [id])).rows[0]!.body).toContain(`\n\n${TEST_STATEMENT}\n\nSource: `);
+  });
+});
+
+describe('B16S-3 R-MLS-2 R-CMA-7 R-CMA-9 (batch 16): the comps email carries the parts of every feed readiness judged, as V2-A\'s report does', () => {
+  const SUBJECT_ATTRIBUTION = 'Listing information from the second regional MLS (test attribution).';
+  const SUBJECT_DISCLAIMER = 'Second MLS: information deemed reliable but not guaranteed (test disclaimer).';
+  const SUBJECT_STATEMENT = 'Second feed valuation statement (fixture text, not legal wording).';
+
+  it('B16S-3: with the subject\'s record on a second feed and every comp on the first, the email carries both feeds\' statements, attributions and disclaimers once each and names both feeds; H3 then refuses it when the second feed\'s attribution or statement changes', async () => {
+    // a world of its own: the second feed would otherwise join the footer of every email in this file
+    const w2 = await sellerWorld(h);
+    const mls2 = await secondFeed(h, w2, { attribution: SUBJECT_ATTRIBUTION, disclaimer: SUBJECT_DISCLAIMER });
+    await h.su.query(`UPDATE integration_connections SET display_name = 'Second MLS feed (test)', license_pack = jsonb_set(license_pack, '{valuation,statements,CA}', $2::jsonb) WHERE id = $1`,
+      [mls2, JSON.stringify({ text: SUBJECT_STATEMENT, min_point_size: 10 })]);
+    // the home's own MLS record (the subject line's beds, size and record date) is on feed 2; the comparable sales on feed 1
+    const l = await sellerLead(h, { ...w2, mls: mls2 }, { comps: 0 });
+    await localSales({ h, tenantId: w2.tenantId, mls: w2.mls }, 8);
+    expect((await confirm(w2, l)).status).toBe(200);
+    expect((await h.su.query<{ c: string }>('SELECT mls_connection_id AS c FROM listings WHERE id = $1', [l.recordId])).rows[0]!.c).toBe(mls2);
+
+    const r = await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())));
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    const built = r as Extract<typeof r, { ok: true }>;
+    expect([...new Set(built.pendingFacts.map((f) => f.connectionId))]).toEqual([w2.mls]);
+    const blocks = built.body.split('\n\n');
+    expect(blocks[1]).toMatch(/^Compared using your home's MLS record from /);
+    for (const t of [TEST_STATEMENT, SUBJECT_STATEMENT, TEST_ATTRIBUTION, TEST_DISCLAIMER, SUBJECT_ATTRIBUTION, SUBJECT_DISCLAIMER]) expect([t, blocks.filter((x) => x === t).length]).toEqual([t, 1]);
+    // the statements sit after the seller-data lines and before the source line; the feed texts after it
+    const source = blocks.findIndex((x) => x.startsWith('Source: '));
+    expect(blocks.slice(source - 2, source).sort()).toEqual([SUBJECT_STATEMENT, TEST_STATEMENT].sort());
+    expect(blocks.slice(source + 1).sort()).toEqual([SUBJECT_ATTRIBUTION, SUBJECT_DISCLAIMER, TEST_ATTRIBUTION, TEST_DISCLAIMER].sort());
+    expect(blocks[source]).toContain('Test MLS feed');
+    expect(blocks[source]).toContain('Second MLS feed (test)');
+
+    // queued, then the subject feed's own texts change while it waits (no comp is on that feed): H3 refuses it
+    const id = await withSellerPacksCleared(h, () => queueFactsAs(h, w2, l, ['comps']));
+    expect(id).not.toBeNull();
+    const h3 = () => withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, _a, actor) => sellerFactsCurrentInTx(tx, actor, id!, nowInstant())));
+    expect(await h3()).toEqual({ codes: [], licenceOk: true });
+    const setPack = (key: string, value: string) => h.su.query(`UPDATE integration_connections SET license_pack = jsonb_set(license_pack, $2::text[], to_jsonb($3::text)) WHERE id = $1`, [mls2, [key], value]);
+    try {
+      await setPack('attribution_text', 'Listing information from the second regional MLS, reworded (test attribution).');
+      expect(await h3()).toEqual({ codes: ['FACT_CHANGED'], licenceOk: true });
+    } finally {
+      await setPack('attribution_text', SUBJECT_ATTRIBUTION);
+    }
+    expect(await h3()).toEqual({ codes: [], licenceOk: true });
+    try {
+      await h.su.query(`UPDATE integration_connections SET license_pack = jsonb_set(license_pack, '{valuation,statements,CA}', $2::jsonb) WHERE id = $1`, [mls2, JSON.stringify({ text: 'Second feed valuation statement, replaced (test).', min_point_size: 10 })]);
+      expect(await h3()).toEqual({ codes: ['VALUATION_STATEMENT_CHANGED'], licenceOk: true });
+    } finally {
+      await h.su.query(`UPDATE integration_connections SET license_pack = jsonb_set(license_pack, '{valuation,statements,CA}', $2::jsonb) WHERE id = $1`, [mls2, JSON.stringify({ text: SUBJECT_STATEMENT, min_point_size: 10 })]);
+    }
   });
 });
 

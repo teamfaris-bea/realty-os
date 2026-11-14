@@ -9,9 +9,11 @@
 //      brokerage (its own, else the mirror's, else refused), a location only when shown, and one "why";
 //   5. only the area sentences V1-B's own builders give (each asserted to be among the engine's), never the value,
 //      tier-limit, records-left-out, weight or valuation-date sentences;
-//   6. the statements (one per comp connection for the subject's state, through valuationStatement), the attribution
+//   6. the statements (one per connection for the subject's state, through valuationStatement), the attribution
 //      and disclaimer per connection, all under V2-A's share-email statement rules (cmaSeam emailStatementRendering:
-//      never substituted, a statement at <= 12 pt), the EARLIEST sync as the as-of, the pack's client_lines verbatim;
+//      never substituted, a statement at <= 12 pt), over the connection set readiness judged (the comps' feeds, the
+//      run's reads and the subject record's, as V2-A's report; B16S-3), the EARLIEST sync as the as-of, the pack's
+//      client_lines verbatim;
 //   7. the guard and fair housing over the whole body, and the server-text ban over ISA and engine lines only;
 //   8. one pending sold_comp_set row per comp (written by the caller with the message id), and last_comps_check.
 // The body never names a value, range, adjusted price, weight, back-test, hidden count, forecast or direction.
@@ -84,6 +86,8 @@ export type CompsBuild =
       updated: boolean;
       /** the valuation statement block the body carries (the licence's current statements; H3 compares it, B16S-2) */
       statement: string;
+      /** each feed's attribution and disclaimer, as the body carries them (H3 checks them, B16S-3) */
+      feedTexts: string[];
     }
   | { ok: false; codes: string[] };
 
@@ -136,14 +140,16 @@ interface Footer {
   code: string | null;
   statement: string | null;
   attribution: string | null;
+  /** each feed's attribution and disclaimer, once each, as the body carries them */
+  feedTexts: string[];
   mlsName: string;
   asOf: Instant | null;
 }
 
-const noFooter = (code: string): Footer => ({ ok: false, code, statement: null, attribution: null, mlsName: '', asOf: null });
+const noFooter = (code: string): Footer => ({ ok: false, code, statement: null, attribution: null, feedTexts: [], mlsName: '', asOf: null });
 
 /**
- * The statement, attribution and disclaimer of every comp feed (R-MLS-2), under V2-A's share-email statement rules
+ * The statement, attribution and disclaimer of every feed in the set (R-MLS-2), under V2-A's share-email statement rules
  * (cmaSeam emailStatementRendering over cma/statement.ts, batch 16): each feed's statement for the subject's state from
  * its licence pack (valuationStatement), once per text, never substituted and never needing more than 12 pt
  * (CMA_STATEMENT_NOT_RENDERABLE, EMAIL_TYPE_SIZE); each feed's attribution and disclaimer once, never substituted. The
@@ -169,7 +175,7 @@ function footerOf(e: MlsEligibility, connectionIds: readonly string[], state: st
   }
   const times = conns.map((c) => c.lastSyncedAt);
   if (times.some((t) => t === null)) return noFooter('FEED_STALE');
-  return { ok: true, code: null, statement: rendered.statements.map((s) => s.text).join('\n\n'), attribution: foot.join('\n\n'), mlsName: [...new Set(conns.map((c) => c.displayName))].join(' and '), asOf: Math.min(...(times as Instant[])) as Instant };
+  return { ok: true, code: null, statement: rendered.statements.map((s) => s.text).join('\n\n'), attribution: foot.join('\n\n'), feedTexts: foot, mlsName: [...new Set(conns.map((c) => c.displayName))].join(' and '), asOf: Math.min(...(times as Instant[])) as Instant };
 }
 
 /** The last of the pack's client lines: the statement block follows it in the email (core renderCompsEmail). */
@@ -186,6 +192,15 @@ export function queuedStatement(body: string): string | null {
   const from = at + BEFORE_STATEMENT.length;
   const to = body.indexOf('\n\nSource: ', from);
   return to < 0 ? null : body.slice(from, to);
+}
+
+/**
+ * B16S-3 (H3): whether a queued body still carries each feed text (attribution, disclaimer) a fresh build has, each as
+ * a paragraph of its own. A comp feed's texts are also in its facts' display-rules version; this covers the feeds no
+ * comp came from, such as the subject record's, whose parts the email carries since batch 16.
+ */
+export function feedTextsCarried(body: string, texts: readonly string[]): boolean {
+  return texts.every((t) => body.includes(`\n\n${t}\n\n`) || body.endsWith(`\n\n${t}`));
 }
 
 async function clientLinesMatch(tx: Tx): Promise<boolean> {
@@ -248,7 +263,9 @@ export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRo
   const sentences = areaSentences(r, p.resolved.facts.yearBuilt.value);
   if (sentences === null) return done(['COMPS_CEILING']);
   const result: IsaCompResult = { methodVersion: r.methodVersion, comps: views, areaLookbackMonths: r.area.lookbackMonths, sizeFilterApplied: true, bedsFilterApplied: bedsFiltered, sentences };
-  const foot = footerOf(e, facts.map((f) => f.connectionId), p.resolved.state);
+  // B16S-3 (R-MLS-2, R-CMA-7, R-CMA-9): the parts of every feed readiness judged, as V2-A's report carries them, not only
+  // the comps' feeds: the subject line shows the home's MLS record (beds, size, record date), which may be another feed's
+  const foot = footerOf(e, [...p.readinessConnectionIds, ...facts.map((f) => f.connectionId), ...(p.record ? [p.record.connectionId] : [])], p.resolved.state);
   if (!foot.ok) return done([foot.code!]);
   if (!(await clientLinesMatch(tx))) return done(['PACK_LINES_MISMATCH']);
   // dedupe and refresh: an unchanged set already sent is skipped; a changed one after 30 days is "Updated"
@@ -279,5 +296,5 @@ export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRo
   const lines = email.body.split('\n\n');
   const pendingFacts: PendingFact[] = facts.map((f, k) => ({ ...f, compSetHash: email.hash, lineSha256: sha256Hex(lines.find((x) => x.startsWith(`${k + 1}. `)) ?? '') }));
   await recordCheck(tx, a.id, [], email.hash, now);
-  return { ok: true, channel: 'email', body: email.body, pendingFacts, compSetHash: email.hash, count: views.length, updated: last !== null, statement: foot.statement! };
+  return { ok: true, channel: 'email', body: email.body, pendingFacts, compSetHash: email.hash, count: views.length, updated: last !== null, statement: foot.statement!, feedTexts: foot.feedTexts };
 }

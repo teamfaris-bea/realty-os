@@ -15,7 +15,7 @@ import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../../audit.js';
 import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
-import { type CompsBuild, buildCompsInTx, queuedStatement } from './comps.js';
+import { type CompsBuild, buildCompsInTx, feedTextsCarried, queuedStatement } from './comps.js';
 import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, smsFits, sourceOf } from './competition.js';
 import { assignmentSubjectLinkInTx, sellerGatesInTx, subjectLinkInTx } from './gates.js';
 import { type CompetitorEvent, FACT_INTROS, STATUS_LABEL, composeMessage, factsMessage } from './isa1Seam.js';
@@ -319,6 +319,9 @@ export async function sellerFactsCurrentInTx(tx: Tx, actor: Actor, messageId: st
         // statements out, so one replaced by another the rules accept while the message waited would go out superseded
         const m = (await sql<{ body: string }>`SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx)).rows[0];
         if (m === undefined || queuedStatement(m.body) !== b.statement) codes.add('VALUATION_STATEMENT_CHANGED');
+        // B16S-3: the attribution and disclaimer of a feed no comp came from (the subject record's) are in no fact's
+        // display-rules version, so a fresh one the queued body does not carry is a display rule that moved under it
+        if (m === undefined || !feedTextsCarried(m.body, b.feedTexts)) codes.add('FACT_CHANGED');
       }
     }
   }

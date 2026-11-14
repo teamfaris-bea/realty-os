@@ -44,7 +44,7 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type ClientShare, type CmaConnections, type NearMatch, type ReadinessInput, type ReadinessUse, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnections } from './gates.js';
+import { type ClientShare, type CmaConnections, type NearMatch, type ReadinessInput, type ReadinessUse, SIZE_NOT_LIVING_AREA_SENTENCE, agentGate, asOfSentence, clientReadiness, compListingIds, mlsDataAsOf, nearMatches, notLivingAreaSize, readinessConnectionIds, readinessConnections } from './gates.js';
 import { shareMessageSentence } from './report.js';
 import {
   type CmaInspection,
@@ -58,6 +58,7 @@ import {
   defaultAddress,
   getCma,
   insertDraft,
+  listingRows,
   mergeTreeIds,
   myOpenDraft,
   myOpenDrafts,
@@ -888,7 +889,21 @@ export interface SubjectRecord {
 }
 
 export type CompsForSubject =
-  | { ok: true; resolved: ResolvedSubject; record: SubjectRecord | null; result: StoredResult; readiness: { share: ClientShare; nearMatches: NearMatch[] }; valuationDate: string; conns: CmaConnections }
+  | {
+      ok: true;
+      resolved: ResolvedSubject;
+      record: SubjectRecord | null;
+      result: StoredResult;
+      readiness: { share: ClientShare; nearMatches: NearMatch[] };
+      /**
+       * The connection set readiness judged (readinessConnectionIds: the gate's used connections, the run's reads, the
+       * subject record's and each comp's): a client rendering carries each one's statement, attribution and disclaimer,
+       * as V2-A's report does (share.ts reportOf; R-CMA-7, R-CMA-9, R-MLS-2; batch 16 B16S-3)
+       */
+      readinessConnectionIds: string[];
+      valuationDate: string;
+      conns: CmaConnections;
+    }
   | { ok: false; code: string; sentence: string };
 
 const REFUSAL_SENTENCE: Readonly<Record<'SELLER_FACTS_NOT_ALLOWED' | 'CMA_SCOPE_LOST', string>> = {
@@ -930,7 +945,7 @@ export async function compsForSubjectInTx(
     const atKey = resolved.addressKey === null ? [] : await mlsRowsAtAddress(tx, resolved.addressKey);
     const n = newest(atKey.filter((r) => r.mls_connection_id !== null && connectionIds.includes(r.mls_connection_id)));
     const record: SubjectRecord | null = n === null ? null : { listingId: n.id, mlsModifiedAt: n.mls_modified_at, connectionId: n.mls_connection_id! };
-    const readiness = await clientReadiness(tx, {
+    const readinessInput: ReadinessInput = {
       use: 'ai_isa',
       conns: await readinessConnections(tx, now),
       now,
@@ -947,8 +962,10 @@ export async function compsForSubjectInTx(
       hasValue: result.available,
       // R-MLS-7 (owner rule): a subject or comp size from a field that is never finished living area blocks every use
       notLivingArea: notLivingAreaSize([resolved.sizeSource, ...result.comps.map((c) => c.sale.sizeSource)]),
-    });
-    return { ok: true, resolved, record, result, readiness, valuationDate, conns };
+    };
+    const readiness = await clientReadiness(tx, readinessInput);
+    const judged = readinessConnectionIds(readinessInput, await listingRows(tx, compListingIds(readinessInput)));
+    return { ok: true, resolved, record, result, readiness, readinessConnectionIds: judged, valuationDate, conns };
   } catch (e) {
     if (e instanceof AppError) {
       const d = (e.details ?? {}) as { sentence?: unknown };
