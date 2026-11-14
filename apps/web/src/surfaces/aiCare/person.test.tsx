@@ -91,6 +91,20 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(s.textContent).not.toMatch(/A confirmation is scheduled\./);
   });
 
+  it('V3 E533 (b14 to-do, b13 review F8-ui low): under the hold a pending holding line is said as a holding message to reach them yourself, never a confirmation to confirm; without the hold it is a holding message too', async () => {
+    const hold = 'AI assistant sending is off on this deployment.';
+    const ho = { id: ISA_IDS.handoff, reason: 'escalated', slaClass: 'high', slaDueAt: iso(3_600_000), slaMetAt: null, overdue: false, confirmationStatus: 'scheduled', confirmationNotSent: null, closedReason: null, pendingKind: 'holding_line' } as const;
+    const v = isaApp(person(panel({ state: 'ended', handoff: ho }), { live: false, hold }), `/contacts/${IDS.jane}`, 'agent');
+    let s = await screen.findByRole('region', { name: 'Handoff' });
+    expect(within(s).getByText('A holding message would go out if sending were allowed. AI messages are held, so reach Jane yourself.')).toBeInTheDocument();
+    expect(s.textContent).not.toMatch(/confirm|A confirmation/i);
+    v.view.unmount();
+    isaApp(person(panel({ state: 'ended', handoff: { ...ho, confirmationStatus: 'queued' } }), { live: false }), `/contacts/${IDS.jane}`, 'agent');
+    s = await screen.findByRole('region', { name: 'Handoff' });
+    expect(within(s).getByText('A holding message is queued.')).toBeInTheDocument();
+    expect(s.textContent).not.toMatch(/A confirmation/);
+  });
+
   it('R-ISA-30 E521 (batch 13 isa-4, b12 recheck R16 follow-up): after a restart with no touch, the panel shows the earlier handoff that is still open and overdue', async () => {
     const p = panel({ earlierHandoff: { id: ISA_IDS.handoff, reason: 'ended_by_user', slaClass: 'high', slaDueAt: new Date(Date.now() - 60_000).toISOString(), slaMetAt: null, overdue: true, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
     isaApp(person(p), `/contacts/${IDS.jane}`, 'agent');

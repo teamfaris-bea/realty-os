@@ -128,6 +128,8 @@ export interface PanelHandoff {
   /** b13 review B13S-3: why a confirmation did not go out (the API decides; null when none failed) */
   confirmationNotSent: ConfirmationNotSent | null;
   closedReason: HandoffClosedReason | null;
+  /** b14 to-do (b13 review F8-ui low): the pending post-handoff message, a confirmation or a holding line (null: none) */
+  pendingKind?: 'confirmation' | 'holding_line' | null;
 }
 export interface PanelResponse {
   contactId: string;

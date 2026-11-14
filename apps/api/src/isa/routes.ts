@@ -86,6 +86,15 @@ async function panel(req: FastifyRequest, contactId: string) {
       x ? confirmationNotSentOf(tx, { contactId: x.contact_id, confirmationStatus: x.confirmation_status, pendingMessageId: x.pending_message_id }) : null;
     const hdNotSent = await notSent(hd);
     const edNotSent = await notSent(ed);
+    // b14 to-do (b13 review F8-ui low): what the pending post-handoff message is, so a holding line is never worded as a
+    // confirmation (writeHandoffInTx stores queued/scheduled for either); read under the viewer's RLS, as the handoff view
+    const pendingKind = async (x: { pending_message_id: string | null } | undefined): Promise<'confirmation' | 'holding_line' | null> => {
+      if (!x?.pending_message_id) return null;
+      const m = (await sql<{ c: string | null }>`SELECT action_category AS c FROM messages WHERE tenant_id = app.tenant_id() AND id = ${x.pending_message_id}`.execute(tx)).rows[0];
+      return m === undefined ? null : m.c === 'ai_isa_confirmation' ? 'confirmation' : 'holding_line';
+    };
+    const hdPending = await pendingKind(hd);
+    const edPending = await pendingKind(ed);
     return {
       ...base,
       assignment: {
@@ -113,9 +122,9 @@ async function panel(req: FastifyRequest, contactId: string) {
       openOffer: offerRow ? { id: offerRow.id, status: offerRow.status, slots: offerRow.slots.map((x) => ({ startsAt: new Date(x.startsAt).toISOString(), endsAt: new Date(x.endsAt).toISOString() })), expiresAt: new Date(offerRow.expiresAt).toISOString() } : null,
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
       handoff: hd ? { id: hd.id, reason: hd.reason, slaClass: hd.sla_class as (typeof S.SLA_CLASSES)[number], slaDueAt: hd.sla_due_at.toISOString(), slaMetAt: hd.sla_met_at?.toISOString() ?? null, overdue: hd.sla_class !== 'none' && hd.sla_met_at === null && !hd.done && hd.sla_due_at.getTime() < now, confirmationStatus: hd.confirmation_status,
-        confirmationNotSent: hdNotSent, closedReason: hd.closed_reason } : null,
+        confirmationNotSent: hdNotSent, closedReason: hd.closed_reason, pendingKind: hdPending } : null,
       earlierHandoff: ed ? { id: ed.id, reason: ed.reason, slaClass: ed.sla_class as (typeof S.SLA_CLASSES)[number], slaDueAt: ed.sla_due_at.toISOString(), slaMetAt: null,
-        overdue: ed.sla_class !== 'none' && ed.sla_due_at.getTime() < now, confirmationStatus: ed.confirmation_status, confirmationNotSent: edNotSent, closedReason: ed.closed_reason } : null,
+        overdue: ed.sla_class !== 'none' && ed.sla_due_at.getTime() < now, confirmationStatus: ed.confirmation_status, confirmationNotSent: edNotSent, closedReason: ed.closed_reason, pendingKind: edPending } : null,
     };
   }, { db: deps.db });
   // b14 to-do (B13S-2 low): turn.ts offers times only while the owner's calendar is live (checked at opt-in only), so the

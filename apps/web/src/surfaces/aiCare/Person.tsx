@@ -29,6 +29,7 @@ import {
   capabilityLine,
   chainLinkWords,
   closedReasonWords,
+  HOLDING_WORDS,
   confirmationWords,
   decisionCodeWords,
   NO_RECIPIENT_WORDS,
@@ -427,6 +428,19 @@ const pendingAfterHandoff = (p: PanelResponse) => [p.handoff, p.earlierHandoff].
 /** Under a hold a pending confirmation never goes out (dispatch refuses it): it is said as what would happen. */
 export const HELD_CONFIRMATION = 'A confirmation would go out if sending were allowed. AI messages are held, so confirm it yourself.';
 
+/**
+ * b14 to-do (b13 review F8-ui low): the post-handoff message line. A holding line (pendingKind) is said as a holding
+ * message, as the thread says it, never as a confirmation to confirm; under the hold a pending one is what would happen.
+ */
+function pendingWords(h: PanelHandoff, first: string, held: boolean): string {
+  const pending = h.confirmationStatus === 'scheduled' || h.confirmationStatus === 'queued';
+  if (h.pendingKind === 'holding_line') {
+    if (held && pending) return `A holding message would go out if sending were allowed. AI messages are held, so reach ${first} yourself.`;
+    return HOLDING_WORDS[h.confirmationStatus] ?? OTHER_CHECK;
+  }
+  return held && pending ? HELD_CONFIRMATION : confirmationWords(h.confirmationStatus, h.confirmationNotSent);
+}
+
 function HandoffLines({ h, viewer, first, title = 'Handoff', held = false }: { h: PanelHandoff; viewer: ViewerInfo; first: string; title?: string; held?: boolean }) {
   return (
     <Section title={title}>
@@ -445,7 +459,7 @@ function HandoffLines({ h, viewer, first, title = 'Handoff', held = false }: { h
           {h.overdue ? ' · Overdue' : ''}. A call, text or email to {first} from {viewer.isOwner ? 'you' : viewer.ownerFirst} or a collaborator meets it.
         </p>
       )}
-      <p className="text-ink-muted">{held && (h.confirmationStatus === 'scheduled' || h.confirmationStatus === 'queued') ? HELD_CONFIRMATION : confirmationWords(h.confirmationStatus, h.confirmationNotSent)}</p>
+      <p className="text-ink-muted">{pendingWords(h, first, held)}</p>
     </Section>
   );
 }

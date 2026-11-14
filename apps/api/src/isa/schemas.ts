@@ -19,6 +19,8 @@ const Iso = z.string();
 /** Why the system closed a handoff (isa/handoff.ts closeHandoffInTx; ai_isa_handoffs.closed_reason, 0081), or null. */
 const HandoffClosedReason = z.enum(HANDOFF_CLOSE_REASONS).nullable();
 const ConfirmationNotSent = z.enum(['by_hand', 'unreachable', 'not_needed']).nullable();
+/** b14 to-do: the handoff's pending post-handoff message: an appointment confirmation or a holding line (null: none). Optional so older clients' fixtures stay valid. */
+const PendingKind = z.enum(['confirmation', 'holding_line']).nullable().optional();
 /** A handoff's deadline class (0080), with 0081's 'none': no human touch can clear it, so it has no deadline (B12X-2). */
 export const SLA_CLASSES = ['critical', 'high', 'normal', 'low', 'none'] as const;
 
@@ -156,10 +158,11 @@ export const PanelResponse = z.object({
   // b12 recheck R19: closedReason says why the system closed it (null while open), so a lead-closed handoff is told
   // apart from one a sweep has not reached
   // b13 review B13S-3: confirmationNotSent says why a confirmation did not go out (by hand, unreachable, not needed)
-  handoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), confirmationNotSent: ConfirmationNotSent, closedReason: HandoffClosedReason }).nullable(),
+  // b14 to-do (b13 review F8-ui low): pendingKind says what the post-handoff message is (confirmationStatus covers both)
+  handoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), confirmationNotSent: ConfirmationNotSent, closedReason: HandoffClosedReason, pendingKind: PendingKind }).nullable(),
   // batch 13 isa-4 (b12 recheck R16 follow-up): the person's newest still-open handoff of an EARLIER assignment (a
   // restart with no human touch leaves it open, and its deadline still alerts); null when there is none
-  earlierHandoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), confirmationNotSent: ConfirmationNotSent, closedReason: HandoffClosedReason }).nullable(),
+  earlierHandoff: z.strictObject({ id: z.uuid(), reason: z.string(), slaClass: z.enum(SLA_CLASSES), slaDueAt: Iso, slaMetAt: Iso.nullable(), overdue: z.boolean(), confirmationStatus: z.string(), confirmationNotSent: ConfirmationNotSent, closedReason: HandoffClosedReason, pendingKind: PendingKind }).nullable(),
   inactivityReleaseAt: Iso.nullable(),
   inactivitySentence: z.string().nullable(),
   block: z.object({ reason: z.string(), since: Iso, sentence: z.string() }).nullable(),

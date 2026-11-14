@@ -1340,6 +1340,9 @@
                   },
                   "closedReason": {
                     "$ref": "#/$defs/__schema2"
+                  },
+                  "pendingKind": {
+                    "$ref": "#/$defs/__schema3"
                   }
                 },
                 "required": [
@@ -1407,6 +1410,9 @@
                   },
                   "closedReason": {
                     "$ref": "#/$defs/__schema2"
+                  },
+                  "pendingKind": {
+                    "$ref": "#/$defs/__schema3"
                   }
                 },
                 "required": [
@@ -1523,6 +1529,20 @@
                   "lead_closed",
                   "care_restarted",
                   "care_continued"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema3": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "confirmation",
+                  "holding_line"
                 ]
               },
               {

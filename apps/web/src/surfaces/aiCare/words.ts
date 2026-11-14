@@ -426,6 +426,14 @@ export const CONFIRMATION_NOT_SENT_WORDS: Record<string, string> = {
   unreachable: 'Confirmation not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.',
   not_needed: 'Confirmation not needed: someone on the team reached them first.',
 };
+/** b14 to-do (b13 review F8-ui low): a holding line's status, as the thread words it (handoff confirmation_status). */
+export const HOLDING_WORDS: Record<string, string> = {
+  scheduled: 'A holding message is scheduled.',
+  queued: 'A holding message is queued.',
+  sent: 'The holding message was sent.',
+  canceled: 'The AI holding message was not sent.',
+  refused: 'The AI holding message was not sent.',
+};
 export const confirmationWords = (s: string, notSent?: string | null) => (notSent ? CONFIRMATION_NOT_SENT_WORDS[notSent] : undefined) ?? CONFIRMATION_WORDS[s] ?? OTHER_CHECK;
 /** The short form on the feed card's line ("· not sent: …"). */
 export const CONFIRMATION_NOT_SENT_SHORT: Record<string, string> = { by_hand: 'not sent: confirm by hand', unreachable: 'not sent: keep or cancel the appointment', not_needed: 'not needed: someone reached them first' };

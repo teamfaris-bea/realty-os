@@ -163,6 +163,15 @@ describe('GET /ai-isa/handoffs/:id (R-ISA-14)', () => {
     }
   });
 
+  it('E533 (b14 to-do, b13 review F8-ui low): the panel\'s handoff says what its pending message is (a holding line here), so the web never words a holding line as a confirmation', async () => {
+    const { lead, handoffId } = await humanRequestHandoff();
+    const row = (await h.su.query<{ pending_message_id: string | null; confirmation_status: string }>(`SELECT pending_message_id, confirmation_status FROM ai_isa_handoffs WHERE id = $1`, [handoffId])).rows[0]!;
+    expect(row.pending_message_id).not.toBeNull();
+    expect((await h.su.query<{ c: string }>(`SELECT action_category AS c FROM messages WHERE id = $1`, [row.pending_message_id])).rows[0]!.c).toBe('ai_isa_holding_line');
+    const p = await call<{ handoff: { id: string; confirmationStatus: string; pendingKind?: string | null } | null }>(w.agents[0]!, 'GET', `/contacts/${lead.id}/ai-isa`);
+    expect(p.body.handoff).toMatchObject({ id: handoffId, confirmationStatus: row.confirmation_status, pendingKind: 'holding_line' });
+  });
+
   it('R-AST-13 R-TEN-3: no confidence, score or tenant key in the response schema, and the package drops them at any depth', () => {
     const keys = JSON.stringify(Object.keys(HandoffView.shape));
     expect(keys).not.toMatch(/confidence|score|tenant/i);
