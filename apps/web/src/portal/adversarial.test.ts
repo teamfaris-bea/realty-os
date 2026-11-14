@@ -70,10 +70,11 @@ describe('adversarial (module 46)', () => {
     }
   });
 
-  it('E708: huge JSON is refused by the parsers, not rendered', () => {
-    const many = Array.from({ length: 1001 }, (_, i) => ({ ...F.timeline().items[0], itemId: `01900000-0000-7000-8000-${String(i).padStart(12, '0')}` }));
-    expect(() => parseTimeline({ ...F.timeline(), items: many })).toThrow(ParseError);
-    expect(() => parseMe(F.me(Array.from({ length: 201 }, () => F.grant())))).toThrow(ParseError);
+  // b16 (b15 review B15-45x46-1): list lengths follow 45, which enforces none (view/parse.test.ts: 1001 items and 201
+  // grants parse); a value longer than 45 can publish is still refused
+  it('E708: over-long JSON values are refused by the parsers, not rendered', () => {
     expect(() => parseTimeline({ ...F.timeline(), items: [{ ...F.timeline().items[0], title: 'x'.repeat(201) }] })).toThrow(ParseError);
+    expect(() => parseTimeline({ ...F.timeline(), items: [{ ...F.timeline().items[0], body: 'x'.repeat(4001) }] })).toThrow(ParseError);
+    expect(() => parseMe(F.me([F.grant({ title: 'x'.repeat(201) })]))).toThrow(ParseError);
   });
 });

@@ -75,6 +75,20 @@ describe('view/parse.ts (R-PORTALWEB-5)', () => {
     expect(parseMe(F.me([F.grant({ contact: { ...F.contact, agentName: astral(121) } })])).grants[0]!.contact?.agentName).toBeNull();
   });
 
+  // b16 (b15 review B15-45x46-1, the array part): 45 sends every live item and grant, with no limit on how many
+  // (client/routes.ts reads them all; shared/schemas.ts has no max), so 46 sets none either: a long-running deal's
+  // timeline, documents or a client's grants past any count are never refused as BAD_RESPONSE
+  it('E708 (b16): no count limit 45 does not enforce: 1001 items, next steps and documents, and 201 grants, all parse', () => {
+    const t = F.timeline();
+    const many = <T,>(one: T, n: number) => Array.from({ length: n }, () => one);
+    const tl = parseTimeline({ ...t, items: many(t.items[0]!, 1001), nextSteps: many(t.nextSteps[0]!, 1001) });
+    expect([tl.items.length, tl.nextSteps.length]).toEqual([1001, 1001]);
+    const d = F.documents();
+    expect(parseDocuments({ ...d, documents: many(d.documents[0]!, 1001) }).documents).toHaveLength(1001);
+    expect(parseMe(F.me(many(F.grant(), 201))).grants).toHaveLength(201);
+    expect(parsePreview({ visibleNow: true, why: [], grant: F.grant(), timeline: { items: many(t.items[0]!, 1001), nextSteps: [] }, documents: many(d.documents[0]!, 1001) }).documents).toHaveLength(1001);
+  });
+
   it('E715: a malformed contact value is dropped (no link is ever built from it), and an all-empty contact is null', () => {
     const g = parseMe(F.me([F.grant({ contact: { agentName: 'Sam Agent', textTo: 'javascript:alert(1)', emailTo: 'a@b.test?cc=evil@example.test' } })])).grants[0]!;
     expect(g.contact).toEqual({ agentName: 'Sam Agent', textTo: null, emailTo: null });

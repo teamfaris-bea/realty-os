@@ -107,7 +107,12 @@ function obj(v: unknown, path: string): Obj {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new ParseError(path);
   return v as Obj;
 }
-function arr(v: unknown, path: string, max = 1000): unknown[] {
+/**
+ * A list. b16 (b15 review B15-45x46-1): no count limit unless 45 enforces one. 45 sends every live item, document and
+ * grant (client/routes.ts, shared/schemas.ts: no max), so those lists have none here; a cap 46 alone set would refuse
+ * a valid answer as BAD_RESPONSE. preview.why keeps its cap: 45 gives at most two reasons (staff/views.ts).
+ */
+function arr(v: unknown, path: string, max = Infinity): unknown[] {
   if (!Array.isArray(v) || v.length > max) throw new ParseError(path);
   return v;
 }
@@ -221,7 +226,7 @@ export function parseMe(v: unknown): MeView {
   if (own(account, 'status') !== 'active') throw new ParseError('me.account.status');
   return {
     csrfToken: nonEmpty(own(o, 'csrfToken'), 'me.csrfToken', 256),
-    grants: arr(own(o, 'grants'), 'me.grants', 200).map((g, i) => parseGrant(g, `me.grants[${i}]`)),
+    grants: arr(own(o, 'grants'), 'me.grants').map((g, i) => parseGrant(g, `me.grants[${i}]`)),
   };
 }
 
