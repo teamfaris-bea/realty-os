@@ -17,6 +17,7 @@ import { aiIsaLiveOff } from '../../comms/runtime.js';
 import { call, grantInitiated, initiatedDayNow, openZone, runIsa } from '../testing.js';
 import { EMAIL_MAX_STATEMENT_POINT_SIZE, type LicenceStatement, type StatementRendering, emailStatementRendering } from './cmaSeam.js';
 import { buildCompsInTx } from './comps.js';
+import { sellerFactsCurrentInTx } from './index.js';
 import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, queueFactsAs, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 
 // ---- pure: the seam against V2-A's share email ---------------------------------------------------------------------
@@ -208,6 +209,28 @@ describe('E604 E605 R-ISA-18 (batch 16): statements V2-A refuses are still refus
   it('R-CMA-9 (as V2-A\'s share email): an attribution the PDF would substitute is CMA_STATEMENT_NOT_RENDERABLE', async () => {
     const l = await confirmedLead();
     expect(await withPack({ attribution: 'Listing information • the regional MLS (test attribution).' }, () => withSellerPacksCleared(h, () => build(l)))).toEqual({ ok: false, codes: ['CMA_STATEMENT_NOT_RENDERABLE'] });
+  });
+});
+
+describe('B16S-2 R-ISA-18 E537 (batch 16): dispatch TX1 (H3) re-checks the queued valuation statement against the licence\'s current one', () => {
+  const rerenders = async (messageId: string) => Number((await h.su.query<{ n: string }>(`SELECT count(*) AS n FROM jobs WHERE kind = 'ai_isa.seller_rerender' AND payload ->> 'messageId' = $1`, [messageId])).rows[0]!.n);
+
+  it('B16S-2: a comps email queued with the feed\'s statement is refused at H3 with VALUATION_STATEMENT_CHANGED once the licence\'s statement for the state is replaced by another printable text of 12 pt or less, as a changed price is, with one re-render; the statement as queued passes', async () => {
+    const l = await confirmedLead();
+    const id = await withSellerPacksCleared(h, () => queueFactsAs(h, w, l, ['comps']));
+    expect(id).not.toBeNull();
+    const h3 = () => withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, _a, actor) => sellerFactsCurrentInTx(tx, actor, id!, nowInstant())));
+    expect(await h3()).toEqual({ codes: [], licenceOk: true });
+    for (const o of [{ text: 'A replacement valuation statement (test).', min: 12 }, { text: `${TEST_STATEMENT} Updated.`, min: 10 }]) {
+      // the replacement is one the rules accept, so only the comparison with the queued email can catch it
+      const fresh = await withPack(o, () => withSellerPacksCleared(h, () => build(l)));
+      expect([o, fresh.ok]).toEqual([o, true]);
+      expect([o, await withPack(o, () => h3())]).toEqual([o, { codes: ['VALUATION_STATEMENT_CHANGED'], licenceOk: true }]);
+    }
+    expect(await rerenders(id!)).toBe(1); // E537: one model-free re-render per turn, never a loop
+    // the licence's statement back as queued: nothing changed under the message
+    expect(await h3()).toEqual({ codes: [], licenceOk: true });
+    expect((await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [id])).rows[0]!.body).toContain(`\n\n${TEST_STATEMENT}\n\nSource: `);
   });
 });
 

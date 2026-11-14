@@ -74,7 +74,17 @@ export interface PendingFact {
 }
 
 export type CompsBuild =
-  | { ok: true; channel: 'email'; body: string; pendingFacts: PendingFact[]; compSetHash: string; count: number; updated: boolean }
+  | {
+      ok: true;
+      channel: 'email';
+      body: string;
+      pendingFacts: PendingFact[];
+      compSetHash: string;
+      count: number;
+      updated: boolean;
+      /** the valuation statement block the body carries (the licence's current statements; H3 compares it, B16S-2) */
+      statement: string;
+    }
   | { ok: false; codes: string[] };
 
 const refuse = (codes: string[]): CompsBuild => ({ ok: false, codes: [...new Set(codes)] });
@@ -160,6 +170,22 @@ function footerOf(e: MlsEligibility, connectionIds: readonly string[], state: st
   const times = conns.map((c) => c.lastSyncedAt);
   if (times.some((t) => t === null)) return noFooter('FEED_STALE');
   return { ok: true, code: null, statement: rendered.statements.map((s) => s.text).join('\n\n'), attribution: foot.join('\n\n'), mlsName: [...new Set(conns.map((c) => c.displayName))].join(' and '), asOf: Math.min(...(times as Instant[])) as Instant };
+}
+
+/** The last of the pack's client lines: the statement block follows it in the email (core renderCompsEmail). */
+const BEFORE_STATEMENT = `${SELLER_DATA_LINES[SELLER_DATA_LINES.length - 1]!}\n\n`;
+
+/**
+ * B16S-2 (H3): the valuation statement block a queued comps email carries, read from its body where renderCompsEmail
+ * lays it out (after the seller-data lines, before the "Source:" line), or null when the body has none. H3 compares it
+ * with a fresh build's `statement`, so a statement replaced while the message waited is never sent superseded.
+ */
+export function queuedStatement(body: string): string | null {
+  const at = body.indexOf(BEFORE_STATEMENT);
+  if (at < 0) return null;
+  const from = at + BEFORE_STATEMENT.length;
+  const to = body.indexOf('\n\nSource: ', from);
+  return to < 0 ? null : body.slice(from, to);
 }
 
 async function clientLinesMatch(tx: Tx): Promise<boolean> {
@@ -253,5 +279,5 @@ export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRo
   const lines = email.body.split('\n\n');
   const pendingFacts: PendingFact[] = facts.map((f, k) => ({ ...f, compSetHash: email.hash, lineSha256: sha256Hex(lines.find((x) => x.startsWith(`${k + 1}. `)) ?? '') }));
   await recordCheck(tx, a.id, [], email.hash, now);
-  return { ok: true, channel: 'email', body: email.body, pendingFacts, compSetHash: email.hash, count: views.length, updated: last !== null };
+  return { ok: true, channel: 'email', body: email.body, pendingFacts, compSetHash: email.hash, count: views.length, updated: last !== null, statement: foot.statement! };
 }

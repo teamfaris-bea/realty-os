@@ -15,7 +15,7 @@ import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../../audit.js';
 import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
-import { type CompsBuild, buildCompsInTx } from './comps.js';
+import { type CompsBuild, buildCompsInTx, queuedStatement } from './comps.js';
 import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, smsFits, sourceOf } from './competition.js';
 import { assignmentSubjectLinkInTx, sellerGatesInTx, subjectLinkInTx } from './gates.js';
 import { type CompetitorEvent, FACT_INTROS, STATUS_LABEL, composeMessage, factsMessage } from './isa1Seam.js';
@@ -277,7 +277,9 @@ export async function writeSellerFactsInTx(tx: Tx, ids: IdGenerator, a: Pick<Ass
 /**
  * H3 (TX1, under lock_contact): whether a message's pending seller facts are still current. Codes join chainFailures
  * (terminal, core gate.ts); `licenceOk` is the licence part of sellerPacksCleared (ai_isa_comps on every comp's feed).
- * A change enqueues one model-free re-render per turn (ai_isa.seller_rerender). A sync that moves only last_synced_at
+ * A comps email's valuation statement is re-checked too: VALUATION_STATEMENT_CHANGED when the licence's statement for
+ * the subject's state is no longer the one the queued body carries (B16S-2, batch 16). A change (FACT_CHANGED or
+ * VALUATION_STATEMENT_CHANGED) enqueues one model-free re-render per turn (ai_isa.seller_rerender). A sync that moves only last_synced_at
  * changes nothing here (E537). VERIFY (engineering, verify item 6): TX1 re-runs the comps pipeline under lock_contact;
  * proposed budget TX1 p95 < 300 ms on the 500k-listing fixture, not measured yet.
  */
@@ -310,10 +312,17 @@ export async function sellerFactsCurrentInTx(tx: Tx, actor: Actor, messageId: st
       const b = await buildCompsInTx(tx, actor, a, now);
       // a refusal stays its own code (terminal in the core gate); FACT_CHANGED means the facts moved under the message
       if (!b.ok) for (const c of b.codes) codes.add(c === 'SUBJECT_CHANGED' || c === 'COMPS_HIDDEN' || c === 'COMPS_TOO_FEW' || c === 'NO_VALUE' ? 'FACT_CHANGED' : c);
-      else if (b.compSetHash !== seller.find((f) => f.fact_kind === 'sold_comp_set')!.comp_set_hash) codes.add('FACT_CHANGED');
+      else {
+        if (b.compSetHash !== seller.find((f) => f.fact_kind === 'sold_comp_set')!.comp_set_hash) codes.add('FACT_CHANGED');
+        // B16S-2: the valuation statement the queued email carries must be the licence's current one for the subject's
+        // state, as a price must be the stored one: the comp-set hash and the display-rules version leave the
+        // statements out, so one replaced by another the rules accept while the message waited would go out superseded
+        const m = (await sql<{ body: string }>`SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx)).rows[0];
+        if (m === undefined || queuedStatement(m.body) !== b.statement) codes.add('VALUATION_STATEMENT_CHANGED');
+      }
     }
   }
-  if (codes.has('FACT_CHANGED')) {
+  if (codes.has('FACT_CHANGED') || codes.has('VALUATION_STATEMENT_CHANGED')) {
     // E537 (ISA-3 audit F6): one re-render per turn; a message that is itself a re-render (ISA-2's queue function marks
     // its action rerenderOf) is refused with no second one, so a fact that keeps changing never loops
     const again = (await sql<{ r: boolean }>`SELECT (aa.payload ->> 'rerenderOf') IS NOT NULL AS r FROM messages m JOIN assistant_actions aa ON aa.tenant_id = m.tenant_id AND aa.id = m.assistant_action_id
