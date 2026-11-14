@@ -228,6 +228,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "point_hmacs",
     "pond_summary",
     "pool_private",
+    "portal_link_sends",
     "postal_code",
     "preview",
     "prompt_template_key",
