@@ -126,11 +126,11 @@ export const NEVER_CLEARED_PACKS: readonly string[] = ['platform:meta'];
 
 /**
  * Packs whose capability is not built in this version, with why nothing reaches a client. Their line never reads
- * "stays off" or "cleared", so neither the review state nor a recorded clearance reads as the capability being
+ * "off" or "cleared", so neither the review state nor a recorded clearance reads as the capability being
  * available (batch 10 review api-ui/F3). The web names them in apps/web/src/surfaces/admin/integrations/words.ts
  * PACK_NAMES. platform:cma left this list in batch 13 (b13 audit V2B-1): V2-A builds client CMAs (the share email and
  * its PDF) and V2-B builds seller value ranges and in-house home-value notes, all behind it, so its line says
- * "stays off" until counsel review is recorded and "cleared" after, as any built capability's does.
+ * "off, awaiting counsel review" until counsel review is recorded and "cleared" after, as any built capability's does.
  * platform:ai_isa_seller_data left it in batch 14 round 2 the same way: ISA-3 (batch 13, apps/api/src/isa/seller/**)
  * builds the assistant's recent-sales emails behind it, so "not built in this version" was false (Honest UI).
  */
@@ -223,7 +223,7 @@ export const PER_USER_SERVICES = [
 
 /**
  * The pack's state in words, matching what the database clears (`app.platform_cleared`, R-INT-6): it says
- * "cleared" only when the pack is, so a vendor-checked pack stays off until `rules.vendor_ready_at` is set even
+ * "cleared" only when the pack is, so a vendor-checked pack reads "off" until `rules.vendor_ready_at` is set even
  * after counsel review, and a never-cleared pack (D2) never reads as awaiting review or as cleared. A pack in
  * PACK_ALSO_NEEDS adds each other pack its capability needs, with that pack's review state when `all` holds it.
  */
@@ -258,8 +258,10 @@ function packStateSentence(p: PlatformPack): string {
       : `${what}: not built in this version, so ${notBuilt}; counsel reviewed the pack on ${reviewedOn} (pack ${p.version}).`;
   }
   const vendorPending = VENDOR_CHECKED_PACKS.includes(p.key) && p.vendorReadyAt === null;
-  if (reviewedOn === null) return `${what} stays off: awaiting counsel review${vendorPending ? ' and the vendor check' : ''} (pack ${p.version}, not yet reviewed).`;
-  if (vendorPending) return `${what} stays off: counsel reviewed it on ${reviewedOn}; it also waits for the vendor check (pack ${p.version}).`;
+  // b17 (item 3): "<name>: off, …" reads for every name; "<name> stays off" did not for a plural one ("The assistant's
+  // recent-sales emails stays off"), nor "it also waits" after one
+  if (reviewedOn === null) return `${what}: off, awaiting counsel review${vendorPending ? ' and the vendor check' : ''} (pack ${p.version}, not yet reviewed).`;
+  if (vendorPending) return `${what}: off, awaiting the vendor check; counsel reviewed the pack on ${reviewedOn} (pack ${p.version}).`;
   return `${what}: cleared by counsel on ${reviewedOn} (pack ${p.version}).`;
 }
 

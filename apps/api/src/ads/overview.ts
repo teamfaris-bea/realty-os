@@ -152,7 +152,7 @@ export async function buildOverview(tx: Tx, now: Instant, o: OverviewOptions = {
     state,
     stateSentence: state === 'not_cleared' && !readsWhileDark ? notReadSentence(campaigns.length > 0 || costs.length > 0, lastReadAt) : STATE_SENTENCE[state],
     packKey: 'platform:ads',
-    packSentence: pack ? packSentence(pack) : 'Changing Google Ads budgets stays off: the pack is missing on this deployment.',
+    packSentence: pack ? packSentence(pack) : 'Changing Google Ads budgets: off, the pack is missing on this deployment.',
     cleared,
     cap: cap ? { id: cap.id, versionNo: cap.versionNo, monthlyCapCents: cap.monthlyCapCents, dailyCeilingCents: cap.dailyCeilingCents, effectiveFrom: cap.effectiveFrom } : null,
     // Q-ADS-3 "no" (b11 ads-7): the stored figure covers every campaign recorded here, the cap only the linked ones

@@ -108,8 +108,8 @@ export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null;
     ],
     platformPacks: [
       { key: 'platform:meta', version: 'v1', reviewed: false, sentence: 'Meta messaging: not offered (owner decision D2); nothing waits on this pack and it is never cleared (pack v1).' },
-      { key: 'platform:fair_housing', version: 'v1', reviewed: o.packsReviewed ?? false, sentence: o.packsReviewed ? 'Publishing marketing: cleared by counsel on 2026-11-01 (pack v1).' : 'Publishing marketing stays off: awaiting counsel review (pack v1, not yet reviewed).' },
-      { key: 'platform:gmail', version: 'v1', reviewed: o.packsReviewed ?? false, sentence: o.packsReviewed ? 'Gmail inbox sync stays off: counsel reviewed it on 2026-11-01; it also waits for the vendor check (pack v1).' : 'Gmail inbox sync stays off: awaiting counsel review and the vendor check (pack v1, not yet reviewed).' },
+      { key: 'platform:fair_housing', version: 'v1', reviewed: o.packsReviewed ?? false, sentence: o.packsReviewed ? 'Publishing marketing: cleared by counsel on 2026-11-01 (pack v1).' : 'Publishing marketing: off, awaiting counsel review (pack v1, not yet reviewed).' },
+      { key: 'platform:gmail', version: 'v1', reviewed: o.packsReviewed ?? false, sentence: o.packsReviewed ? 'Gmail inbox sync: off, awaiting the vendor check; counsel reviewed the pack on 2026-11-01 (pack v1).' : 'Gmail inbox sync: off, awaiting counsel review and the vendor check (pack v1, not yet reviewed).' },
     ],
     perUser: [{ key: 'google_calendar', name: 'Google Calendar', sentence: 'Each person connects their own calendar from their settings.' }],
   };

@@ -75,7 +75,7 @@ describe('connect (R-ADS-13, R-INT-1, E160)', () => {
     expect(createProviders({ ...testConfig(), env: 'production', allowFakeProviders: true }, { clock: { now: () => Date.now() } as never }).ads).toBeInstanceOf(FakeAds);
   });
 
-  it('R-INT-6 R-ADS-7 E441: change_budget waits for counsel review of platform:ads, then for its vendor check ("it also waits for the vendor check"); read_spend works at once (Q-ADS-1)', async () => {
+  it('R-INT-6 R-ADS-7 E441: change_budget waits for counsel review of platform:ads, then for its vendor check ("off, awaiting the vendor check"); read_spend works at once (Q-ADS-1)', async () => {
     const w = await adsWorld(h);
     const { connectionId } = await connectAds(h, w);
     type Caps = { services: { kind: string; connections: { id: string; capabilities: { name: string; available: boolean; reason: string | null }[] }[] }[] };
@@ -86,7 +86,7 @@ describe('connect (R-ADS-13, R-INT-1, E160)', () => {
       expect((await caps())[0]!.reason).toBe('Waits for the vendor check of platform:ads.');
       const ov = await overview(w);
       expect(ov.state).toBe('not_cleared');
-      expect(ov.packSentence).toMatch(/^Changing Google Ads budgets stays off: counsel reviewed it on \d{4}-\d{2}-\d{2}; it also waits for the vendor check \(pack 2026\.11\.0\)\.$/);
+      expect(ov.packSentence).toMatch(/^Changing Google Ads budgets: off, awaiting the vendor check; counsel reviewed the pack on \d{4}-\d{2}-\d{2} \(pack 2026\.11\.0\)\.$/);
     } finally {
       await resetAdsPack(h);
     }

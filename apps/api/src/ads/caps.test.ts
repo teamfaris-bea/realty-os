@@ -88,7 +88,7 @@ describe('GET /ads (R-ADS-5, R-AST-13)', () => {
     const get = async () => (await call<Ov>(w.owner, 'GET', '/ads')).body;
     let ov = await get();
     expect(ov.state).toBe('not_cleared');
-    expect(ov.packSentence).toBe('Changing Google Ads budgets stays off: awaiting counsel review and the vendor check (pack 2026.11.0, not yet reviewed).');
+    expect(ov.packSentence).toBe('Changing Google Ads budgets: off, awaiting counsel review and the vendor check (pack 2026.11.0, not yet reviewed).');
     // while dark the reconcile only alerts at the cap: the page never says Realty OS pauses
     expect(ov.stateSentence).toBe('Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Spend is still read and shown, and you are alerted at the cap.');
     expect(ov.overspendNote).toBe(OVERSPEND_NOTE_DARK);

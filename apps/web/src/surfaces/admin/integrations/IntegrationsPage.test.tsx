@@ -65,7 +65,7 @@ describe('Integrations page', () => {
 
   it('b10 review api-ui/F3 D9, b13 audit V2B-1: the platform:cma pack is named for what is built behind it, never "Another feature" or "a later version", and shows the API\'s line as sent', async () => {
     const body = integrations();
-    const sentence = 'Client CMAs, seller value ranges and in-house home-value notes stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed). In-house home-value notes also need the Home-value notes pack (not reviewed yet).';
+    const sentence = 'Client CMAs, seller value ranges and in-house home-value notes: off, awaiting counsel review (pack 2026.11.0, not yet reviewed). In-house home-value notes also need the Home-value notes pack (not reviewed yet).';
     body.platformPacks.push({ key: 'platform:cma', version: '2026.11.0', reviewed: false, sentence });
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body }), PAGE_PATH);
     const section = (await screen.findByRole('heading', { level: 2, name: 'Counsel review' })).closest('section')!;
@@ -81,7 +81,7 @@ describe('Integrations page', () => {
     expect(within(section).queryByText('Not reviewed by counsel')).toBeNull();
     expect(within(section).getByText('Reviewed by counsel', { selector: 'p' })).toBeInTheDocument();
     expect(within(section).getAllByText('Reviewed by counsel', { selector: 'span' })).toHaveLength(2);
-    expect(within(section).getByText(/it also waits for the vendor check/)).toBeInTheDocument();
+    expect(within(section).getByText(/off, awaiting the vendor check/)).toBeInTheDocument();
   });
 
   it('a capability is "Works now" only when the server says it is available, and otherwise says why in words', async () => {

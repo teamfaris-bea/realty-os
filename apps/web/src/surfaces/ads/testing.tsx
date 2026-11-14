@@ -135,7 +135,7 @@ export const darkOverview = (over: Partial<OverviewResponse> = {}): OverviewResp
   overview({
     state: 'not_cleared',
     stateSentence: NOT_CLEARED_SENTENCE,
-    packSentence: 'Changing Google Ads budgets stays off: awaiting counsel review and the vendor check (pack 1.0.0, not yet reviewed).',
+    packSentence: 'Changing Google Ads budgets: off, awaiting counsel review and the vendor check (pack 1.0.0, not yet reviewed).',
     cleared: false,
     overspendNote: 'Google Ads may spend more than a daily budget on a given day. Until counsel review and the Google Ads check are complete, Realty OS reads spend and alerts you at your monthly cap but cannot pause campaigns: pause them in Google Ads.',
     ...over,

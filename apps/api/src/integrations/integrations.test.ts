@@ -92,14 +92,18 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);
-      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : / stays off: awaiting counsel review/);
+      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : /: off, awaiting counsel review/);
+      // b17 (item 3): the line reads for every name, singular or plural ("The assistant's recent-sales emails stays off"
+      // did not): the name, a colon, then the state
+      expect(p.sentence, p.key).toMatch(/^[^:]+: (off, awaiting|not offered|not built|cleared by counsel)/);
+      expect(p.sentence, p.key).not.toMatch(/\bstays off\b/);
       // only the D10 outreach pack names a capability that is not built (no outreach path exists)
       if (p.key !== 'platform:public_records_outreach') expect(p.sentence, p.key).not.toMatch(/not built/);
     }
     // module 71 (D9, F8): the platform:cma pack names what waits on it. Batch 13 (V2-A, V2-B) builds all three, so the
     // line no longer says "not built" (b13 audit V2B-1, Honest UI), and it names the second pack in-house notes need
-    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toBe(`${CMA_LINE} stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed). ${CMA_ALSO} (not reviewed yet).`);
-    expect(v.platformPacks.find((p) => p.key === 'platform:avm')!.sentence).toMatch(new RegExp(`^Home-value notes stays off: awaiting counsel review \\(pack \\S+, not yet reviewed\\)\\. ${AVM_ALSO} \\(not reviewed yet\\)\\.$`));
+    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toBe(`${CMA_LINE}: off, awaiting counsel review (pack 2026.11.0, not yet reviewed). ${CMA_ALSO} (not reviewed yet).`);
+    expect(v.platformPacks.find((p) => p.key === 'platform:avm')!.sentence).toMatch(new RegExp(`^Home-value notes: off, awaiting counsel review \\(pack \\S+, not yet reviewed\\)\\. ${AVM_ALSO} \\(not reviewed yet\\)\\.$`));
   });
 
   it('b13 audit V2B-1 R-CMA-10 R-INT-6 D9: once counsel review of platform:cma is recorded, its line says cleared (client CMAs, seller value ranges and in-house notes are built) and that in-house notes also wait for platform:avm; platform:avm cleared alone says in-house notes also wait for platform:cma', async () => {
@@ -123,8 +127,8 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
   it('b14 round 2 (b12 review ui-1; R-INT-6, R-ISA-18): the recent-sales emails pack says they are held, never "not built" (ISA-3 built them in batch 13): it stays off until counsel review is recorded, names platform:cma and the MLS licence pack beside it, and says cleared only for the pack once reviewed; since batch 16 (statement rules connected) it names only counsel and the licence as holding them; the AI ISA pack lines name "the assistant", never "AI"', async () => {
     // ISA-3's 0084 publishes platform:ai_isa_seller_data@2026.11.1 (unreviewed) and retires 2026.11.0 (batch 13)
     const before = (await list()).platformPacks;
-    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(`${SELLER_LINE} stays off: awaiting counsel review (pack 2026.11.1, not yet reviewed). ${SELLER_ALSO} (not reviewed yet), and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}`);
-    expect(before.find((x) => x.key === 'platform:ai_isa')!.sentence).toBe("The assistant's ISA texts and emails stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed).");
+    expect(before.find((x) => x.key === 'platform:ai_isa_seller_data')!.sentence).toBe(`${SELLER_LINE}: off, awaiting counsel review (pack 2026.11.1, not yet reviewed). ${SELLER_ALSO} (not reviewed yet), and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}`);
+    expect(before.find((x) => x.key === 'platform:ai_isa')!.sentence).toBe("The assistant's ISA texts and emails: off, awaiting counsel review (pack 2026.11.0, not yet reviewed).");
     for (const p of before) expect(p.sentence, p.key).not.toMatch(/\bAI\b/);
     try {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-01T00:00:00Z' WHERE key = 'platform:ai_isa_seller_data' AND status = 'published'");
@@ -162,7 +166,7 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-02T00:00:00Z' WHERE key = 'platform:cma' AND status = 'published'");
       // the seller-data and CMA packs reviewed, the assistant's own pack not: the line says what still holds the emails
       expect(await line('platform:ai_isa_seller_data')).toBe(`${SELLER_LINE}: cleared by counsel on 2026-12-01 (pack 2026.11.1). ${SELLER_ALSO}, which counsel reviewed on 2026-12-02, and ${ISA_PACK} (not reviewed yet). ${SELLER_LICENCE}`);
-      expect(await line('platform:ai_isa')).toBe(`${ISA_LINE} stays off: awaiting counsel review (pack 2026.11.0, not yet reviewed).`);
+      expect(await line('platform:ai_isa')).toBe(`${ISA_LINE}: off, awaiting counsel review (pack 2026.11.0, not yet reviewed).`);
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-12-03T00:00:00Z' WHERE key = 'platform:ai_isa' AND status = 'published'");
       const seller = await line('platform:ai_isa_seller_data');
       const isa = await line('platform:ai_isa');
@@ -190,11 +194,11 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
   it('R-INT-6: platform:gmail (D2) and platform:voice say "cleared" exactly when the database clears them: counsel review AND the vendor check (rules.vendor_ready_at)', async () => {
     const pack = async (key: string) => (await list()).platformPacks.find((p) => p.key === key)!;
     const dbCleared = async (key: string) => (await h.su.query<{ c: boolean }>('SELECT app.platform_cleared($1, true) AS c', [key])).rows[0]!.c;
-    expect(await pack('platform:gmail')).toMatchObject({ reviewed: false, sentence: expect.stringMatching(/^Gmail inbox sync stays off: awaiting counsel review and the vendor check \(pack \S+, not yet reviewed\)\.$/) });
+    expect(await pack('platform:gmail')).toMatchObject({ reviewed: false, sentence: expect.stringMatching(/^Gmail inbox sync: off, awaiting counsel review and the vendor check \(pack \S+, not yet reviewed\)\.$/) });
     const states = [
-      { reviewed: false, vendor: false, cleared: false, sentence: / stays off: awaiting counsel review and the vendor check \(pack \S+, not yet reviewed\)\.$/ },
-      { reviewed: false, vendor: true, cleared: false, sentence: / stays off: awaiting counsel review \(pack \S+, not yet reviewed\)\.$/ },
-      { reviewed: true, vendor: false, cleared: false, sentence: / stays off: counsel reviewed it on \d{4}-\d{2}-\d{2}; it also waits for the vendor check \(pack \S+\)\.$/ },
+      { reviewed: false, vendor: false, cleared: false, sentence: /: off, awaiting counsel review and the vendor check \(pack \S+, not yet reviewed\)\.$/ },
+      { reviewed: false, vendor: true, cleared: false, sentence: /: off, awaiting counsel review \(pack \S+, not yet reviewed\)\.$/ },
+      { reviewed: true, vendor: false, cleared: false, sentence: /: off, awaiting the vendor check; counsel reviewed the pack on \d{4}-\d{2}-\d{2} \(pack \S+\)\.$/ },
       { reviewed: true, vendor: true, cleared: true, sentence: /: cleared by counsel on \d{4}-\d{2}-\d{2} \(pack \S+\)\.$/ },
     ];
     try {
@@ -309,7 +313,7 @@ describe('connect through the provider callback (R-INT-3)', () => {
       await set('platform:fair_housing', false);
       await set('platform:gbp', false);
     }
-    expect((await list()).platformPacks.find((p) => p.key === 'platform:gbp')!.sentence).toMatch(/^Google Business Profile stays off: awaiting counsel review \(pack 2026\.11\.0, not yet reviewed\)\.$/);
+    expect((await list()).platformPacks.find((p) => p.key === 'platform:gbp')!.sentence).toMatch(/^Google Business Profile: off, awaiting counsel review \(pack 2026\.11\.0, not yet reviewed\)\.$/);
   });
 
   it('E160: a Page the token does not manage is refused; nothing is linked; the row stays unconfigured; the token is revoked', async () => {
