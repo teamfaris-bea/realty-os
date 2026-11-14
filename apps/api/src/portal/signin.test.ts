@@ -380,4 +380,29 @@ describe('R-PORTAL-12, R-TWL-2: sign-in texts spend only a bounded share of the 
       await h.su.query('UPDATE tenant_settings SET telephony_daily_cap = 200 WHERE tenant_id = $1', [w.tenantId]);
     }
   });
+
+  it('b15 (b14 low b): a client whose sign-in point is a phone gets no link by email (portal.request_login matches only that point), so past the share, or under a cap of 10, they cannot sign in by text that day; the docs say so', async () => {
+    const agent = w.agents[0]!;
+    const c = await client(agent, { firstName: 'Lee' });
+    const d = await deal(agent, c.id);
+    const phone = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'`, [c.id])).rows[0]!.id;
+    expect((await invite(agent, d, c.id, { loginPointId: phone })).status).toBe(200);
+    const emailsBefore = h.providers.email.sent.filter((m) => m.to.toLowerCase() === c.email.toLowerCase()).length;
+    expect((await askLink(h, slug, c.email, ip())).statusCode).toBe(202);
+    expect(h.providers.email.sent.filter((m) => m.to.toLowerCase() === c.email.toLowerCase())).toHaveLength(emailsBefore);
+    expect((await h.su.query(`SELECT 1 FROM messages WHERE contact_id = $1 AND action_category = 'portal_login_link'`, [c.id])).rows).toEqual([]);
+    // the three places that described the share say the real trade-off, never that the client can ask by email
+    const { readFileSync } = await import('node:fs');
+    const repo = new URL('../../../../', import.meta.url);
+    const texts = {
+      constant: /\/\*\*[^/]*\*\/\s*export const PORTAL_LINK_CAP_PERCENT/.exec(readFileSync(new URL('apps/api/src/comms/telephonySafeguards.ts', repo), 'utf8'))![0].replace(/\n\s*\*\s?/g, ' '),
+      deploy: readFileSync(new URL('docs/DEPLOY.md', repo), 'utf8').split('\n').find((l) => l.startsWith('**Daily cap.**'))!,
+      plan: readFileSync(new URL('docs/PHASE2_3_PLAN.md', repo), 'utf8').split('\n').find((l) => l.startsWith('| Q-PORTAL-17 '))!,
+    };
+    for (const [where, t] of Object.entries(texts)) {
+      expect(t, where).not.toMatch(/can (still )?(ask|request)[^.]*by email|email links are not limited/i);
+      expect(t, where).toMatch(/sign-in point is a phone/);
+      expect(t, where).toMatch(/under a cap of 10/);
+    }
+  });
 });

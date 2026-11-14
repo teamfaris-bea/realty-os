@@ -45,8 +45,10 @@ export const UNVERIFIED_SENDER_BLOCKS_CALLS = false;
 export const DEFAULT_DAILY_CAP = 200;
 /**
  * Owner default (b14 review R1, owner question Q-PORTAL-17): the percentage of the tenant's daily cap that client
- * sign-in link texts may use a tenant-local day, rounded down (a cap of 200 gives 20; a cap under 10 gives none, so
- * the link is refused and the client can still ask for it by email).
+ * sign-in link texts may use a tenant-local day, rounded down (a cap of 200 gives 20; under a cap of 10 it gives none).
+ * The trade-off: portal.request_login matches only the account's sign-in point, so a client whose sign-in point is a
+ * phone gets no link by email instead. Once the day's share is used up such a client cannot sign in by text until the
+ * next tenant-local day, and under a cap of 10 they cannot sign in by text at all (b14 low b).
  */
 export const PORTAL_LINK_CAP_PERCENT = 10;
 /** b14 review R1: the gate reason sentence (gateInput.ts DISPATCH_DENY_SENTENCES.PORTAL_LINK_DAILY_CAP_REACHED). */
