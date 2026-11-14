@@ -21,7 +21,7 @@ import { sql } from 'kysely';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenantTx } from '../src/tenantTx.js';
-import { forceRiOrder, recreateContactFk, riOrder, simulateShortOidTemplate } from './riOrderFixture.js';
+import { forceRiOrder, recreateContactFk, riOrder, simulateShortOidTemplate, simulatedRiName } from './riOrderFixture.js';
 import { createHarness, createWorld, type Harness, intakeLead, suRows, uuid, type World } from './world.js';
 
 let h: Harness;
@@ -144,6 +144,14 @@ describe.each(CLUSTERS)('b14: contact erasure does not depend on RI trigger-name
 });
 
 describe('b14 round 2: forcing the RI order is robust to the oid width (riOrderFixture.ts)', () => {
+  it('b15 (b14 low i): the simulated template names sort after the name of a trigger with ANY oid (compared as text, as triggers fire), so every trigger created now sorts before them', () => {
+    const oids = ['1', '16384', '99989', '99999', '100000', '9999', '99991', '9999123', '99999999', '999999999', '1000000000', '4294967295'];
+    for (let i = 0; i < 4; i++) {
+      const name = simulatedRiName(i);
+      expect(oids.filter((o) => !(`RI_ConstraintTrigger_a_${o}` < name)), name).toEqual([]);
+    }
+  });
+
   async function inRolledBackTx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
     const c = await h.su.connect();
     try {

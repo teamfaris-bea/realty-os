@@ -65,14 +65,25 @@ export async function forceRiOrder(
 }
 
 /**
- * Simulates a test template built just below the 100000 oid crossing in a cluster whose counter has since passed it:
- * both tables' contact action triggers get five-digit names (their natural order kept), so any trigger created now,
- * with a six- or seven-digit oid, sorts before them. The names are only names; nothing else about the triggers changes.
+ * Simulates a test template built just below a power-of-ten oid crossing in a cluster whose counter has since passed
+ * it: both tables' contact action triggers get names that sort after every oid's text (their natural order kept;
+ * simulatedRiName), so any trigger created now sorts before them, whatever the cluster's oid. The names are only names;
+ * nothing else about the triggers changes.
  */
 export async function simulateShortOidTemplate(c: pg.PoolClient): Promise<void> {
   const r = await c.query<{ tgname: string; t: string }>(`SELECT tg.tgname, cr.relname AS t FROM pg_trigger tg JOIN pg_constraint con ON con.oid = tg.tgconstraint JOIN pg_class cr ON cr.oid = con.conrelid
     WHERE tg.tgrelid = 'public.contacts'::regclass AND tg.tgisinternal AND cr.relname IN ('lead_inquiries','lead_email_messages') AND tg.tgname LIKE 'RI_ConstraintTrigger_a_%'
     ORDER BY CASE cr.relname WHEN 'lead_inquiries' THEN 0 ELSE 1 END, tg.tgname COLLATE "C"`);
-  let n = 99_990;
-  for (const t of r.rows) await c.query(`ALTER TRIGGER "${t.tgname}" ON contacts RENAME TO "RI_ConstraintTrigger_a_${n++}"`);
+  let n = 0;
+  for (const t of r.rows) await c.query(`ALTER TRIGGER "${t.tgname}" ON contacts RENAME TO "${simulatedRiName(n++)}"`);
+}
+
+/**
+ * The i-th name simulateShortOidTemplate gives a trigger: ten digits starting 999999999, which sort after the name of a
+ * trigger with ANY oid compared as text (an oid is at most 4294967295, and a shorter all-nines oid is a prefix, so it
+ * sorts first). The five-digit names used before (99990…) sorted before an oid starting 9999, such as 9999123
+ * (b14 low i).
+ */
+export function simulatedRiName(i: number): string {
+  return `RI_ConstraintTrigger_a_${9_999_999_990 + i}`;
 }
