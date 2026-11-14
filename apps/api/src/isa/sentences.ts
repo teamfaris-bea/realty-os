@@ -7,6 +7,14 @@ export const STATE_SENTENCES = {
   held: 'Held: sending is off or a daily limit is reached; it continues on its own when that clears.',
 } as const;
 
+/**
+ * b18 item f (owner product boundary, 2026-11-14): why a person whose original lead source is marked "No AI care for
+ * leads from this source" gets no AI care: the start refusal, chain link 11 and the pause note all say it.
+ */
+export const SOURCE_NO_AI_CARE_SENTENCE = "No AI care for leads from this source: the Owner turned this on for this person's lead source, so the AI assistant does not care for them.";
+/** The pause note's body (notifications.body is at most 240 characters). */
+export const SOURCE_NO_AI_CARE_NOTE = 'No AI care for leads from this source is on for their lead source (an Owner setting). AI care stays paused and cannot be resumed while it is on.';
+
 const START_REFUSALS: Record<string, string> = {
   AI_ISA_OFF: 'The AI assistant is off for your team.',
   AI_ISA_NOT_CLEARED: 'Waiting on counsel review (platform:ai_isa). Nothing is sent until counsel clears it.',
@@ -22,6 +30,8 @@ const START_REFUSALS: Record<string, string> = {
   AI_ISA_ACTIVE_CLIENT: 'They are a client on an open deal or an active listing.',
   AI_ISA_NO_CHANNEL: 'No phone or email of theirs can receive AI messages.',
   AI_ISA_LISTED_ELSEWHERE: 'Their home is listed with another brokerage.',
+  // b18 item f: an Owner setting on the lead source (the panel names it; the source itself is the owner's data)
+  AI_ISA_SOURCE_NO_AI_CARE: SOURCE_NO_AI_CARE_SENTENCE,
 };
 /**
  * b13 review B13S-2: what this tree implements, one list for the panel and the opt-in form (the web reads it from

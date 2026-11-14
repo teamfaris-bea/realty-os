@@ -16,7 +16,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { IdGenerator, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import type { InquiryFacts, RoutingPreview, SkipReason } from '@realty/core/ownership';
 import { matchRule, previewRouting } from '@realty/core/ownership';
-import { type Database, type Tx, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, lockAddresses, withTenantTx } from '@realty/db';
+import { type Database, type Tx, enqueueJob, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, lockAddresses, withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
@@ -32,7 +32,7 @@ import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
-import { OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
+import { AiCareBody, AiCareResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
 
@@ -109,13 +109,25 @@ interface SourceRow {
   last_email_at: Date | null;
   secret_created_at: Date | null;
   skipped_30d: number;
+  no_ai_care: boolean;
+}
+
+/**
+ * b18 item f (owner product boundary, 2026-11-14): the lead source's "No AI care for leads from this source" line, the
+ * same words on the sources screen, the Owner's answer and the AI care panel (isa/sentences.ts).
+ */
+export const NO_AI_CARE_LABEL = 'No AI care for leads from this source';
+export function noAiCareSentence(on: boolean): string {
+  return on
+    ? `${NO_AI_CARE_LABEL}: on. AI care cannot start for leads from this source (any record of the person), and care already running for them is paused and cannot be resumed. Only the Owner changes this.`
+    : `${NO_AI_CARE_LABEL}: off. A lead's owner may start AI care as usual. Only the Owner changes this.`;
 }
 
 export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.infer<typeof OverviewResponse>> {
   return asSystem(deps.db, actor, async (tx, sys) => {
     const rows = (
       await sql<SourceRow>`
-        SELECT s.id, s.name, s.kind, s.active, s.created_at, s.active_changed_at,
+        SELECT s.id, s.name, s.kind, s.active, s.created_at, s.active_changed_at, s.no_ai_care,
                s.ingest_token_hash IS NOT NULL AS has_token, s.consent_disclosure_id IS NOT NULL AS has_disclosure,
                (SELECT i.received_at FROM lead_inquiries i WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id
                    AND i.outcome IN ('new_contact','attached','reinquiry') ORDER BY i.received_at DESC LIMIT 1) AS last_lead_at,
@@ -190,6 +202,8 @@ export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.i
           webChats: conns.filter((c) => c.lead_source_id === s.id && c.kind === 'web_chat_widget').map((c) => ({ status: c.status })),
         },
         hasConsentText: s.has_disclosure,
+        noAiCare: s.no_ai_care,
+        noAiCareSentence: noAiCareSentence(s.no_ai_care),
       });
     }
     return { sources, deployment: { inboundEmail: deps.inboundDomain !== null, publicHttps: https, telephony: deps.telephony ?? 'simulated' } };
@@ -390,6 +404,36 @@ async function register(app: FastifyInstance): Promise<void> {
       return { source: view((await sourceRow(tx, s.id))!) };
     });
   });
+
+  // b18 item f: the Owner-only "No AI care for leads from this source" (🔒 when turning it off: that re-allows AI care).
+  // Turning it on also asks each live AI care of the source's people for a turn now, whose chain (link 11) pauses it
+  // source_no_ai_care with the note; dispatch TX1 refuses any AI message still queued for them meanwhile (the chain).
+  r.put('/lead-sources/:id/ai-care', {
+    config: { auth: 'lead_source.ai_care' },
+    preHandler: authorize('lead_source.ai_care', (req) => ({ loosening: (req.body as { noAiCare?: unknown } | undefined)?.noAiCare !== true })),
+    schema: { params: Params, body: AiCareBody, response: { 200: AiCareResponse } },
+  }, async (req) =>
+    leadsTx(req, async (tx, _now, actor) => {
+      const s = await sourceRow(tx, req.params.id);
+      if (!s) throw new AppError('NOT_FOUND');
+      const was = (await sql<{ v: boolean }>`SELECT no_ai_care AS v FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid FOR UPDATE`.execute(tx)).rows[0]!.v;
+      let pausing = 0;
+      if (was !== req.body.noAiCare) {
+        await sql`UPDATE lead_sources SET no_ai_care = ${req.body.noAiCare}, no_ai_care_changed_at = now(), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
+        await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id: s.id }, changes: redactSnapshot({ noAiCare: { from: was, to: req.body.noAiCare } }, { entity: 'lead_source' }), reason: req.body.noAiCare ? 'LEAD_SOURCE_NO_AI_CARE_ON' : 'LEAD_SOURCE_NO_AI_CARE_OFF' });
+      }
+      if (req.body.noAiCare) {
+        const live = await sql<{ id: string; epoch: number }>`SELECT a.id, a.epoch FROM ai_isa_assignments a
+           WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
+             AND app.person_no_ai_care_source(a.tenant_id, a.contact_id) ORDER BY a.id`.execute(tx);
+        for (const a of live.rows) {
+          await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
+        }
+        pausing = live.rows.length;
+      }
+      return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, pausing };
+    }),
+  );
 
   r.post('/lead-sources/:id/off', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, false)));
   r.post('/lead-sources/:id/on', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, true)));

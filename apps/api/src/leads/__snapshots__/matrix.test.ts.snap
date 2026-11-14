@@ -2590,6 +2590,7 @@ exports[`route table and schemas > every leads route declares its authorization 
   "GET /api/lead-sources/overview → settings.routing",
   "HEAD /api/lead-sources/overview → settings.routing",
   "PATCH /api/lead-sources/:id → settings.routing",
+  "PUT /api/lead-sources/:id/ai-care → lead_source.ai_care",
   "POST /api/lead-sources/:id/off → integration.manage",
   "POST /api/lead-sources/:id/on → integration.manage",
   "POST /api/lead-sources/:id/webhook → integration.manage",

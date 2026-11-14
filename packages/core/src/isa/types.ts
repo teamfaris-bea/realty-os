@@ -68,6 +68,8 @@ export const ISA_PAUSE_REASONS = [
   'check_this',
   'taking_over',
   'ending',
+  // b18 item f (owner 2026-11-14): the person's original lead source is marked "No AI care for leads from this source"
+  'source_no_ai_care',
 ] as const;
 export type IsaPauseReason = (typeof ISA_PAUSE_REASONS)[number];
 

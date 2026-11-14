@@ -19,7 +19,7 @@ import { skipText } from '../nurture/decide.js';
 import { backstopInTx } from './backstop.js';
 import { applyActionsInTx, cancelForAssignmentInTx, chainEnvOf, contextFor, control, type IsaDeps, pauseCardInTx } from './effects.js';
 import { closeHandoffInTx } from './handoff.js';
-import { type AssignmentRow, activeBlock, assignmentById, evaluateChain, exclusivity, inFlightIsaMessages, liveAssignmentOf, lockForTurn, personIds, tenantIsaFacts } from './repo.js';
+import { type AssignmentRow, activeBlock, assignmentById, evaluateChain, exclusivity, inFlightIsaMessages, liveAssignmentOf, lockForTurn, personIds, personNoAiCareSource, tenantIsaFacts } from './repo.js';
 import { sellerStartRefusalInTx } from './seller/index.js';
 
 export const UNDO_MS = 10_000;
@@ -101,6 +101,9 @@ export async function startRefusal(tx: Tx, actor: UserActor, contactId: string, 
   if (cr.merged !== null) return { code: 'AI_ISA_NOT_ROOT' };
   const live = await liveAssignmentOf(tx, contactId);
   if (live !== null && live.id !== i.continuedFrom) return { code: 'AI_ISA_ALREADY_ACTIVE' };
+  // b18 item f: any record of the person from a source marked "No AI care for leads from this source" (an Owner
+  // setting; app.ai_isa_assignments_source_guard is the backstop at insert and resume)
+  if (await personNoAiCareSource(tx, contactId)) return { code: 'AI_ISA_SOURCE_NO_AI_CARE' };
   if (cr.dnc !== null) return { code: 'AI_ISA_DO_NOT_CONTACT' };
   if ((await activeBlock(tx, contactId)) !== null) return { code: 'AI_ISA_PERSON_DECLINED' };
   if (cr.first_touch_at === null && cr.release_due_at !== null) return { code: 'AI_ISA_FIRST_TOUCH_PENDING' };
@@ -297,7 +300,7 @@ export async function resumeCare(actor: UserActor, deps: IsaDeps, contactId: str
         AND assignment_id = ${a.id} AND status = 'accepting'`.execute(tx)).rows[0]!.n > 0) throw new AppError('AI_ISA_BOOKING_IN_PROGRESS');
     // the chain must hold (a hold is fine: it is not a pause)
     const chain = await evaluateChain(tx, a, chainEnvOf(deps));
-    if (chain.effect === 'pause' || chain.effect === 'end') throw new AppError((chain.worst?.code === 'AI_ISA_NOT_CLEARED' ? 'AI_ISA_NOT_CLEARED' : chain.worst?.code === 'AI_ISA_NO_OPTIN' ? 'AI_ISA_NO_OPTIN' : 'AI_ISA_OFF'));
+    if (chain.effect === 'pause' || chain.effect === 'end') throw new AppError((chain.worst?.code === 'AI_ISA_NOT_CLEARED' ? 'AI_ISA_NOT_CLEARED' : chain.worst?.code === 'AI_ISA_NO_OPTIN' ? 'AI_ISA_NO_OPTIN' : chain.worst?.code === 'AI_ISA_SOURCE_NO_AI_CARE' ? 'AI_ISA_SOURCE_NO_AI_CARE' : 'AI_ISA_OFF'));
     const r = step({ ...a.machine, paused: a.machine.paused ?? { reason: (a.pauseReason ?? 'user') as IsaPauseReason, byKind: a.pausedByKind ?? 'system', since: a.pausedAt } },
       { type: 'human_control', at: now, control: 'resume', byOwner: true }, NOFACTS);
     await sql`UPDATE ai_isa_assignments SET paused_at = NULL, paused_by_kind = NULL, paused_by_user_id = NULL, pause_reason = NULL, epoch = epoch + 1,

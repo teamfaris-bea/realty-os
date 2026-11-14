@@ -210,6 +210,7 @@ A turn may compose and a message may send only while every link holds. Every lin
 | 8 | No address shared with another person; no open deal or active team listing with the person as a party | data | — | contact_points, deals, listings |
 | 9 | Consent evidence for the channel and tier (§5.2) | the lead (ledger) | — | consent_events / consent_state / messages / dnc_checks |
 | 10 | "Seller home" (seller- or both-side assignments; ISA-3 H5, `isa/seller/gates.ts subjectLinkInTx`): no live team listing or mirror at the subject's key (else end `active_client`), no other live MLS listing at it (else end `listed_elsewhere`, also refused at start by H4), no undismissed live near match (else pause `possible_listing`) | data; the owner's "different home" answers | — | listings, `ai_isa_seller_watch.near_match_dismissed` |
+| 11 | "Lead source" (batch 18 item f, owner product boundary 2026-11-14): no record of the person (the merge tree) came from a lead source marked "No AI care for leads from this source" | the Owner only (`PUT /lead-sources/:id/ai-care`, core `lead_source.ai_care`, `app.lead_sources_no_ai_care_guard`) | off | `lead_sources.no_ai_care` (0094); `app.person_no_ai_care_source` |
 
 **Link-failure table.** One table, applied identically at ingestion, in TX-A, TX-B and TX1, by the sweep and in the guard's reason classes.
 
@@ -220,6 +221,7 @@ A turn may compose and a message may send only while every link holds. Every lin
 | Link 4 superseded by a widening version | **Pause** `policy_updated`, one card per agent | One agent re-attestation continues all of them (§3.2) |
 | Same-owner new ownership period (REINQUIRY_SLA, decide.ts:813-817) | **Pause** `reinquiry`, with an accurate card | Owner "Continue AI care" (a linked new assignment, §3.6) |
 | A possible live listing at the seller's subject (near match) | **Pause** `possible_listing` with an escalation card | The owner confirms "different home", then resumes |
+| Link 11 (the person's lead source is marked "No AI care for leads from this source") | **Pause** `source_no_ai_care`, system, one card per owner whose note says why; start and Continue are refused AI_ISA_SOURCE_NO_AI_CARE, and `app.ai_isa_assignments_source_guard` refuses an insert or a resume in the database | Only after the Owner turns the setting off, the lead's owner resumes (or the pause expires and care ends as any pause does) |
 | Link 3 `ai_isa_enabled` false; link 5 revoked; link 6 owner changed, merged, owner inactive or bound point removed; link 7; link 8; a confirmed listing at the subject (team → `active_client`, other brokerage → `listed_elsewhere`) | **End** with one handoff | A new start only |
 
 Delivery failures are handled separately:

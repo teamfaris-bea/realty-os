@@ -396,6 +396,7 @@ export const ERROR_STATUS = {
   AI_ISA_CALENDAR_REQUIRED: 409, // book_appointments needs a live calendar
   AI_ISA_FIRST_TOUCH_PENDING: 409, // the human first touch is not recorded yet
   AI_ISA_PERSON_DECLINED: 409, // a person block (opt-out, complaint, declined AI)
+  AI_ISA_SOURCE_NO_AI_CARE: 409, // b18 item f: the person's original lead source is marked "No AI care for leads from this source"
   AI_ISA_HANDBACK_STALE: 409, // the handback is no longer current or its reply was queued
   AI_ISA_UNDO_EXPIRED: 409, // the 10-second undo window has passed
   AI_ISA_BOOKING_IN_PROGRESS: 409, // ISA-2b: the AI assistant is booking an agreed time; resume after it finishes

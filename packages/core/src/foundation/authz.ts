@@ -184,6 +184,7 @@ export const ACTIONS = [
   'cma.share', // module 71 (D9 V2-A): share a CMA, preview it, download its report (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; creator only for share and preview; R-CMA-9)
   'portal.view', // module 45: a deal's or listing's portal state, a grant's client-view preview, an item preview (DATA_MODEL §8 split row)
   'portal.manage', // module 45: invite, publish, retract, revoke, disable, change the login point (Owner, Admin, TL T, agent own)
+  'lead_source.ai_care', // b18 item f: "No AI care for leads from this source" on a lead source (the Owner only; 🔒 when turning it off; DB guard)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -784,6 +785,9 @@ const MATRIX: Record<Action, ActionRule> = {
   // Human actors only: no ISA, no support, no system via (the sync is a job, not a route). The DB re-checks every write.
   'portal.view': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
   'portal.manage': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
+  // b18 item f (owner product boundary, 2026-11-14): the Owner only, as themselves; turning it off re-allows AI care for
+  // the source's leads (loosening), so it asks for a fresh re-auth. app.lead_sources_no_ai_care_guard is the backstop.
+  'lead_source.ai_care': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

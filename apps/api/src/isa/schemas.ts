@@ -115,7 +115,7 @@ export const ListRow = z.object({
 export const ListResponse = z.object({ rows: z.array(ListRow), holdSentence: z.string().nullable() });
 
 export const ChainLink = z.object({
-  link: z.number().int().min(1).max(9),
+  link: z.number().int().min(1).max(11), // b18: link 11 "Lead source" (item f); link 10 "Seller home" (ISA-3 H5) was above the old max(9)
   name: z.string(),
   effect: z.enum(LINK_EFFECTS),
   code: z.string().nullable(),

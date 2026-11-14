@@ -20,6 +20,9 @@ export interface SourceOverview {
   /** partner-feed leads skipped because the source was off, last 30 days (R-LSRC-2) */
   skippedWhileOffLast30Days: number;
   hasConsentText: boolean;
+  /** b18 item f: "No AI care for leads from this source" (an Owner setting) and the API's sentence for it */
+  noAiCare?: boolean;
+  noAiCareSentence?: string;
   paths: {
     email: { state: PathState; address: string | null; lastEmailAt: string | null };
     webhook: { hasToken: boolean; ownSecret: boolean; secretCreatedAt: string | null };

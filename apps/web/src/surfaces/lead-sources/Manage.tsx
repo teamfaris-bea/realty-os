@@ -3,6 +3,7 @@
 // the overview), says what happens to what is sent while it is off, and has a second, explicit button.
 import { type FormEvent, useState } from 'react';
 import { Button, Card, Dialog, Notice, TextField } from '../../design/index.js';
+import { useSession } from '../../shell/index.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { StatusLine, TextArea } from '../admin/lib/ui.js';
 import { SOURCE_KEYS } from './hooks.js';
@@ -11,6 +12,8 @@ import type { OnOffResponse, SourceOverview, SourceView } from './types.js';
 import { OFF_SENTENCE, stoppingPaths } from './words.js';
 
 export const OFF_CONFIRM_LABEL = 'Turn off and stop receiving leads';
+/** b18 item f: the setting's name, as the API writes it (leads/sources.ts NO_AI_CARE_LABEL) */
+export const NO_AI_CARE_LABEL = 'No AI care for leads from this source';
 
 export function Manage({ source }: { source: SourceOverview }) {
   const [status, announce] = useAnnounce(8000);
@@ -20,6 +23,7 @@ export function Manage({ source }: { source: SourceOverview }) {
       <StatusLine text={status} />
       <Rename source={source} onDone={announce} />
       <Consent source={source} onDone={announce} />
+      <AiCare source={source} onDone={announce} />
       <OnOff source={source} />
     </Card>
   );
@@ -83,6 +87,40 @@ function Consent({ source, onDone }: { source: SourceOverview; onDone(t: string)
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * b18 item f (owner product boundary, 2026-11-14): the Owner-only "No AI care for leads from this source". The API's
+ * sentence says what it does; only an Owner gets the button (the API and the database refuse anyone else), and turning
+ * it off asks for the password again (the shell's re-auth).
+ */
+function AiCare({ source, onDone }: { source: SourceOverview; onDone(t: string): void }) {
+  const { session } = useSession();
+  const owner = session?.tenant?.role === 'owner';
+  const a = useAction<{ noAiCare: boolean }, { source: { noAiCare: boolean }; pausing: number }>('PUT', { invalidate: SOURCE_KEYS });
+  if (source.noAiCareSentence === undefined) return null;
+  const on = source.noAiCare === true;
+  const turn = async (next: boolean) => {
+    const r = await a.run(`/lead-sources/${source.id}/ai-care`, { noAiCare: next });
+    if (!r.ok) return;
+    if (!r.data.source.noAiCare) onDone(`${NO_AI_CARE_LABEL} is off.`);
+    else if (r.data.pausing > 0) onDone(`${NO_AI_CARE_LABEL} is on. AI care already running for ${r.data.pausing} of its lead${r.data.pausing === 1 ? '' : 's'} will pause.`);
+    else onDone(`${NO_AI_CARE_LABEL} is on.`);
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[15px] font-medium text-ink">{NO_AI_CARE_LABEL}</p>
+      <p className="text-[15px] text-ink-muted">{source.noAiCareSentence}</p>
+      {owner ? (
+        <div>
+          <Button variant="secondary" pending={a.pending} onClick={() => void turn(!on)}>
+            {on ? 'Allow AI care for leads from this source' : `Turn on: ${NO_AI_CARE_LABEL.toLowerCase()}`}
+          </Button>
+        </div>
+      ) : null}
+      {a.error ? <Notice tone="error">{sentenceFor(a.error)}</Notice> : null}
     </div>
   );
 }

@@ -40,6 +40,9 @@ export const SourceOverview = z.object({
     webChats: z.array(z.object({ status: z.string() })),
   }),
   hasConsentText: z.boolean(),
+  /** b18 item f: "No AI care for leads from this source" (an Owner setting) and its sentence */
+  noAiCare: z.boolean(),
+  noAiCareSentence: z.string(),
 });
 export const OverviewResponse = z.object({ sources: z.array(SourceOverview), deployment: z.object({ inboundEmail: z.boolean(), publicHttps: z.boolean(), telephony: TelephonyMode }) });
 
@@ -52,6 +55,11 @@ export const OnOffResponse = z.object({
   sentence: z.string(),
 });
 export const WebhookRotatedResponse = z.object({ intakeUrl: z.string(), signingSecret: z.string(), createdAt: Iso });
+
+/** b18 item f: PUT /lead-sources/:id/ai-care (the Owner only) */
+export const AiCareBody = z.strictObject({ noAiCare: z.boolean() });
+/** `pausing`: live AI care of the source's people that this change sends to its chain now, to pause (on only) */
+export const AiCareResponse = z.object({ source: z.object({ id: Id, name: z.string(), noAiCare: z.boolean(), noAiCareSentence: z.string() }), pausing: z.number().int() });
 
 export const PatchBody = z.strictObject({ name: z.string().trim().min(1).max(80).optional(), consentDisclosure: ConsentDisclosureInput.optional() });
 
