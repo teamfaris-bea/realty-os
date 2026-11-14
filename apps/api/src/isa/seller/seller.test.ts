@@ -560,6 +560,52 @@ describe('E502 (b13 review B13-MRG-5): a continuation keeps an unresolved pricin
   });
 });
 
+describe('E502 (b14 review B14-OWN-3): a continuation carries a share lift that bounced while care was paused', () => {
+  it('E502: hold, a sent share lifts it (cma_shared), the email bounces during the pause, then Continue: the new assignment is suspended, as a read of the old one is', async () => {
+    const w8 = await sellerWorld(h);
+    const l = await sellerLead(h, w8);
+    await confirm(w8, l);
+    expect((await call(w8.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
+    await asSystem(h, w8, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    const { sendText } = await import('../../comms/testing.js');
+    const toLead = (await sendText(w8.agents[0]!, l.id, 'A note from your agent.')).body.message!.id;
+    const replica = async (q: string, p: unknown[]) => {
+      await h.su.query(`SET session_replication_role = replica`);
+      try {
+        await h.su.query(q, p);
+      } finally {
+        await h.su.query(`SET session_replication_role = origin`);
+      }
+    };
+    await replica(`UPDATE messages SET status = 'sent', dispatched_at = COALESCE(dispatched_at, now()) WHERE id = $1`, [toLead]);
+    await replica(`UPDATE cma_reports SET status = 'shared', shared_at = now() + interval '1 second', shared_by_user_id = $2, shared_message_id = $3 WHERE contact_id = $1`, [l.id, w8.agents[0]!.userId, toLead]);
+    const suspendedNow = (x: typeof l) => asSystem(h, w8, x, async (tx, a, actor) => compsSuspendedNowInTx(tx, actor, a, await watchOf(tx, a.id)));
+    expect(await suspendedNow(l)).toBe(false);
+    expect((await h.su.query(`SELECT comps_resumed_reason AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]).toEqual({ r: 'cma_shared' });
+    // the email bounces while care is paused (no turn, so no system read of the old watch), then Continue
+    await replica(`UPDATE messages SET status = 'bounced' WHERE id = $1`, [toLead]);
+    const a2 = randomUUID();
+    await replica(`UPDATE ai_isa_assignments SET ended_at = now(), end_reason = 'ended_by_user', ended_by_kind = 'user', state = 'ended' WHERE id = $1`, [l.assignmentId]);
+    await replica(
+      `INSERT INTO ai_isa_assignments (tenant_id, id, contact_id, owner_user_id, optin_id, playbook_version_id, bound_ownership_seq, bound_points, side,
+          started_by_user_id, continued_from_assignment_id, consent_snapshot)
+        SELECT tenant_id, $2, contact_id, owner_user_id, optin_id, playbook_version_id, bound_ownership_seq, bound_points, side, started_by_user_id, id, consent_snapshot
+          FROM ai_isa_assignments WHERE id = $1`,
+      [l.assignmentId, a2],
+    );
+    const l2 = { ...l, assignmentId: a2 };
+    await asSystem(h, w8, l2, async (tx, a) => { const { ensureWatchInTx } = await import('./subject.js'); await ensureWatchInTx(tx, a); });
+    expect(await suspendedNow(l2), 'the continuation').toBe(true);
+    expect((await h.su.query(`SELECT comps_suspended_at IS NOT NULL AS s, comps_resumed_at IS NULL AS r FROM ai_isa_seller_watch WHERE assignment_id = $1`, [a2])).rows[0]).toEqual({ s: true, r: true });
+    expect((await h.su.query(`SELECT reason, actor_kind FROM audit_log WHERE entity_id = $1 AND action = 'ai_isa.comps_suspended'`, [a2])).rows).toEqual([{ reason: 'continued', actor_kind: 'system' }]);
+    expect(await suspendedNow(l), 'a read of the old one agrees').toBe(true);
+    // a later share that reaches them lifts the continuation's suspension as usual
+    await replica(`UPDATE messages SET status = 'delivered' WHERE id = $1`, [toLead]);
+    await replica(`UPDATE cma_reports SET shared_at = now() + interval '1 second' WHERE contact_id = $1`, [l.id]);
+    expect(await suspendedNow(l2), 'delivered later').toBe(false);
+  });
+});
+
 describe('R-ISA-21 (b13 review B13-MRG-4): the seller watch\'s system actions and clears are audited', () => {
   const auditsOf = async (assignmentId: string) => (await h.su.query<{ action: string; reason: string | null; actor_kind: string; actor_user_id: string | null }>(
     `SELECT action, reason, actor_kind, actor_user_id FROM audit_log WHERE entity_type = 'ai_isa_assignment' AND entity_id = $1 AND action LIKE 'ai_isa.%' ORDER BY seq`, [assignmentId])).rows;
