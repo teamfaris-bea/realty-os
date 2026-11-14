@@ -1,11 +1,12 @@
 // module 46 e2e: the real module 45 API (journeys/stack.ts: a fresh Postgres database, RLS-bound app_user, the real
 // worker drained through /jobs, deterministic FAKE providers only) plus the portal's fixture routes:
-//   /portal/world   {world}        Jane Doe (example.test email, fake phone) on agent0, her buy deal, a confirmed
-//                                  milestone (module 31's route) and a clean, shared PDF (upload, fake scan, share)
+//   /portal/world   {world}        Jane Doe (example.test email, fake phone) on agent0, her buy deal, two confirmed
+//                                  milestones (module 31's route), an open task for a next step, and a clean, shared PDF
+//                                  (upload, fake scan, share)
 //   /portal/clear   {cleared}      platform:portal cleared or withdrawn (superuser; the spec restores it)
 //   /portal/link    {to, after}    drains comms.dispatch, waits up to 10 s for the post-reply delivery, and returns
 //                                  the newest #token= link sent to `to` after `after` messages, and the notice bodies
-//   /portal/publish {grantId, documentId}  the agent's POST /portal-items for the document (test only), then the jobs
+//   /portal/publish {grantId, documentId | kind + sourceId}  the agent's POST /portal-items (test only), then the jobs
 //   /portal/isa     {world}        an ISA member of the world (client "<world>.isa")
 // Nothing is sent to a real person: every email and text lands in the fakes.
 import { type JourneyStack, startJourneyStack } from '../journeys/stack.js';
@@ -17,6 +18,8 @@ export interface PortalWorld {
   jane: { id: string; email: string; phone: string; name: string };
   documentId: string;
   documentName: string;
+  /** the open task published as a next step (b15 audit F7: R-PORTAL-16 compares more than one item, in order) */
+  nextStepTaskId: string;
   pdfBase64: string;
   milestoneOn: string;
 }
@@ -26,6 +29,7 @@ export interface PortalStack extends JourneyStack {
   setCleared(cleared: boolean): Promise<void>;
   link(to: string, after?: number): Promise<{ link: string | null; count: number; notices: string[] }>;
   publishDocument(grantId: string, documentId: string): Promise<void>;
+  publishItem(grantId: string, kind: 'next_step' | 'document', sourceId: string): Promise<void>;
   emailCount(to: string): Promise<number>;
 }
 
@@ -36,10 +40,12 @@ const ROUTES = String.raw`
     const jane = await portalClient(agent, { firstName: 'Jane' });
     const dealId = await portalDeal(agent, jane.id);
     await portalMilestone(agent, dealId, '2026-12-18', 'inspection');
+    await portalMilestone(agent, dealId, '2027-01-08', 'appraisal');
+    const step = must(await call(agent, 'POST', '/tasks', { title: 'Book the movers', dealId, dueAt: '2027-01-10T17:00:00Z' }), 'task');
     const doc = await sharedDocument(h, w, agent, dealId, 'Purchase contract.pdf');
     const slug = await slugOf(h, w.tenantId);
     const d = must(await call(agent, 'GET', '/deals/' + dealId), 'deal');
-    return { dealId, dealName: d.deal.name, slug, jane: { ...jane, name: d.deal.primaryContact.name }, documentId: doc.id, documentName: 'Purchase contract.pdf', pdfBase64: Buffer.from(doc.bytes).toString('base64'), milestoneOn: '2026-12-18' };
+    return { dealId, dealName: d.deal.name, slug, jane: { ...jane, name: d.deal.primaryContact.name }, documentId: doc.id, documentName: 'Purchase contract.pdf', nextStepTaskId: step.task.id, pdfBase64: Buffer.from(doc.bytes).toString('base64'), milestoneOn: '2026-12-18' };
   },
   async '/portal/clear'(b) { await setPortalCleared(h, !!b.cleared); return { ok: true }; },
   async '/portal/count'(b) {
@@ -62,7 +68,7 @@ const ROUTES = String.raw`
   },
   async '/portal/publish'(b) {
     const w = world(b.world);
-    const r = await portalPublish(w.agents[0], 'document', b.documentId, [b.grantId]);
+    const r = await portalPublish(w.agents[0], b.kind ?? 'document', b.sourceId ?? b.documentId, [b.grantId]);
     if (r.status !== 200 || r.body.results[0].result !== 'published') throw new Error('publish: ' + JSON.stringify(r.body));
     await worker().drain(100);
     return { ok: true };
@@ -86,6 +92,7 @@ export async function startPortalStack(): Promise<PortalStack> {
     setCleared: async (cleared) => void (await s.fixture('/portal/clear', { cleared })),
     link: (to, after = 0) => s.fixture('/portal/link', { to, after }),
     publishDocument: async (grantId, documentId) => void (await s.fixture('/portal/publish', { grantId, documentId })),
+    publishItem: async (grantId, kind, sourceId) => void (await s.fixture('/portal/publish', { grantId, kind, sourceId })),
     emailCount: async (to) => (await s.fixture<{ count: number }>('/portal/count', { to })).count,
   };
 }

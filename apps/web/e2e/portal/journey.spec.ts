@@ -4,7 +4,8 @@
 //   45's sentence verbatim; the link opens and nothing is posted until she taps Sign in (1 tap); she sees "Your home
 //   purchase" with its dated milestone, no done mark, and the agent card; Documents (1 tap on a phone, 0 on desktop)
 //   and Download (1 tap) save the fixture's bytes; Sign out is 1 tap and the link then says it was used; the agent's
-//   "What Jane Doe sees" (1 tap) lists the same items; Stop sharing hides everything on her next request.
+//   "What Jane Doe sees" (1 tap) lists the same items and dates in the same order as Jane's own view (two milestones
+//   and a next step; b15 audit F7); Stop sharing hides everything on her next request.
 import { type Page, expect, test } from 'playwright/test';
 import { shot, signIn, tap } from '../journeys/helpers.js';
 import type { WorldInfo } from '../journeys/stack.js';
@@ -30,6 +31,11 @@ test.afterAll(async () => {
 });
 
 const section = (page: Page) => page.locator('section').filter({ has: page.getByRole('heading', { name: 'Client portal' }) });
+/** b15 audit F7: each Timeline and Next steps item as shown (its title and dates), in order: R-PORTAL-16 compares them. */
+async function itemsOf(page: Page): Promise<{ timeline: string[]; nextSteps: string[] }> {
+  const read = (heading: string) => page.locator('section').filter({ has: page.getByRole('heading', { level: 2, name: heading, exact: true }) }).locator('li').allInnerTexts();
+  return { timeline: await read('Timeline'), nextSteps: await read('Next steps') };
+}
 
 test('module 46: invite, sign in on a tap, see the purchase, download, sign out; the preview matches; revoke hides it', async ({ page, browser }, info) => {
   test.setTimeout(300_000);
@@ -54,6 +60,7 @@ test('module 46: invite, sign in on a tap, see the purchase, download, sign out;
   const st = await stack.api<{ grants: { id: string }[] }>('a.agent0', 'GET', `/deals/${pw.dealId}/portal`);
   const grantId = st.body.grants[0]!.id;
   await stack.publishDocument(grantId, pw.documentId);
+  await stack.publishItem(grantId, 'next_step', pw.nextStepTaskId);
   await stack.jobs();
 
   // 2. Jane asks for a link (45's sentence verbatim) and signs in with one tap
@@ -82,6 +89,11 @@ test('module 46: invite, sign in on a tap, see the purchase, download, sign out;
   const card = jane.locator('section').filter({ has: jane.getByRole('heading', { name: 'Your agent' }) });
   await expect(card.getByRole('link', { name: /^Email / }).or(card.getByText('Reply to any text or email from your agent.'))).toBeVisible();
   expect(await jane.locator('main').textContent()).not.toMatch(/✓|✔|\bdone\b|completed/i);
+  // Jane's items, in her order: two milestones and a next step (compared with the preview in step 6)
+  const janeItems = await itemsOf(jane);
+  expect(janeItems.timeline).toHaveLength(2);
+  expect(janeItems.nextSteps).toHaveLength(1);
+  expect([...janeItems.timeline, ...janeItems.nextSteps].map((t) => t.split('\n')[0]).sort()).toEqual(['Appraisal', 'Book the movers', 'Inspection']);
   await shot(jane, info, 'portal', 'home');
 
   // 4. documents: 1 tap on a phone (the tab), 0 on desktop; download: 1 tap; the bytes equal the fixture
@@ -116,6 +128,8 @@ test('module 46: invite, sign in on a tap, see the purchase, download, sign out;
   expect(pv.taps).toBe(1);
   await expect(agent.getByText('Inspection', { exact: true })).toBeVisible();
   await expect(agent.getByText('Dec 18, 2026')).toBeVisible();
+  // R-PORTAL-16: the preview lists Jane's items and dates, the same and in the same order
+  expect(await itemsOf(agent)).toEqual(janeItems);
   await expect(agent.getByText('Download Purchase contract.pdf')).toBeVisible();
   await expect(agent.getByRole('button', { name: /Download/ })).toHaveCount(0);
   await shot(agent, info, 'portal', 'preview');
