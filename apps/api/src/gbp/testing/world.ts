@@ -14,7 +14,8 @@ import type { FakeGbp } from '../testing.js';
 
 export { call };
 
-export const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests', 'platform:portal'];
+/** D11's six packs: DEPLOY's D11 command since 0091 (platform:portal is not recorded by it; Q-PORTAL-19). */
+export const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests'];
 
 export interface GbpWorld {
   owner: TestClient;

@@ -3,6 +3,7 @@
 // superuser pool only records a pack's review (platform data), builds fixtures that have no application path in this
 // package (calls, recordings, call scores, a connected location: suFixture), and reads back.
 import type { Actor, SupportActor, TenantId, UserId } from '@realty/core/foundation';
+import { readFileSync } from 'node:fs';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
@@ -20,7 +21,7 @@ let gbpConn: string;
 let gbpDown: string;
 let fbConn: string;
 
-const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests', 'platform:portal'];
+const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests'];
 const review = (keys: string[], on: boolean) =>
   h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = ${on ? 'now()' : 'NULL'} WHERE key = ANY($1::text[]) AND status = 'published'`, [keys]);
 const resetPacks = () => h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key LIKE 'platform:%'");
@@ -91,7 +92,14 @@ describe('M53 platform:gbp gate on reviews and publications (R-GBP-3)', () => {
     expect(p!.notes).toMatch(/Not covered by owner attestation D11\. VERIFY WITH COUNSEL \(C15\)\./);
   });
 
-  it('E460 R-GBP-3: with every pack unreviewed, and with D11\'s seven packs recorded, no review row can exist (GBP_NOT_CLEARED)', async () => {
+  it('b15 (b14 low j): this suite\'s D11 list is DEPLOY\'s D11 command\'s keys (six since 0091: platform:portal is not recorded by it)', () => {
+    const block = readFileSync(new URL('../../../docs/DEPLOY.md', import.meta.url), 'utf8').split('**Owner decision D11')[1]!;
+    const keys = /--keys (\S+)/.exec(block)![1]!.split(',').map((k) => k.split('@')[0]);
+    expect(keys).toHaveLength(6);
+    expect([...D11].sort()).toEqual([...keys].sort());
+  });
+
+  it('E460 R-GBP-3: with every pack unreviewed, and with D11\'s six packs recorded, no review row can exist (GBP_NOT_CLEARED)', async () => {
     await resetPacks();
     await expect(insertReview()).rejects.toThrow(/GBP_NOT_CLEARED/);
     await review(D11, true);

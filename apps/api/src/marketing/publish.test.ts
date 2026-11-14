@@ -1,6 +1,7 @@
 // Publishing through publishPost (module 29; D2; DATA_MODEL R-MKT-12, R-GATE-15, R-INT-6, R-MKT-4, R-MKT-6; E227, E228).
 // Real Postgres (createTestDb via the harness) and the deterministic FakeSocialPublisher; nothing leaves the process.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import pg from 'pg';
@@ -763,7 +764,7 @@ describe('R-MKT-12 R-GATE-15 races, held deterministically', () => {
 // ---- module 53: the gbp_location branch (flagged edit) ------------------------------------------------------------
 
 describe('module 53: a GBP post publishes through publishPost to a GBP location (R-GBP-2, R-GBP-3)', () => {
-  const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests', 'platform:portal'];
+  const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests'];
   const packs = (keys: string[], on: boolean) => h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = ${on ? 'now()' : 'NULL'} WHERE key = ANY($1::text[]) AND status = 'published'`, [keys]);
   let loc: { connectionId: string; accountId: string };
   const gbp = () => h.providers.gbp;
@@ -801,7 +802,14 @@ describe('module 53: a GBP post publishes through publishPost to a GBP location 
     expect(p).toMatchObject({ kind: 'gbp_post', status: 'draft' });
   });
 
-  it('E460 R-GBP-3: with D11\'s seven packs recorded and platform:gbp not, a GBP post is export-only, the API refuses to publish with nothing inserted or called, and the database refuses a forced row', async () => {
+  it('b15 (b14 low j): this suite\'s D11 list is DEPLOY\'s D11 command\'s keys (six since 0091: platform:portal is not recorded by it)', () => {
+    const block = readFileSync(new URL('../../../../docs/DEPLOY.md', import.meta.url), 'utf8').split('**Owner decision D11')[1]!;
+    const keys = /--keys (\S+)/.exec(block)![1]!.split(',').map((k) => k.split('@')[0]);
+    expect(keys).toHaveLength(6);
+    expect([...D11].sort()).toEqual([...keys].sort());
+  });
+
+  it('E460 R-GBP-3: with D11\'s six packs recorded and platform:gbp not, a GBP post is export-only, the API refuses to publish with nothing inserted or called, and the database refuses a forced row', async () => {
     await packs(D11, true);
     const p = await approvedGbpPost();
     expect(p.publishOptions).toEqual([{ kind: 'export', connectionId: loc.connectionId, reason: 'PLATFORM_NOT_CLEARED', sentence: 'Google Business Profile posts stay off until counsel reviews them. Export it and copy it to your Business Profile yourself.' }]);

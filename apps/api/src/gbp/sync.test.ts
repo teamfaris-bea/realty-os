@@ -9,6 +9,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { type GbpProvider, UnconfiguredGbp } from './provider.js';
 import { syncReviews } from './sync.js';
 import { rawReview } from './testing.js';
+import { readFileSync } from 'node:fs';
 import { D11, type GbpWorld, call, connectLocation, gbpWorld, jobCtx, leadsWorldFor, makeDue, resetFake, resetPacks, reviewRows, setPacks, syncDeps } from './testing/world.js';
 
 let h: ApiHarness;
@@ -45,7 +46,14 @@ async function draftFor(reviewId: string): Promise<string> {
 const actionStatus = async (id: string) => (await h.su.query<{ status: string }>('SELECT status FROM assistant_actions WHERE id = $1', [id])).rows[0]!.status;
 
 describe('GBP stays dark until platform:gbp is reviewed (R-GBP-3)', () => {
-  it('E460 R-GBP-3: with every pack unreviewed, and with D11\'s seven packs recorded, the sync calls nothing and stores nothing; the status says why', async () => {
+  it('b15 (b14 low j): the GBP world\'s D11 list is DEPLOY\'s D11 command\'s keys (six since 0091: platform:portal is not recorded by it)', () => {
+    const block = readFileSync(new URL('../../../../docs/DEPLOY.md', import.meta.url), 'utf8').split('**Owner decision D11')[1]!;
+    const keys = /--keys (\S+)/.exec(block)![1]!.split(',').map((k) => k.split('@')[0]);
+    expect(keys).toHaveLength(6);
+    expect([...D11].sort()).toEqual([...keys].sort());
+  });
+
+  it('E460 R-GBP-3: with every pack unreviewed, and with D11\'s six packs recorded, the sync calls nothing and stores nothing; the status says why', async () => {
     fake().seed(w.location.accountId, [rawReview('dark-1')]);
     await resetPacks(h);
     expect(await sync()).toMatchObject({ locations: 0, pages: 0 });
