@@ -12,6 +12,7 @@
 // second no-restricted-imports block in eslint.config.js would not (it would replace the apps/web one).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const SRC = resolve(__dirname, '../..');
@@ -32,43 +33,16 @@ const PORTAL_FILES = ALL.filter((f) => f.startsWith(PORTAL + '/'));
 const VIEW_FILES = PORTAL_FILES.filter((f) => f.startsWith(join(PORTAL, 'view') + '/'));
 const STAFF_FILES = ALL.filter((f) => !f.startsWith(PORTAL + '/'));
 
-/** Source without comments (strings and template literals kept). */
-export function stripComments(src: string): string {
-  let out = '';
-  let i = 0;
-  let q: string | null = null;
-  while (i < src.length) {
-    const c = src[i]!;
-    if (q) {
-      out += c;
-      if (c === '\\') {
-        out += src[i + 1] ?? '';
-        i += 2;
-        continue;
-      }
-      if (c === q) q = null;
-      i += 1;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      q = c;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && src[i + 1] === '/') {
-      while (i < src.length && src[i] !== '\n') i += 1;
-      continue;
-    }
-    if (c === '/' && src[i + 1] === '*') {
-      const end = src.indexOf('*/', i + 2);
-      i = end < 0 ? src.length : end + 2;
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
+/**
+ * Source without comments (strings, template literals, regex literals and JSX text kept), printed from TypeScript's own
+ * parse of the file. b15 review B15R-PORTAL-3: the old character scanner knew only quotes, so a quote inside a regex
+ * literal or JSX text flipped it into "string" mode, and a later "//" inside a real string then dropped the real code
+ * after it from every scan below.
+ */
+export function stripComments(src: string, fileName = 'x.ts'): string {
+  const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, kind);
+  return ts.createPrinter({ removeComments: true }).printFile(sf);
 }
 
 /** Import specifiers: static, re-export, side-effect, dynamic and type imports. */
@@ -97,7 +71,7 @@ export function viewImportOk(file: string, spec: string): boolean {
 /** b15 audit P46-SEC-1: a dynamic import whose module is not a plain string (a computed specifier no scan can read). */
 export const computedImport = (src: string): boolean => /\bimport\s*\((?!\s*(?:'[^'\n]*'|"[^"\n]*"|`[^`$]*`)\s*[,)])/.test(src);
 
-const code = (f: string) => stripComments(readFileSync(f, 'utf8'));
+const code = (f: string) => stripComments(readFileSync(f, 'utf8'), f);
 const FORBIDDEN: [string, RegExp][] = [
   ['document.cookie', /document\s*\.\s*cookie/],
   ['the staff cookie', /__Host-sid/],
@@ -116,7 +90,17 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     expect(PORTAL_FILES.length).toBeGreaterThan(15);
     expect(VIEW_FILES.map(rel)).toEqual(expect.arrayContaining(['portal/view/index.ts', 'portal/view/parse.ts', 'portal/view/components.tsx']));
     expect(STAFF_FILES.length).toBeGreaterThan(200);
-    expect(stripComments("const a = '//x'; // gone\n/* gone */ const b = `/*y*/`;")).toBe("const a = '//x'; \n const b = `/*y*/`;");
+    const stripped = stripComments("const a = '//x'; // gone\n/* gone */ const b = `/*y*/`;");
+    expect(stripped).toContain("'//x'");
+    expect(stripped).toContain('`/*y*/`');
+    expect(stripped).not.toContain('gone');
+    // b15 review B15R-PORTAL-3: a quote inside a regex literal or JSX text is not a string, so it never hides the code
+    // after a later "//" inside a real string (the old character scanner dropped it, and the scans below read nothing)
+    const hidden = (f: string, src: string) => FORBIDDEN.filter(([, re]) => re.test(stripComments(src, f))).map(([w]) => w);
+    expect(hidden('zzhide.ts', 'export const quote = /"/;\nexport const sep = "//"; export const jar = () => document.cookie + String(sessionStorage.length);')).toEqual(['document.cookie', 'sessionStorage']);
+    expect(hidden('zzhide.ts', "export const q = /'/g;\nexport const u = 'https://x'; export const c = () => console.log(1);")).toEqual(['console']);
+    expect(hidden('zzhide.tsx', "export const P = () => <p>Don't</p>;\nexport const u = 'https://x'; export const e = () => eval('1');")).toEqual(['eval']);
+    expect(stripComments('const r = /[<>:"|?*]/g; // gone\nconst s = "a//b";', 'x.ts')).not.toContain('gone');
     expect(importsOf("import { a } from './a.js';\nexport * from '../b.js';\nconst c = await import('./c.js');\nimport './d.css';")).toEqual(['./a.js', '../b.js', './c.js', './d.css']);
     // b15 audit P46-SEC-1: the test-helper and computed-import checks catch what they must, and only that
     const api = join(PORTAL, 'api.ts');
