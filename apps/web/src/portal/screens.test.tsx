@@ -270,6 +270,49 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     await waitFor(() => expect(r.queryClient.getQueryCache().getAll()).toEqual([]));
   });
 
+  // b15 audit F6 (E705's "another client signs in on the device", R-PORTALWEB-9: the cache is cleared on each new
+  // sign-in). Client B's world: another grant, another CSRF token, other items.
+  const bMe = () => F.me([F.grant({ id: F.GRANT_2, title: 'Your home sale', scope: 'sale' })], 'portal-csrf-token-b');
+  const bTimeline = (grantId: string) => ({ grantId, items: [{ itemId: F.ITEM_2, kind: 'milestone', title: 'Final walk-through', body: null, occursOn: '2027-02-01', publishedAt: '2026-11-10T15:00:00.000Z' }], nextSteps: [] });
+  const aShown = () => ['Inspection', 'Book the movers', 'Your home purchase'].filter((t) => screen.queryByText(t) !== null);
+  const cachedKeys = (r: ReturnType<typeof renderPortal>) => r.queryClient.getQueryCache().getAll().map((q) => JSON.stringify(q.queryKey));
+
+  it('E705 (b15 audit F6): another client signs in on the device (another tab): on the next /me nothing of the first client is shown or cached', async () => {
+    let who: 'a' | 'b' = 'a';
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => ({ status: 200, body: who === 'a' ? F.me() : bMe() }),
+        'GET /portal/timeline': (x) => ({ status: 200, body: who === 'a' ? F.timeline(x.query.grantId) : bTimeline(x.query.grantId!) }),
+      },
+    });
+    await screen.findByText('Inspection');
+    expect(cachedKeys(r).some((k) => k.includes(F.GRANT_ID))).toBe(true);
+    who = 'b';
+    await act(async () => {
+      await r.queryClient.invalidateQueries({ queryKey: ['portal', 'me'] });
+    });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Your home sale' })).toBeInTheDocument();
+    expect(await screen.findByText('Final walk-through')).toBeInTheDocument();
+    expect(aShown()).toEqual([]);
+    expect(cachedKeys(r).filter((k) => k.includes(F.GRANT_ID))).toEqual([]);
+    expect(r.api.hasCsrf()).toBe(true);
+    expect(r.problems).toEqual([]);
+  });
+
+  it('E705 (b15 audit F6): a sign-in link tapped on a device holding another client\'s data clears the cache first', async () => {
+    withToken();
+    const r = renderPortal({ link: { link: 'token' }, routes: { 'GET /portal/me': () => ({ status: 200, body: bMe() }), 'GET /portal/timeline': (x) => ({ status: 200, body: bTimeline(x.query.grantId!) }), 'GET /portal/documents': (x) => ({ status: 200, body: F.documents(x.query.grantId) }), 'POST /portal/session': () => ({ status: 200, body: F.session('portal-csrf-token-b') }) } });
+    // client A's answers, as a shared device's cache would hold them
+    r.queryClient.setQueryData(['portal', 'me'], F.me());
+    r.queryClient.setQueryData(['portal', 'timeline', F.GRANT_ID], F.timeline());
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Your home sale' })).toBeInTheDocument();
+    expect(await screen.findByText('Final walk-through')).toBeInTheDocument();
+    expect(aShown()).toEqual([]);
+    expect(cachedKeys(r).filter((k) => k.includes(F.GRANT_ID))).toEqual([]);
+  });
+
   it('R-PORTALWEB-6: no screen shows a code', async () => {
     renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => portalApiError('VALIDATION_FAILED') } });
     await screen.findByText('Inspection');
