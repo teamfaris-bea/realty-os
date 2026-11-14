@@ -34,6 +34,17 @@ export function packageOf(id: string): string | null {
   return rest[0]!.startsWith('@') ? `${rest[0]}/${rest[1]}` : rest[0]!;
 }
 
+/**
+ * Whether a source module id is shipped portal code: under src/portal and not a test helper (b15 audit P46-SEC-1:
+ * lint and the source scans exempt test code). b17 (b16 review L16-4): a module id keeps its Vite query
+ * ('…/link.test.ts?raw'), so the file is read before the query or hash.
+ */
+export function shippedPortalModule(id: string): boolean {
+  const file = id.split(/[?#]/)[0] ?? id;
+  if (!file.startsWith(portalDir)) return false;
+  return !/(^|\/)(test|testing)(\/|$)/.test(file.slice(portalDir.length)) && !/\.test(\.[cm]?[jt]sx?)?$/.test(file);
+}
+
 /** The chunk an HTML entry's module script names, and its static and dynamic closure. */
 function closureOf(htmlName: string): Rollup.OutputChunk[] {
   const src = /<script type="module"[^>]*\ssrc="\/([^"]+)"/.exec(html(htmlName))?.[1];
@@ -66,6 +77,13 @@ beforeAll(async () => {
 }, 180_000);
 
 describe('the client portal bundle (R-PORTALWEB-1)', () => {
+  it('b17 (L16-4): the shipped-module check is not vacuous: a query or hash on test code is still test code', () => {
+    const at = (p: string) => `${portalDir}${p}`;
+    expect(['link.test.ts?raw', 'link.test.tsx?url', 'screens.test.tsx?inline', 'link.test.ts#x', 'test/fixtures.ts?raw', 'test?raw', 'view/testing/x.ts'].map((p) => shippedPortalModule(at(p)))).toEqual([false, false, false, false, false, false, false]);
+    expect(['main.tsx', 'portal.css?inline', 'testids.ts?raw', 'view/index.ts'].map((p) => shippedPortalModule(at(p)))).toEqual([true, true, true, true]);
+    expect(shippedPortalModule(resolve(webRoot, 'src/shell/api.ts?raw'))).toBe(false);
+  });
+
   it('R-PORTALWEB-1: the portal closure holds only src/portal, react, react-dom, scheduler and TanStack Query (and bundler helpers)', () => {
     const ids = closureOf('portal.html').flatMap((c) => c.moduleIds);
     expect(ids.some((m) => m === resolve(webRoot, 'src/portal/main.tsx'))).toBe(true);
@@ -74,8 +92,7 @@ describe('the client portal bundle (R-PORTALWEB-1)', () => {
       if (m === resolve(webRoot, 'portal.html')) return false;
       const pkg = packageOf(m);
       if (pkg) return !PACKAGES.has(pkg);
-      // b15 audit P46-SEC-1: a test helper under src/portal is not shipped code (lint and the source scans exempt it)
-      return !m.startsWith(portalDir) || /(^|\/)(test|testing)\//.test(m.slice(portalDir.length)) || /\.test\.[cm]?[jt]sx?$/.test(m);
+      return !shippedPortalModule(m);
     });
     expect(outside).toEqual([]);
   });

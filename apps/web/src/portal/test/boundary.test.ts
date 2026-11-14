@@ -55,7 +55,8 @@ export function importsOf(src: string): string[] {
 /** b15 audit P46-SEC-1: whether a relative specifier from `file` names test code (a test/ or testing/ directory, or a .test file). */
 export function intoTestCode(file: string, spec: string): boolean {
   if (!spec.startsWith('.')) return false;
-  const to = relative(SRC, resolve(dirname(file), spec)).replaceAll('\\', '/');
+  // b17 (b16 review L16-4): the file is named before any Vite query or hash ('./link.test.ts?raw' embeds its source)
+  const to = relative(SRC, resolve(dirname(file), spec.split(/[?#]/)[0] ?? spec)).replaceAll('\\', '/');
   // b16: an extensionless specifier counts too ('./link.test' is link.test.ts)
   return /(^|\/)(test|testing)(\/|$)/.test(to) || /\.test(\.[cm]?[jt]sx?)?$/.test(to);
 }
@@ -110,6 +111,10 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     // b16: extensionless specifiers of test code ('./link.test' is link.test.ts, './test' is test/index.ts)
     expect(['./link.test', './test', './screens.test', './testing', './view/../test'].map((s) => intoTestCode(api, s))).toEqual([true, true, true, true, true]);
     expect([intoTestCode(home, '../test/fixtures.js'), intoTestCode(home, './test'), intoTestCode(api, './testids.js'), intoTestCode(api, './contest/x.js'), intoTestCode(api, './view/index.js'), intoTestCode(api, 'react')]).toEqual([true, true, false, false, false, false]);
+    // b17 (b16 review L16-4): a Vite query or a hash after the file still names test code ('?raw' embeds its source)
+    expect(['./link.test.ts?raw', './link.test.tsx?url', './link.test.js?inline', './link.test.ts#x', './test?raw', '../test/render.tsx?raw'].map((s) => intoTestCode(s.startsWith('../') ? home : api, s))).toEqual([true, true, true, true, true, true]);
+    expect(['./portal.css?inline', './testids.js?raw', './view/index.js?url'].map((s) => intoTestCode(api, s))).toEqual([false, false, false]);
+    expect(importsOf("import t from './link.test.ts?raw';")).toEqual(['./link.test.ts?raw']);
     expect(['import(name)', 'import(`./${n}.js`)', "import('./a' + b)", 'import (x)'].map(computedImport)).toEqual([true, true, true, true]);
     // b15 audit P46-TEST-1: a view import is resolved, so './../x' (which leaves view/) is caught
     const parse = join(PORTAL, 'view', 'parse.ts');

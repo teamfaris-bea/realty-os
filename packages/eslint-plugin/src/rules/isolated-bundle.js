@@ -4,7 +4,8 @@
 // bundle's own directory (`dir`, a directory name under some src/), and a package import must be on `allow`.
 // The files it applies to are configured in eslint.config.js.
 // b15 audit P46-SEC-1: shipped bundle code never imports test code (a `test/` or `testing/` directory, or a
-// `*.test.*` file; b16: also when named without its extension, './test' or './link.test'), which eslint.config.js and
+// `*.test.*` file; b16: also when named without its extension, './test' or './link.test'; b17: also with a Vite query or
+// a hash, './link.test.ts?raw'), which eslint.config.js and
 // the source scans exempt, so a helper there could carry staff code or an env value into the bundle; and a dynamic
 // import must name its module as a string (a template literal without expressions counts), so the rule can read it.
 
@@ -48,7 +49,9 @@ const rule = {
     /** @param {any} node @param {string} source */
     function check(node, source) {
       if (source.startsWith('.') || source.startsWith('/')) {
-        const target = resolve(dirname(filename), source);
+        // b17 (b16 review L16-4): the file is named before any Vite query or hash ('./link.test.ts?raw' embeds that
+        // test file's source; '?url' and '?inline' ship it too), so they are stripped before the checks
+        const target = resolve(dirname(filename), source.split(/[?#]/)[0] ?? source);
         if (!`${target}${sep}`.startsWith(root) && !target.startsWith(root)) context.report({ node, messageId: 'outside', data: { source, dir } });
         else if (!importerIsTest && isTestCode(target)) context.report({ node, messageId: 'testCode', data: { source, dir } });
         return;

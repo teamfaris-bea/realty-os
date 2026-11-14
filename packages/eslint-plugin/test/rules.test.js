@@ -314,6 +314,9 @@ describe('realty/isolated-bundle, b15 audit P46-SEC-1: no test helper and no unr
       // a name that merely contains "test" is not test code
       { code: "import { x } from './testids.js'", filename: at('api.ts'), options: opts },
       { code: "import { x } from './contest/x.js'", filename: at('api.ts'), options: opts },
+      // b17: a query on shipped code is not test code
+      { code: "import css from './portal.css?inline'", filename: at('App.tsx'), options: opts },
+      { code: "import w from './testids.js?raw'", filename: at('api.ts'), options: opts },
       // test code may import test code (eslint.config.js exempts test files from the portal block anyway)
       { code: "import { renderPortal } from './render.js'", filename: at('test/fixtures.ts'), options: opts },
       { code: "import { me } from './test/fixtures.js'", filename: at('screens.test.tsx'), options: opts },
@@ -329,6 +332,14 @@ describe('realty/isolated-bundle, b15 audit P46-SEC-1: no test helper and no unr
       { code: "export * from '../testing'", filename: at('view/parse.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
       { code: "const m = await import('./screens.test')", filename: at('App.tsx'), options: opts, errors: [{ messageId: 'testCode' }] },
       { code: 'const m = await import(`./test/fixtures.js`)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      // b17 (b16 review L16-4): a Vite query or a hash after the file still names test code ('?raw' embeds its source)
+      { code: "import t from './link.test.ts?raw'", filename: at('api.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import u from './link.test.tsx?url'", filename: at('App.tsx'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import i from './link.test.js?inline'", filename: at('view/parse.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import h from './link.test.ts#x'", filename: at('api.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "const m = await import('./screens.test.tsx?raw')", filename: at('App.tsx'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import r from './test?raw'", filename: at('api.ts'), options: opts, errors: [{ messageId: 'testCode' }] },
+      { code: "import o from '../shell/api.ts?raw'", filename: at('api.ts'), options: opts, errors: [{ messageId: 'outside' }] },
       { code: 'const m = await import(`../shell/api.js`)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'outside' }] },
       { code: 'const m = await import(`./${name}.js`)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'computed' }] },
       { code: 'const m = await import(name)', filename: at('api.ts'), options: opts, errors: [{ messageId: 'computed' }] },
