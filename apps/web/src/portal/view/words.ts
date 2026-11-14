@@ -15,7 +15,8 @@ export const VIEW_WORDS = {
   contactFallback: 'Reply to any text or email from your agent.',
   fileUnavailable: "This file isn't available now. It may no longer be shared with you. Try again, or ask your agent.",
   downloading: 'Getting the file',
-  previewGeneric: "The client can't see this now.",
+  /** a reason 45 did not give (the banner reads "{Name} can't see this now: the reason is not known.") */
+  previewGeneric: 'the reason is not known.',
 } as const;
 
 export const visibleUntil = (date: string): string => `You can see this until ${date}.`;
