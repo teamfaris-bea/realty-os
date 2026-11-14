@@ -20,9 +20,21 @@ export const E164 = /^\+[1-9][0-9]{6,14}$/;
 /** One address: no whitespace, control, separator or header-injection character. */
 const ADDR_PART = String.raw`[^\s@?&,;:/%<>"()[\]\\\p{Cc}\p{Cf}]+`;
 export const SINGLE_EMAIL = new RegExp(`^${ADDR_PART}@${ADDR_PART}\\.${ADDR_PART}$`, 'u');
+// b15 review B15-45x46-1: every length here is counted in Unicode code points, as 45 counts them (core portal/text.ts,
+// Postgres length(), Zod): a JavaScript .length counts an astral character (an emoji) twice, so text 45 accepted and
+// published could fail here on every read. 45's own limits are at or under these (titles 120, bodies 4000).
 const TITLE_MAX = 200;
 const BODY_MAX = 4000;
 const NAME_MAX = 120;
+
+/** Whether `s` has at most `max` code points (a string over 2 × max UTF-16 units cannot, so it is not walked). */
+function withinCodePoints(s: string, max: number): boolean {
+  if (s.length <= max) return true;
+  if (s.length > 2 * max) return false;
+  let n = 0;
+  for (const _ of s) if (++n > max) return false;
+  return true;
+}
 
 /** The client item kinds (45: shared/schemas.ts Item; documents come apart). */
 export const ITEM_KINDS = ['milestone', 'showing', 'feedback', 'seller_update', 'next_step'] as const;
@@ -100,7 +112,7 @@ function arr(v: unknown, path: string, max = 1000): unknown[] {
   return v;
 }
 function str(v: unknown, path: string, max: number): string {
-  if (typeof v !== 'string' || v.length > max) throw new ParseError(path);
+  if (typeof v !== 'string' || !withinCodePoints(v, max)) throw new ParseError(path);
   return v;
 }
 function nonEmpty(v: unknown, path: string, max: number): string {
@@ -145,7 +157,7 @@ function emailTo(v: unknown): string | null {
   return typeof v === 'string' && v.length <= 320 && SINGLE_EMAIL.test(v) ? v : null;
 }
 function agentName(v: unknown): string | null {
-  return typeof v === 'string' && v.trim() !== '' && v.length <= NAME_MAX && !/\p{Cc}/u.test(v) ? v : null;
+  return typeof v === 'string' && v.trim() !== '' && withinCodePoints(v, NAME_MAX) && !/\p{Cc}/u.test(v) ? v : null;
 }
 
 function contact(v: unknown, path: string): ContactView | null {

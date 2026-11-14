@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import * as F from '../test/fixtures.js';
 import { hostile, rng } from '../test/hostile.js';
+import { BODY_MAX as CORE_BODY_MAX, TITLE_MAX as CORE_TITLE_MAX, codePointLength } from '@realty/core/portal';
 import { ParseError, parseDocuments, parseLoginAccepted, parseMe, parsePreview, parseSession, parseStreamToken, parseTimeline } from './parse.js';
 
 const INJECTED = { notes: 'internal note', score: 97, value: 512000, cmaValue: '$500k', aiDraft: 'drafted', assignee: 'agent', tenantId: '01900000-0000-7000-8000-0000000000ff' };
@@ -45,6 +46,33 @@ describe('view/parse.ts (R-PORTALWEB-5)', () => {
       ['array', () => parseMe([])],
     ];
     for (const [what, f] of bad) expect(f, what).toThrow(ParseError);
+  });
+
+  // b15 review B15-45x46-1: 45 counts text in code points (core text.ts, Postgres length(), Zod), so an astral character
+  // (an emoji, a mathematical letter) counts once there and twice in a UTF-16 .length. Text 45 accepted at its limits
+  // must parse; one past the parser's own limit, counted in code points, still fails.
+  it('E708 (b15 review B15-45x46-1): lengths are counted in code points, as 45 counts them: astral text at 45\'s limits parses everywhere', () => {
+    const astral = (n: number) => '\u{1D49C}'.repeat(n); // MATHEMATICAL SCRIPT CAPITAL A: one code point, two UTF-16 units
+    const title = astral(CORE_TITLE_MAX);
+    const body = `${'x'.repeat(CORE_BODY_MAX - 10)}${'\u{1F3E1}'.repeat(10)}`;
+    expect([codePointLength(title), title.length, codePointLength(body), body.length]).toEqual([CORE_TITLE_MAX, 2 * CORE_TITLE_MAX, CORE_BODY_MAX, CORE_BODY_MAX + 10]);
+    const t = F.timeline();
+    const item = { ...t.items[0]!, title, body };
+    expect(parseTimeline({ ...t, items: [item], nextSteps: [{ ...t.nextSteps[0]!, title, body }] }).items[0]).toMatchObject({ title, body });
+    const d = F.documents();
+    expect(parseDocuments({ ...d, documents: [{ ...d.documents[0]!, title, body }] }).documents[0]).toMatchObject({ title, body });
+    const name = astral(120);
+    const g = parseMe(F.me([F.grant({ title, contact: { ...F.contact, agentName: name } })])).grants[0]!;
+    expect([g.title, g.contact?.agentName]).toEqual([title, name]);
+    expect(parsePreview({ visibleNow: true, why: [], grant: F.grant({ title }), timeline: { items: [item], nextSteps: [] }, documents: [{ ...d.documents[0]!, title, body }] }).timeline.items[0]!.body).toBe(body);
+    // a document display name of 200 code points (documents/upload.ts DISPLAY_NAME_MAX) plus its extension
+    const fileName = `${astral(200)}.pdf`;
+    expect(parseStreamToken(F.streamToken({ fileName })).fileName).toBe(fileName);
+    // one past the parser's own limits, in code points, is still refused
+    expect(() => parseTimeline({ ...t, items: [{ ...item, body: `${body}x` }] })).toThrow(ParseError);
+    expect(() => parseTimeline({ ...t, items: [{ ...item, title: astral(201) }] })).toThrow(ParseError);
+    expect(() => parseStreamToken(F.streamToken({ fileName: astral(256) }))).toThrow(ParseError);
+    expect(parseMe(F.me([F.grant({ contact: { ...F.contact, agentName: astral(121) } })])).grants[0]!.contact?.agentName).toBeNull();
   });
 
   it('E715: a malformed contact value is dropped (no link is ever built from it), and an all-empty contact is null', () => {
