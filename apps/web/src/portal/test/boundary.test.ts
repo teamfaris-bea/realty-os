@@ -180,6 +180,25 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     expect(previewImports).toBeGreaterThan(0);
   });
 
+  // SECURITY §2.3's rule for new code (every href or src built from data goes through design/safeUrl.ts) has one stated
+  // exception: the portal bundle, which cannot import it. There an href is built from data only in view/components.tsx's
+  // ContactCard (from view/contact.ts: smsHref, mailtoHref) and download.ts (a Blob's object URL, never a server string).
+  it('SECURITY §2.3 exception: portal hrefs built from data come only from view/contact.ts and download.ts\'s object URL, and the rule says so', () => {
+    const problems: string[] = [];
+    const allowed: Record<string, RegExp[]> = { 'portal/view/components.tsx': [/^href=\{a\.href\}$/], 'portal/download.ts': [/^\.href = href;?$/] };
+    for (const f of PORTAL_FILES) {
+      const src = code(f);
+      const uses = [...src.matchAll(/\b(?:href|src)=\{[^}]*\}|\.(?:href|src)\s*=\s*[^;\n]+;?/g)].map((m) => m[0].trim());
+      for (const u of uses) if (!(allowed[rel(f)] ?? []).some((r) => r.test(u))) problems.push(`${rel(f)}: ${u}`);
+    }
+    expect(problems).toEqual([]);
+    expect(code(join(PORTAL, 'view', 'components.tsx'))).toMatch(/smsHref\(contact\?\.textTo\)[\s\S]*mailtoHref\(contact\?\.emailTo\)/);
+    expect(code(join(PORTAL, 'download.ts'))).toMatch(/createObjectURL/);
+    const rule = readFileSync(resolve(SRC, '../../../docs/SECURITY.md'), 'utf8').split('\n').find((l) => l.startsWith('**Rule for new code:**'))!;
+    expect(rule).toMatch(/src\/portal\/view\/contact\.ts/);
+    expect(rule).toMatch(/download\.ts/);
+  });
+
   it('E717, R-PORTALWEB-9: no staff file names a client portal path (staff code never calls the client API)', () => {
     const problems: string[] = [];
     for (const f of STAFF_FILES) {

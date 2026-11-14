@@ -72,7 +72,7 @@ The client portal (module 46) sends its portal CSRF token (`x-csrf-token`, from 
 | Client portal text (module 46): grant titles, item titles and bodies, document names, the agent's name | React text with `dir="auto"` and wrapping; nothing is linkified; strict allowlist parsers (`src/portal/view/parse.ts`) keep only contract fields; the portal's only hrefs built from data are `sms:` and `mailto:` from `src/portal/view/contact.ts` (a validated E.164 number or one plain address), and the portal cannot import `design/safeUrl.ts` | safe |
 | Raw HTML | the codebase has no `dangerouslySetInnerHTML`, `innerHTML`, `document.write`, `eval` or `target=_blank` | safe |
 
-**Rule for new code:** every href or src built from data goes through `safeUrl`, and a new `target="_blank"` needs `rel="noopener noreferrer"`. Tests: `apps/web/src/design/safeUrl.test.ts`, `apps/web/src/shell/auth/SignIn.security.test.tsx`.
+**Rule for new code:** every href or src built from data goes through `safeUrl`, and a new `target="_blank"` needs `rel="noopener noreferrer"`. The one exception is the client portal bundle (module 46), which cannot import `design/safeUrl.ts`: there an href is built from data only by `src/portal/view/contact.ts` (`sms:` from a validated E.164 number, `mailto:` from one plain address, else none) and by `src/portal/download.ts` (the temporary object URL of a Blob it built itself, never a server string); `src/portal/test/boundary.test.ts` fails on any other. Tests: `apps/web/src/design/safeUrl.test.ts`, `apps/web/src/shell/auth/SignIn.security.test.tsx`.
 
 ### 2.4 Authentication
 
