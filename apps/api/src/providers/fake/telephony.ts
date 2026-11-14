@@ -60,6 +60,15 @@ export interface FakeCall {
   idempotencyKey: string;
 }
 
+/** How many fictional numbers (555-0150 to 555-0176) the fake sells in one area code. */
+export const FAKE_NUMBERS_PER_AREA = 27;
+/**
+ * Where the fake goes on once an area code's 27 are sold: every line (555-0100 to 555-0199) of these area codes, in
+ * order, shared by every area code asked for. No test writes a number in them (@realty/core/testing RESERVED_AREAS
+ * lists them, so bulk test numbers come to them last).
+ */
+export const FAKE_OVERFLOW_AREAS = ['210', '214', '215', '216', '217'] as const;
+
 export class FakeTelephony implements TelephonyProvider {
   readonly sms: FakeSms[] = [];
   readonly calls: FakeCall[] = [];
@@ -67,7 +76,9 @@ export class FakeTelephony implements TelephonyProvider {
   readonly numbers = new Map<string, { e164: string; accountRef: string; released: boolean }>();
   private readonly byKey = new Map<string, { providerRef: string; status: ProviderMessageStatus }>();
   private failures: FakeFailure[] = [];
-  private numberSeq = 0;
+  /** numbers bought so far, per area code */
+  private readonly boughtIn = new Map<string, number>();
+  private overflowSold = 0;
   /** registrationRef → status (default 'approved') */
   readonly registrations = new Map<string, 'pending' | 'approved' | 'rejected' | 'suspended'>();
 
@@ -185,10 +196,27 @@ export class FakeTelephony implements TelephonyProvider {
     if (m) m.status = status;
   }
 
+  /**
+   * b17 (B17R-2): a bought number is fictional, +1 <area> 555-0150 to 555-0176, in the requested area code (else 555),
+   * handed out in order per area code. The numbers tests write themselves sit below 555-0150 or from 555-0177 up, so a
+   * bought number never equals one of them. Once an area code's 27 are sold, the fake goes on in FAKE_OVERFLOW_AREAS (a
+   * test file's harness buys more than 27 team numbers in 415); when those run out too it refuses, as Twilio refuses an
+   * area code with nothing left, rather than reuse a number.
+   */
   async purchaseNumber(account: TelephonyAccount, opts: { areaCode?: string }) {
-    this.numberSeq += 1;
     const area = /^[2-9]\d{2}$/.test(opts.areaCode ?? '') ? opts.areaCode! : '555';
-    const e164 = `+1${area}${String(2_000_000 + this.numberSeq).padStart(7, '0')}`;
+    const n = this.boughtIn.get(area) ?? 0;
+    let e164: string;
+    if (n < FAKE_NUMBERS_PER_AREA) {
+      this.boughtIn.set(area, n + 1);
+      e164 = `+1${area}55501${50 + n}`;
+    } else {
+      const k = this.overflowSold;
+      const over = FAKE_OVERFLOW_AREAS[Math.floor(k / 100)];
+      if (over === undefined) throw new ProviderError('rejected', 'FAKE_NO_NUMBERS_LEFT');
+      this.overflowSold = k + 1;
+      e164 = `+1${over}55501${String(k % 100).padStart(2, '0')}`;
+    }
     const providerRef = ref('PN', `${account.accountRef}:${e164}`);
     this.numbers.set(providerRef, { e164, accountRef: account.accountRef, released: false });
     return { e164, providerRef };

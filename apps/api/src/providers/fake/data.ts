@@ -67,10 +67,14 @@ export class FakeDnc implements DncProvider {
 
 // ---- carrier ----------------------------------------------------------------------------------
 
-/** Line numbers (last 4 digits) starting with 8 are landlines, 7 VoIP, 6 unknown; everything else mobile. */
+/**
+ * The line number's third digit decides: 555-0180 to 555-0189 are landlines, 555-0170 to 555-0179 VoIP, 555-0160 to
+ * 555-0169 unknown; everything else is mobile. (Every test number is a fictional 555-01xx, b17 B17R-2, so the digit
+ * after "01" carries the type; it was the line's first digit before.)
+ */
 export class FakeCarrier implements CarrierLookup {
   async lookup(e164: string): Promise<{ lineType: LineType; carrier: string | null }> {
-    const sub = /^\+1\d{3}\d{3}(\d)\d{3}$/.exec(e164)?.[1];
+    const sub = /^\+1\d{3}\d{3}\d{2}(\d)\d$/.exec(e164)?.[1];
     const lineType: LineType = sub === '8' ? 'landline' : sub === '7' ? 'voip' : sub === '6' ? 'unknown' : 'mobile';
     return { lineType, carrier: lineType === 'unknown' ? null : `FakeCarrier-${(h(e164)[0]! % 3) + 1}` };
   }

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { testConfig } from '../auth/testHarness.js';
 import { FAKE_BAD_QUOTE, ProviderConfigError, ProviderError, createFakeProviders, createProviders, parseFakeSources } from './index.js';
+import { FAKE_NUMBERS_PER_AREA, FAKE_OVERFLOW_AREAS } from './fake/telephony.js';
 import { LocalFsStorage, StorageKeyError } from './storage.js';
 
 const clock = { now: () => 1_794_300_000_000 as never };
@@ -16,7 +17,7 @@ describe('fake providers are deterministic', () => {
   it('telephony: same inputs ⇒ same refs and numbers across instances; a repeated idempotency key never sends twice', async () => {
     const a = createFakeProviders({ clock }).telephony;
     const b = createFakeProviders({ clock }).telephony;
-    const req = { account, from: '+18435550001', to: '+18435550100', body: 'Hi', idempotencyKey: 'msg-1' };
+    const req = { account, from: '+18435550102', to: '+18435550100', body: 'Hi', idempotencyKey: 'msg-1' };
     const ra = await a.sendSms(req);
     expect(ra).toEqual(await b.sendSms(req));
     expect(await a.sendSms({ ...req, body: 'changed' })).toEqual(ra);
@@ -26,6 +27,25 @@ describe('fake providers are deterministic', () => {
     expect(await a.purchaseNumber(account, { areaCode: '843' })).toEqual(await b.purchaseNumber(account, { areaCode: '843' }));
     expect(await a.createSubaccount(T, 'x')).toEqual(await b.createSubaccount(T, 'y'));
     expect(await a.fetchRecording(account, 'RE1')).toEqual(await b.fetchRecording(account, 'RE1'));
+  });
+
+  it('b17 (B17R-2): telephony sells fictional numbers, 555-0150 to 555-0176 in the area code asked for (else 555), then the overflow area codes, then refuses', async () => {
+    const t = createFakeProviders({ clock }).telephony;
+    const bought = [(await t.purchaseNumber(account, { areaCode: '617' })).e164];
+    expect(bought[0]).toBe('+16175550150');
+    expect((await t.purchaseNumber(account, {})).e164).toBe('+15555550150');
+    expect((await t.purchaseNumber(account, { areaCode: '5x5' })).e164).toBe('+15555550151');
+    while (bought.length < FAKE_NUMBERS_PER_AREA) bought.push((await t.purchaseNumber(account, { areaCode: '617' })).e164);
+    expect(bought.at(-1)).toBe('+16175550176');
+    expect(new Set(bought).size).toBe(FAKE_NUMBERS_PER_AREA);
+    expect(bought.every((n) => /^\+16175550(1[5-6]\d|17[0-6])$/.test(n))).toBe(true);
+    // the 28th in 617 and the next in 555's place go on in the overflow area codes, every line of each, in order
+    expect((await t.purchaseNumber(account, { areaCode: '617' })).e164).toBe(`+1${FAKE_OVERFLOW_AREAS[0]}5550100`);
+    for (let i = 1; i < 100 * FAKE_OVERFLOW_AREAS.length; i++) {
+      const n = (await t.purchaseNumber(account, { areaCode: '617' })).e164;
+      expect(n).toBe(`+1${FAKE_OVERFLOW_AREAS[Math.floor(i / 100)]}55501${String(i % 100).padStart(2, '0')}`);
+    }
+    await expect(t.purchaseNumber(account, { areaCode: '617' })).rejects.toMatchObject({ kind: 'rejected', providerCode: 'FAKE_NO_NUMBERS_LEFT' });
   });
 
   it('telephony: injected failures; timeout_after_submit records the submit but throws (the dispatch_unknown case)', async () => {
@@ -51,9 +71,10 @@ describe('fake providers are deterministic', () => {
     expect((await a.dnc.scrub(['+18435550199', '+18435550100'])).map((r) => r.listed)).toEqual([true, false]);
     expect(await a.dnc.scrub(['+18435550100'])).toEqual(await b.dnc.scrub(['+18435550100']));
     expect((await a.carrier.lookup('+18435550100')).lineType).toBe('mobile');
-    expect((await a.carrier.lookup('+18435558100')).lineType).toBe('landline');
-    expect((await a.carrier.lookup('+18435557100')).lineType).toBe('voip');
-    expect(await a.carrier.lookup('+18435556100')).toEqual(await b.carrier.lookup('+18435556100'));
+    expect((await a.carrier.lookup('+18435550186')).lineType).toBe('landline');
+    expect((await a.carrier.lookup('+18435550174')).lineType).toBe('voip');
+    expect((await a.carrier.lookup('+18435550168')).lineType).toBe('unknown');
+    expect(await a.carrier.lookup('+18435550168')).toEqual(await b.carrier.lookup('+18435550168'));
     const p1 = await a.mls.changes(null, 2);
     expect(p1.listings).toHaveLength(2);
     expect(await a.mls.changes(p1.cursor, 10)).toEqual(await b.mls.changes(p1.cursor, 10));
