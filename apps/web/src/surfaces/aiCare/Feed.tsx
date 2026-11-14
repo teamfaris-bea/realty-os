@@ -20,7 +20,7 @@ import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
 import { localDate, localTime } from './time.js';
-import { CARE_STATE_WORDS, CONFIRMATION_NOT_SENT_SHORT, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, CONFIRMATION_NOT_SENT_SHORT, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, ackWhoWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -381,7 +381,7 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
           </Button>
         </div>
       ) : !d.canAcknowledge ? (
-        <p className="text-[14px] text-ink-muted">Only {holder && holder !== 'you' ? `${holder} or Owner/Admin` : 'Owner/Admin'} can mark this seen.</p>
+        <p className="text-[14px] text-ink-muted">{ackWhoWords({ holder, ownerUserId, viewerUserId: viewer.userId, ownerFirst: viewer.ownerFirst })}</p>
       ) : null}
       {sheet ? (
         <Dialog title="Handoff seen" onClose={() => setSheet(null)}>

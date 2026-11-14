@@ -153,6 +153,18 @@ export function handoffHolder(o: {
   return o.tookOver ? 'the person who took over' : 'someone else on the team';
 }
 export const NO_RECIPIENT_WORDS = 'The handoff went to the team leads and Owner/Admin.';
+/**
+ * b14 to-do (b13 review F3 wording remainder): who besides Owner/Admin may mark a handoff seen, for a viewer who may not
+ * (0081 isa_update): the person who took over (the recipient), and the lead's current owner. A recipient who is
+ * neither (an earlier owner, "someone else on the team") is not named: after an owner change they no longer see the lead.
+ */
+export function ackWhoWords(o: { holder: string | null; ownerUserId: string | null | undefined; viewerUserId: string | null; ownerFirst: string }): string {
+  const who: string[] = [];
+  if (o.holder === 'the person who took over') who.push(o.holder);
+  if (o.ownerUserId && o.ownerUserId !== o.viewerUserId) who.push(o.ownerFirst);
+  const all = [...who, 'Owner/Admin'];
+  return `Only ${all.length === 1 ? all[0] : `${all.slice(0, -1).join(', ')} or ${all[all.length - 1]}`} can mark this seen.`;
+}
 
 // ---- ISA-2b's package fields (isa/handoff.ts, isa/booking/book.ts; batch 13 isa-4 F6) -------------------------------
 

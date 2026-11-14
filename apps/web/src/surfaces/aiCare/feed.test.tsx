@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { card, draftAction, feed } from '../feed/lib/testing.js';
 import { FakeFetch, IDS, ISA_IDS, contactReads, handoffView, isaApp, iso, panel, row } from './testing.js';
+import { ackWhoWords } from './words.js';
 
 const handoffCard = (over = {}) =>
   card({ itemType: 'ai_isa_handoff', band: 'pinned', dueAt: iso(900_000), subjectType: 'ai_isa_handoff', subjectId: ISA_IDS.handoff, reasons: [{ code: 'AI_ISA_HANDOFF:escalated', label: 'AI care handed back to you' }], primaryAction: { kind: 'open_contact', label: 'Open', contactId: IDS.jane }, ...over });
@@ -66,9 +67,22 @@ describe('AI care feed cards (module 76)', () => {
   it("E521 V8: without canAcknowledge there is no Got it, and the line names who can; the deadline names the owner, never \"you\"", async () => {
     isaApp(feedOf([handoffCard()], { handoff: handoffView({ canAcknowledge: false, recipientUserId: null }) }), '/', 'team_lead', { userId: ISA_IDS.tl });
     const c = await screen.findByTestId('ai-card-ai_isa_handoff');
-    expect(await within(c).findByText('Only Owner/Admin can mark this seen.')).toBeInTheDocument();
+    // b14 to-do: the lead's current owner may mark it seen too (0081 isa_update), so they are named
+    expect(await within(c).findByText('Only Ava or Owner/Admin can mark this seen.')).toBeInTheDocument();
     expect(within(c).queryByRole('button', { name: 'Got it' })).toBeNull();
     expect(within(c).getByText(/from Ava or a collaborator does\./)).toBeInTheDocument();
+  });
+
+  it('R-ISA-30 (b14 to-do, b13 review F3 wording remainder): after an owner change the line names the lead\'s current owner, never the former recipient who no longer sees the lead', async () => {
+    isaApp(feedOf([handoffCard()], { handoff: handoffView({ canAcknowledge: false, recipientUserId: ISA_IDS.other }) }), '/', 'team_lead', { userId: ISA_IDS.tl });
+    const c = await screen.findByTestId('ai-card-ai_isa_handoff');
+    expect(await within(c).findByText('Only Ava or Owner/Admin can mark this seen.')).toBeInTheDocument();
+    expect(c.textContent).not.toMatch(/Only someone else on the team/);
+  });
+
+  it('R-ISA-30 (b14 to-do): a second team lead reads both the person who took over and the lead\'s owner', () => {
+    expect(ackWhoWords({ holder: 'the person who took over', ownerUserId: IDS.me, viewerUserId: ISA_IDS.other, ownerFirst: 'Ava' })).toBe('Only the person who took over, Ava or Owner/Admin can mark this seen.');
+    expect(ackWhoWords({ holder: null, ownerUserId: null, viewerUserId: ISA_IDS.tl, ownerFirst: 'their agent' })).toBe('Only Owner/Admin can mark this seen.');
   });
 
   it('R-ISA-30 ISA-2b Q1 (batch 13 isa-4 F4): after a team lead took over, the owner without Got it reads who can mark it seen, never "Only Owner/Admin" alone', async () => {
