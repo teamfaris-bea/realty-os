@@ -43,8 +43,10 @@ export const COPY = {
   sendLink: 'Send me a sign-in link',
   sending: 'Sending',
   useDifferent: 'Use a different email or number',
-  smsOff: "Sign-in links can't be sent by text message right now, so nothing was sent. Choose Email to get a link by email.",
-  // b15 audit F11: email off never sends the client to text messages, which may be off too (smsOff offers Email)
+  // b16: text off does not offer Email. 45 matches a request only to the account's own sign-in point (0091
+  // portal.request_login), so a client who signs in by phone gets nothing by email
+  smsOff: "Sign-in links can't be sent by text message right now, so nothing was sent. Try again later, or ask your agent.",
+  // b15 audit F11: email off never sends the client to text messages, which may be off too
   emailOff: "Sign-in links can't be sent by email right now, so nothing was sent. Try again later, or ask your agent.",
   // no team
   noTeamTitle: 'Open your invitation link',

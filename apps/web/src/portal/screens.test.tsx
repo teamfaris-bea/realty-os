@@ -134,14 +134,19 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     expect(r.seen.find((x) => x.key === 'POST /portal/login')!.body).toEqual({ team: 'harbor', address: '(555) 555-0123' });
   });
 
-  it('E706: a channel that cannot send: its sentence, nothing sent, Email still offered, the field kept', async () => {
+  // b16: 45's request_login matches only the account's sign-in point (0091 portal.request_login: a.login_point_id), so
+  // a client who signs in by phone gets nothing by email: text off says what emailOff says (try later, or ask your agent)
+  it('E706: a channel that cannot send: its sentence (nothing sent; try later or ask your agent, no promise of email), the field kept', async () => {
     renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => portalApiError('PORTAL_NOT_AVAILABLE', { channel: 'sms' }) } });
     await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
     await userEvent.click(screen.getByRole('radio', { name: COPY.byText }));
     await userEvent.type(screen.getByLabelText(COPY.phoneLabel), '5555550123');
     await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
     expect(await screen.findByText(COPY.smsOff, IGN)).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: COPY.byEmail })).toBeEnabled();
+    expect(COPY.smsOff).toMatch(/nothing was sent/);
+    expect(COPY.smsOff).not.toMatch(/Choose Email|by email/i);
+    expect(COPY.smsOff.endsWith('Try again later, or ask your agent.')).toBe(true);
+    expect(COPY.smsOff.slice(COPY.smsOff.indexOf('so nothing was sent'))).toBe(COPY.emailOff.slice(COPY.emailOff.indexOf('so nothing was sent')));
     expect(screen.getByLabelText(COPY.phoneLabel)).toHaveValue('5555550123');
   });
 
