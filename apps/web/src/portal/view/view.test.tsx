@@ -2,6 +2,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import * as F from '../test/fixtures.js';
+import { copyEntry } from '../test/portalContract.js';
 import { ContactCard, GrantBody, PreviewBanner } from './components.js';
 import { parseMe, parseTimeline } from './parse.js';
 import { VIEW_WORDS } from './words.js';
@@ -78,5 +79,15 @@ describe('view components (R-PORTALWEB-5)', () => {
     rerender(<PreviewBanner name="jane" visibleNow={false} why={[]} />);
     expect(screen.getByText("Jane can't see this now: " + VIEW_WORDS.previewGeneric)).toBeInTheDocument();
     expect(VIEW_WORDS.previewGeneric).toBe('the reason is not known.');
+  });
+
+  it('b15 review UI-6: every one of 45\'s reasons reads as one sentence after the colon: "This …" reasons are lowercased like "The …" ones', () => {
+    const { rerender } = render(<PreviewBanner name="Jane Doe" visibleNow={false} why={[copyEntry('NOT_VISIBLE', 'REVOKED')]} />);
+    expect(screen.getByText("Jane Doe can't see this now: this access was revoked, so the client no longer sees it.")).toBeInTheDocument();
+    for (const k of ['REVOKED', 'LAPSED', 'CONTACT_DELETED', 'PORTAL_OFF', 'NOT_SIGNED_IN', 'NOT_A_PARTY', 'DISABLED']) {
+      const reason = copyEntry('NOT_VISIBLE', k);
+      rerender(<PreviewBanner name="Jane Doe" visibleNow={false} why={[reason]} />);
+      expect(screen.getByText(/^Jane Doe can't see this now: /).textContent, k).not.toMatch(/: (The|This)\b/);
+    }
   });
 });

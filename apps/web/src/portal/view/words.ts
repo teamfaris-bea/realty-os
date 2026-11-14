@@ -35,6 +35,7 @@ function capitalize(s: string): string {
   return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
 }
 function lowerFirst(s: string): string {
-  // "The client portal is not turned on…" reads "…: the client portal is not turned on…"; a name stays as written
-  return /^The\b/.test(s) ? `t${s.slice(1)}` : s;
+  // "The client portal is not turned on…" reads "…: the client portal is not turned on…", and "This access was
+  // revoked…" reads "…: this access was revoked…" (b15 review UI-6: REVOKED, LAPSED, CONTACT_DELETED); a name stays as written
+  return /^(?:The|This)\b/.test(s) ? `t${s.slice(1)}` : s;
 }
