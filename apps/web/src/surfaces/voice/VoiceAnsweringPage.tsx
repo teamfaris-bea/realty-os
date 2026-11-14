@@ -128,7 +128,7 @@ function StateSection({ view, isOwner }: { view: AnsweringView; isOwner: boolean
       {view.reasons.length > 0 ? (
         <ul aria-label="What keeps it off" className="flex list-disc flex-col gap-1 pl-5 text-[15px] text-ink">
           {view.reasons.map((r) => (
-            <li key={r.code}>{reasonWords(r)}</li>
+            <li key={r.code}>{reasonWords(r, view.pack)}</li>
           ))}
         </ul>
       ) : null}

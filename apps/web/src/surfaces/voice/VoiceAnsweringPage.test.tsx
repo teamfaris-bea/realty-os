@@ -8,9 +8,9 @@ import { buildPageTable, navFor, pagesFor, tapsTo } from '../../shell/pages.js';
 import { surfaces } from '../../shell/registry.js';
 import { homeFallback } from '../../shell/shellSurface.js';
 import { StaffFake, staffError } from '../../test/staffContract.js';
-import { API_ATTESTATION, API_OWNER_ONLY_DISABLE, API_TEST_CALL_SENTENCE, IDS, NOT_ADMINS, RAW_CODE, answering, axeViolations, mountAs, pageText, session, testCall } from './testing.js';
+import { API_ATTESTATION, API_OWNER_ONLY_DISABLE, API_TEST_CALL_SENTENCE, IDS, NOT_ADMINS, RAW_CODE, answering, axeViolations, mountAs, pageText, reason, session, testCall } from './testing.js';
 import { UNKNOWN_SCRIPT_WORDS, VERSION_CONFLICT_WORDS } from './VoiceAnsweringPage.js';
-import { ADMIN_WIDEN_REASON, ANSWERING_REASON_WORDS, BOOKING_DRAFT_NOTE, DARK_WIDEN_REASON, NO_PLAYBOOK_TO_SIMULATE, VOICE_PAGE_PATH } from './words.js';
+import { ADMIN_WIDEN_REASON, ANSWERING_REASON_WORDS, BOOKING_DRAFT_NOTE, DARK_WIDEN_REASON, NOT_CLEARED_BOTH_RECORDED, NO_PLAYBOOK_TO_SIMULATE, VOICE_PAGE_PATH, reasonWords } from './words.js';
 
 const GET = 'GET /voice/answering';
 const PUT = 'PUT /voice/answering/settings';
@@ -49,6 +49,24 @@ describe('R-STAFF-1 E660: the state is the API state, every reason worded by its
     expect(screen.getByText(DARK_WIDEN_REASON)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.queryByRole('checkbox')).toBeNull();
+  });
+
+  it('b14 review F7: VOICE_NOT_CLEARED never contradicts the checks: with counsel review and the vendor check both recorded it says the voice service is not cleared yet; with one recorded it names only the other', async () => {
+    const both = answering('dark', { reasons: [reason('VOICE_NOT_CLEARED')], pack: { version: '2026.11.0', reviewedByCounselAt: '2026-11-02T15:00:00.000Z', vendorReady: true, cleared: false } });
+    const fake = new StaffFake().on(GET, { status: 200, body: both });
+    await open(fake);
+    const why = screen.getByRole('list', { name: 'What keeps it off' });
+    expect(why.textContent).toBe(NOT_CLEARED_BOTH_RECORDED);
+    expect(why.textContent).not.toMatch(/waits for counsel review|check of a real voice vendor/);
+    expect(screen.getByText('Counsel review recorded on Nov 2, 2026.')).toBeInTheDocument();
+    expect(screen.getByText('Voice vendor check recorded.')).toBeInTheDocument();
+  });
+
+  it('b14 review F7: with only counsel review recorded the reason waits for the vendor check alone, and the other way round', () => {
+    const r = { code: 'VOICE_NOT_CLEARED', sentence: 'x' };
+    expect(reasonWords(r, { reviewedByCounselAt: '2026-11-02T15:00:00.000Z', vendorReady: false })).toBe('AI answering waits for a check of a real voice vendor.');
+    expect(reasonWords(r, { reviewedByCounselAt: null, vendorReady: true })).toBe('AI answering waits for counsel review.');
+    expect(reasonWords(r, { reviewedByCounselAt: null, vendorReady: false })).toBe(ANSWERING_REASON_WORDS.VOICE_NOT_CLEARED);
   });
 
   it('off with only the Owner choice left: counsel and vendor recorded, provider, transfers and the playbook link', async () => {

@@ -39,8 +39,19 @@ export const ANSWERING_REASON_WORDS: Record<AnsweringReasonCode, string> = {
   VOICE_ANSWERING_OFF: 'The Owner has not turned AI answering on.',
 };
 
-/** One reason in words, by its code; an unknown code shows the server's sentence without codes. */
-export function reasonWords(r: { code: string; sentence: string }): string {
+/** b14 review F7: VOICE_NOT_CLEARED while counsel review and the vendor check are both recorded (the pack is then
+ *  missing something else the API requires, such as its response-time limit): never "waits for" either record. */
+export const NOT_CLEARED_BOTH_RECORDED = 'AI answering is not cleared on this deployment yet.';
+
+/** One reason in words, by its code; an unknown code shows the server's sentence without codes. VOICE_NOT_CLEARED
+ *  names only the record still missing, so it never contradicts the page's Checks list (b14 review F7). */
+export function reasonWords(r: { code: string; sentence: string }, pack?: { reviewedByCounselAt: string | null; vendorReady: boolean }): string {
+  if (r.code === 'VOICE_NOT_CLEARED' && pack) {
+    const counsel = pack.reviewedByCounselAt !== null;
+    if (counsel && pack.vendorReady) return NOT_CLEARED_BOTH_RECORDED;
+    if (counsel) return 'AI answering waits for a check of a real voice vendor.';
+    if (pack.vendorReady) return 'AI answering waits for counsel review.';
+  }
   return wordFor(ANSWERING_REASON_WORDS, r.code, withoutCodes(r.sentence) || 'Another check is not met yet.');
 }
 

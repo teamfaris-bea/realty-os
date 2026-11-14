@@ -38,7 +38,7 @@ export const API_VENDOR_NOT_CONFIGURED_TEXT = 'No voice vendor is set up on this
 /** apps/api/src/voice/routes.ts:32 TEST_CALL_SENTENCE */
 export const API_TEST_CALL_SENTENCE = 'Simulation with a scripted caller. No call was placed and nothing was saved.';
 
-const reason = (code: keyof typeof API_REASON_SENTENCES) => ({ code, sentence: API_REASON_SENTENCES[code] });
+export const reason = (code: keyof typeof API_REASON_SENTENCES) => ({ code, sentence: API_REASON_SENTENCES[code] });
 
 /** GET /voice/answering as the API answers it in each state. */
 export function answering(state: 'dark' | 'off' | 'off_blocked' | 'on', over: Partial<AnsweringView> = {}): AnsweringView {
