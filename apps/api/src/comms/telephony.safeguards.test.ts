@@ -216,6 +216,10 @@ describe('R-TWL-2 per-tenant daily cap on texts and calls (enforced in dispatch 
     await setCap(200, 5);
     await expect(h.su.query('UPDATE telephony_daily_usage SET sends = 1 WHERE tenant_id = $1', [w.tenantId])).rejects.toThrow(/TELEPHONY_USAGE_COUNTS_UP/);
     await expect(h.su.query("UPDATE telephony_daily_usage SET day = day - 1 WHERE tenant_id = $1", [w.tenantId])).rejects.toThrow(/TELEPHONY_USAGE_COUNTS_UP/);
+    // b14 review R1 (0090): the sign-in texts' own count only counts up too, and never exceeds the day's sends
+    await h.su.query('UPDATE telephony_daily_usage SET portal_link_sends = 2 WHERE tenant_id = $1', [w.tenantId]);
+    await expect(h.su.query('UPDATE telephony_daily_usage SET portal_link_sends = 1 WHERE tenant_id = $1', [w.tenantId])).rejects.toThrow(/TELEPHONY_USAGE_COUNTS_UP/);
+    await expect(h.su.query('UPDATE telephony_daily_usage SET portal_link_sends = 6 WHERE tenant_id = $1', [w.tenantId])).rejects.toThrow(/portal_link_within_sends/);
     await setCap(200, 0);
   });
 });

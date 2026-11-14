@@ -2711,6 +2711,7 @@ export interface TelephonyDailyUsageTable {
   day: string;
   sends: number;
   updated_at: Generated<Timestamp>;
+  portal_link_sends: Generated<number>;
 }
 
 /** public.tenant_keys (table) */

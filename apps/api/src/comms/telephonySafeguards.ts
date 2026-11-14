@@ -6,7 +6,9 @@
 //            here: the one sentence every path answers with, and the reason codes that are never an opt-out,
 //            never retried and never reconciled.
 //   R-TWL-2  daily cap: claimTelephonySend, one unit per outbound text or call through the real adapter, inside the
-//            send-time transaction (TX1); the STOP confirmation and HELP reply are exempt.
+//            send-time transaction (TX1); the STOP confirmation and HELP reply are exempt. A client's sign-in link
+//            text (portal_login_link, asked for on a public route) claims through claimPortalLinkSend: it also counts
+//            toward a share of the cap of its own, so anonymous requests never spend the team's budget (b14 review R1).
 //   R-TWL-9  unverified sender (Twilio 30032 toll-free / 30034 unregistered 10DLC): SENDER_NOT_VERIFIED, the NUMBER
 //            marked not ready to text in the same transaction (never its shared registration; b9 review sends/F1), one
 //            Owner/Admin notice per number per day.
@@ -14,6 +16,7 @@
 // OWNER DEFAULTS (open owner questions; each is ONE constant here, so one edit changes it):
 //   UNVERIFIED_SENDER_BLOCKS_CALLS   false  an unverified sender blocks texts only; calls keep working
 //   DEFAULT_DAILY_CAP                200    tenant_settings.telephony_daily_cap default (the column is the setting)
+//   PORTAL_LINK_CAP_PERCENT          10     the share of that cap sign-in link texts may use a day (b14 review R1)
 //   (the others live where they act: comms/mmsText.ts TEXT_PART_MAX_BYTES / PLATFORM_CONFIRMS_PART_STOP,
 //    comms/inbound.ts OPTOUTTYPE handling: YES is not an opt-in keyword; Advanced Opt-Out stays off at Twilio)
 import type { ActionCategory } from '@realty/core/compliance';
@@ -40,6 +43,14 @@ export const SENDER_NOT_VERIFIED_SENTENCE = "Not delivered: the team's number is
 export const UNVERIFIED_SENDER_BLOCKS_CALLS = false;
 /** Owner default (R-TWL-2): matches the migration's column default. */
 export const DEFAULT_DAILY_CAP = 200;
+/**
+ * Owner default (b14 review R1, owner question Q-PORTAL-17): the percentage of the tenant's daily cap that client
+ * sign-in link texts may use a tenant-local day, rounded down (a cap of 200 gives 20; a cap under 10 gives none, so
+ * the link is refused and the client can still ask for it by email).
+ */
+export const PORTAL_LINK_CAP_PERCENT = 10;
+/** b14 review R1: the gate reason sentence (gateInput.ts DISPATCH_DENY_SENTENCES.PORTAL_LINK_DAILY_CAP_REACHED). */
+export const PORTAL_LINK_CAP_SENTENCE = "Today's limit on sign-in link texts for this team is reached.";
 
 /**
  * Twilio error codes meaning the SENDER is not verified for texting (R-TWL-9). Never an opt-out, never retried.
@@ -70,6 +81,31 @@ export async function claimTelephonySend(tx: Tx): Promise<boolean> {
      WHERE u.sends < (SELECT s2.telephony_daily_cap FROM tenant_settings s2 WHERE s2.tenant_id = u.tenant_id)
     RETURNING u.sends`.execute(tx);
   return r.rows.length === 1;
+}
+
+/**
+ * R-TWL-2 for a client's sign-in link text (b14 review R1): one statement raises the day's `sends` and
+ * `portal_link_sends` together, only while sends < the cap AND portal_link_sends < PORTAL_LINK_CAP_PERCENT of the
+ * cap (0090), under the same row lock as claimTelephonySend (E380). null = the link may go; else the reason it may
+ * not, and nothing is written: DAILY_SEND_CAP_REACHED when the team's cap itself is reached, otherwise
+ * PORTAL_LINK_DAILY_CAP_REACHED. The public sign-in route therefore spends at most that share of the team's budget.
+ */
+export async function claimPortalLinkSend(tx: Tx): Promise<'DAILY_SEND_CAP_REACHED' | 'PORTAL_LINK_DAILY_CAP_REACHED' | null> {
+  const r = await sql<{ sends: number }>`
+    INSERT INTO telephony_daily_usage AS u (tenant_id, day, sends, portal_link_sends)
+    SELECT s.tenant_id, (now() AT TIME ZONE s.default_timezone)::date, 1, 1
+      FROM tenant_settings s WHERE s.tenant_id = app.tenant_id() AND s.telephony_daily_cap * ${PORTAL_LINK_CAP_PERCENT}::int / 100 >= 1
+    ON CONFLICT (tenant_id, day) DO UPDATE SET sends = u.sends + 1, portal_link_sends = u.portal_link_sends + 1
+     WHERE u.sends < (SELECT s2.telephony_daily_cap FROM tenant_settings s2 WHERE s2.tenant_id = u.tenant_id)
+       AND u.portal_link_sends < (SELECT s2.telephony_daily_cap * ${PORTAL_LINK_CAP_PERCENT}::int / 100 FROM tenant_settings s2 WHERE s2.tenant_id = u.tenant_id)
+    RETURNING u.sends`.execute(tx);
+  if (r.rows.length === 1) return null;
+  const f = await sql<{ full: boolean }>`
+    SELECT COALESCE(u.sends >= s.telephony_daily_cap, false) AS full
+      FROM tenant_settings s
+      LEFT JOIN telephony_daily_usage u ON u.tenant_id = s.tenant_id AND u.day = (now() AT TIME ZONE s.default_timezone)::date
+     WHERE s.tenant_id = app.tenant_id()`.execute(tx);
+  return f.rows[0]?.full === true ? 'DAILY_SEND_CAP_REACHED' : 'PORTAL_LINK_DAILY_CAP_REACHED';
 }
 
 // ---- R-TWL-9: unverified sender ---------------------------------------------------------------------------

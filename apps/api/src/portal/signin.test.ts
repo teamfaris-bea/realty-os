@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, TEST_ORIGIN, createApiHarness } from '../auth/testHarness.js';
 import { reconcileOutbound } from '../comms/dispatch.js';
 import { depsFromPlatform } from '../comms/runtime.js';
+import { PORTAL_LINK_CAP_SENTENCE } from '../comms/telephonySafeguards.js';
+import { ownedContact } from '../comms/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { linkChannels } from './signin/delivery.js';
 import { linkExpireInTx } from './signin/links.js';
@@ -311,5 +313,71 @@ describe('R-PORTAL-11 the sign-in link (E682-E685)', () => {
     const c = await invited({ firstName: 'Zed' });
     const pc = await signIn(h, slug, c.email, new PortalClient(h, ip()));
     expect((await pc.get('/api/portal/me')).statusCode).toBe(200);
+  });
+});
+
+describe('R-PORTAL-12, R-TWL-2: sign-in texts spend only a bounded share of the team\'s daily text cap (b14 review R1)', () => {
+  it('b14 review R1: anonymous link requests for a phone client spend at most a tenth of the cap; past that a link is blocked PORTAL_LINK_DAILY_CAP_REACHED, claims nothing, and a person\'s next text still goes', async () => {
+    const agent = w.agents[0]!;
+    const c = await client(agent, { firstName: 'Pat' });
+    const d = await deal(agent, c.id);
+    const phone = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'`, [c.id])).rows[0]!.id;
+    const inv = await invite(agent, d, c.id, { loginPointId: phone });
+    expect(inv.status, JSON.stringify(inv.body)).toBe(200);
+    await h.su.query('UPDATE tenant_settings SET telephony_daily_cap = 20 WHERE tenant_id = $1', [w.tenantId]);
+    await h.su.query('DELETE FROM telephony_daily_usage WHERE tenant_id = $1', [w.tenantId]);
+    // a real text channel (Twilio with live requests): the cap is on (depsFromPlatform), and text links are 'real'
+    const cfg = h.app.platform.config as unknown as { providers: { telephony: string }; telephonyLiveRequests: boolean };
+    const saved = { t: cfg.providers.telephony, live: cfg.telephonyLiveRequests };
+    cfg.providers.telephony = 'twilio';
+    cfg.telephonyLiveRequests = true;
+    try {
+      const before = h.providers.telephony.sms.length;
+      for (let i = 0; i < 4; i++) expect((await askLink(h, slug, c.phone, ip())).statusCode).toBe(202);
+      const links = await h.su.query<{ status: string; status_reason: string | null; gate_decision_id: string | null }>(
+        `SELECT status, status_reason, gate_decision_id FROM messages WHERE contact_id = $1 AND action_category = 'portal_login_link' ORDER BY created_at`,
+        [c.id],
+      );
+      // a cap of 20 lets sign-in texts use 2 units a day; the third and fourth are refused with their own reason
+      expect(links.rows.map((m) => [m.status, m.status_reason])).toEqual([
+        ['sent', null],
+        ['sent', null],
+        ['blocked', 'PORTAL_LINK_DAILY_CAP_REACHED'],
+        ['blocked', 'PORTAL_LINK_DAILY_CAP_REACHED'],
+      ]);
+      const dec = await h.su.query<{ reason_codes: string[]; explanation: string }>('SELECT reason_codes, explanation FROM gate_decisions WHERE id = $1', [links.rows[3]!.gate_decision_id]);
+      expect(dec.rows[0]!.reason_codes).toContain('PORTAL_LINK_DAILY_CAP_REACHED');
+      expect(dec.rows[0]!.explanation).toContain(PORTAL_LINK_CAP_SENTENCE);
+      expect(h.providers.telephony.sms.length - before).toBe(2);
+      const usage = await h.su.query<{ sends: number; portal_link_sends: number }>('SELECT sends, portal_link_sends FROM telephony_daily_usage WHERE tenant_id = $1', [w.tenantId]);
+      expect(usage.rows).toEqual([{ sends: 2, portal_link_sends: 2 }]);
+      // the agent's own text still goes, and claims the team's budget as usual
+      const other = await ownedContact(agent, { consent: false });
+      const sent = await call<{ message: { id: string } | null }>(agent, 'POST', `/contacts/${other.id}/messages`, { channel: 'sms', body: 'Are you free to see the house at 4?', idempotencyKey: randomUUID().replace(/-/g, '') });
+      expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+      const m = await h.su.query<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM messages WHERE id = $1', [sent.body.message?.id]);
+      expect(m.rows[0]).toEqual({ status: 'sent', status_reason: null });
+      expect((await h.su.query<{ sends: number }>('SELECT sends FROM telephony_daily_usage WHERE tenant_id = $1', [w.tenantId])).rows[0]!.sends).toBe(3);
+      // a cap under 10 leaves sign-in texts no share at all: the link is refused and the team's budget untouched
+      await h.su.query('UPDATE tenant_settings SET telephony_daily_cap = 9 WHERE tenant_id = $1', [w.tenantId]);
+      await h.su.query('DELETE FROM telephony_daily_usage WHERE tenant_id = $1', [w.tenantId]);
+      await h.su.query(`UPDATE portal_login_tokens SET created_at = created_at - interval '2 hours', expires_at = expires_at - interval '2 hours' WHERE portal_account_id = $1`, [inv.body.account.id]);
+      expect((await askLink(h, slug, c.phone, ip())).statusCode).toBe(202);
+      const last = await h.su.query<{ status: string; status_reason: string | null }>(`SELECT status, status_reason FROM messages WHERE contact_id = $1 AND action_category = 'portal_login_link' ORDER BY created_at DESC LIMIT 1`, [c.id]);
+      expect(last.rows[0]).toEqual({ status: 'blocked', status_reason: 'PORTAL_LINK_DAILY_CAP_REACHED' });
+      expect((await h.su.query('SELECT sends FROM telephony_daily_usage WHERE tenant_id = $1', [w.tenantId])).rows).toEqual([]);
+      // the team's own cap reached by people's texts: a link is refused with the team's reason, as before
+      await h.su.query('UPDATE tenant_settings SET telephony_daily_cap = 20 WHERE tenant_id = $1', [w.tenantId]);
+      await h.su.query(`INSERT INTO telephony_daily_usage (tenant_id, day, sends) SELECT tenant_id, (now() AT TIME ZONE default_timezone)::date, 20 FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId]);
+      await h.su.query(`UPDATE portal_login_tokens SET created_at = created_at - interval '2 hours', expires_at = expires_at - interval '2 hours' WHERE portal_account_id = $1`, [inv.body.account.id]);
+      expect((await askLink(h, slug, c.phone, ip())).statusCode).toBe(202);
+      const full = await h.su.query<{ status: string; status_reason: string | null }>(`SELECT status, status_reason FROM messages WHERE contact_id = $1 AND action_category = 'portal_login_link' ORDER BY created_at DESC LIMIT 1`, [c.id]);
+      expect(full.rows[0]).toEqual({ status: 'blocked', status_reason: 'DAILY_SEND_CAP_REACHED' });
+      expect((await h.su.query('SELECT sends, portal_link_sends FROM telephony_daily_usage WHERE tenant_id = $1', [w.tenantId])).rows).toEqual([{ sends: 20, portal_link_sends: 0 }]);
+    } finally {
+      cfg.providers.telephony = saved.t;
+      cfg.telephonyLiveRequests = saved.live;
+      await h.su.query('UPDATE tenant_settings SET telephony_daily_cap = 200 WHERE tenant_id = $1', [w.tenantId]);
+    }
   });
 });

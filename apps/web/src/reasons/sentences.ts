@@ -138,6 +138,8 @@ const BLOCKED: Record<string, string> = {
   PERSON_DO_NOT_CONTACT: 'they asked not to be contacted',
   // R-TWL-2: the team's daily telephony cap (the gate's own sentence: "Today's sending limit for this team is reached.")
   DAILY_SEND_CAP_REACHED: "today's sending limit for this team is reached",
+  // R-TWL-2 (b14 review R1): the share of that cap a client's sign-in link texts may use (the gate's own sentence)
+  PORTAL_LINK_DAILY_CAP_REACHED: "today's limit on sign-in link texts for this team is reached",
   // R-TWL-1 (b9 review ownership-data/F4): the kill switch, refused before the send (the gate's own sentence)
   TELEPHONY_LIVE_OFF: 'live texting and calling are off on this deployment',
   // a dispatch guard's own refusal with no gate code for the same fact

@@ -60,7 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
-import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
+import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
   /** the message's tenant (from the session, a job row or a webhook resolver; R-TEN-3) */
@@ -258,10 +258,15 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     verdict = verdictOf(evaluated.decision, extra);
   }
   // R-TWL-2: an allowed text through the real adapter claims a unit of today's cap in THIS transaction (a rollback
-  // returns it); the platform's STOP confirmation / HELP reply is exempt (E381). Over the cap ⇒ a recorded deny.
-  if (verdict.outcome === 'allow' && channel === 'sms' && c.deps.telephonyDailyCap === true && countsTowardDailyCap(m.actionCategory) && !(await claimTelephonySend(tx))) {
-    extra.push('DAILY_SEND_CAP_REACHED');
-    verdict = verdictOf(evaluated.decision, extra);
+  // returns it); the platform's STOP confirmation / HELP reply is exempt (E381). Over the cap ⇒ a recorded deny. A
+  // client's sign-in link (asked for on a public route) also needs a unit of its own share of the cap, so anonymous
+  // requests never spend the team's budget (b14 review R1; over the share it is refused and claims nothing).
+  if (verdict.outcome === 'allow' && channel === 'sms' && c.deps.telephonyDailyCap === true && countsTowardDailyCap(m.actionCategory)) {
+    const refused = m.actionCategory === 'portal_login_link' ? await claimPortalLinkSend(tx) : (await claimTelephonySend(tx)) ? null : 'DAILY_SEND_CAP_REACHED';
+    if (refused !== null) {
+      extra.push(refused);
+      verdict = verdictOf(evaluated.decision, extra);
+    }
   }
 
   // R-ISA-25: AI_ISA_LIVE_SENDS=false refuses an AI ISA message on a non-fake adapter (a hold, never an opt-out)
