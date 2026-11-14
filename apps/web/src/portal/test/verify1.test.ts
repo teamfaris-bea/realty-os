@@ -28,6 +28,10 @@ export const VERIFY_1_WORDS: readonly string[] = [
   COPY.unavailableTitle,
   API_SENTENCES.PORTAL_NOT_AVAILABLE,
   COPY.nothingSent,
+  // b16 (L16-1): the sign-in page's answers when texting or email is off, which batch 16 (smsOff) and batch 15 F11
+  // (emailOff) reworded; counsel sees them before platform:portal is recorded
+  COPY.smsOff,
+  COPY.emailOff,
   previewVisible('{name}'),
   previewHidden('{name}', '{reason}'),
 ];
