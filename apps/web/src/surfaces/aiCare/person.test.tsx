@@ -91,14 +91,14 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(await within(strip).findByRole('link', { name: 'The handoff is in your feed.' })).toHaveAttribute('href', '/');
   });
 
-  it('R-ISA-14 E533 R-ISA-30 (b13 review B13S-3 / F4-ui): the panel never asks for a hand confirmation D1 blocks, nor after a person on the team called, texted or emailed them first (an attempt, b18 review F2)', async () => {
+  it('R-ISA-14 E533 R-ISA-30 (b13 review B13S-3 / F4-ui): the panel never asks for a hand confirmation D1 blocks, nor after a call with them or a message from someone on the team came first (ISA_HANDOFF_CLOSED; b18 review F2, item 5a)', async () => {
     const ended = (h: Partial<NonNullable<PanelResponse['handoff']>>) => panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'appointment_booked', slaClass: 'none', slaDueAt: iso(0), slaMetAt: null, overdue: false, confirmationStatus: 'refused', confirmationNotSent: 'unreachable', closedReason: null, ...h } });
     const v = isaApp(person(ended({}), { live: false }), `/contacts/${IDS.jane}`, 'agent');
     expect(await screen.findByText('Confirmation not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/confirm by hand\./);
     v.view.unmount();
     isaApp(person(ended({ slaClass: 'critical', slaMetAt: iso(-60_000), confirmationNotSent: 'not_needed' }), { live: false }), `/contacts/${IDS.jane}`, 'agent');
-    expect(await screen.findByText('AI confirmation not sent: someone on the team called, texted or emailed them first (an attempt, answered or not).')).toBeInTheDocument(); // b18 review F2
+    expect(await screen.findByText("AI confirmation not sent: after the handoff there was a call with them (theirs or the team's, answered or missed) or a text, email or chat reply from someone on the team.")).toBeInTheDocument(); // b18 review F2, item 5a
     expect(document.body.textContent).not.toMatch(/confirm by hand/);
   });
 

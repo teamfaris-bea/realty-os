@@ -19,14 +19,16 @@ const CLAIMS_CONTACT = /reached them|reached the|(?:was|were) reached|connected 
 const here = dirname(fileURLToPath(import.meta.url));
 
 describe('E724 (b18 review F2): what a human touch closes or decides is worded as an attempt', () => {
-  it('E724 R-ISA-30 (b18 review F2): a handoff closed by a touch says someone called, texted or emailed them in time, an attempt answered or not, never that they were reached', () => {
-    expect(CLOSED_REASON_WORDS.deadline_met).toBe('Closed: someone on the team called, texted or emailed them in time (an attempt, answered or not).');
+  it('E724 R-ISA-30 (b18 review F2, item 5a): a handoff closed by a touch says someone called, texted, emailed or replied in the chat in time, an attempt answered or not, never that they were reached', () => {
+    expect(CLOSED_REASON_WORDS.deadline_met).toBe('Closed: someone on the team called, texted, emailed or replied in the website chat in time (an attempt, answered or not).'); // b18 review item 5a: a chat reply meets it too (R-OWN-14, D8)
     for (const w of Object.values(CLOSED_REASON_WORDS)) expect(w).not.toMatch(CLAIMS_CONTACT);
   });
 
-  it('E724 R-ISA-14 E533 (b18 review F2): the AI confirmation held back after a person\'s attempt says it was an attempt, in the panel and on the feed line', () => {
-    expect(CONFIRMATION_NOT_SENT_WORDS.not_needed).toBe('AI confirmation not sent: someone on the team called, texted or emailed them first (an attempt, answered or not).');
-    expect(CONFIRMATION_NOT_SENT_SHORT.not_needed).toBe('not sent: the team called, texted or emailed them first');
+  it('E724 R-ISA-14 E533 (b18 review F2, item 5a): the AI confirmation held back says what holds it back: any call with them (theirs or the team\'s, answered or missed) or a message from someone on the team, in the panel and on the feed line', () => {
+    // b18 review item 5a: ISA_HANDOFF_CLOSED (0083's guard) holds it back after ANY call with them (theirs or the team's,
+    // answered or missed) and after any message from someone on the team (a text, email or chat reply), so the words say that
+    expect(CONFIRMATION_NOT_SENT_WORDS.not_needed).toBe("AI confirmation not sent: after the handoff there was a call with them (theirs or the team's, answered or missed) or a text, email or chat reply from someone on the team.");
+    expect(CONFIRMATION_NOT_SENT_SHORT.not_needed).toBe('not sent: a call or a team message came after the handoff');
     for (const w of [...Object.values(CONFIRMATION_NOT_SENT_WORDS), ...Object.values(CONFIRMATION_NOT_SENT_SHORT)]) expect(w).not.toMatch(CLAIMS_CONTACT);
   });
 

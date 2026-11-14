@@ -975,8 +975,10 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     expect(notes.rows).toHaveLength(0);
     const card = (await h.su.query<{ reasons: { code: string; text: string }[] }>(`SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type = 'ai_isa_handoff'`, [l.id])).rows[0]!;
     expect(card.reasons[0]!.code).toBe('AI_ISA_CONFIRMATION_NOT_NEEDED');
-    // b18 review F2 (E724): a person's touch is an attempt (R-OWN-14), so the card never says they were reached
-    expect(card.reasons[0]!.text).toBe('Someone on the team called, texted or emailed them first (an attempt, answered or not), so the AI confirmation was not sent.');
+    // b18 review F2 (E724), item 5a: the guard holds it back after any call with them or any message from someone on the
+    // team (0083: ISA_HANDOFF_CLOSED), so the card says exactly that and never that they were reached
+    expect(card.reasons[0]!.text).toBe("After the handoff there was a call with them (theirs or the team's, answered or missed) or a text, email or chat reply from someone on the team, so the AI confirmation was not sent.");
+    expect((await h.su.query<{ explanation: string }>('SELECT explanation FROM gate_decisions WHERE message_id = $1', [m.id])).rows[0]!.explanation).toContain("AI care handed back: only its pending confirmation or holding line may go, and not once there has been a call with them or a message from someone on the team.");
     // nothing hot: no confirmation-not-sent notification (`notes` above) and the card is not re-scored
     expect(card.reasons.map((r) => r.code)).not.toContain('AI_ISA_CONFIRMATION_NOT_SENT');
     expect((await handoffOf(h, l.id))[0]!.confirmation_status).toBe('refused');

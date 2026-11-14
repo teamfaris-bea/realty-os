@@ -91,7 +91,7 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
     WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND pending_message_id = ${messageId} AND confirmation_status IN ('queued','scheduled')
     RETURNING id, contact_id, recipient_user_id`.execute(tx));
   // item 9 (R-ISA-14 E533): an appointment confirmation that did not go out makes the card critical; ISA_HANDOFF_CLOSED
-  // (a person on the team called, texted or emailed them first: an attempt, b18 review F2) only says so
+  // (a call with them, theirs or the team's, or a message from someone on the team came after the handoff: b18 review F2, item 5a) only says so
   if (!ok && ho.rows[0] && r.category === 'ai_isa_confirmation') {
     await confirmationNotSentInTx(tx, deps.ids, { id: ho.rows[0].id, assignmentId: a.id, contactId: ho.rows[0].contact_id, recipientUserId: ho.rows[0].recipient_user_id },
       (r.reason ?? '').startsWith('ISA_HANDOFF_CLOSED') ? 'closed' : 'not_sent', now);

@@ -432,13 +432,15 @@ export const CONFIRMATION_WORDS: Record<string, string> = {
 /**
  * b13 review B13S-3 / F4-ui: a confirmation that did not go out is said as the API decides it (confirmationNotSent):
  * never "confirm by hand" when D1 leaves the person no text, call or email (718451fe's card: keep or cancel the
- * appointment), nor when a person on the team called, texted or emailed them first (nothing to do). b18 review F2
+ * appointment), nor when the guard held it back after a call with them or a message from someone on the team (nothing to do;
+ * ISA_HANDOFF_CLOSED, 0083: any call, theirs or the team's, answered or missed, and any text, email or chat reply from
+ * the team; b18 review item 5a). b18 review F2
  * (E724): that touch is an attempt (R-OWN-14: a dialed call, answered or not), so the words never say they were reached.
  */
 export const CONFIRMATION_NOT_SENT_WORDS: Record<string, string> = {
   by_hand: 'Confirmation not sent: confirm by hand.',
   unreachable: 'Confirmation not sent, and no text, call or email can reach them now, so it cannot be confirmed by hand: keep or cancel the appointment.',
-  not_needed: 'AI confirmation not sent: someone on the team called, texted or emailed them first (an attempt, answered or not).',
+  not_needed: "AI confirmation not sent: after the handoff there was a call with them (theirs or the team's, answered or missed) or a text, email or chat reply from someone on the team.",
 };
 /** b14 to-do (b13 review F8-ui low): a holding line's status, as the thread words it (handoff confirmation_status). */
 export const HOLDING_WORDS: Record<string, string> = {
@@ -450,7 +452,7 @@ export const HOLDING_WORDS: Record<string, string> = {
 };
 export const confirmationWords = (s: string, notSent?: string | null) => (notSent ? CONFIRMATION_NOT_SENT_WORDS[notSent] : undefined) ?? CONFIRMATION_WORDS[s] ?? OTHER_CHECK;
 /** The short form on the feed card's line ("· not sent: …"). */
-export const CONFIRMATION_NOT_SENT_SHORT: Record<string, string> = { by_hand: 'not sent: confirm by hand', unreachable: 'not sent: keep or cancel the appointment', not_needed: 'not sent: the team called, texted or emailed them first' };
+export const CONFIRMATION_NOT_SENT_SHORT: Record<string, string> = { by_hand: 'not sent: confirm by hand', unreachable: 'not sent: keep or cancel the appointment', not_needed: 'not sent: a call or a team message came after the handoff' };
 
 // ---- handoff deadlines and closes (0081: sla_class 'none', b12 review B12X-2; closed_reason, b12 recheck R19, R23) ----
 
@@ -461,7 +463,7 @@ export const noDeadlineWords = (first: string) => `No deadline: no call, text or
 /** Why the system closed a handoff (it is done; never overdue). b18 review F2 (E724): deadline_met is a human touch, an
  *  attempt (R-OWN-14), never "reached them". */
 export const CLOSED_REASON_WORDS: Record<HandoffClosedReason, string> = {
-  deadline_met: 'Closed: someone on the team called, texted or emailed them in time (an attempt, answered or not).',
+  deadline_met: 'Closed: someone on the team called, texted, emailed or replied in the website chat in time (an attempt, answered or not).',
   acknowledged: 'Closed: it was acknowledged, and it had no deadline.',
   lead_closed: 'Closed: the lead was closed.',
   care_restarted: 'Closed: AI care started again.',

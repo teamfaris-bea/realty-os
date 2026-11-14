@@ -159,7 +159,9 @@ export const DISPATCH_DENY_SENTENCES = {
   ISA_PAUSED: 'AI care is paused, so the AI assistant did not send this.',
   ISA_STALE_EPOCH: 'AI care was paused and resumed after this was written, so it did not go out.',
   ISA_STALE_REPLY: 'The person wrote again after this was written; the AI assistant will answer both.',
-  ISA_HANDOFF_CLOSED: 'AI care handed back; only its pending confirmation may go.',
+  // b18 review item 5a: 0083's guard raises it for any call with them (theirs or the team's, answered or missed) and any
+  // text, email or chat reply from someone on the team after the handoff, or for any other AI message after it
+  ISA_HANDOFF_CLOSED: 'AI care handed back: only its pending confirmation or holding line may go, and not once there has been a call with them or a message from someone on the team.',
   ISA_SHARED_ADDRESS: 'Another person shares this address, so AI care stopped.',
   ISA_ACTIVE_CLIENT: 'This person is a client on an open deal or listing, so AI care stopped.',
   ISA_UNREAD_PART: 'A part of their message has not been read yet, so the AI assistant waited.',
