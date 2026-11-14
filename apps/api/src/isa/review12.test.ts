@@ -4,6 +4,7 @@ import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { depsFromPlatform } from '../comms/runtime.js';
+import { inboundSms } from '../comms/testing.js';
 import { command } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { slaSweepInTx } from './handoff.js';
@@ -89,6 +90,27 @@ describe('b12 review F1, F6, B12X-3: a merge that ends live AI care on the merge
     await touch(survivor.id);
     expect(await ageAndSweep(ho!.id)).toMatchObject({ met: 1, escalated: 0 });
     expect(await overdue([loser.id, survivor.id])).toBe(0);
+  });
+});
+
+describe('b14 to-do (b13 review B13-MRG-3 side effect): the "they replied" card of care a merge ended (R-ISA-16; E526)', () => {
+  it('R-ISA-16 E526: a reply card on the merged-away record does not stay open once the merge ends its care; the handoff on the survivor carries on', async () => {
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const loser = await isaLead(h, a0);
+    const survivor = await isaLead(h, a1);
+    expect((await startCare(a0, loser.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    await inboundSms(h, loser.phone, w.mainNumber, 'Thanks, what areas do you cover?');
+    const activity = async () => (await h.su.query<{ contact_id: string; state: string; code: string }>(
+      `SELECT contact_id, state, reasons->0->>'code' AS code FROM priority_feed_items WHERE contact_id = ANY($1::uuid[]) AND item_type = 'ai_isa_activity'`, [[loser.id, survivor.id]])).rows;
+    expect(await activity()).toEqual([{ contact_id: loser.id, state: 'open', code: 'AI_ISA_REPLY_RECEIVED' }]);
+    const m = await command(w.owner, survivor.id, 'merge', { loserId: loser.id, ownerChoice: a1.userId });
+    expect(m.status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await assignmentOf(h, loser.id))!.end_reason).toBe('merged');
+    // "the AI assistant is answering" is over, on a record nobody can open: the card is resolved, not left open
+    expect((await activity()).filter((c) => c.state === 'open')).toEqual([]);
+    expect(await cards([loser.id, survivor.id])).toEqual([{ contact_id: survivor.id, user_id: a1.userId, state: 'open', text: 'AI care ended because this lead moved. Here is what it did.' }]);
   });
 });
 
@@ -1090,7 +1112,7 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
   });
 
   it('R-ISA-30 (b12 recheck R19): the panel\'s handoff and the "Got it" result say why a handoff is closed: null while open, then deadline_met, lead_closed, acknowledged or care_restarted', async () => {
-    type PanelHandoff = { id: string; reason: string; slaClass: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; confirmationNotSent: string | null; closedReason: string | null }; // b13 review B13S-3
+    type PanelHandoff = { id: string; reason: string; slaClass: string; slaDueAt: string; slaMetAt: string | null; overdue: boolean; confirmationStatus: string; confirmationNotSent: string | null; closedReason: string | null; pendingKind?: string | null }; // b13 review B13S-3; b14 pendingKind
     const panelOf = async (as: TestClient, contactId: string) => {
       const p = await call<{ handoff: PanelHandoff | null }>(as, 'GET', `/contacts/${contactId}/ai-isa`);
       expect(p.status).toBe(200);
@@ -1099,12 +1121,12 @@ describe('b12 recheck R13: a handoff that is done closes its pinned card and its
     const closedReasonOf = async (handoffId: string) => (await h.su.query<{ r: string | null }>(`SELECT closed_reason AS r FROM ai_isa_handoffs WHERE id = $1`, [handoffId])).rows[0]!.r;
     // open, acknowledged with a deadline: nothing closed it; then a touch and the sweep: deadline_met
     const met = await handedToA1();
-    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: null, overdue: false, confirmationStatus: expect.any(String), confirmationNotSent: null, closedReason: null });
+    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: null, overdue: false, confirmationStatus: expect.any(String), confirmationNotSent: null, closedReason: null, pendingKind: null });
     const ack = await call<Record<string, unknown>>(met.a1, 'POST', `/ai-isa/handoffs/${met.ho.id}/ack`, {});
     expect([ack.status, ack.body]).toEqual([200, { handoffId: met.ho.id, acknowledgedAt: expect.any(String), slaMet: false, confirmationStatus: expect.any(String), closedReason: null }]);
     await touch(met.l.id);
     await ageAndSweep(met.ho.id);
-    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: expect.any(String), overdue: false, confirmationStatus: expect.any(String), confirmationNotSent: null, closedReason: 'deadline_met' });
+    expect(await panelOf(met.a1, met.l.id)).toEqual({ id: met.ho.id, reason: 'owner_change', slaClass: 'normal', slaDueAt: expect.any(String), slaMetAt: expect.any(String), overdue: false, confirmationStatus: expect.any(String), confirmationNotSent: null, closedReason: 'deadline_met', pendingKind: null });
     // a lead closed while its deadline runs: lead_closed, which the panel tells apart from a handoff the sweep never reached
     const shut = await handedToA1();
     expect((await command(shut.a1, shut.l.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);

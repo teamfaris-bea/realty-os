@@ -199,6 +199,12 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         await control(tx, deps.ids, ctx.a, 'system_end', act.reason);
         await audit(tx, env.actor, { action: 'ai_isa.system_ended', entity: { type: 'ai_isa_assignment', id: ctx.a.id }, reason: act.reason });
         await pauseSavedSearchesInTx(tx, ctx.a.contactId);
+        // b14 to-do (b13 review B13-MRG-3 side effect): a merge ends care on a record nobody opens any more; its "they
+        // replied, the AI assistant is answering" card is resolved there (the merge handoff on the survivor carries on)
+        if (act.reason === 'merged') {
+          await sql`UPDATE priority_feed_items SET state = 'done', resolved_at = ${new Date(now)}, snoozed_until = NULL, updated_at = now()
+            WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_activity:${ctx.a.id}`} AND state IN ('open','snoozed')`.execute(tx);
+        }
         out.ended = true;
         break;
       case 'await_model':
