@@ -64,11 +64,14 @@ async function retractStale(tx: Tx, actor: SystemActor, limit: number): Promise<
      ORDER BY i.published_at LIMIT ${limit}`.execute(tx);
   // R-PORTAL-19 (b14 review R3): 0087's items guard checks the seller side only at publish. A deal grant's showing,
   // feedback or seller update that is not the contact's own showing (the direct path) reached it through the deal's
-  // listing, so it goes once the contact is no longer a seller or co-seller of the deal (a corrected role)
+  // listing, so it goes once the contact is no longer a seller or co-seller of the deal (a corrected role). b15 (b14 low
+  // c): an account whose contact was merged into another record is skipped, never retracted for good: the merge moved
+  // the deal role to the survivor, and what such an account sees is Q-PORTAL-20's to decide
   const sellerSide = await sql<{ id: string }>`
     SELECT i.id FROM portal_items i
       JOIN portal_grants g ON g.tenant_id = i.tenant_id AND g.id = i.grant_id AND g.deal_id IS NOT NULL
       JOIN portal_accounts a ON a.tenant_id = g.tenant_id AND a.id = g.portal_account_id
+      JOIN contacts ac ON ac.tenant_id = a.tenant_id AND ac.id = a.contact_id AND ac.merged_into_contact_id IS NULL
       LEFT JOIN showing_feedback f ON i.source_type = 'showing_feedback' AND f.tenant_id = i.tenant_id AND f.id = i.source_id
       LEFT JOIN showings s ON s.tenant_id = i.tenant_id AND s.id = CASE i.source_type WHEN 'showing' THEN i.source_id WHEN 'showing_feedback' THEN f.showing_id END
      WHERE i.tenant_id = app.tenant_id() AND i.retracted_at IS NULL AND i.source_type IN ('showing','showing_feedback','assistant_action')

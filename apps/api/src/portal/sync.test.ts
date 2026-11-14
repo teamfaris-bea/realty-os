@@ -250,6 +250,34 @@ describe('R-PORTAL-19 after a role correction (b14 review R3)', () => {
       await setPortalCleared(h, false);
     }
   });
+
+  it('R-PORTAL-19 (b15, b14 low c): a seller merged into another record keeps the listing\'s items: the merge moved the deal role to the survivor, so the sync skips the account (Q-PORTAL-20) and never says "no longer a seller"', async () => {
+    await setPortalCleared(h, true);
+    try {
+      const l = (await call<{ listing: { id: string } }>(agent(), 'POST', '/listings', { status: 'active', addressLine1: '14 Birch Lane', city: 'Exampleville', region: 'CA', postalCode: '94000' })).body.listing.id;
+      const buyer = await client(agent(), { firstName: 'Ida' });
+      const d = await deal(agent(), buyer.id, { side: 'buy', listingId: l });
+      const seller = await client(agent(), { firstName: 'Ola' });
+      expect((await call(agent(), 'POST', `/deals/${d}/contacts`, { contactId: seller.id, role: 'seller' })).status).toBe(200);
+      const g = (await invite(agent(), d, seller.id)).body.grant.id;
+      const sh = await call<{ showing: { id: string } }>(agent(), 'POST', `/listings/${l}/showings`, { startsAt: '2030-01-07T15:00:00Z' });
+      await call(agent(), 'POST', `/showings/${sh.body.showing.id}/feedback`, { rating: 4, comments: 'Bright kitchen.' });
+      const fb = (await h.su.query<{ id: string }>('SELECT id FROM showing_feedback WHERE showing_id = $1', [sh.body.showing.id])).rows[0]!.id;
+      expect((await publish(agent(), 'feedback', fb, [g])).body.results[0]!.result).toBe('published');
+      await sync();
+      // the seller's record is merged into another one (a duplicate): the deal role moves to the survivor
+      const survivor = await client(agent(), { firstName: 'Ola' });
+      const m = await call(agent(), 'POST', `/leads/${survivor.id}/merge`, { loserId: seller.id, commandId: randomUUID() });
+      expect(m.status, JSON.stringify(m.body)).toBe(200);
+      expect((await h.su.query<{ merged: string | null }>('SELECT merged_into_contact_id AS merged FROM contacts WHERE id = $1', [seller.id])).rows[0]!.merged).toBe(survivor.id);
+      expect((await sync()).retracted).toBe(0);
+      expect((await items(g)).map((i) => [i.kind, i.retracted])).toEqual([['feedback', false]]);
+      const view = await call<{ items: { note: string | null }[] }>(agent(), 'GET', `/deals/${d}/portal`);
+      expect(view.body.items.map((i) => i.note)).not.toContain(RETRACTED_NOT_SELLER_SIDE);
+    } finally {
+      await setPortalCleared(h, false);
+    }
+  });
 });
 
 describe('R-PORTAL-15 batches', () => {
