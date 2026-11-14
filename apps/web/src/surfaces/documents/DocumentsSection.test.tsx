@@ -33,6 +33,14 @@ const pdf = (name = 'contract.pdf', size?: number) => {
 const uploaded = (over = {}) => ({ ...detail(doc({ scan: 'checking', scanText: COPY.checking, ...over })), previousVersionShared: false, previousVersionSharedText: null });
 
 describe('the documents section', () => {
+  it('b14 review F6: a long file name with no spaces wraps anywhere inside its link (no sideways scroll at 390 px; jsdom has no layout, so the classes are checked)', async () => {
+    const long = 'Residential_Purchase_Agreement_FULLY_EXECUTED_with_all_addenda_v3.pdf';
+    const fake = new StaffFake().on(`GET /deals/${DEAL}/documents`, { status: 200, body: list([entry({ displayName: long })], platform()) });
+    render(fake, '/t/deal');
+    const link = await within(await section()).findByRole('link', { name: long });
+    expect(link.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-w-0', 'max-w-full', '[overflow-wrap:anywhere]']));
+  });
+
   it('R-STAFF-1: each chain shows kind, version, uploader, date and the server\'s scan, portal and extraction sentences; Review N dates; the newer-version note; the platform status', async () => {
     const fake = new StaffFake().on(
       `GET /deals/${DEAL}/documents`,

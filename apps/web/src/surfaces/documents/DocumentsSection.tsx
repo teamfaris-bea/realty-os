@@ -33,7 +33,9 @@ export function DocumentRow({ d, me }: { d: ListEntry; me: string | null }) {
   const review = d.extraction.status === 'proposed' && d.extraction.claimCount > 0;
   return (
     <li className="flex flex-col gap-1 border-t border-line py-3 first:border-t-0">
-      <Link to={`/documents/${d.id}`} className="inline-flex min-h-tap items-center text-[16px] font-medium text-accent underline decoration-line underline-offset-4">
+      {/* b14 review F6: a file name is often one long word (Residential_Purchase_Agreement.pdf); it wraps anywhere, as the
+          shell's h1 does, so the row never scrolls sideways at 390 px */}
+      <Link to={`/documents/${d.id}`} className="inline-flex min-h-tap min-w-0 max-w-full items-center text-[16px] font-medium text-accent underline decoration-line underline-offset-4 [overflow-wrap:anywhere]">
         {d.displayName}
       </Link>
       <p className="text-[14px] text-ink-muted">{[KIND_WORDS[d.kind], `Version ${d.versionNo}`, uploaderWords(d.uploadedByUserId, me), dateWords(d.uploadedAt)].filter(Boolean).join(' · ')}</p>
