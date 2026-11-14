@@ -179,6 +179,16 @@ export const PACK_ALSO_LICENCE: Readonly<Record<string, string>> = {
 };
 
 /**
+ * b15 (b14 low g): what else holds a pack's capability back in this version, said without "not built" (the capability
+ * is built and held). The assistant's recent-sales emails need V2-A's statement rules, which isa/seller/cmaSeam.ts
+ * stubs (STUB(V2-A): every statement refused), so no recent-sales email goes out whatever the packs say. Remove the line
+ * when cma/statement.ts is connected there (integrations.test.ts pins both together).
+ */
+export const PACK_ALSO_HELD: Readonly<Record<string, string>> = {
+  'platform:ai_isa_seller_data': 'The emails also wait for the statement rules to be connected, so none is sent in this version.',
+};
+
+/**
  * A capability that also waits on platform clearance packs (one, or several that must all be cleared). A pack in
  * VENDOR_CHECKED_PACKS also needs its vendor check (`rules.vendor_ready_at`), exactly as the database clears it:
  * `change_budget` waits for `platform:ads`, which the module 52 gates read with `app.platform_cleared('platform:ads', true)`.
@@ -213,7 +223,7 @@ export const PER_USER_SERVICES = [
  */
 export function packSentence(p: PlatformPack, all: readonly PlatformPack[] = []): string {
   const base = packStateSentence(p);
-  const licence = Object.hasOwn(PACK_ALSO_LICENCE, p.key) ? ` ${PACK_ALSO_LICENCE[p.key]!}` : '';
+  const licence = (Object.hasOwn(PACK_ALSO_LICENCE, p.key) ? ` ${PACK_ALSO_LICENCE[p.key]!}` : '') + (Object.hasOwn(PACK_ALSO_HELD, p.key) ? ` ${PACK_ALSO_HELD[p.key]!}` : '');
   const also = PACK_ALSO_NEEDS[p.key];
   if (also === undefined) return `${base}${licence}`;
   const other = all.find((x) => x.key === also.pack);
