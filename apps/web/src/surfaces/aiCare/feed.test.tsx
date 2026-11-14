@@ -324,4 +324,46 @@ describe('compose, approvals and the inbox (module 76)', () => {
     expect(await within(sheet).findByText('They wrote again or a reply was already queued. Open the thread instead.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/ai-isa/start`)[0]!.body).toEqual({ side: 'buyer', fromHandbackId: IDS.handback });
   });
+
+  // b14 review F1 (staff-ui): a voice handback stores no inbound message (voice/handback.ts), so the server refuses a
+  // start from it (AI_ISA_HANDBACK_STALE, worded "They wrote again …", false for a call): no offer on a voice card
+  const voiceClaim = (outcome: string) => ({
+    id: '01900000-0000-7000-8000-0000000055d2',
+    kind: 'fact',
+    text: 'The call ended.',
+    needsReview: false,
+    reviewStatus: 'unreviewed',
+    due: null,
+    evidence: [{ sourceType: 'call', sourceId: '01900000-0000-7000-8000-0000000055c1', locator: { kind: 'field', field: 'voice_outcome' }, snippet: outcome, verified: true, sourceAvailable: true, label: 'x' }],
+  });
+  const voiceHandback = (outcome: string) => draftAction({ id: IDS.handback, kind: 'handback', primaryAction: 'acknowledge', draft: null, explanation: 'The assistant answered a missed call.', claims: [voiceClaim(outcome)] as never });
+
+  for (const outcome of ['opted_out', 'message_taken']) {
+    it(`b14 review F1: a ${outcome} voice handback I own with no live AI care offers no "Let the AI assistant continue"`, async () => {
+      const fake = feedOf([])
+        .on('GET /assistant/inbox', { status: 200, body: { items: [voiceHandback(outcome), draftAction({ id: ISA_IDS.optin, kind: 'handback', primaryAction: 'acknowledge', draft: null, explanation: 'They replied' })] } })
+        .on(`GET /contacts/${IDS.jane}/ai-isa`, { status: 200, body: panel({ state: 'none', canStart: true }) })
+        .on('GET /me/ai-isa', { status: 404, body: { error: { code: 'NOT_FOUND', requestId: 'r' } } });
+      isaApp(fake, '/approvals', 'agent');
+      const voice = (await screen.findByText(/The assistant answered a call/)).closest('article') as HTMLElement;
+      const other = (await screen.findByText('They replied')).closest('article') as HTMLElement;
+      // the ordinary handback of the same person still offers it, so the contact and the live rows have loaded
+      expect(await within(other).findByRole('button', { name: 'Let the AI assistant continue' })).toBeInTheDocument();
+      expect(within(voice).getByRole('button', { name: 'Mark handled' })).toBeInTheDocument();
+      expect(within(voice).queryByRole('button', { name: 'Let the AI assistant continue' })).toBeNull();
+    });
+  }
+
+  it('b14 review F1: an opted-out voice handback has no Send, so it never says "Sending pauses AI care", even while care is live', async () => {
+    const fake = feedOf([], { live: true })
+      .on('GET /assistant/inbox', { status: 200, body: { items: [voiceHandback('opted_out'), draftAction({ id: ISA_IDS.optin, kind: 'handback', primaryAction: 'acknowledge', draft: null, explanation: 'They replied' })] } })
+      .on('GET /me/ai-isa', { status: 404, body: { error: { code: 'NOT_FOUND', requestId: 'r' } } });
+    isaApp(fake, '/approvals', 'agent');
+    const voice = (await screen.findByText(/The assistant answered a call/)).closest('article') as HTMLElement;
+    const other = (await screen.findByText('They replied')).closest('article') as HTMLElement;
+    // the ordinary handback in the same inbox shows the note, so the live row has loaded
+    expect(await within(other).findByTestId('ai-action-note')).toHaveTextContent('Sending pauses AI care for Jane.');
+    expect(within(voice).getByText('The caller asked not to be contacted, so there is no reply or call back from here.')).toBeInTheDocument();
+    expect(within(voice).queryByTestId('ai-action-note')).toBeNull();
+  });
 });

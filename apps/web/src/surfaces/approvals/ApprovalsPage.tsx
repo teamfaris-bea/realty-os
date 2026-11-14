@@ -28,7 +28,7 @@ import { ExtractionActionPointer, RefusalNotice } from './ExtractionPointers.js'
 import { Phase3Approvals } from './Phase3Approvals.js';
 import { SellerUpdateApproval } from './SellerUpdateApproval.js';
 import { AiApprovalExtras, withoutAiActions } from '../aiCare/Compose.js'; // module 76 (flagged edit)
-import { VOICE_HANDBACK_LABEL, VoiceHandback, VoiceHandbackButtons, isVoiceHandback } from './VoiceHandback.js';
+import { VOICE_HANDBACK_LABEL, VoiceHandback, VoiceHandbackButtons, isVoiceHandback, voiceHandbackOf } from './VoiceHandback.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -231,7 +231,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       ) : sendable && check.decision?.outcome === 'deny' ? (
         <GateBadge decision={check.decision} />
       ) : null}
-      <AiApprovalExtras action={action} />
+      <AiApprovalExtras action={action} voice={voiceHandbackOf(action)} />
       <div className="flex flex-wrap gap-2">
         {action.kind === 'saved_search_proposal' && action.contactId ? (
           <Button aria-expanded={searchOpen} onClick={() => setSearchOpen((o) => !o)}>

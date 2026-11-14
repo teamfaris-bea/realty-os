@@ -144,14 +144,20 @@ export function AiCareShareNote({ contactId, name }: { contactId: string; name: 
  * Under a draft or handback: the Send line for a live contact, and on a handback in the viewer's inbox (the inbox
  * lists the caller's own proposed actions) "Let the AI assistant continue", which opens the Start sheet; the sheet
  * offers the sides only when the panel's canStart holds, else the refusal, then posts start {side, fromHandbackId}.
+ *
+ * `voice` is module 55's voice handback (approvals/VoiceHandback.tsx voiceHandbackOf; b14 review F1): it stores no
+ * inbound message, so the server always refuses a start from it (AI_ISA_HANDBACK_STALE) and the offer is never made;
+ * and an opted-out caller's card has no Send or Reply, so it never says sending pauses AI care.
  */
-export function AiApprovalExtras({ action }: { action: { id: string; kind: string; status: string; contactId: string | null; contactName: string | null; primaryAction: string; draft: unknown } }) {
+export function AiApprovalExtras({ action, voice = null }: { action: { id: string; kind: string; status: string; contactId: string | null; contactName: string | null; primaryAction: string; draft: unknown }; voice?: { outcome: string | null } | null }) {
   const row = useLiveRow(action.contactId);
   const [open, setOpen] = useState(false);
-  const c = useContact(action.kind === 'handback' && action.contactId ? action.contactId : '');
+  const offer = action.kind === 'handback' && voice === null;
+  const c = useContact(offer && action.contactId ? action.contactId : '');
   const full = c.data?.contact.view === 'full' ? c.data.contact : null;
   const first = firstOf(action.contactName, 'them');
-  const sends = action.kind === 'handback' || (action.primaryAction === 'send' && action.draft !== null);
+  const draftSend = action.primaryAction === 'send' && action.draft !== null;
+  const sends = voice !== null ? draftSend || voice.outcome !== 'opted_out' : action.kind === 'handback' || draftSend;
   return (
     <>
       {row && sends ? (
@@ -159,7 +165,7 @@ export function AiApprovalExtras({ action }: { action: { id: string; kind: strin
           Sending pauses AI care for {first}.
         </p>
       ) : null}
-      {action.kind === 'handback' && action.status === 'proposed' && full && full.ownership.ownedByMe && !row ? (
+      {offer && action.status === 'proposed' && full && full.ownership.ownedByMe && !row ? (
         <div>
           <Button variant="secondary" onClick={() => setOpen(true)}>
             Let the AI assistant continue
