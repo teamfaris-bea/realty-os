@@ -22,6 +22,7 @@ import type { ImportBatch, ImportCounts, ImportRecord, ImportStage, MappingsResp
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
 import { ParityMapping } from './ParityMapping.js';
+import { ImportLabelList, type ImportLabelView } from '../lead-sources/ImportLabels.js';
 import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
@@ -189,7 +190,29 @@ function Parity({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void
   const q = useImportsQuery<ParityResponse>([...batchKey(batch.id), 'parity', batch.snapshotSha256], `/imports/${batch.id}/parity`);
   if (q.isError) return <QueryError error={q.error} retry={() => void q.refetch()} />;
   if (!q.data) return null;
-  return <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />;
+  return (
+    <>
+      <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />
+      {(q.data.sourceLabels ?? []).length > 0 ? <SourceLabels rows={q.data.sourceLabels ?? []} source={batch.source} onChanged={() => void q.refetch()} /> : null}
+    </>
+  );
+}
+
+/**
+ * b18 round 3 item 1 (E728): the source labels the import found, each with the lead source it means and whether that
+ * source has "No automated contact for leads from this source" on. The Owner maps a label here, at import time, or later
+ * on the lead sources page; the mapping is the team's, not this import's.
+ */
+export function SourceLabels({ rows, source, onChanged }: { rows: readonly ImportLabelView[]; source: string; onChanged(): void }) {
+  return (
+    <section aria-label="Lead sources in this import">
+      <Card className="flex flex-col gap-2">
+        <h3 className="text-[16px] font-semibold text-ink">Lead sources</h3>
+        <p className="text-[15px] text-ink-muted">{`${source === 'csv' ? 'Your file' : 'Follow Up Boss'} gives each person's source as a label. Map a label to a lead source so the people it brings in count as that source's leads.`}</p>
+        <ImportLabelList rows={rows} onChanged={onChanged} />
+      </Card>
+    </section>
+  );
 }
 
 function batchKey(id: string) {
@@ -662,6 +685,8 @@ export function parityImportedHeader(phase: string): string {
 
 type ReportView = Omit<ReportResponse, 'categories'> & {
   categories: (ReportResponse['categories'][number] & { unassigned?: UnassignedView | null })[];
+  /** b18 round 3 item 1 (E728): the source labels of the contacts records, each with its lead source and whether that one is marked */
+  sourceLabels?: ImportLabelView[];
   parity?: { phase: string; rows: ParityRowView[]; lines: string[] } | null;
   /** owner decision B7: what Follow Up Boss holds that the import does not bring over */
   notImported?: Omit<NotImportedView, 'countedAt'> | null;
@@ -676,7 +701,8 @@ function Report({ batch }: { batch: ImportBatch }) {
   // owner decision B7: the final report says what doesn't come over once something was imported; until then the
   // "What doesn't come over" notice above is the one place it is said (review F3: no report of that sentence alone)
   const left = reportSaysNotImported(batch.stages) ? (q.data.notImported?.lines ?? []) : [];
-  if (lines.length === 0 && !parity && !unassigned && left.length === 0) return null;
+  const labels = q.data.sourceLabels ?? [];
+  if (lines.length === 0 && !parity && !unassigned && left.length === 0 && labels.length === 0) return null;
   return (
     <Section title="Report">
       {lines.length > 0 ? (
@@ -727,6 +753,7 @@ function Report({ batch }: { batch: ImportBatch }) {
           </ul>
         </Card>
       ) : null}
+      {labels.length > 0 ? <SourceLabels rows={labels} source={batch.source} onChanged={() => void q.refetch()} /> : null}
       {unassigned ? <UnassignedPeople view={unassigned} onClosed={() => void q.refetch()} /> : null}
       {left.length > 0 ? (
         <section aria-label="Not brought over">

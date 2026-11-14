@@ -4,6 +4,7 @@
 // step (R-IMPORT-2…5); these helpers only decide what the page offers, so it never offers a step the
 // server would refuse.
 import { IMPORT_CATEGORIES, type ImportBatch, type ImportCategory, type ImportStage } from '../admin/lib/types.js';
+import type { ImportLabelView } from '../lead-sources/ImportLabels.js';
 
 export const CATEGORY_LABEL: Record<ImportCategory, string> = {
   contacts: 'Contacts',
@@ -253,6 +254,8 @@ export interface ParityResponse {
   blockers: string[];
   lines: string[];
   report: ParityRowView[];
+  /** b18 round 3 item 1 (E728): the source labels found, each with the lead source it means and whether that one is marked */
+  sourceLabels?: ImportLabelView[];
 }
 
 export const PARITY_CATEGORY_LABEL: Record<ParityRowView['category'], string> = { stages: 'Stages', tags: 'Tags', custom_fields: 'Custom fields' };

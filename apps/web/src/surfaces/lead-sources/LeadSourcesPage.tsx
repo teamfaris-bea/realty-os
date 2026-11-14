@@ -13,6 +13,7 @@ import { useAnnounce } from '../admin/lib/hooks.js';
 import { Pill } from '../admin/lib/ui.js';
 import { AddSource } from './AddSource.js';
 import { useOverview } from './hooks.js';
+import { ImportLabelsSection } from './ImportLabels.js';
 import { sentenceFor } from './messages.js';
 import type { SourceOverview } from './types.js';
 import { copyText } from './ui.js';
@@ -43,6 +44,7 @@ export default function LeadSourcesPage() {
           </li>
         ))}
       </ul>
+      {q.data && sources.length > 0 ? <ImportLabelsSection /> : null}
       {adding ? <AddSource deployment={q.data?.deployment ?? null} onClose={() => setAdding(false)} /> : null}
     </div>
   );

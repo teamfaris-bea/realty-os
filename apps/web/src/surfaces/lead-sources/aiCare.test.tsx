@@ -10,7 +10,7 @@ import { S1, overview, source, sourcesApp, sourcesFake } from './testing.js';
 
 const page = `/admin/lead-sources/${S1}`;
 const OFF = `${NO_AUTOMATED_CONTACT_LABEL}: off. Leads from this source get the team's automatic replies, plans and AI care as usual. Only the Owner changes this.`;
-const ON = `${NO_AUTOMATED_CONTACT_LABEL}: on. Nothing automatic reaches leads from this source (any record of the person): no instant reply, no plan, no bulk text, email or invite, no AI care and no AI-answered call. Plans and AI care already running for them stop or pause. People on the team can still call, text and email them one to one. Only the Owner changes this.`;
+const ON = `${NO_AUTOMATED_CONTACT_LABEL}: on. Nothing automatic reaches leads from this source (any record of the person): no instant reply, no plan, no bulk text, email or invite, no AI care and no AI-answered call. Plans and AI care already running for them stop or pause. People an import brought in count once the Owner maps their imported source label to this source. People on the team can still call, text and email them one to one. Only the Owner changes this.`;
 
 describe('E727 a lead source\'s "No automated contact for leads from this source" (b18 item f, B18S-5)', () => {
   it('B18S-5: the setting is named honestly: "No automated contact for leads from this source", never "No AI care"', () => {

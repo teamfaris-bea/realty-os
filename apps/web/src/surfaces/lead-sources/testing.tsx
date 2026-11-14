@@ -60,6 +60,7 @@ export function sourcesFake(o: OverviewResponse = overview([source()])): FakeFet
     .on('GET /lead-sources/overview', { status: 200, body: o })
     .on('GET /numbers', { status: 200, body: { numbers: [] } })
     .on('GET /members', { status: 200, body: { members: [member()], invites: [] } })
+    .on('GET /lead-sources/import-labels', { status: 200, body: { labels: [], canChange: false } })
     .on('GET /lead-sources', { status: 200, body: { sources: o.sources.map((s) => ({ id: s.id, name: s.name, kind: s.kind, active: s.active, hasToken: s.paths.webhook.hasToken, createdAt: s.createdAt })) } });
   for (const s of o.sources) f.on(`GET /lead-sources/${s.id}/google-lead-form`, { status: 200, body: googleForm({ state: s.paths.googleLeadForm.state, sourceHasConsentText: s.hasConsentText }) });
   return f;

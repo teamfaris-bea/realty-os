@@ -4,9 +4,9 @@ import { type ApiError, useApi } from '../../shell/index.js';
 import type { MembersResponse } from '../admin/lib/types.js';
 import { MEMBERS_KEY, OVERVIEW_KEY, type OverviewResponse } from './types.js';
 
-export function useOverview() {
+export function useOverview(enabled = true) {
   const api = useApi();
-  return useQuery<OverviewResponse, ApiError>({ queryKey: OVERVIEW_KEY, queryFn: ({ signal }) => api.get<OverviewResponse>('/lead-sources/overview', { signal }) });
+  return useQuery<OverviewResponse, ApiError>({ queryKey: OVERVIEW_KEY, queryFn: ({ signal }) => api.get<OverviewResponse>('/lead-sources/overview', { signal }), enabled });
 }
 
 export function useMembers(enabled = true) {
