@@ -99,7 +99,8 @@ test('J1 E521: start (2 taps) → the AI message is labelled → AGENT → the h
   const care = page.getByRole('region', { name: 'AI care' });
   const at = await page.evaluate((iso) => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(iso)), h2[0]!.met!);
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  await expect(care).toContainText(new RegExp(`Done: Jane was reached at (?:\\w{3}, \\w{3} \\d{1,2}, )?${esc(at)}\\.`));
+  // b18 review F2 (E724): a met deadline is an attempt, never "was reached"
+  await expect(care).toContainText(new RegExp(`Done: someone on the team called, texted or emailed Jane at (?:\\w{3}, \\w{3} \\d{1,2}, )?${esc(at)} \\(an attempt, answered or not\\)\\.`));
   await expect(care).not.toContainText(/Respond by|Overdue/);
   // the strip names who got it and, the card being closed, never sends them to the feed for it
   await expect(page.getByTestId('ai-strip')).toContainText('You got the handoff.');

@@ -20,7 +20,7 @@ import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
 import { localDate, localTime } from './time.js';
-import { CARE_STATE_WORDS, CONFIRMATION_NOT_SENT_SHORT, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, ackWhoWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
+import { CARE_STATE_WORDS, CONFIRMATION_NOT_SENT_SHORT, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, ackWhoWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, handoffDoneWords, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 
 export const isAiCareCard = (c: Pick<FeedCard, 'itemType'>) => c.itemType.startsWith('ai_isa_');
 
@@ -351,9 +351,7 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
         // batch 13 skeptic low (kept in batch 14 round 2): rarely seen, since meeting the deadline also sets closedReason
         // and the closed card leaves the feed; a feed page loaded before the touch can still open it, and then this says
         // Done with the time instead of a deadline. feed.test.tsx "V9 Q10" covers it.
-        <p className="text-[15px] font-semibold text-ok">
-          Done: {first} was reached at {localTime(d.slaMetAt)}
-        </p>
+        <p className="text-[15px] font-semibold text-ok">{handoffDoneWords(first, localTime(d.slaMetAt))}</p>
       ) : d.closedReason ? (
         // batch 13 merge (0081, b12 recheck R19): the system closed it, so it is done and has no deadline left
         <p className="text-[15px] font-semibold text-ok">{closedReasonWords(d.closedReason)}</p>

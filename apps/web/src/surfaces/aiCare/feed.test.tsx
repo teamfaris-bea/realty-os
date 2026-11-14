@@ -185,10 +185,11 @@ describe('AI care feed cards (module 76)', () => {
     expect(c.textContent).not.toMatch(/confidence|\bscore\b|0\.91|0\.66|\b77\b|%/i);
   });
 
-  it('V9 Q10: a met deadline reads "Done: Jane was reached at …" and the card stays', async () => {
+  it('V9 Q10 E724 (b18 review F2): a met deadline reads "Done: someone on the team called, texted or emailed Jane at … (an attempt, answered or not)." and the card stays', async () => {
     isaApp(feedOf([handoffCard()], { handoff: handoffView({ slaMetAt: iso(-60_000) }) }), '/', 'agent');
     const c = await screen.findByTestId('ai-card-ai_isa_handoff');
-    expect(await within(c).findByText(/^Done: Jane was reached at /)).toBeInTheDocument();
+    expect(await within(c).findByText(/^Done: someone on the team called, texted or emailed Jane at .+ \(an attempt, answered or not\)\.$/)).toBeInTheDocument();
+    expect(c.textContent).not.toMatch(/was reached/);
   });
 
   it('R-ISA-23: a hold-topic escalation says the AI stays off the topic; resolve continues the conversation, never the topic', async () => {

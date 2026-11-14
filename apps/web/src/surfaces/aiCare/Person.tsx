@@ -29,6 +29,7 @@ import {
   capabilityLine,
   chainLinkWords,
   closedReasonWords,
+  handoffDoneWords,
   HOLDING_WORDS,
   confirmationWords,
   decisionCodeWords,
@@ -449,9 +450,7 @@ function HandoffLines({ h, viewer, first, title = 'Handoff', held = false }: { h
     <Section title={title}>
       <p>{handoffWhy(h.reason)}</p>
       {h.slaMetAt ? (
-        <p>
-          Done: {first} was reached at {localTime(h.slaMetAt)}.
-        </p>
+        <p>{handoffDoneWords(first, localTime(h.slaMetAt))}</p>
       ) : h.closedReason ? (
         <p>{closedReasonWords(h.closedReason)}</p>
       ) : !SLA_HAS_DEADLINE[h.slaClass] ? (

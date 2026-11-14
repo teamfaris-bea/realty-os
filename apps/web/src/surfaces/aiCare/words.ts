@@ -468,6 +468,10 @@ export const CLOSED_REASON_WORDS: Record<HandoffClosedReason, string> = {
   care_continued: 'Closed: AI care was continued.',
 };
 export const closedReasonWords = (r: string) => (CLOSED_REASON_WORDS as Record<string, string>)[r] ?? OTHER_CHECK;
+/** The panel's and the feed card's line for a handoff whose deadline a person's touch met (slaMetAt): b18 review F2
+ *  remainder (E724), a touch is an attempt (R-OWN-14: a dialed call, answered or not, or a text or email the gate let
+ *  through), never "was reached". */
+export const handoffDoneWords = (first: string, at: string) => `Done: someone on the team called, texted or emailed ${first} at ${at} (an attempt, answered or not).`;
 
 export type MessageVerb = 'sent' | 'scheduled' | 'queued' | 'not_sent';
 /** The verb a message's own status supports (R-ISA-7): never "sent" unless it was. */
