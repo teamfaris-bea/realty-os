@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-4; E684, E686, E687, E699): the sign-in request. The team comes only from ?team= or the
+// module 46 (R-PORTALWEB-4; E704, E706, E707, E719): the sign-in request. The team comes only from ?team= or the
 // remembered slug, never guessed; without one there is no form, only how to get in. Every answer is 45's sentence,
 // verbatim, in the visible notice and the live region; the page never says a link was sent. The form has no action:
 // a submit is handled in script, and the portal CSP's form-action 'none' stops a no-JS submit from putting the

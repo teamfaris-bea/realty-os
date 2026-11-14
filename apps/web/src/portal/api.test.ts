@@ -46,7 +46,7 @@ describe('portalApi (R-PORTALWEB-9)', () => {
     await expect(down.request('GET', '/api/portal/me', parseMe)).rejects.toMatchObject({ code: 'NETWORK_ERROR', status: 0 });
   });
 
-  it('R-PORTALWEB-9 (E685): only a 401 PORTAL_SESSION_REQUIRED emits signedOut, and it forgets the CSRF token', async () => {
+  it('R-PORTALWEB-9 (E705): only a 401 PORTAL_SESSION_REQUIRED emits signedOut, and it forgets the CSRF token', async () => {
     let next = json(401, { error: { code: 'PORTAL_LINK_INVALID', requestId: 'r' } });
     const api = portalApi(async () => next);
     const out = vi.fn();

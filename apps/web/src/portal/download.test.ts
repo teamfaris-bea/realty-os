@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-7; E649, E693, E694, E696): downloads through 45's re-checked stream only.
+// module 46 (R-PORTALWEB-7; E689, E713, E714, E716): downloads through 45's re-checked stream only.
 import { describe, expect, it, vi } from 'vitest';
 import { portalApi } from './api.js';
 import { type SaveDeps, downloadDocument, essence, safeFileName } from './download.js';
@@ -41,7 +41,7 @@ describe('download.ts (R-PORTALWEB-7)', () => {
     expect(h.problems).toEqual([]);
   });
 
-  it('E694: a stream URL other than /api/portal/files/<43 characters> is refused and nothing is fetched', async () => {
+  it('E714: a stream URL other than /api/portal/files/<43 characters> is refused and nothing is fetched', async () => {
     for (const url of ['https://evil.example.test/api/portal/files/' + 'a'.repeat(43), '//evil.example.test/x', '/api/portal/files/' + 'a'.repeat(42), '/api/portal/files/../../me', '/api/files/' + 'a'.repeat(43), '/api/portal/files/' + 'a'.repeat(43) + '?x=1', 'javascript:alert(1)']) {
       const h = harness({ token: () => ({ status: 200, body: F.streamToken({ url }) }) });
       expect(await downloadDocument(h.api, F.DOC_1, async () => undefined, h.save), url).toEqual({ ok: false, reason: 'unavailable' });
@@ -50,7 +50,7 @@ describe('download.ts (R-PORTALWEB-7)', () => {
     }
   });
 
-  it('E693: a 404, a 500, a wrong type, a short or long body, a larger Content-Length or a network cut saves nothing', async () => {
+  it('E713: a 404, a 500, a wrong type, a short or long body, a larger Content-Length or a network cut saves nothing', async () => {
     const pdf = (body: BodyInit | null, headers: Record<string, string>, status = 200) => () => new Response(body, { status, headers });
     const cases: [string, () => Response][] = [
       ['404', () => new Response(JSON.stringify(portalApiError('NOT_FOUND').body), { status: 404 })],
@@ -81,7 +81,7 @@ describe('download.ts (R-PORTALWEB-7)', () => {
     expect(essence('application/pdf; x=y')).toBe('application/pdf');
   });
 
-  it('E696: CSRF_INVALID refetches /me and retries once; a second CSRF_INVALID is reported; a session 401 is "session"', async () => {
+  it('E716: CSRF_INVALID refetches /me and retries once; a second CSRF_INVALID is reported; a session 401 is "session"', async () => {
     let n = 0;
     const h = harness({ token: () => (n++ === 0 ? portalApiError('CSRF_INVALID') : { status: 200, body: F.streamToken() }) });
     const refresh = vi.fn(async () => undefined);

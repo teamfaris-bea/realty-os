@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-8, E695): the only hrefs built from data.
+// module 46 (R-PORTALWEB-8, E715): the only hrefs built from data.
 import { describe, expect, it } from 'vitest';
 import { mailtoHref, smsHref } from './contact.js';
 
@@ -11,7 +11,7 @@ describe('view/contact.ts (R-PORTALWEB-8)', () => {
     }
   });
 
-  it('E695: mailto: only from one plain address', () => {
+  it('E715: mailto: only from one plain address', () => {
     expect(mailtoHref('replies@example.test')).toBe('mailto:replies@example.test');
     expect(mailtoHref("o'neil+homes@example.test")).toBe("mailto:o'neil%2Bhomes@example.test");
     for (const v of ['javascript:alert(1)', 'mailto:a@example.test', 'a@example.test?body=x', 'a@example.test?cc=b@example.test', 'a@example.test,b@example.test', 'a@example.test;b@example.test', 'a@example.test\r\nBcc: b@example.test', '<a@example.test>', '"a"@example.test', 'a b@example.test', 'a@example', 'a%0a@example.test', 'a@exa‮mple.test', '', null]) {

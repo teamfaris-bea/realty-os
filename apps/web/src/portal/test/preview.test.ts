@@ -1,5 +1,5 @@
 // @vitest-environment node
-// module 46 (R-PORTALWEB-2, E697): `vite preview` (vite.config.ts realty-portal-preview) serves /portal.html, with any
+// module 46 (R-PORTALWEB-2, E717): `vite preview` (vite.config.ts realty-portal-preview) serves /portal.html, with any
 // query, with portalSecurityHeaders and no-store; /portal, /portal/ and /portal.html/x are the staff app with the staff
 // headers, as in nginx. The build refuses an HTML entry with no policy (cspTagFor).
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -56,7 +56,7 @@ describe('vite preview serves the portal like nginx (R-PORTALWEB-2)', () => {
     expectSet(headersOf(head), portalSecurityHeaders);
   });
 
-  it('E697: /portal, /portal/ and / are the staff app with the staff headers; nothing else serves the portal', async () => {
+  it('E717: /portal, /portal/ and / are the staff app with the staff headers; nothing else serves the portal', async () => {
     for (const path of ['/', '/portal', '/portal/', '/portal.html/x', '/login']) {
       const r = await fetch(base + path);
       expect(r.status, path).toBe(200);

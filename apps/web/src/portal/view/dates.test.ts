@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-5, E690): a LocalDate is its calendar date in every zone, exactly as the staff formatter.
+// module 46 (R-PORTALWEB-5, E710): a LocalDate is its calendar date in every zone, exactly as the staff formatter.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatLocalDate as staffFormat } from '../../surfaces/feed/lib/format.js';
 import { formatLocalDate, formatShared } from './dates.js';
@@ -22,8 +22,8 @@ function inZone<T>(zone: string, fn: () => T): T {
   }
 }
 
-describe('view/dates.ts (E690)', () => {
-  it('E690: 2026-12-18 reads "Dec 18, 2026" under Honolulu, Los Angeles and Tokyo, and equals the staff formatter', () => {
+describe('view/dates.ts (E710)', () => {
+  it('E710: 2026-12-18 reads "Dec 18, 2026" under Honolulu, Los Angeles and Tokyo, and equals the staff formatter', () => {
     for (const z of ZONES) {
       expect(inZone(z, () => formatLocalDate('2026-12-18')), z).toBe('Dec 18, 2026');
       expect(inZone(z, () => formatLocalDate('2026-01-01')), z).toBe('Jan 1, 2026');

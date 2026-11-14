@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-3, R-PORTALWEB-4; E680-E683, E699): the link is read once, before the first render.
+// module 46 (R-PORTALWEB-3, R-PORTALWEB-4; E700-E703, E719): the link is read once, before the first render.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEAM_STORAGE_KEY, classifyHash, dropToken, linkToken, readLink, resetLinkForTests, teamFromSearch } from './link.js';
 import { TOKEN } from './test/fixtures.js';
@@ -26,7 +26,7 @@ describe('link.ts (R-PORTALWEB-3)', () => {
     expect(linkToken()).toBeNull();
   });
 
-  it('E682: anything but exactly 43 base64url characters is "incomplete": no token, and the fragment is still stripped', () => {
+  it('E702: anything but exactly 43 base64url characters is "incomplete": no token, and the fragment is still stripped', () => {
     const cases = [
       `#token=${TOKEN.slice(0, 42)}`,
       `#token=${TOKEN}x`,
@@ -73,7 +73,7 @@ describe('link.ts (R-PORTALWEB-3)', () => {
     expect([...store.m.keys()]).toEqual([TEAM_STORAGE_KEY]);
   });
 
-  it('R-PORTALWEB-4: the token link (no team) uses the remembered slug; an invalid remembered or given slug is never used (E699)', () => {
+  it('R-PORTALWEB-4: the token link (no team) uses the remembered slug; an invalid remembered or given slug is never used (E719)', () => {
     expect(readLink({ pathname: '/portal.html', search: '', hash: `#token=${TOKEN}` }, hist(), memoryStore({ [TEAM_STORAGE_KEY]: 'harbor' })).team).toBe('harbor');
     resetLinkForTests();
     expect(readLink({ pathname: '/portal.html', search: '', hash: '' }, hist(), memoryStore({ [TEAM_STORAGE_KEY]: 'BAD SLUG' })).team).toBeNull();

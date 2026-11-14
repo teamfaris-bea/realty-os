@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-5, E690): dates as the client reads them. A LocalDate (YYYY-MM-DD) is its calendar date in
+// module 46 (R-PORTALWEB-5, E710): dates as the client reads them. A LocalDate (YYYY-MM-DD) is its calendar date in
 // every zone: built with Date.UTC and formatted in UTC, never `new Date('YYYY-MM-DD')`, exactly as the staff formatter
 // (surfaces/feed/lib/format.ts formatLocalDate). An instant ("Shared …") is shown in the viewer's own zone. Pure.
 

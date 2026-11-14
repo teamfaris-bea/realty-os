@@ -142,7 +142,7 @@ test('R-PORTALWEB-2, VERIFY 6: zero CSP and Trusted Types violations on sign-in,
   }
 });
 
-test('E697: /login, / and /portal keep the staff headers (the portal policy is /portal.html only)', async ({ page }) => {
+test('E717: /login, / and /portal keep the staff headers (the portal policy is /portal.html only)', async ({ page }) => {
   await watch(page);
   for (const path of ['/login', '/', '/portal']) {
     const res = await page.goto(`${baseUrl}${path}`);

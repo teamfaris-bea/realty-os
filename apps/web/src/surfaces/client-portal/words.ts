@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-10; E653, E698): the staff words of the client-portal section and preview. 45's sentences are
+// module 46 (R-PORTALWEB-10; E693, E718): the staff words of the client-portal section and preview. 45's sentences are
 // copied verbatim (staff code cannot import the API; ClientPortalSection.test.tsx proves them equal to 45's contract).
 // They are passed to messageFor here, never put in the surface's errorMessages (CONTACT_MERGED already has two
 // sentences in the staff app, and shell/pages.ts refuses a conflicting one).

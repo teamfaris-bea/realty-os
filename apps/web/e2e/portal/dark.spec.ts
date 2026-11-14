@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-4, R-PORTALWEB-6, R-PORTALWEB-10; E653, E659, E684, E685): platform:portal uncleared, the
+// module 46 (R-PORTALWEB-4, R-PORTALWEB-6, R-PORTALWEB-10; E693, E699, E704, E705): platform:portal uncleared, the
 // default on every deployment. Nothing is sent, the portal says it is not available, and the deal section says it
 // is off; a link minted while cleared stops working at the tap once the clearance is withdrawn; a withdrawal
 // mid-session signs the client out on her next request. The clearance is restored in a finally.
@@ -25,7 +25,7 @@ test.afterAll(async () => {
   await stack?.stop();
 });
 
-test('E684, E653: uncleared, nothing is sent: the portal is not available, the deal section is off, the invite says nothing was sent', async ({ page, browser }, info) => {
+test('E704, E693: uncleared, nothing is sent: the portal is not available, the deal section is off, the invite says nothing was sent', async ({ page, browser }, info) => {
   test.setTimeout(240_000);
   await stack.setCleared(false);
   await signIn(page, stack, w.agents[0]!);
@@ -49,7 +49,7 @@ test('E684, E653: uncleared, nothing is sent: the portal is not available, the d
   await ctx.close();
 });
 
-test('E684: a link minted while cleared, then the clearance withdrawn: the tap answers not available', async ({ browser }, info) => {
+test('E704: a link minted while cleared, then the clearance withdrawn: the tap answers not available', async ({ browser }, info) => {
   test.setTimeout(240_000);
   const ctx = await newClientContext(browser, info);
   const jane = await ctx.newPage();
@@ -65,7 +65,7 @@ test('E684: a link minted while cleared, then the clearance withdrawn: the tap a
   }
 });
 
-test('E659, E685: the clearance withdrawn mid-session signs Jane out on her next request; nothing stale stays', async ({ browser }, info) => {
+test('E699, E705: the clearance withdrawn mid-session signs Jane out on her next request; nothing stale stays', async ({ browser }, info) => {
   test.setTimeout(240_000);
   const ctx = await newClientContext(browser, info);
   const jane = await ctx.newPage();

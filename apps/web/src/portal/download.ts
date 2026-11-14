@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-7; E649, E693, E694, E696): a document is saved only from the client's Download tap, and only
+// module 46 (R-PORTALWEB-7; E689, E713, E714, E716): a document is saved only from the client's Download tap, and only
 // through 45's re-checked stream: POST …/stream-token (CSRF), then the same-origin /api/portal/files/<43-character
 // token> it names, and nothing else. Only a 200 whose Content-Type matches the announced type (MIME essence) and whose
 // body is exactly the announced byte size becomes a Blob, saved through a temporary <a download> with the object URL

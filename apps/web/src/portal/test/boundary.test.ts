@@ -1,5 +1,5 @@
 // @vitest-environment node
-// module 46 (R-PORTALWEB-1, R-PORTALWEB-9, R-PORTALWEB-10; E697): the trust boundary in the source, both ways.
+// module 46 (R-PORTALWEB-1, R-PORTALWEB-9, R-PORTALWEB-10; E717): the trust boundary in the source, both ways.
 //   - portal code names only /api/portal/ API paths, and never document.cookie, the staff cookie, /auth/, raw HTML
 //     sinks, eval, sessionStorage, console or import.meta.env; localStorage only in link.ts (the team slug);
 //   - view/** (what staff code may import) imports only react and itself, and touches no window, document, fetch,
@@ -138,7 +138,7 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     expect(previewImports).toBeGreaterThan(0);
   });
 
-  it('E697, R-PORTALWEB-9: no staff file names a client portal path (staff code never calls the client API)', () => {
+  it('E717, R-PORTALWEB-9: no staff file names a client portal path (staff code never calls the client API)', () => {
     const problems: string[] = [];
     for (const f of STAFF_FILES) {
       const hit = /['"`](?:\/api)?\/portal\/[^'"`]*/.exec(code(f));

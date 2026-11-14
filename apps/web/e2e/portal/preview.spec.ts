@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-10; E698): "What {name} sees" before Jane signs in (45's reason in the banner), an ISA (no
+// module 46 (R-PORTALWEB-10; E718): "What {name} sees" before Jane signs in (45's reason in the banner), an ISA (no
 // section, the preview not found), and an invite whose notice an opt-out blocks (the decision, no send-anyway).
 import { type Page, expect, test } from 'playwright/test';
 import { signIn, tap } from '../journeys/helpers.js';
@@ -28,7 +28,7 @@ test.afterAll(async () => {
 
 const section = (page: Page) => page.locator('section').filter({ has: page.getByRole('heading', { name: 'Client portal' }) });
 
-test('E698: before Jane signs in, the preview says why she cannot see it (45\'s reason); it is 1 tap from the deal', async ({ page }) => {
+test('E718: before Jane signs in, the preview says why she cannot see it (45\'s reason); it is 1 tap from the deal', async ({ page }) => {
   test.setTimeout(180_000);
   await signIn(page, stack, w.agents[0]!);
   await page.goto(`${stack.webUrl}/deals/${pw.dealId}`);
@@ -43,7 +43,7 @@ test('E698: before Jane signs in, the preview says why she cannot see it (45\'s 
   await expect(page.getByText(`${pw.jane.name} can't see this now: the client has not signed in yet.`)).toBeVisible();
 });
 
-test('E698: an ISA gets no section on the deal and not-found on the preview', async ({ page }) => {
+test('E718: an ISA gets no section on the deal and not-found on the preview', async ({ page }) => {
   test.setTimeout(180_000);
   await signIn(page, stack, isa);
   await page.goto(`${stack.webUrl}/client-portal/${grantId}`);

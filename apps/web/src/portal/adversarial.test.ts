@@ -1,4 +1,4 @@
-// module 46 adversarial cases (critical module; R-PORTALWEB-1…9; E682, E683, E688, E693, E694, E695): a hostile
+// module 46 adversarial cases (critical module; R-PORTALWEB-1…9; E702, E703, E708, E713, E714, E715): a hostile
 // link, query, stream answer, file name, contact or body never gets the portal to post, fetch, link or render what it
 // must not.
 import { describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { portalContractFetch } from './test/portalContract.js';
 import { ParseError, mailtoHref, parseMe, parseTimeline, smsHref } from './view/index.js';
 
 describe('adversarial (module 46)', () => {
-  it('E682: #token=…&next=//evil is incomplete; nothing navigates, nothing is kept', () => {
+  it('E702: #token=…&next=//evil is incomplete; nothing navigates, nothing is kept', () => {
     resetLinkForTests();
     const h = { state: null, replaceState: vi.fn() };
     const r = readLink({ pathname: '/portal.html', search: '?team=harbor', hash: `#token=${F.TOKEN}&next=//evil.example.test` }, h, null);
@@ -30,7 +30,7 @@ describe('adversarial (module 46)', () => {
     expect(() => parseMe(F.me([{ ...F.grant(), id: '../../me' }]))).toThrow(ParseError);
   });
 
-  it('E694: off-origin, protocol-relative, dot-segment or encoded stream URLs are refused, and the API refuses any non-portal path', async () => {
+  it('E714: off-origin, protocol-relative, dot-segment or encoded stream URLs are refused, and the API refuses any non-portal path', async () => {
     for (const u of ['https://evil.example.test/api/portal/files/' + 'a'.repeat(43), '//evil.example.test/api/portal/files/' + 'a'.repeat(43), '/api/portal/files/../me' + 'a'.repeat(36), '/api/portal/files/%2e%2e' + 'a'.repeat(37), '/api/portal/files/' + 'a'.repeat(43) + '#x', '/API/portal/files/' + 'a'.repeat(43)]) {
       expect(FILE_URL_RE.test(u), u).toBe(false);
       const fetchSpy = vi.fn(portalContractFetch((x) => (x.key.includes('stream-token') ? { status: 200, body: F.streamToken({ url: u }) } : { status: 500, body: undefined })));
@@ -56,21 +56,21 @@ describe('adversarial (module 46)', () => {
     expect(seen).toEqual([]);
   });
 
-  it('E693: ../../x, CRLF and bidi file names are only names', () => {
+  it('E713: ../../x, CRLF and bidi file names are only names', () => {
     expect(safeFileName('../../x')).toBe('x');
     expect(safeFileName('a\r\nContent-Type: text/html')).toBe('html');
     expect(safeFileName('a\r\nContent-Type: x.pdf')).toBe('aContent-Type_ x.pdf');
     expect(safeFileName('‮fdp.exe')).toBe('fdp.exe');
   });
 
-  it('E695: contacts carrying a scheme or parameters give no link', () => {
+  it('E715: contacts carrying a scheme or parameters give no link', () => {
     for (const v of ['tel:+15555550123', 'sms:+15555550123', 'data:text/html,x', 'javascript:alert(1)//@example.test']) {
       expect(smsHref(v), v).toBeNull();
       expect(mailtoHref(v), v).toBeNull();
     }
   });
 
-  it('E688: huge JSON is refused by the parsers, not rendered', () => {
+  it('E708: huge JSON is refused by the parsers, not rendered', () => {
     const many = Array.from({ length: 1001 }, (_, i) => ({ ...F.timeline().items[0], itemId: `01900000-0000-7000-8000-${String(i).padStart(12, '0')}` }));
     expect(() => parseTimeline({ ...F.timeline(), items: many })).toThrow(ParseError);
     expect(() => parseMe(F.me(Array.from({ length: 201 }, () => F.grant())))).toThrow(ParseError);

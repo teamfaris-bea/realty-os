@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-1, R-PORTALWEB-2, R-PORTALWEB-3, R-PORTALWEB-9; E680, E683, E697, E148): the trust boundary
+// module 46 (R-PORTALWEB-1, R-PORTALWEB-2, R-PORTALWEB-3, R-PORTALWEB-9; E700, E703, E717, E148): the trust boundary
 // in a real browser. A staff browser on /portal.html calls only /api/portal/* and its staff tab is unaffected; a
 // client on / or /portal gets the staff sign-in; the token is in no URL, Referer, storage or history entry; a visit
 // that runs the page's script without a tap (a scanner, a preview) leaves the link valid.
@@ -27,7 +27,7 @@ test.afterAll(async () => {
   await stack?.stop();
 });
 
-test('E697: a staff browser on /portal.html calls only /api/portal/*; the staff tab still works; the staff session is not the portal\'s', async ({ page }) => {
+test('E717: a staff browser on /portal.html calls only /api/portal/*; the staff tab still works; the staff session is not the portal\'s', async ({ page }) => {
   test.setTimeout(180_000);
   await signIn(page, stack, w.agents[0]!);
   const portal = await page.context().newPage();
@@ -44,7 +44,7 @@ test('E697: a staff browser on /portal.html calls only /api/portal/*; the staff 
   await expect(page.getByRole('heading', { level: 1, name: pw.dealName })).toBeVisible({ timeout: 20_000 });
 });
 
-test('E697: a client on / and on /portal gets the staff sign-in, never the portal', async ({ browser }, info) => {
+test('E717: a client on / and on /portal gets the staff sign-in, never the portal', async ({ browser }, info) => {
   const ctx = await newClientContext(browser, info);
   const p = await ctx.newPage();
   for (const path of ['/', '/portal']) {
@@ -55,7 +55,7 @@ test('E697: a client on / and on /portal gets the staff sign-in, never the porta
   await ctx.close();
 });
 
-test('E683, E680: the token is in no URL, Referer, storage or history entry; a scripted visit with no tap leaves the link valid', async ({ browser }, info) => {
+test('E703, E700: the token is in no URL, Referer, storage or history entry; a scripted visit with no tap leaves the link valid', async ({ browser }, info) => {
   test.setTimeout(180_000);
   const asker = await newClientContext(browser, info);
   const link = await requestLink(await asker.newPage(), stack, pw.slug, pw.jane.email);

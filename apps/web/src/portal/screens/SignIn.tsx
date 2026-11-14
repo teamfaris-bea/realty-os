@@ -1,6 +1,6 @@
 // module 46: the signed-out screens. SignIn (GET /me answered 401), SignedOut (after a logout or a session 401: the
-// causes are not told apart, R-PORTALWEB-6), Incomplete (a malformed link, E682) and Unavailable (503: the portal is
-// off, nothing was sent, E684).
+// causes are not told apart, R-PORTALWEB-6), Incomplete (a malformed link, E702) and Unavailable (503: the portal is
+// off, nothing was sent, E704).
 import { API_SENTENCES, COPY } from '../copy.js';
 import { usePortal } from '../context.js';
 import { H1, Page, useFocusHeading } from './common.js';

@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-5, R-PORTALWEB-8, R-PORTALWEB-10; E689, E695, E698): the pure view components.
+// module 46 (R-PORTALWEB-5, R-PORTALWEB-8, R-PORTALWEB-10; E709, E715, E718): the pure view components.
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import * as F from '../test/fixtures.js';
@@ -16,7 +16,7 @@ function body(items: unknown[]) {
 }
 
 describe('view components (R-PORTALWEB-5)', () => {
-  it('E689: HTML is text, URLs are not links, every server string is direction-isolated, and a 5,000-character word wraps', () => {
+  it('E709: HTML is text, URLs are not links, every server string is direction-isolated, and a 5,000-character word wraps', () => {
     // the parsers cap a body at 45's 4,000 characters; the component still wraps a longer word if one ever came
     const tl = body([{ ...F.timeline().items[0], title: HOSTILE_TITLE, body: URL_BODY }, { ...F.timeline().items[1], title: BIDI }]);
     tl.items[1] = { ...tl.items[1]!, body: LONG };
@@ -49,7 +49,7 @@ describe('view components (R-PORTALWEB-5)', () => {
     expect(screen.getByText(VIEW_WORDS.noDocuments)).toBeInTheDocument();
   });
 
-  it('R-PORTALWEB-8, E695: the card names the agent verbatim, never split; with no valid contact, the fallback sentence; no Call', () => {
+  it('R-PORTALWEB-8, E715: the card names the agent verbatim, never split; with no valid contact, the fallback sentence; no Call', () => {
     const { rerender } = render(<ContactCard contact={{ agentName: 'María José de la Cruz-Núñez', textTo: '+15555550123', emailTo: null }} mode="client" />);
     expect(screen.getByRole('link', { name: 'Text María José de la Cruz-Núñez' })).toBeInTheDocument();
     expect(screen.queryByText(/^María$/)).toBeNull();
@@ -61,7 +61,7 @@ describe('view components (R-PORTALWEB-5)', () => {
     expect(screen.queryByText(/call/i)).toBeNull();
   });
 
-  it('R-PORTALWEB-10, E698: preview mode shows the controls as plain text (no link, no button, nothing focusable)', () => {
+  it('R-PORTALWEB-10, E718: preview mode shows the controls as plain text (no link, no button, nothing focusable)', () => {
     const { container } = render(<GrantBody grant={parseMe(F.me()).grants[0]!} timeline={parseTimeline(F.timeline())} documents={F.documents().documents} mode="preview" layout="both" headingLevel={2} />);
     expect(container.querySelectorAll('a, button, input, [tabindex="0"]')).toHaveLength(0);
     expect(screen.getByText('Text Sam Agent')).toBeInTheDocument();

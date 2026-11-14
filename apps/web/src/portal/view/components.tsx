@@ -162,7 +162,7 @@ export function ContactCard({ contact, mode, compact = false }: { contact: Conta
                   <Txt>{a.label}</Txt>
                 </a>
               ) : (
-                <span data-inert="contact" className="inline-flex min-h-tap items-center px-1 text-[15px] text-ink-muted">
+                <span data-inert="contact" className="inline-flex items-center px-1 py-1 text-[15px] text-ink-muted">
                   <Txt>{a.label}</Txt>
                 </span>
               )}

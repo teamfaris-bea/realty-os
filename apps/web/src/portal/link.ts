@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-3, R-PORTALWEB-4; E680-E683, E699): the sign-in link and the team, read ONCE before the first
+// module 46 (R-PORTALWEB-3, R-PORTALWEB-4; E700-E703, E719): the sign-in link and the team, read ONCE before the first
 // render (main.tsx calls readLink before createRoot).
 //
 // Token: only a fragment that is exactly `#token=` and 43 base64url characters is well-formed; any other fragment that
@@ -9,7 +9,7 @@
 //
 // Team: `?team=` (lowercased, the tenants slug pattern) stays in the address bar: it is not a secret and no query is
 // logged. A valid one is also remembered on this device (localStorage, the slug only; Q-PORTALWEB-2, VERIFY WITH
-// COUNSEL) for the token link, which carries no team. An invalid slug is never guessed at (E699).
+// COUNSEL) for the token link, which carries no team. An invalid slug is never guessed at (E719).
 import { LINK_TOKEN_RE, TEAM_SLUG_RE } from './copy.js';
 
 export type LinkKind = 'none' | 'token' | 'incomplete';

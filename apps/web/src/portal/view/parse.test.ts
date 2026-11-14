@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-5, E688): the strict allowlist parsers.
+// module 46 (R-PORTALWEB-5, E708): the strict allowlist parsers.
 import { describe, expect, it } from 'vitest';
 import * as F from '../test/fixtures.js';
 import { hostile, rng } from '../test/hostile.js';
@@ -8,7 +8,7 @@ const INJECTED = { notes: 'internal note', score: 97, value: 512000, cmaValue: '
 const PARSERS = [parseMe, parseTimeline, parseDocuments, parseStreamToken, parseSession, parsePreview, parseLoginAccepted];
 
 describe('view/parse.ts (R-PORTALWEB-5)', () => {
-  it('E688: only contract keys survive; injected notes, scores, values, CMA, AI drafts, assignees, tenant ids and __proto__ never reach a component', () => {
+  it('E708: only contract keys survive; injected notes, scores, values, CMA, AI drafts, assignees, tenant ids and __proto__ never reach a component', () => {
     const me = parseMe({ ...F.me([{ ...F.grant(), ...INJECTED, contact: { ...F.contact, ...INJECTED } }]), ...INJECTED });
     const tl = parseTimeline({ ...F.timeline(), ...INJECTED, items: F.timeline().items.map((i) => ({ ...i, ...INJECTED })) });
     const docs = parseDocuments({ ...F.documents(), documents: F.documents().documents.map((d) => ({ ...d, ...INJECTED })) });
@@ -22,7 +22,7 @@ describe('view/parse.ts (R-PORTALWEB-5)', () => {
     expect(Object.keys(tl.items[0]!).sort()).toEqual(['body', 'itemId', 'kind', 'occursOn', 'publishedAt', 'title']);
   });
 
-  it('E688: a malformed required field, a seventh kind, a non-date, a non-UUID or a bad instant is BAD_RESPONSE (ParseError)', () => {
+  it('E708: a malformed required field, a seventh kind, a non-date, a non-UUID or a bad instant is BAD_RESPONSE (ParseError)', () => {
     const t = F.timeline();
     const bad: [string, () => unknown][] = [
       ['seventh kind', () => parseTimeline({ ...t, items: [{ ...t.items[0], kind: 'cma_value' }] })],
@@ -47,7 +47,7 @@ describe('view/parse.ts (R-PORTALWEB-5)', () => {
     for (const [what, f] of bad) expect(f, what).toThrow(ParseError);
   });
 
-  it('E695: a malformed contact value is dropped (no link is ever built from it), and an all-empty contact is null', () => {
+  it('E715: a malformed contact value is dropped (no link is ever built from it), and an all-empty contact is null', () => {
     const g = parseMe(F.me([F.grant({ contact: { agentName: 'Sam Agent', textTo: 'javascript:alert(1)', emailTo: 'a@b.test?cc=evil@example.test' } })])).grants[0]!;
     expect(g.contact).toEqual({ agentName: 'Sam Agent', textTo: null, emailTo: null });
     const none = parseMe(F.me([F.grant({ contact: { agentName: null, textTo: '555', emailTo: 'not-an-email' } as never })])).grants[0]!;
@@ -61,7 +61,7 @@ describe('view/parse.ts (R-PORTALWEB-5)', () => {
     expect(JSON.stringify(p)).not.toContain('cmaValue');
   });
 
-  it('E688 (property): 200 seeded hostile values make every parser either return or throw ParseError, never anything else', () => {
+  it('E708 (property): 200 seeded hostile values make every parser either return or throw ParseError, never anything else', () => {
     const r = rng(46);
     let threw = 0;
     for (let i = 0; i < 200; i += 1) {

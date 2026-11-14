@@ -69,7 +69,7 @@ function Screens({ link }: { link: LinkRead }) {
   const [lead, setLead] = useState<string | null>(null);
   const wasIn = useRef(false);
 
-  // R-PORTALWEB-9 (E685): a session 401 anywhere drops the CSRF and link tokens; a client who was in is signed out
+  // R-PORTALWEB-9 (E705): a session 401 anywhere drops the CSRF and link tokens; a client who was in is signed out
   useEffect(
     () =>
       api.onSignedOut(() => {

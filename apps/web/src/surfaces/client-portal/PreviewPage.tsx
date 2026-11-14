@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-10, R-PORTAL-16; E698): "What {name} sees". A staff page in the staff bundle: it reads 45's
+// module 46 (R-PORTALWEB-10, R-PORTAL-16; E718): "What {name} sees". A staff page in the staff bundle: it reads 45's
 // staff route GET /portal-grants/:id/preview (never the client API), parses it with the client's own parser and
 // renders the client's own view components in preview mode (every control plain text), under a banner that says
 // whether the client can see it now and, if not, 45's reasons. A 404 (another agent's grant, an ISA) is not-found.

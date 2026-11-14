@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-3, R-PORTALWEB-4, R-PORTALWEB-6, R-PORTALWEB-9; E680-E687, E691, E692, E699): the screens
+// module 46 (R-PORTALWEB-3, R-PORTALWEB-4, R-PORTALWEB-6, R-PORTALWEB-9; E700-E707, E711, E712, E719): the screens
 // on a contract-checked fake of module 45.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -20,7 +20,7 @@ const h1 = () => screen.getByRole('heading', { level: 1 });
 const withToken = () => readLink({ pathname: '/portal.html', search: '', hash: `#token=${F.TOKEN}` }, { state: null, replaceState: () => undefined }, null);
 
 describe('LinkLanding (R-PORTALWEB-3)', () => {
-  it('E680, E645: nothing is posted on load, focus, visibility or pageshow; the Sign in tap posts the token once, even on a double tap', async () => {
+  it('E700, E700: nothing is posted on load, focus, visibility or pageshow; the Sign in tap posts the token once, even on a double tap', async () => {
     withToken();
     const r = renderPortal({ link: { link: 'token' }, routes: { ...signedIn, 'POST /portal/session': () => ({ status: 200, body: F.session() }) } });
     expect(h1()).toHaveTextContent('Sign in');
@@ -40,7 +40,7 @@ describe('LinkLanding (R-PORTALWEB-3)', () => {
     expect(r.problems).toEqual([]);
   });
 
-  it('E681: a used link says so, then /me decides: signed in opens home with the sentence announced', async () => {
+  it('E701: a used link says so, then /me decides: signed in opens home with the sentence announced', async () => {
     withToken();
     renderPortal({ link: { link: 'token' }, routes: { ...signedIn, 'POST /portal/session': () => portalApiError('PORTAL_LINK_INVALID') } });
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
@@ -48,7 +48,7 @@ describe('LinkLanding (R-PORTALWEB-3)', () => {
     await waitFor(() => expect(live()).toHaveTextContent(API_SENTENCES.PORTAL_LINK_INVALID));
   });
 
-  it('E681: a used link while signed out shows the sentence and the form; with no team, the no-team state', async () => {
+  it('E701: a used link while signed out shows the sentence and the form; with no team, the no-team state', async () => {
     withToken();
     renderPortal({ link: { link: 'token' }, routes: { ...signedOutRoutes, 'POST /portal/session': () => portalApiError('PORTAL_LINK_INVALID') } });
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
@@ -57,7 +57,7 @@ describe('LinkLanding (R-PORTALWEB-3)', () => {
     expect(screen.getByRole('button', { name: COPY.sendLink })).toBeInTheDocument();
   });
 
-  it('E684: uncleared at the tap: not available, nothing was sent', async () => {
+  it('E704: uncleared at the tap: not available, nothing was sent', async () => {
     withToken();
     renderPortal({ link: { link: 'token' }, routes: { 'POST /portal/session': () => portalApiError('PORTAL_NOT_AVAILABLE') } });
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
@@ -77,7 +77,7 @@ describe('LinkLanding (R-PORTALWEB-3)', () => {
     expect(r.keys().filter((k) => k === 'POST /portal/session')).toHaveLength(2);
   });
 
-  it('E682: an incomplete link has no button, says so, and posts nothing', async () => {
+  it('E702: an incomplete link has no button, says so, and posts nothing', async () => {
     const r = renderPortal({ link: { link: 'incomplete' }, routes: {} });
     expect(screen.getByText(COPY.incomplete)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
@@ -114,7 +114,7 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     expect(r.seen.find((x) => x.key === 'POST /portal/login')!.body).toEqual({ team: 'harbor', address: '(555) 555-0123' });
   });
 
-  it('E686: a channel that cannot send: its sentence, nothing sent, Email still offered, the field kept', async () => {
+  it('E706: a channel that cannot send: its sentence, nothing sent, Email still offered, the field kept', async () => {
     renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => portalApiError('PORTAL_NOT_AVAILABLE', { channel: 'sms' }) } });
     await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
     await userEvent.click(screen.getByRole('radio', { name: COPY.byText }));
@@ -125,7 +125,7 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     expect(screen.getByLabelText(COPY.phoneLabel)).toHaveValue('5555550123');
   });
 
-  it('E684: uncleared at the request: the not-available screen, nothing sent', async () => {
+  it('E704: uncleared at the request: the not-available screen, nothing sent', async () => {
     renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => portalApiError('PORTAL_NOT_AVAILABLE') } });
     await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
     await userEvent.type(screen.getByLabelText(COPY.emailLabel), 'jane@example.test');
@@ -134,7 +134,7 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     expect(screen.getByText(COPY.nothingSent)).toBeInTheDocument();
   });
 
-  it('E687: 429, 413 and 422 show their own sentences and keep the address', async () => {
+  it('E707: 429, 413 and 422 show their own sentences and keep the address', async () => {
     for (const code of ['RATE_LIMITED', 'PAYLOAD_TOO_LARGE', 'EMAIL_INVALID', 'VALIDATION_FAILED'] as const) {
       const v = renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => portalApiError(code) } });
       await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
@@ -147,7 +147,7 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     }
   });
 
-  it('E699: no team: "Open your invitation link", no form, nothing guessed', async () => {
+  it('E719: no team: "Open your invitation link", no form, nothing guessed', async () => {
     const r = renderPortal({ link: { team: null }, routes: signedOutRoutes });
     expect(await screen.findByRole('heading', { level: 1, name: COPY.noTeamTitle })).toBeInTheDocument();
     expect(screen.getByText(COPY.noTeamBody)).toBeInTheDocument();
@@ -191,7 +191,7 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(screen.queryByRole('tablist')).toBeNull();
   });
 
-  it('E691: zero grants: one "nothing is shared" sentence', async () => {
+  it('E711: zero grants: one "nothing is shared" sentence', async () => {
     renderPortal({ routes: { ...signedIn, 'GET /portal/me': () => ({ status: 200, body: F.me([]) }) } });
     expect(await screen.findByText(VIEW_WORDS.nothingShared)).toBeInTheDocument();
     expect(h1()).toHaveTextContent(VIEW_WORDS.portalTitle);
@@ -206,7 +206,7 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     window.history.replaceState(null, '', '/');
   });
 
-  it('E692, E125: a grant revoked between /me and the timeline: "no longer shared", /me refetched, no stale item', async () => {
+  it('E712, E125: a grant revoked between /me and the timeline: "no longer shared", /me refetched, no stale item', async () => {
     let revoked = false;
     const r = renderPortal({
       routes: {
@@ -236,7 +236,7 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(r.api.hasCsrf()).toBe(false);
   });
 
-  it('E685: the session ends mid-use: the next 401 signs out, the cache is cleared, nothing stale is shown', async () => {
+  it('E705: the session ends mid-use: the next 401 signs out, the cache is cleared, nothing stale is shown', async () => {
     let ended = false;
     const r = renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => (ended ? portalApiError('PORTAL_SESSION_REQUIRED') : { status: 200, body: F.documents() }), 'GET /portal/me': () => (ended ? portalApiError('PORTAL_SESSION_REQUIRED') : { status: 200, body: F.me() }) } });
     await screen.findByText('Inspection');

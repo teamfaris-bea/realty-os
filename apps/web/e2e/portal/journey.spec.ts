@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-3…10; E125, E645, E681): the accept journey against the REAL module 45 API with fakes
+// module 46 (R-PORTALWEB-3…10; E125, E700, E701): the accept journey against the REAL module 45 API with fakes
 // (e2e/portal/stack.ts), on the phone (390×844) and desktop (1440×900) projects, tap counts asserted:
 //   the agent invites Jane in 1 tap (the fake email holds the notice, with no token); Jane asks for a link and sees
 //   45's sentence verbatim; the link opens and nothing is posted until she taps Sign in (1 tap); she sees "Your home
@@ -69,7 +69,7 @@ test('module 46: invite, sign in on a tap, see the purchase, download, sign out;
   await jane.goto(link);
   await expect(jane.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
   await jane.waitForTimeout(500);
-  expect(posts).toEqual([]); // E645: nothing before the tap
+  expect(posts).toEqual([]); // E700: nothing before the tap
   expect(jane.url()).not.toContain('token');
   await tap(jane, jane.getByRole('button', { name: 'Sign in' }), taps);
   await expect(jane.getByRole('heading', { level: 1, name: 'Your home purchase' })).toBeVisible({ timeout: 20_000 });
@@ -99,7 +99,7 @@ test('module 46: invite, sign in on a tap, see the purchase, download, sign out;
   expect(docTaps.taps).toBe(isPhone(jane) ? 2 : 1);
   await shot(jane, info, 'portal', 'documents');
 
-  // 5. sign out in one tap; the same link then says it was used (E681)
+  // 5. sign out in one tap; the same link then says it was used (E701)
   const out = { taps: 0 };
   await tap(jane, jane.getByRole('button', { name: 'Sign out' }), out);
   await expect(jane.getByRole('heading', { level: 1, name: "You're signed out" })).toBeVisible();

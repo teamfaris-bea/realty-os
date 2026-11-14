@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-10; E653, E698): the deal's client portal section and "What {name} sees", in jsdom, on
+// module 46 (R-PORTALWEB-10; E693, E718): the deal's client portal section and "What {name} sees", in jsdom, on
 // fixtures checked against module 45's contract.
 import type { Role } from '@realty/core/foundation';
 import { screen, waitFor, within } from '@testing-library/react';
@@ -25,14 +25,14 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
     for (const [code, s] of Object.entries(PORTAL_STAFF_MESSAGES)) expect(s, code).toBe(contractSentence(code));
   });
 
-  it('E698: a 404 (an ISA, support, another agent) hides the section', async () => {
+  it('E718: a 404 (an ISA, support, another agent) hides the section', async () => {
     const fake = new FakeFetch().on(STATE, F.apiErr('NOT_FOUND'));
     render(fake, '/t/deal', 'isa');
     await waitFor(() => expect(fake.callsTo(STATE).length).toBeGreaterThan(0));
     await waitFor(() => expect(screen.queryByRole('heading', { name: STAFF_WORDS.heading })).toBeNull());
   });
 
-  it('E653: uncleared: 45\'s sentence and that invitations are not sent; the "can\'t be shared from the app yet" line is always there', async () => {
+  it('E693: uncleared: 45\'s sentence and that invitations are not sent; the "can\'t be shared from the app yet" line is always there', async () => {
     const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ portalCleared: false, portalText: 'The client portal is not turned on for this team yet, so the client sees nothing.' })));
     render(fake);
     const s = await section();
@@ -64,7 +64,7 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
     expect(within(s).getByRole('link', { name: 'What Jane Doe sees' })).toHaveAttribute('href', `/client-portal/${F.GRANT}`);
   });
 
-  it('a blocked notice shows its decision, with no send-anyway; the uncleared notice says nothing was sent (E653)', async () => {
+  it('a blocked notice shows its decision, with no send-anyway; the uncleared notice says nothing was sent (E693)', async () => {
     const blocked = F.notice({ sent: false, text: 'The note to Jane was not sent; the reason is below. The invite stands.', decision: { outcome: 'deny', reasons: ['opted_out_email'], explanation: 'Opted out of email' } });
     const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state())).on(INVITE, F.ok('POST /deals/:id/portal/invite', F.inviteBody(blocked)));
     render(fake);
@@ -140,14 +140,14 @@ describe('PreviewPage: What {name} sees (R-PORTALWEB-10, R-PORTAL-16)', () => {
     expect(screen.queryByRole('link', { name: /Text|Email/ })).toBeNull();
   });
 
-  it("E698: not visible now: 45's reasons in the banner", async () => {
+  it("E718: not visible now: 45's reasons in the banner", async () => {
     const fake = new FakeFetch().on(PREVIEW, F.ok('GET /portal-grants/:id/preview', F.preview({ visibleNow: false, why: ['The client portal is not turned on for this team yet, so the client sees nothing.', 'The client has not signed in yet.'] })));
     render(fake, `/client-portal/${F.GRANT}`);
     expect(await screen.findByText("The client can't see this now: the client portal is not turned on for this team yet, so the client sees nothing.")).toBeInTheDocument();
     expect(screen.getByText("The client can't see this now: the client has not signed in yet.")).toBeInTheDocument();
   });
 
-  it('E698: a 404 (an ISA, another agent) is not-found; a malformed id asks nothing', async () => {
+  it('E718: a 404 (an ISA, another agent) is not-found; a malformed id asks nothing', async () => {
     const fake = new FakeFetch().on(PREVIEW, F.apiErr('NOT_FOUND'));
     render(fake, `/client-portal/${F.GRANT}`, 'tc');
     expect(await screen.findByText(STAFF_WORDS.notFound)).toBeInTheDocument();

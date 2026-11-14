@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-5, R-PORTALWEB-6; E125, E127, E691, E692): what the signed-in client sees. GET /me lists the
+// module 46 (R-PORTALWEB-5, R-PORTALWEB-6; E125, E127, E711, E712): what the signed-in client sees. GET /me lists the
 // live grants (a revoked one looks never granted). None: one sentence. One: it opens directly. Several: a one-tap list.
 // The open grant and tab are URL state (?grant=<uuid>&view=documents, pushState/popstate); an id not in /me is ignored.
 // Sign out posts /logout (CSRF), then the App clears the cache and tokens (not the team) and shows SignedOut.
@@ -43,7 +43,7 @@ export function useMe() {
     queryKey: ME_KEY,
     queryFn: async ({ signal }) => {
       const me = await api.request('GET', '/api/portal/me', parseMe, undefined, { signal });
-      // E127, E685: another session on this device (a sign-in in another tab) leaves nothing of the old one cached
+      // E127, E705: another session on this device (a sign-in in another tab) leaves nothing of the old one cached
       const prev = qc.getQueryData<MeView>(ME_KEY);
       if (prev && prev.csrfToken !== me.csrfToken) qc.removeQueries({ predicate: (q) => q.queryKey[0] === 'portal' && q.queryKey[1] !== 'me' });
       api.setCsrf(me.csrfToken);

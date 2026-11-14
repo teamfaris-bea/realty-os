@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-5, E688): strict allowlist parsers for every portal answer the web reads. Only the contract's
+// module 46 (R-PORTALWEB-5, E708): strict allowlist parsers for every portal answer the web reads. Only the contract's
 // keys survive (an injected note, score, value, AI draft or id never reaches a component); every kept field is checked
 // (UUIDs, YYYY-MM-DD dates, ISO instants, the item kinds, lengths, an E.164 number, a single email address). A missing
 // or malformed required field throws ParseError, which the client API turns into BAD_RESPONSE. Pure: no I/O, no DOM.

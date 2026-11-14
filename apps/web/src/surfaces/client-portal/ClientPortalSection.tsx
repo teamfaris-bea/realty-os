@@ -1,4 +1,4 @@
-// module 46 (R-PORTALWEB-10; E653, E698): the client portal section of a deal (and, in a follow-up, a listing). It
+// module 46 (R-PORTALWEB-10; E693, E718): the client portal section of a deal (and, in a follow-up, a listing). It
 // reads module 45's staff routes only (never the client API): GET /deals/:id/portal; an invisible deal or a role
 // without portal.view (an ISA, support) is 404 and the section is hidden. It shows 45's words for the clearance,
 // the link channels, each account and grant, a "What {name} sees" link per live grant, Invite (one tap, a fresh
