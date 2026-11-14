@@ -22,10 +22,12 @@ const D11_KEYS = [
   'platform:voice',
   'platform:avm',
   'platform:review_requests',
-  'platform:portal',
 ];
-/** published platform packs D11's run does not record: Meta (D2 cut) and the D10 outreach pack, recorded by its own run */
-const NOT_D11 = ['platform:meta', 'platform:public_records_outreach'];
+/** published platform packs D11's run does not record: Meta (D2 cut), the D10 outreach pack (recorded by its own run) and
+ * the client portal, published at 2026.11.1 by 0091 because D11's review was of the 2026.11.0 placeholder (Q-PORTAL-19) */
+const NOT_D11 = ['platform:meta', 'platform:public_records_outreach', 'platform:portal'];
+/** the module-45 portal pack (0091): unreviewed, needs its own counsel review */
+const PORTAL = 'platform:portal@2026.11.1';
 const VENDOR_CHECKED = ['platform:voice', 'platform:gmail'];
 const D11_REFERENCE = 'counsel review reported by the owner, 2026-11-12';
 /** the version every platform pack ships at (0018, 0025): the version D11's review covers */
@@ -160,7 +162,11 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
       ['platform:avm@2026.11.1', 'platform:avm is named with two versions (2026.11.0, 2026.11.1)'],
       ['platform:nonexistent@2026.11.0', 'platform:nonexistent: no such pack on this deployment'],
       ['platform:draft_only@2026.11.0', 'platform:draft_only has no published version (draft 2026.11.0)'],
-      ['platform:portal@2026.11.9', 'platform:portal@2026.11.9 is not the published version 2026.11.0: there is no version 2026.11.9'],
+      ['platform:portal@2026.11.9', 'platform:portal@2026.11.9 is not the published version 2026.11.1: there is no version 2026.11.9'],
+      [
+        'platform:portal@2026.11.0',
+        'platform:portal@2026.11.0 is not the published version 2026.11.1: 2026.11.0 is retired, so the version counsel reviewed is no longer the published one; 2026.11.1 needs its own counsel review',
+      ],
       [
         'platform:fair_housing@2026.10.0',
         'platform:fair_housing@2026.10.0 is not the published version 2026.11.0: 2026.10.0 is retired, so the version counsel reviewed is no longer the published one',
@@ -256,14 +262,14 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
   });
 
   it('R-INT-6: a review set outside the command (no note of its own) is never reported as recorded: the command refuses and says so; --revoke withdraws it and it can then be recorded properly', async () => {
-    const portal = pin('platform:portal');
+    const portal = PORTAL;
     for (const at of ['2026-11-12T15:30:00Z', '2026-11-12T00:00:00Z']) {
       await query(db.ownerUrl, "UPDATE jurisdiction_packs SET reviewed_by_counsel_at = $1 WHERE key = 'platform:portal' AND status = 'published'", [at]);
       const hand = await packs();
       const r = await run(args([portal], ['--apply']));
       expect(r.code, at).toBe(1);
       expect(r.err, at).toContain(
-        'platform:portal has reviewed_by_counsel_at on 2026-11-12 (version 2026.11.0) but no note from this command recording that review: it was set outside this command',
+        'platform:portal has reviewed_by_counsel_at on 2026-11-12 (version 2026.11.1) but no note from this command recording that review: it was set outside this command',
       );
       expect(r.out, at).toBe('');
       expect(await packs(), at).toEqual(hand);
@@ -355,7 +361,7 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
     }
   });
 
-  it('R-INT-6 D11: it never sets or changes rules.vendor_ready_at: after the seven D11 packs are recorded, platform_cleared is true for the five counsel-only packs and stays false for voice and Gmail until their vendor checks pass', async () => {
+  it('R-INT-6 D11: it never sets or changes rules.vendor_ready_at: after the six D11 packs are recorded, platform_cleared is true for the four counsel-only packs and stays false for voice and Gmail until their vendor checks pass; the portal stays uncleared (Q-PORTAL-19)', async () => {
     const r = await run(args(D11_KEYS.map(pin), ['--apply']));
     expect(r.err).toBe('');
     expect(r.code).toBe(0);
@@ -373,9 +379,10 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
       }
     }
     expect(await cleared('platform:meta', false)).toBe(false);
+    expect(await cleared('platform:portal', false)).toBe(false);
     expect(r.out).toContain('after:  reviewed by counsel on 2026-11-12; not cleared: still waits for the vendor check (rules.vendor_ready_at; this command never sets it)');
     expect(r.out.match(/still waits for the vendor check/g)).toHaveLength(2);
-    expect(r.out).toContain('applied: 7 recorded, 0 already recorded');
+    expect(r.out).toContain('applied: 6 recorded, 0 already recorded');
 
     // a vendor check recorded separately is kept as it is, and only then is the capability cleared
     await query(db.ownerUrl, `UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL, rules = rules || '{"vendor_ready_at": "2026-11-01T00:00:00Z"}' WHERE key = 'platform:voice' AND status = 'published'`);
@@ -388,14 +395,14 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
     expect(v.out).toContain('after:  reviewed by counsel on 2026-11-12; cleared');
   });
 
-  it('R-HOME-8 R-INT-6 D11: platform:public_records_outreach ships unreviewed with {"states":["SC"]}; the seven-key D11 run leaves it alone, and only its own command run records it', async () => {
+  it('R-HOME-8 R-INT-6 D11: platform:public_records_outreach ships unreviewed with {"states":["SC"]}; the six-key D11 run leaves it alone, and only its own command run records it', async () => {
     const before = await published('platform:public_records_outreach');
     expect(before.reviewed_by_counsel_at).toBeNull();
     expect(before.rules).toEqual({ states: ['SC'] });
     expect(before.notes).toContain('Gates nothing in this build');
     const d11 = await run(args(D11_KEYS.map(pin), ['--apply']));
     expect(d11.code).toBe(0);
-    expect(d11.out).toContain('applied: 7 recorded');
+    expect(d11.out).toContain('applied: 6 recorded');
     expect(await published('platform:public_records_outreach')).toEqual(before);
     expect(await cleared('platform:public_records_outreach', false)).toBe(false);
     const own = await run(args([pin('platform:public_records_outreach')], ['--apply']));
@@ -409,13 +416,13 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
 
   it('R-INT-6: a dry run (the default) prints what would change and changes nothing; --apply then changes it', async () => {
     const reference = 'counsel letter of 2026-11-12, filed with the deploy log';
-    const argv = ['--keys', `${pin('platform:portal')},${pin('platform:gmail')}`, '--reviewed-on', '2026-11-12', '--reference', reference];
+    const argv = ['--keys', `${PORTAL},${pin('platform:gmail')}`, '--reviewed-on', '2026-11-12', '--reference', reference];
     const dry = await run(argv);
     expect(dry.err).toBe('');
     expect(dry.code).toBe(0);
     expect(await packs()).toEqual(snapshot);
     expect(dry.out).toContain('dry run');
-    expect(dry.out).toContain('platform:portal (version 2026.11.0)');
+    expect(dry.out).toContain('platform:portal (version 2026.11.1)');
     expect(dry.out).toContain('before: not reviewed by counsel; not cleared');
     expect(dry.out).toContain('after:  reviewed by counsel on 2026-11-12; cleared');
     expect(dry.out).toContain('still waits for the vendor check');

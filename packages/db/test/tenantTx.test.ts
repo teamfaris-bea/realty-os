@@ -120,14 +120,14 @@ describe('withTenantTx', () => {
       // (0018's seven, platform:gmail from the D2 migration, platform:cma from the D9 S0 migration, platform:ads from module 52,
       // platform:public_records_outreach from D10, platform:gbp from module 53, and platform:ai_isa and platform:ai_isa_seller_data
       // from the AI ISA migration; the AI ISA seller migration retires platform:ai_isa_seller_data@2026.11.0 and publishes 2026.11.1,
-      // so 15 rows)
+      // and 0091 (batch 14 round 2, Q-PORTAL-19) retires platform:portal@2026.11.0 and publishes 2026.11.1, so 16 rows)
       const pack = await sql<{ n: string; p: string; reviewed: string }>`
         SELECT count(*) FILTER (WHERE key = 'US') AS n, count(*) FILTER (WHERE key LIKE 'platform:%') AS p,
                count(*) FILTER (WHERE key LIKE 'platform:%' AND reviewed_by_counsel_at IS NOT NULL) AS reviewed
           FROM jurisdiction_packs`.execute(tx);
       return { n, t, packs: Number(pack.rows[0]!.n), platformPacks: Number(pack.rows[0]!.p), reviewed: Number(pack.rows[0]!.reviewed) };
     }, { db: h.app });
-    expect(r).toEqual({ n: 0, t: 0, packs: 1, platformPacks: 15, reviewed: 0 }); // with the seller-data pack's two versions (ISA-3), and with platform:cma (D9 S0), platform:ads (module 52), platform:public_records_outreach (D10), platform:gbp (module 53) and the two AI ISA packs (D12 proposed)
+    expect(r).toEqual({ n: 0, t: 0, packs: 1, platformPacks: 16, reviewed: 0 }); // with the seller-data and portal packs' two versions each (ISA-3, 0091), and with platform:cma (D9 S0), platform:ads (module 52), platform:public_records_outreach (D10), platform:gbp (module 53) and the two AI ISA packs (D12 proposed)
   });
 
   it('support actors are read-only (RESTRICTIVE support_read_only_* policies)', async () => {

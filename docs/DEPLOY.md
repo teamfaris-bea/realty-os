@@ -612,18 +612,18 @@ pnpm --filter @realty/db counsel-review -- --revoke --keys platform:<name>@<vers
 - **Audit trail.** There is no platform-level audit table (`audit_log` is per tenant), so the record is the pack itself: `reviewed_by_counsel_at` and the appended notes, which the platform reads (`app_user` has SELECT; the Integrations page says per pack `cleared by counsel on <date>` or that it still waits for the vendor check), plus the command's printed output. **Keep the `--apply` output with the deploy log.**
 - **Effect.** Once applied, that deployment stops holding the capability back on that pack from the next statement on (the gates read the pack each time; no restart). It turns nothing on by itself: each capability still needs its own switch, connection or vendor. The pilot is a separate approval: on a deployment real teams use, run `--apply` only once the pilot is approved.
 
-**Owner decision D11 (2026-11-12).** The owner reported that counsel cleared nine items. Seven have a pack, all at version `2026.11.0`, and are recorded with one command (dry run, read it, then the same command with `--apply`). The pins keep this command from clearing any later version of these packs:
+**Owner decision D11 (2026-11-12).** The owner reported that counsel cleared nine items. Seven have a pack. Six, all at version `2026.11.0`, are recorded with one command (dry run, read it, then the same command with `--apply`); the seventh, the client portal, is not (below, PHASE2_3_PLAN Q-PORTAL-19). The pins keep this command from clearing any later version of these packs:
 
 ```sh
 # the app VM (§12, real teams): render /run/realty/owner.env for this window, run it through the release profile, then remove owner.env
 REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release \
   node packages/db/dist/scripts/counsel-review.js \
-  --keys platform:fair_housing@2026.11.0,platform:coaching@2026.11.0,platform:gmail@2026.11.0,platform:voice@2026.11.0,platform:avm@2026.11.0,platform:review_requests@2026.11.0,platform:portal@2026.11.0 \
+  --keys platform:fair_housing@2026.11.0,platform:coaching@2026.11.0,platform:gmail@2026.11.0,platform:voice@2026.11.0,platform:avm@2026.11.0,platform:review_requests@2026.11.0 \
   --reviewed-on 2026-11-12 --reference "counsel review reported by the owner, 2026-11-12 (owner decision D11)"
 # the single-VM staging and rehearsal stack only (docker-compose.prod.yml, .env.owner)
 docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
   node packages/db/dist/scripts/counsel-review.js \
-  --keys platform:fair_housing@2026.11.0,platform:coaching@2026.11.0,platform:gmail@2026.11.0,platform:voice@2026.11.0,platform:avm@2026.11.0,platform:review_requests@2026.11.0,platform:portal@2026.11.0 \
+  --keys platform:fair_housing@2026.11.0,platform:coaching@2026.11.0,platform:gmail@2026.11.0,platform:voice@2026.11.0,platform:avm@2026.11.0,platform:review_requests@2026.11.0 \
   --reviewed-on 2026-11-12 --reference "counsel review reported by the owner, 2026-11-12 (owner decision D11)"
 ```
 
@@ -635,11 +635,11 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | AI voice answering | `platform:voice` | not cleared: still waits for a real vendor's latency check (`vendor_ready_at`) |
 | Home-value notes to past clients | `platform:avm` | cleared; in-house notes (production's source, R-CMA-10) also wait for `platform:cma`, which D11 does not cover, so none is requested until it is recorded below |
 | Review requests | `platform:review_requests` | cleared |
-| The client portal | `platform:portal` | cleared (module 45: sign-in by email also needs `EMAIL_PROVIDER=smtp`, by text `TELEPHONY_PROVIDER=twilio` and `TELEPHONY_LIVE_REQUESTS=true`; otherwise that channel answers 503 `PORTAL_NOT_AVAILABLE {channel}`, and a fake provider never carries a link outside tests. No new environment variable. The web image's nginx redacts `/api/portal/files/<token>` and `/api/portal/documents/<item id>` in its access log) |
+| The client portal | `platform:portal` | not recorded by this command, and not cleared: D11's review was of the `2026.11.0` placeholder, before module 45 was built. Migration `0091_b14_round2_portal` retires `2026.11.0` (a review already recorded on it stays as history and clears nothing) and publishes `2026.11.1` unreviewed; the counsel-review command refuses the old `2026.11.0` pin. `2026.11.1` needs a new counsel review of module 45 as built (ARCHITECTURE §21.52 VERIFY 1-6, Q-PORTAL-16, module 46's client page), recorded with its own command once the owner reports it (PHASE2_3_PLAN Q-PORTAL-19). Once cleared, sign-in by email also needs `EMAIL_PROVIDER=smtp`, by text `TELEPHONY_PROVIDER=twilio` and `TELEPHONY_LIVE_REQUESTS=true`; otherwise that channel answers 503 `PORTAL_NOT_AVAILABLE {channel}`, and a fake provider never carries a link outside tests. No new environment variable. The web image's nginx redacts `/api/portal/files/<token>` and `/api/portal/documents/<item id>` in its access log |
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
-| Using public-record personal information for outreach (South Carolina privacy law) | `platform:public_records_outreach` | not recorded by the seven-key command: recorded only by its own command below (owner question 1). It gates nothing in this build (no outreach path exists); the homeowner panel shows whether it is recorded |
+| Using public-record personal information for outreach (South Carolina privacy law) | `platform:public_records_outreach` | not recorded by the six-key command: recorded only by its own command below (owner question 1). It gates nothing in this build (no outreach path exists); the homeowner panel shows whether it is recorded |
 
-The D10 outreach clearance is recorded on its own command, never in the seven-key D11 command, and only after the owner confirms that counsel's review covered the brief's verify_items 9 (SC Code 30-2-50: internal display on existing contacts, absentee prospecting, vendor data, texts, LLC and out-of-state owners) and 10 (Beaufort County's GIS distribution policy inside a multi-tenant CRM) (owner question 1; batch 11 reconciliation homeowner-8). The owner's D11 attestation (PHASE2_3_PLAN D11) names this item; if counsel's review covered both questions, its date and reference are the ones to record, otherwise wait for the review that does. Fill in the placeholders from that review (dry run first, then `--apply`):
+The D10 outreach clearance is recorded on its own command, never in the six-key D11 command, and only after the owner confirms that counsel's review covered the brief's verify_items 9 (SC Code 30-2-50: internal display on existing contacts, absentee prospecting, vendor data, texts, LLC and out-of-state owners) and 10 (Beaufort County's GIS distribution policy inside a multi-tenant CRM) (owner question 1; batch 11 reconciliation homeowner-8). The owner's D11 attestation (PHASE2_3_PLAN D11) names this item; if counsel's review covered both questions, its date and reference are the ones to record, otherwise wait for the review that does. Fill in the placeholders from that review (dry run first, then `--apply`):
 
 ```sh
 # the app VM (§12, real teams): render /run/realty/owner.env for this window, run it through the release profile, then remove owner.env
@@ -662,7 +662,7 @@ Recording it builds nothing: the pack gates no outreach path, and the homeowner 
 
 `platform:gbp` (Google Business Profile, module 53) is **not** covered by D11: never add it to the command above. Record it only after its own counsel review (PHASE2_3_PLAN §7 C15), pinned to the version counsel reviewed, with the same dry run and `--apply`.
 
-Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); neither the app-VM form nor the compose form above has been run against a stack.
+Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused; that rehearsal was of the earlier seven-key form; batch 14 round 2's `packages/db/test/portal_pack_0091.test.ts` dry-runs this six-key list against a fresh database); neither the app-VM form nor the compose form above has been run against a stack.
 
 **D9: `platform:cma` and the licence pack's valuation section (batch 10).** Owner decision D9 adds a CMA built in-house from the team's own MLS sold data (an estimate, never an appraisal; never a third-party AVM). Two separate records hold it back, and neither is turned on by this release:
 
