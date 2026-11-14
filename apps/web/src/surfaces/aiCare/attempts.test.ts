@@ -44,4 +44,16 @@ describe('E724 (b18 review F2): what a human touch closes or decides is worded a
     expect(handoffDoneWords('Jane', '3:05 PM')).not.toMatch(CLAIMS_CONTACT);
     for (const f of ['Person.tsx', 'Feed.tsx']) expect(readFileSync(resolve(here, f), 'utf8'), f).not.toMatch(CLAIMS_CONTACT);
   });
+
+  it('E724 R-ISA-14 OQ-B18-G3 (b18 review): the owner question about an attempt that did not connect is recorded in the PLAN Needed table with the built default and the alternative', () => {
+    const plan = readFileSync(resolve(here, '../../../../../docs/PHASE2_3_PLAN.md'), 'utf8');
+    const row = plan.split('\n').find((l) => l.startsWith('| OQ-B18-G3 '));
+    expect(row, 'OQ-B18-G3 row').toBeDefined();
+    expect(row).toMatch(/unanswered (?:dial|call)/);
+    expect(row).toMatch(/failed (?:human )?text/);
+    expect(row).toMatch(/closes the AI care handoff/);
+    expect(row).toMatch(/holds back the AI appointment confirmation/);
+    expect(row).toMatch(/Default: as built/);
+    expect(row).toMatch(/Alternative:.*keeps the confirmation.*confirm (?:it )?by hand/);
+  });
 });
