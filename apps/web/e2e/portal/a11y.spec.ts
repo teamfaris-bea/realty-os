@@ -32,6 +32,7 @@ test.beforeAll(async () => {
   pw = await stack.portalWorld();
   await stack.setCleared(true);
   const inv = await stack.api<{ grant: { id: string } }>('a.agent0', 'POST', `/deals/${pw.dealId}/portal/invite`, { contactId: pw.jane.id, idempotencyKey: 'a11yinvite' + Date.now() });
+  expect(inv.status, JSON.stringify(inv.body)).toBe(200);
   grantId = inv.body.grant.id;
   await stack.publishDocument(grantId, pw.documentId);
   await stack.jobs();

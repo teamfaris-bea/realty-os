@@ -72,16 +72,18 @@ test('E699, E705: the clearance withdrawn mid-session signs Jane out on her next
   try {
     await stack.setCleared(true);
     const st = await stack.api<{ grants: { id: string }[] }>('a.agent0', 'GET', `/deals/${pw.dealId}/portal`);
+    expect(st.status, JSON.stringify(st.body)).toBe(200);
     await stack.publishDocument(st.body.grants[0]!.id, pw.documentId);
     const link = await requestLink(jane, stack, pw.slug, pw.jane.email);
     await openLinkAndSignIn(jane, link);
     await expect(jane.getByRole('heading', { level: 1, name: 'Your home purchase' })).toBeVisible({ timeout: 20_000 });
     await stack.setCleared(false);
-    // her next request (a Download tap) answers 401; a background refetch (window focus) may get there first, so
-    // a tap on a control that is already gone is skipped: either way she is signed out
-    const quick = { timeout: 3000 };
-    if ((jane.viewportSize()?.width ?? 1440) < 768) await jane.getByRole('tab', { name: 'Documents' }).tap(quick).catch(() => undefined);
-    await jane.getByRole('button', { name: 'Download Purchase contract.pdf' }).click(quick).catch(() => undefined);
+    // b15 audit F9: her next request is driven and asserted, never swallowed: the Download tap (the documents are
+    // already loaded, so the phone's tab tap asks nothing) posts for a stream token, which answers 401
+    if ((jane.viewportSize()?.width ?? 1440) < 768) await tap(jane, jane.getByRole('tab', { name: 'Documents' }));
+    const refused = jane.waitForResponse((r) => /^\/api\/portal\/documents\/[^/]+\/stream-token$/.test(new URL(r.url()).pathname) && r.status() === 401, { timeout: 20_000 });
+    await tap(jane, jane.getByRole('button', { name: 'Download Purchase contract.pdf' }));
+    await refused;
     await expect(jane.getByRole('heading', { level: 1, name: "You're signed out" })).toBeVisible({ timeout: 20_000 });
     await expect(jane.getByText('Inspection', { exact: true })).toHaveCount(0);
   } finally {

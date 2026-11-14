@@ -21,7 +21,9 @@ test.beforeAll(async () => {
   w = await stack.world({ agents: 1 });
   pw = await stack.portalWorld();
   await stack.setCleared(true);
-  await stack.api('a.agent0', 'POST', `/deals/${pw.dealId}/portal/invite`, { contactId: pw.jane.id, idempotencyKey: 'e2einvite' + Date.now() });
+  // b15 audit F9: a failed invite fails here, not later as "no sign-in link reached the fake email"
+  const inv = await stack.api('a.agent0', 'POST', `/deals/${pw.dealId}/portal/invite`, { contactId: pw.jane.id, idempotencyKey: 'e2einvite' + Date.now() });
+  expect(inv.status, JSON.stringify(inv.body)).toBe(200);
 });
 test.afterAll(async () => {
   await stack?.setCleared(false).catch(() => undefined);

@@ -58,6 +58,7 @@ test('module 46: invite, sign in on a tap, see the purchase, download, sign out;
 
   // the document is published to her grant (test only: no staff screen publishes yet) and the sync runs
   const st = await stack.api<{ grants: { id: string }[] }>('a.agent0', 'GET', `/deals/${pw.dealId}/portal`);
+  expect(st.status, JSON.stringify(st.body)).toBe(200);
   const grantId = st.body.grants[0]!.id;
   await stack.publishDocument(grantId, pw.documentId);
   await stack.publishItem(grantId, 'next_step', pw.nextStepTaskId);
