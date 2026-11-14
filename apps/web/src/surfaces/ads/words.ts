@@ -37,7 +37,9 @@ export function campaignStatusWords(s: string): string {
 /** ad_allocation_events.event_kind (core/ads LEDGER_EVENT_KINDS). */
 export type LedgerKind = 'planned' | 'applied' | 'failed' | 'paused';
 export const LEDGER_KIND_WORDS: Record<LedgerKind, string> = {
-  planned: 'Approved, sent to Google Ads',
+  // b14 review F2: the planned row is written before any call to Google (ads/dispatch.ts TX1); only the applied,
+  // failed and pending outcome rows say what reached Google
+  planned: 'Approved, waiting to be sent to Google Ads',
   applied: 'Changed on Google Ads',
   failed: 'Not changed',
   paused: 'Paused',

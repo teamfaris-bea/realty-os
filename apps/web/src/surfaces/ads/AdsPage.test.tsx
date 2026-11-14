@@ -203,6 +203,15 @@ describe('the Owner’s cap', () => {
 });
 
 describe('ledger and linking', () => {
+  it('R-STAFF-3 (b14 review F2): a planned row says approved and waiting, never "sent", beside a PACK_WITHDRAWN failure that was never sent', async () => {
+    const planned = ev(5, { kind: 'planned', reasonCode: 'APPROVED_SHIFT', providerRef: null });
+    const failed = ev(6, { kind: 'failed', reasonCode: 'PACK_WITHDRAWN', providerRef: null });
+    adsApp(adsFake().on('GET /ads/ledger', { status: 200, body: { events: [failed, planned], next: null } }));
+    expect(await screen.findByText(/Approved, waiting to be sent to Google Ads, \$40\.00 → \$50\.00 a day \(an approved change\)\./)).toBeInTheDocument();
+    expect(screen.getByText(/Not changed, \$40\.00 → \$50\.00 a day \(budget changes were turned off before it was sent\)\./)).toBeInTheDocument();
+    expect(mainText()).not.toMatch(/Approved, sent to Google Ads/);
+  });
+
   it('R-STAFF-3: the ledger’s "Show older" asks for the page before the last event shown', async () => {
     const fake = adsFake()
       .on('GET /ads/ledger', { status: 200, body: { events: [ev(1)], next: ev(1).id } })
