@@ -10,12 +10,12 @@ import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { summarizeCall } from '../assistant/callPipeline.js';
 import { type ApiHarness, type TestClient, createApiHarness, testConfig } from '../auth/testHarness.js';
-import * as coaching from '../coaching/repos/coaching.js';
+import * as coaching from './repos/coaching.js';
 import { FakeTranscription, UnconfiguredTranscription, createProviders } from '../providers/index.js';
 import { ProviderError, type TranscriptionProvider } from '../providers/types.js';
 import { systemActor } from '../worker/systemActor.js';
-import { depsFromPlatform } from './runtime.js';
-import { type CommsWorld, call, commsWorld, ownedContact, randomPhone, runJobs, telephonyWebhook } from './testing.js';
+import { depsFromPlatform } from '../comms/runtime.js';
+import { type CommsWorld, call, commsWorld, ownedContact, randomPhone, runJobs, telephonyWebhook } from '../comms/testing.js';
 
 const clock = { now: () => instant(Date.now()) };
 const productionTranscription = (): TranscriptionProvider => createProviders({ ...testConfig(), env: 'production', allowFakeProviders: false }, { clock: clock as never }).transcription;
