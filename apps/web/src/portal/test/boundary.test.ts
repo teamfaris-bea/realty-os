@@ -56,7 +56,8 @@ export function importsOf(src: string): string[] {
 export function intoTestCode(file: string, spec: string): boolean {
   if (!spec.startsWith('.')) return false;
   const to = relative(SRC, resolve(dirname(file), spec)).replaceAll('\\', '/');
-  return /(^|\/)(test|testing)(\/|$)/.test(to) || /\.test\.[cm]?[jt]sx?$/.test(to);
+  // b16: an extensionless specifier counts too ('./link.test' is link.test.ts)
+  return /(^|\/)(test|testing)(\/|$)/.test(to) || /\.test(\.[cm]?[jt]sx?)?$/.test(to);
 }
 
 /** b15 audit P46-TEST-1: whether a view/** file's import stays inside view/ once resolved ('./../link.js' does not), or is react. */
@@ -106,6 +107,8 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     const api = join(PORTAL, 'api.ts');
     const home = join(PORTAL, 'screens', 'Home.tsx');
     expect(['./test/fixtures.js', './testing/x.js', './link.test.js', './view/../test/render.js'].map((s) => intoTestCode(api, s))).toEqual([true, true, true, true]);
+    // b16: extensionless specifiers of test code ('./link.test' is link.test.ts, './test' is test/index.ts)
+    expect(['./link.test', './test', './screens.test', './testing', './view/../test'].map((s) => intoTestCode(api, s))).toEqual([true, true, true, true, true]);
     expect([intoTestCode(home, '../test/fixtures.js'), intoTestCode(home, './test'), intoTestCode(api, './testids.js'), intoTestCode(api, './contest/x.js'), intoTestCode(api, './view/index.js'), intoTestCode(api, 'react')]).toEqual([true, true, false, false, false, false]);
     expect(['import(name)', 'import(`./${n}.js`)', "import('./a' + b)", 'import (x)'].map(computedImport)).toEqual([true, true, true, true]);
     // b15 audit P46-TEST-1: a view import is resolved, so './../x' (which leaves view/) is caught

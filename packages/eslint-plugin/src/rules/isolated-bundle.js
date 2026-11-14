@@ -4,9 +4,9 @@
 // bundle's own directory (`dir`, a directory name under some src/), and a package import must be on `allow`.
 // The files it applies to are configured in eslint.config.js.
 // b15 audit P46-SEC-1: shipped bundle code never imports test code (a `test/` or `testing/` directory, or a
-// `*.test.*` file), which eslint.config.js and the source scans exempt, so a helper there could carry staff code or an
-// env value into the bundle; and a dynamic import must name its module as a string (a template literal without
-// expressions counts), so the rule can read it.
+// `*.test.*` file; b16: also when named without its extension, './test' or './link.test'), which eslint.config.js and
+// the source scans exempt, so a helper there could carry staff code or an env value into the bundle; and a dynamic
+// import must name its module as a string (a template literal without expressions counts), so the rule can read it.
 
 /** @typedef {import('eslint').Rule.RuleModule} RuleModule */
 import { dirname, resolve, sep } from 'node:path';
@@ -41,8 +41,9 @@ const rule = {
     const at = filename.lastIndexOf(marker);
     if (at < 0) return {};
     const root = filename.slice(0, at + marker.length);
+    // b16: an extensionless specifier counts too ('./test' resolves to test/index.ts, './link.test' to link.test.ts)
     /** @param {string} p a path under root */
-    const isTestCode = (p) => /(^|[\\/])(test|testing)[\\/]/.test(p.slice(root.length)) || /\.test\.[cm]?[jt]sx?$/.test(p);
+    const isTestCode = (p) => /(^|[\\/])(test|testing)([\\/]|$)/.test(p.slice(root.length)) || /\.test(\.[cm]?[jt]sx?)?$/.test(p);
     const importerIsTest = isTestCode(filename);
     /** @param {any} node @param {string} source */
     function check(node, source) {
