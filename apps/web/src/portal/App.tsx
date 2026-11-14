@@ -8,10 +8,10 @@ import { type PortalApi, portalApi, shouldRetry } from './api.js';
 import { PortalContext, usePortal } from './context.js';
 import type { SaveDeps } from './download.js';
 import { type LinkRead, dropToken } from './link.js';
-import { Home, ME_KEY, useMe } from './screens/Home.js';
+import { Home, HomeError, ME_KEY, useMe } from './screens/Home.js';
 import { LinkLanding } from './screens/LinkLanding.js';
 import { Incomplete, SignIn, SignedOut, Unavailable } from './screens/SignIn.js';
-import { COPY } from './copy.js';
+import { COPY, sentenceFor } from './copy.js';
 
 export function createPortalQueryClient(): QueryClient {
   return new QueryClient({
@@ -22,7 +22,7 @@ export function createPortalQueryClient(): QueryClient {
   });
 }
 
-type Mode = 'landing' | 'incomplete' | 'check' | 'signedOut' | 'unavailable';
+type Mode = 'landing' | 'incomplete' | 'check' | 'signedOut' | 'unavailable' | 'unavailableAtTap';
 
 export interface PortalAppProps {
   link: LinkRead;
@@ -81,7 +81,7 @@ function Screens({ link }: { link: LinkRead }) {
   );
   // the cache is cleared once the signed-in screens are gone (never under a mounted query)
   useEffect(() => {
-    if (mode === 'signedOut' || mode === 'unavailable') {
+    if (mode === 'signedOut' || mode === 'unavailable' || mode === 'unavailableAtTap') {
       qc.clear();
       wasIn.current = false;
     }
@@ -97,6 +97,7 @@ function Screens({ link }: { link: LinkRead }) {
   }, [qc]);
 
   const unavailable = useCallback(() => setMode('unavailable'), []);
+  const unavailableAtTap = useCallback(() => setMode('unavailableAtTap'), []);
   const signedOut = useCallback(() => {
     api.setCsrf(null);
     dropToken();
@@ -116,11 +117,12 @@ function Screens({ link }: { link: LinkRead }) {
           setLead(sentence);
           setMode('check');
         }}
-        onUnavailable={unavailable}
+        onUnavailable={unavailableAtTap}
       />
     );
   if (mode === 'incomplete') return <Incomplete onUnavailable={unavailable} />;
   if (mode === 'unavailable') return <Unavailable />;
+  if (mode === 'unavailableAtTap') return <Unavailable atTap />;
   if (mode === 'signedOut') return <SignedOut onUnavailable={unavailable} />;
   return <Checked lead={lead} onIn={() => (wasIn.current = true)} onSignedOut={signedOut} onUnavailable={unavailable} />;
 }
@@ -132,6 +134,10 @@ function Checked({ lead, onIn, onSignedOut, onUnavailable }: { lead: string | nu
     if (me.data) onIn();
   }, [me.data, onIn]);
   if (me.isError && me.error.code === 'PORTAL_SESSION_REQUIRED') return <SignIn lead={lead} onUnavailable={onUnavailable} />;
+  // b15 audit F11: a first /me that fails for another reason (a network error, an unreadable answer) is shown here, with
+  // Try again and no Sign out (whether the client is signed in is not known). Falling through to Home looped: Home's
+  // observer refetched on mount, the query went back to pending, and this screen unmounted Home again.
+  if (me.isError && me.data === undefined) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} signOut={null} />;
   if (me.isPending)
     return (
       <main id="main" className="mx-auto max-w-[640px] px-4 pt-6">

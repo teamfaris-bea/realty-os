@@ -59,6 +59,9 @@ test('E704: a link minted while cleared, then the clearance withdrawn: the tap a
     await stack.setCleared(false);
     await openLinkAndSignIn(jane, link);
     await expect(jane.getByRole('heading', { level: 1, name: "The client portal isn't available" })).toBeVisible({ timeout: 20_000 });
+    // b15 audit F11: she holds a link that was sent, so the tap's not-available screen makes no claim about sending
+    await expect(jane.getByText(NOT_AVAILABLE)).toBeVisible();
+    await expect(jane.getByText('No sign-in link was sent.')).toHaveCount(0);
   } finally {
     await stack.setCleared(false);
     await ctx.close();

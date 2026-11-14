@@ -69,13 +69,14 @@ describe('LinkLanding (R-PORTALWEB-3)', () => {
     expect(r.keys()).toEqual(['POST /portal/session', 'GET /portal/me']);
   });
 
-  it('E704: uncleared at the tap: not available, nothing was sent', async () => {
+  it('E704 (b15 audit F11): uncleared at the tap: not available, with no claim about sending (the client holds a link that was sent)', async () => {
     withToken();
     renderPortal({ link: { link: 'token' }, routes: { 'POST /portal/session': () => portalApiError('PORTAL_NOT_AVAILABLE') } });
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle })).toBeInTheDocument();
     expect(screen.getByText(API_SENTENCES.PORTAL_NOT_AVAILABLE)).toBeInTheDocument();
-    expect(screen.getByText(COPY.nothingSent)).toBeInTheDocument();
+    expect(screen.queryByText(COPY.nothingSent)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/sent/i);
   });
 
   it('a rate limit or a network error: the sentence, and the tap may be tried again', async () => {
@@ -156,6 +157,17 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
     await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN);
     expect(r.seen.filter((x) => x.key === 'POST /portal/login').map((x) => x.body)).toEqual([{ team: 'harbor', address: '(555) 555-0123' }]);
+  });
+
+  it('b15 audit F11: email off: its sentence says nothing was sent and does not promise text messages (which may be off too)', async () => {
+    renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => portalApiError('PORTAL_NOT_AVAILABLE', { channel: 'email' }) } });
+    await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
+    await userEvent.type(screen.getByLabelText(COPY.emailLabel), 'jane@example.test');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    expect(await screen.findByText(COPY.emailOff, IGN)).toBeInTheDocument();
+    expect(COPY.emailOff).toMatch(/nothing was sent/);
+    expect(COPY.emailOff).not.toMatch(/Text message|by text/i);
+    expect(screen.getByLabelText(COPY.emailLabel)).toHaveValue('jane@example.test');
   });
 
   it('E704: uncleared at the request: the not-available screen, nothing sent', async () => {
@@ -323,6 +335,34 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(await screen.findByText('Final walk-through')).toBeInTheDocument();
     expect(aShown()).toEqual([]);
     expect(cachedKeys(r).filter((k) => k.includes(F.GRANT_ID))).toEqual([]);
+  });
+
+  it('b15 audit F11: /me fails for another reason than the session (a network error): the sentence and Try again, no Sign out; Try again asks /me again', async () => {
+    let down = true;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => {
+          if (down) throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.me() };
+        },
+      },
+    });
+    expect(await screen.findByText(COPY.network, IGN)).toBeInTheDocument();
+    expect(h1()).toHaveTextContent(VIEW_WORDS.portalTitle);
+    expect(screen.queryByRole('button', { name: COPY.signOut })).toBeNull();
+    down = false;
+    await userEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Your home purchase' })).toBeInTheDocument();
+    expect(r.keys().filter((k) => k === 'GET /portal/me').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('b15 audit F11: an unreadable /me answer (BAD_RESPONSE) gets the generic sentence and Try again, no Sign out', async () => {
+    // a raw answer (the contract fake checks bodies, and the API never sends this one): what a broken proxy might send
+    renderPortal({ routes: { ...signedIn, 'GET /portal/me': () => ({ status: 200, raw: new Response('{"grants":"not a list"}', { status: 200, headers: { 'content-type': 'application/json' } }) }) } });
+    expect(await screen.findByText(COPY.generic, IGN)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: COPY.tryAgain })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: COPY.signOut })).toBeNull();
   });
 
   it('R-PORTALWEB-6: no screen shows a code', async () => {

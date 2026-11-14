@@ -44,7 +44,8 @@ export const COPY = {
   sending: 'Sending',
   useDifferent: 'Use a different email or number',
   smsOff: "Sign-in links can't be sent by text message right now, so nothing was sent. Choose Email to get a link by email.",
-  emailOff: "Sign-in links can't be sent by email right now, so nothing was sent. Choose Text message to get a link by text.",
+  // b15 audit F11: email off never sends the client to text messages, which may be off too (smsOff offers Email)
+  emailOff: "Sign-in links can't be sent by email right now, so nothing was sent. Try again later, or ask your agent.",
   // no team
   noTeamTitle: 'Open your invitation link',
   noTeamBody: "To sign in, open the link in the invitation your agent sent you. If you can't find it, ask your agent to send it again.",
@@ -60,6 +61,7 @@ export const COPY = {
   loading: 'Loading',
   // generic
   generic: 'Something went wrong. Try again in a moment.',
+  tryAgain: 'Try again',
   network: "We couldn't reach the server. Check your connection and try again.",
 } as const;
 

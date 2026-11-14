@@ -5,10 +5,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { type PortalError, noBody } from '../api.js';
-import { COPY } from '../copy.js';
+import { COPY, sentenceFor } from '../copy.js';
 import { usePortal } from '../context.js';
 import { type GrantTab, type GrantView, type MeView, VIEW_WORDS, parseMe } from '../view/index.js';
-import { H1, Page, secondaryButton, useFocusHeading } from './common.js';
+import { H1, Page, primaryButton, secondaryButton, useFocusHeading } from './common.js';
 import { Grant } from './Grant.js';
 
 export const ME_KEY = ['portal', 'me'] as const;
@@ -108,7 +108,9 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
   );
 
   if (me.isPending) return <Loading />;
-  if (me.isError) return <HomeError signOut={signOutButton} />;
+  // b15 audit F11: a /me refetch that fails after /me answered (a network error, an unreadable answer) offers Try again
+  // beside Sign out; a first /me that fails is App's Checked's to show (no Sign out: signed in is not known)
+  if (me.isError) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} signOut={signOutButton} />;
   if (open) {
     return (
       <Grant
@@ -135,13 +137,19 @@ function Loading() {
   );
 }
 
-function HomeError({ signOut }: { signOut: ReactNode }) {
+/** /me failed for another reason than the session: the sentence and Try again (Sign out only when signed in is known). */
+export function HomeError({ sentence, onRetry, signOut }: { sentence: string; onRetry(): void; signOut: ReactNode | null }) {
   const h = useFocusHeading();
   return (
     <Page>
       <H1 headingRef={h}>{VIEW_WORDS.portalTitle}</H1>
-      <p className="text-[16px] text-ink">{COPY.generic}</p>
-      <div>{signOut}</div>
+      <p className="text-[16px] text-ink">{sentence}</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={onRetry} className={primaryButton}>
+          {COPY.tryAgain}
+        </button>
+        {signOut}
+      </div>
     </Page>
   );
 }
