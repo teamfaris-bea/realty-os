@@ -35,13 +35,13 @@ export function LinkLanding({ onSignedIn, onLinkRefused, onUnavailable }: LinkLa
     try {
       const s = await api.request('POST', '/api/portal/session', parseSession, { token });
       api.setCsrf(s.csrfToken);
-      dropToken();
+      dropToken(token); // only the token this tap sent: a newer link read in place meanwhile stays (B15R-PORTAL-2)
       onSignedIn();
       return;
     } catch (e) {
       const code = e instanceof PortalError ? e.code : 'BAD_RESPONSE';
       if (code === 'PORTAL_LINK_INVALID') {
-        dropToken();
+        dropToken(token);
         onLinkRefused(API_SENTENCES.PORTAL_LINK_INVALID);
         return;
       }

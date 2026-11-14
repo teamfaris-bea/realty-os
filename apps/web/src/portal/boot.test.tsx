@@ -96,4 +96,53 @@ describe('b15 audit P46-SEC-2: a link opened in a tab already on the portal (has
     expect(linkToken()).toBeNull();
     expect(w.keys()).not.toContain('POST /portal/session');
   });
+
+  // b15 review B15R-PORTAL-2: the token is module state shared by every app generation. Link B opened while link A's
+  // tap is in flight remounts the app on B; A's late answer (success or a refused link) must drop only A's token, so B's
+  // Sign in still posts B (it used to find no token and do nothing under a live Sign in button)
+  for (const aAnswer of ['200', 'PORTAL_LINK_INVALID'] as const) {
+    it(`E703 (b15 review B15R-PORTAL-2): link B arrives while link A's tap is pending; A then answers ${aAnswer}; B's Sign in posts B`, async () => {
+      const TOKEN_B = 'B'.repeat(43);
+      window.history.replaceState(null, '', `/portal.html?team=harbor#token=${F.TOKEN}`);
+      const seen: PortalExchange[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let signedIn = false;
+      const fetchImpl = vi.fn(
+        portalContractFetch(async (x) => {
+          if (x.key === 'POST /portal/session') {
+            if ((x.body as { token: string }).token === F.TOKEN) {
+              await gate;
+              if (aAnswer === 'PORTAL_LINK_INVALID') return portalApiError('PORTAL_LINK_INVALID');
+            }
+            signedIn = true;
+            return { status: 200, body: F.session() };
+          }
+          if (x.key === 'GET /portal/me') return signedIn ? { status: 200, body: F.me() } : portalApiError('PORTAL_SESSION_REQUIRED');
+          if (x.key === 'GET /portal/timeline') return { status: 200, body: F.timeline(x.query.grantId) };
+          if (x.key === 'GET /portal/documents') return { status: 200, body: F.documents(x.query.grantId) };
+          throw new Error(`no fake answer for ${x.key}`);
+        }, seen),
+      );
+      // each app generation gets its own API client, as in production
+      act(() => {
+        stop = bootPortal(el, window, { api: portalApi(fetchImpl) });
+      });
+      await userEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+      act(() => {
+        window.location.hash = `#token=${TOKEN_B}`;
+      });
+      await waitFor(() => expect(linkToken()).toBe(TOKEN_B));
+      expect(await screen.findByRole('button', { name: 'Sign in' })).toBeEnabled();
+      await act(async () => {
+        release();
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(linkToken()).toBe(TOKEN_B);
+      await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+      await waitFor(() => expect(seen.filter((x) => x.key === 'POST /portal/session').map((x) => (x.body as { token: string }).token)).toEqual([F.TOKEN, TOKEN_B]));
+      expect(await screen.findByRole('heading', { level: 1, name: 'Your home purchase' })).toBeInTheDocument();
+      expect(linkToken()).toBeNull();
+    });
+  }
 });

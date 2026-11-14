@@ -115,9 +115,13 @@ export function linkToken(): string | null {
   return token;
 }
 
-/** Forgets the token (after the tap succeeded or the link was refused, on sign-out and on a session 401). */
-export function dropToken(): void {
-  token = null;
+/**
+ * Forgets the token (after the tap succeeded or the link was refused, on sign-out and on a session 401). With `sent`,
+ * only that token is forgotten: a tap whose answer arrives after a newer link was read in place (rereadLink) leaves the
+ * newer token for the new Sign in (b15 review B15R-PORTAL-2).
+ */
+export function dropToken(sent?: string): void {
+  if (sent === undefined || token === sent) token = null;
 }
 
 /** Tests only: forget what was read. */
