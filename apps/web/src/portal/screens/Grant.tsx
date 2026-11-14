@@ -55,6 +55,14 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     onGone(grant.id);
   }, [isGone, qc, grant.id, onGone]);
 
+  const failed = (timeline.isError && !gone(timeline.error)) || (documents.isError && !gone(documents.error));
+  // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
+  // which reads the failed parts again (busy while they run; aria-disabled keeps focus)
+  const failedAt = Math.max(timeline.errorUpdatedAt, documents.errorUpdatedAt);
+  useEffect(() => {
+    if (failed) announce(COPY.generic);
+  }, [failed, failedAt, announce]);
+
   if (isGone) return null;
 
   const download = async (d: DocumentView) => {
@@ -83,8 +91,22 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     }
   };
 
-  const failed = (timeline.isError && !gone(timeline.error)) || (documents.isError && !gone(documents.error));
-  const placeholder = failed ? <p className="text-[16px] text-ink">{COPY.generic}</p> : <p className="text-[15px] text-ink-muted">{COPY.loading}</p>;
+  const retrying = timeline.isFetching || documents.isFetching;
+  const retry = () => {
+    if (retrying) return;
+    if (timeline.isError) void timeline.refetch();
+    if (documents.isError) void documents.refetch();
+  };
+  const placeholder = failed ? (
+    <div className="flex flex-col items-start gap-2">
+      <p className="text-[16px] text-ink">{COPY.generic}</p>
+      <button type="button" onClick={retry} aria-disabled={retrying || undefined} className={`${secondaryButton} ${retrying ? 'opacity-60' : ''}`}>
+        {COPY.tryAgain}
+      </button>
+    </div>
+  ) : (
+    <p className="text-[15px] text-ink-muted">{COPY.loading}</p>
+  );
 
   return (
     <Page wide={wide}>

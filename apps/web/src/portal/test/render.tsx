@@ -8,7 +8,7 @@ import type { LinkRead } from '../link.js';
 import { type PortalAnswer, type PortalExchange, portalApiError, portalContractFetch } from './portalContract.js';
 import * as F from './fixtures.js';
 
-export type Routes = Partial<Record<string, (x: PortalExchange) => PortalAnswer>>;
+export type Routes = Partial<Record<string, (x: PortalExchange) => PortalAnswer | Promise<PortalAnswer>>>;
 
 /** A matchMedia that answers `wide` for (min-width: 768px). */
 export function setViewport(wide: boolean) {

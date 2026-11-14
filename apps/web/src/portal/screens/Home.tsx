@@ -135,7 +135,7 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
   if (me.isPending) return <Loading />;
   // b15 audit F11: a /me refetch that fails after /me answered (a network error, an unreadable answer) offers Try again
   // beside Sign out; a first /me that fails is App's Checked's to show (no Sign out: signed in is not known)
-  if (me.isError) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} signOut={signOutButton} />;
+  if (me.isError) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} retrying={me.isFetching} failedAt={me.errorUpdatedAt} signOut={signOutButton} />;
   if (open) {
     return (
       <Grant
@@ -162,15 +162,23 @@ function Loading() {
   );
 }
 
-/** /me failed for another reason than the session: the sentence and Try again (Sign out only when signed in is known). */
-export function HomeError({ sentence, onRetry, signOut }: { sentence: string; onRetry(): void; signOut: ReactNode | null }) {
+/**
+ * /me failed for another reason than the session: the sentence and Try again (Sign out only when signed in is known).
+ * b15 review UI-2: the sentence is announced when the screen opens and after each failed retry (`failedAt`), and Try
+ * again is marked busy while the retry runs (aria-disabled, so it keeps focus; a tap then asks nothing more).
+ */
+export function HomeError({ sentence, onRetry, signOut, retrying = false, failedAt = 0 }: { sentence: string; onRetry(): void; signOut: ReactNode | null; retrying?: boolean; failedAt?: number }) {
+  const { announce } = usePortal();
   const h = useFocusHeading();
+  useEffect(() => {
+    announce(sentence);
+  }, [announce, sentence, failedAt]);
   return (
     <Page>
       <H1 headingRef={h}>{VIEW_WORDS.portalTitle}</H1>
       <p className="text-[16px] text-ink">{sentence}</p>
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={onRetry} className={primaryButton}>
+        <button type="button" onClick={() => (retrying ? undefined : onRetry())} aria-disabled={retrying || undefined} className={`${primaryButton} ${retrying ? 'opacity-60' : ''}`}>
           {COPY.tryAgain}
         </button>
         {signOut}

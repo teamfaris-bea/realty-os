@@ -137,7 +137,7 @@ function Checked({ lead, onIn, onSignedOut, onUnavailable }: { lead: string | nu
   // b15 audit F11: a first /me that fails for another reason (a network error, an unreadable answer) is shown here, with
   // Try again and no Sign out (whether the client is signed in is not known). Falling through to Home looped: Home's
   // observer refetched on mount, the query went back to pending, and this screen unmounted Home again.
-  if (me.isError && me.data === undefined) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} signOut={null} />;
+  if (me.isError && me.data === undefined) return <HomeError sentence={sentenceFor(me.error.code)} onRetry={() => void me.refetch()} retrying={me.isFetching} failedAt={me.errorUpdatedAt} signOut={null} />;
   if (me.isPending)
     return (
       <main id="main" className="mx-auto max-w-[640px] px-4 pt-6">

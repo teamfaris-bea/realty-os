@@ -462,6 +462,86 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(screen.queryByRole('button', { name: COPY.signOut })).toBeNull();
   });
 
+  // b15 review UI-2: Try again says what happened. The sentence reaches the live region when the error screen opens and
+  // after each failed retry (the same sentence again too), and Try again is marked busy while the retry runs (it keeps
+  // focus: aria-disabled, not disabled).
+  const liveLog = () => {
+    const seen: string[] = [];
+    const mo = new MutationObserver(() => seen.push(live().textContent ?? ''));
+    mo.observe(live(), { childList: true, characterData: true, subtree: true });
+    return seen;
+  };
+
+  it('b15 review UI-2: a /me refetch that keeps failing after /me answered: the sentence is announced, Try again is busy while it runs, and a failed retry is announced again', async () => {
+    let mode: 'up' | 'down' | 'gated' = 'up';
+    let release!: () => void;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': async () => {
+          if (mode === 'gated') await new Promise<void>((res) => (release = res));
+          if (mode !== 'up') throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.me() };
+        },
+      },
+    });
+    await screen.findByText('Inspection');
+    mode = 'down';
+    await act(async () => {
+      await r.queryClient.invalidateQueries({ queryKey: ['portal', 'me'] });
+    });
+    expect(await screen.findByText(COPY.network, IGN)).toBeInTheDocument();
+    await waitFor(() => expect(live()).toHaveTextContent(COPY.network));
+    expect(screen.getByRole('button', { name: COPY.signOut })).toBeInTheDocument();
+    const seen = liveLog();
+    mode = 'gated';
+    const again = screen.getByRole('button', { name: COPY.tryAgain });
+    await userEvent.click(again);
+    await waitFor(() => expect(again).toHaveAttribute('aria-disabled', 'true'));
+    expect(again).toHaveFocus();
+    await userEvent.click(again); // a tap while busy asks nothing more
+    const calls = r.keys().filter((k) => k === 'GET /portal/me').length;
+    await act(async () => {
+      release();
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    await waitFor(() => expect(again).not.toHaveAttribute('aria-disabled', 'true'));
+    await waitFor(() => expect(seen.filter((t) => t === COPY.network).length).toBeGreaterThanOrEqual(1));
+    expect(r.keys().filter((k) => k === 'GET /portal/me').length).toBe(calls);
+  });
+
+  it('b15 review UI-2: a first /me that fails announces its sentence (the error screen\'s heading takes focus, the live region says why)', async () => {
+    renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => {
+          throw new TypeError('Failed to fetch');
+        },
+      },
+    });
+    expect(await screen.findByText(COPY.network, IGN)).toBeInTheDocument();
+    await waitFor(() => expect(live()).toHaveTextContent(COPY.network));
+  });
+
+  it('b15 review UI-2: a timeline that fails to load offers Try again (announced); Try again reads it again', async () => {
+    let down = true;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/timeline': (x) => {
+          if (down) throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.timeline(x.query.grantId) };
+        },
+      },
+    });
+    expect(await screen.findByText(COPY.generic, IGN)).toBeInTheDocument();
+    await waitFor(() => expect(live()).toHaveTextContent(COPY.generic));
+    down = false;
+    await userEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
+    expect(await screen.findByText('Inspection')).toBeInTheDocument();
+    expect(r.keys().filter((k) => k === 'GET /portal/timeline').length).toBe(2);
+  });
+
   it('R-PORTALWEB-6: no screen shows a code', async () => {
     renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => portalApiError('VALIDATION_FAILED') } });
     await screen.findByText('Inspection');
