@@ -19,11 +19,24 @@ function filesUnder(dir: string): string[] {
   });
 }
 
-/** Ofcom's drama ranges, as digits after +44. */
-// b17: also 028 9649 6xxx, 03069 990xxx, 0808 157 0xxx and 0909 879 0xxx (Ofcom's other drama blocks), which
-// packages/core/src/testing/phones.ts makes bulk test numbers from
-const DRAMA = [/^2079460\d{3}$/, /^7700900\d{3}$/, /^1632960\d{3}$/, /^1(?:1[3-8]|21|31|41|51|61)4960\d{3}$/, /^1914980\d{3}$/, /^(?:2896496|3069990|8081570|9098790)\d{3}$/];
-export const isDramaNumber = (digitsAfter44: string): boolean => DRAMA.some((r) => r.test(digitsAfter44));
+/**
+ * Ofcom's drama blocks, as the first seven digits after +44; each holds the 1,000 numbers that end 000 to 999.
+ * b17: also 028 9649 6xxx, 03069 990xxx, 0808 157 0xxx and 0909 879 0xxx (Ofcom's other drama blocks), which
+ * packages/core/src/testing/phones.ts makes bulk test numbers from.
+ */
+export const DRAMA_BLOCKS: readonly string[] = [
+  '2079460', // 020 7946 0xxx (London)
+  '7700900', // 07700 900xxx (mobile)
+  '1632960', // 01632 960xxx (no area)
+  // 0113, 0114, 0115, 0116, 0117, 0118, 0121, 0131, 0141, 0151 and 0161 496 0xxx (the big cities)
+  '1134960', '1144960', '1154960', '1164960', '1174960', '1184960', '1214960', '1314960', '1414960', '1514960', '1614960',
+  '1914980', // 0191 498 0xxx (Tyneside, Durham and Sunderland)
+  '2896496', // 028 9649 6xxx (Northern Ireland)
+  '3069990', // 03069 990xxx (UK-wide)
+  '8081570', // 0808 157 0xxx (freephone)
+  '9098790', // 0909 879 0xxx (premium rate)
+];
+export const isDramaNumber = (digitsAfter44: string): boolean => /^\d{10}$/.test(digitsAfter44) && DRAMA_BLOCKS.includes(digitsAfter44.slice(0, 7));
 
 /** Every UK number written as +44 (spaces allowed), as digits after +44. */
 export function ukNumbers(text: string): string[] {
@@ -33,9 +46,18 @@ export function ukNumbers(text: string): string[] {
 describe('b15 audit F13: UK phone numbers in apps, packages and docs are fictional', () => {
   it('the check knows the ranges', () => {
     expect(['2079460958', '7700900123', '1632960001', '1134960000', '1914980999'].map(isDramaNumber)).toEqual([true, true, true, true, true]);
-    // b17 (B17R-2): the samples outside the ranges are ones no line can have (a digit too many, a digit too few), so
-    // this file names no number outside the drama ranges
-    expect(['77009001000', '207946099'].map(isDramaNumber)).toEqual([false, false]);
+    // every block, from its first number to its last
+    expect(DRAMA_BLOCKS.flatMap((b) => [`${b}000`, `${b}999`]).filter((n) => !isDramaNumber(n))).toEqual([]);
+    // b17 round 2 (L-b): the samples outside the ranges are built from parts at run time, so this file spells no
+    // number outside the drama ranges. A digit too many or too few, and a same-length near miss of every block: its
+    // seven digits with one changed (a check that read only the length, or only the block's first digits, passes none)
+    const nearMisses = DRAMA_BLOCKS.flatMap((b) => [...b].map((_, i) => [b.slice(0, i), String((Number(b[i]) + 1) % 10), b.slice(i + 1)].join('')))
+      .filter((b) => !DRAMA_BLOCKS.includes(b))
+      .map((b) => [b, '000'].join(''));
+    expect(nearMisses.length).toBeGreaterThan(DRAMA_BLOCKS.length * 6);
+    expect(nearMisses.every((n) => n.length === 10)).toBe(true);
+    expect(nearMisses.filter(isDramaNumber)).toEqual([]);
+    expect(DRAMA_BLOCKS.flatMap((b) => [[b, '0000'].join(''), [b, '00'].join('')]).filter(isDramaNumber)).toEqual([]);
     expect(ukNumbers("sms('+442079460958') and +44 20 7946 0958 and +44 7700 900123")).toEqual(['2079460958', '2079460958', '7700900123']);
   });
 
