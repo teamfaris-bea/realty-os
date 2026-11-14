@@ -29,6 +29,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { isDramaNumber } from './dramaRanges.js';
 
 const repo = resolve(__dirname, '../../../..');
 const SELF = 'apps/web/src/test/fictionalUsPhones.test.ts';
@@ -44,8 +45,6 @@ function filesUnder(dir: string): string[] {
 const FICTIONAL = /^[2-9]\d{2}55501\d{2}$/;
 /** True for a ten-digit NANP number (area code first) in the fictional range NXX 555-0100..0199. */
 export const isFictionalUs = (ten: string): boolean => FICTIONAL.test(ten);
-/** Ofcom's drama blocks, as digits after +44 (the b15 guard's list). */
-const UK_DRAMA = /^(?:2079460|7700900|1632960|1(?:1[3-8]|21|31|41|51|61)4960|1914980|2896496|3069990|8081570|9098790)\d{3}$/;
 
 export interface Found {
   line: number;
@@ -115,8 +114,8 @@ export function usNumbers(text: string): Found[] {
       const ten = `${m[1] ?? m[2]}${m[3]}${m[4]}`;
       add(m, ten, isFictionalUs(ten));
     }
-    for (const m of l.matchAll(QUOTED)) add(m, m[2]!, isFictionalUs(m[2]!) || (m[0].length === 12 && UK_DRAMA.test(m[2]!)));
-    for (const m of l.matchAll(BARE)) add(m, m[1]!, isFictionalUs(m[1]!) || (m[0].length === 10 && UK_DRAMA.test(m[1]!)));
+    for (const m of l.matchAll(QUOTED)) add(m, m[2]!, isFictionalUs(m[2]!) || (m[0].length === 12 && isDramaNumber(m[2]!)));
+    for (const m of l.matchAll(BARE)) add(m, m[1]!, isFictionalUs(m[1]!) || (m[0].length === 10 && isDramaNumber(m[1]!)));
   });
   return out;
 }
@@ -210,7 +209,7 @@ describe('b17 (B17R-2): US phone numbers in apps, packages and docs are fictiona
       `const q = '+${sample('1415')}' + String(n);`,
       `const r = \`+1\${area}55501\${nn}\`; const s = \`+1843555013\${i}\`;`,
       `const t = \`(${sample('415')}) 05\${n}\`; const u = '415-${sample('055')}-' + n; const v = \`(415) 555-01\${nn}\`;`,
-      `uk: '${sample('2079460', '123')}' and not numbers: 2026-11-14, 122.2711456, 4155550100500, v1.415.555.0100, 203.0.113.\${n}`,
+      `uk: '${sample('2079460', '123')}', '${sample('2920180', '123')}' and not numbers: 2026-11-14, 122.2711456, 4155550100500, v1.415.555.0100, 203.0.113.\${n}`,
       'Phone: (415)&nbsp;555-0106 and 415\\u2066-555-0107',
     ].join('\n');
     expect(usNumbers(text).map((f) => [f.line, f.digits, f.ok])).toEqual([
@@ -218,7 +217,7 @@ describe('b17 (B17R-2): US phone numbers in apps, packages and docs are fictiona
       [2, '4155550104', true], [2, sample('415', '055', '0100'), false], [2, '4155550105', true],
       [3, sample('415055'), false], [4, '415', false], [5, '', true], [5, '843555013', true],
       [6, sample('41505'), false], [6, '41555501', true], [6, sample('415055'), false],
-      [7, sample('2079460', '123'), true],
+      [7, sample('2079460', '123'), true], [7, sample('2920180', '123'), true],
       [8, '4155550106', true], [8, '4155550107', true],
     ]);
   });
