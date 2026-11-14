@@ -97,7 +97,7 @@ describe('search', () => {
     await h.su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3)', [w.tenantId, conv, c.id]);
     await h.su.query(
       `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, occurred_at)
-       VALUES ($1,$2,$3,$4,'sms','inbound','+14155550000','+14155550001','Is the bungalow on Alder still available?','received','client', now())`,
+       VALUES ($1,$2,$3,$4,'sms','inbound','+14155550125','+14155550126','Is the bungalow on Alder still available?','received','client', now())`,
       [w.tenantId, msg, conv, c.id],
     );
     expect((await find(a, 'bungalow alder')).messages.map((x) => x.id)).toEqual([msg]);

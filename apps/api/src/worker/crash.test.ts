@@ -125,14 +125,14 @@ describe('kill the worker', () => {
       await suFixture(
         h.su,
         `INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
-         VALUES ($1, $2, $3, 'phone', '+15550000002', decode(repeat('ab', 32), 'hex'))`,
+         VALUES ($1, $2, $3, 'phone', '+15555550110', decode(repeat('ab', 32), 'hex'))`,
         [w.tenantId, uuid(), contactId],
       );
       await suFixture(
         h.su,
         `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
                                body, status, initiator, purpose, idempotency_key, occurred_at)
-         VALUES ($1, $2::uuid, $3, $4, 'sms', 'outbound', $5, '+15550000001', '+15550000002', 'Hi there', 'queued', 'system', 'informational', $2::text, now())`,
+         VALUES ($1, $2::uuid, $3, $4, 'sms', 'outbound', $5, '+15555550109', '+15555550110', 'Hi there', 'queued', 'system', 'informational', $2::text, now())`,
         [w.tenantId, messageId, uuid(), contactId, uuid()],
       );
       const log = join(mkdtempSync(join(tmpdir(), 'realty-crash-')), `provider-${randomBytes(3).toString('hex')}.log`);

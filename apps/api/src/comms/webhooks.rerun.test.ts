@@ -99,8 +99,8 @@ describe('R-LSRC-7 E354: a failed or crashed delivery is processed on the retry,
 
   it('R-LSRC-7: an unrouted delivery stays unrouted on a retry', async () => {
     const ref = sid();
-    expect((await inboundSms(h, randomPhone(), '+15550000000', 'Nobody', ref)).statusCode).toBe(200);
-    expect((await inboundSms(h, randomPhone(), '+15550000000', 'Nobody', ref)).statusCode).toBe(200);
+    expect((await inboundSms(h, randomPhone(), '+15555550108', 'Nobody', ref)).statusCode).toBe(200);
+    expect((await inboundSms(h, randomPhone(), '+15555550108', 'Nobody', ref)).statusCode).toBe(200);
     expect(await event(`sms:${ref}`)).toEqual([{ status: 'unrouted', error_code: null }]);
   });
 });

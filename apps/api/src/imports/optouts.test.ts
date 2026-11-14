@@ -36,7 +36,7 @@ const contactWithPhone = async (e164: string) =>
 
 describe('outbound-2: imported opt-outs take effect when the contacts stage commits', () => {
   it('R-CONSENT-3 E40: a CSV "Opted Out" row cannot be texted between the contacts commit and the consent commit', async () => {
-    const csv = 'First Name,Last Name,Mobile Phone,Opted Out\nOlive,Out,(415) 301-7777,yes\nPaula,Plain,(415) 301-7778,\n';
+    const csv = 'First Name,Last Name,Mobile Phone,Opted Out\nOlive,Out,(415) 555-0108,yes\nPaula,Plain,(415) 555-0109,\n';
     const r = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'optout.csv', fileBase64: csvBase64(csv) });
     expect(r.status).toBe(201);
     expect((await call(admin, 'POST', `/imports/${r.body.batch.id}/snapshot`)).status).toBe(202);
@@ -45,7 +45,7 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     await commitContacts(b);
     expect(stageOf(await batchOf(admin, b.id), 'consent').status).toBe('pending');
 
-    const olive = await contactWithPhone('+14153017777');
+    const olive = await contactWithPhone('+14155550108');
     const states = await q<{ channel: string; status: string }>(
       "SELECT DISTINCT cs.channel, cs.status FROM consent_state cs JOIN contact_points p ON p.tenant_id = cs.tenant_id AND p.address_hmac = cs.address_hmac WHERE p.contact_id = $1 ORDER BY cs.channel",
       [olive.id],
@@ -61,7 +61,7 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     expect(ih.h.providers.telephony.sms.length).toBe(sent);
 
     // a row without an opt-out is untouched (the contacts stage writes no grant: grants stay history in the consent stage)
-    const paula = await contactWithPhone('+14153017778');
+    const paula = await contactWithPhone('+14155550109');
     expect(await q('SELECT 1 FROM consent_events WHERE contact_id = $1', [paula.id])).toHaveLength(0);
     expect((await sendText(w.owner, paula.id, 'Hi Paula')).body.result).toBe('sent');
 
@@ -107,15 +107,15 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     expect(await q("SELECT 1 FROM consent_events WHERE tenant_id = $1 AND event_type = 'grant'", [w.tenantId])).toHaveLength(0);
   });
   it('B6 review R2 E40 R-CONSENT-3: an opted-out phone on a row skipped as a duplicate is in force from the contacts commit too: an exact match to a contact an earlier batch created (nothing new to fill) and an in-file duplicate of an earlier row (with a DNC tag); the events name the contact the skip points at; undoing and abandoning the batch before its consent stage leaves them in force', async () => {
-    const P = '(415) 820-5601';
-    const P9 = '(415) 820-5901';
+    const P = '(415) 555-0144';
+    const P9 = '(415) 555-0145';
     const valid = (value: string) => ({ value, type: 'mobile', status: 'Valid' });
     const optedOut = (value: string) => ({ value, type: 'mobile', status: 'Opted Out' });
     const none = { users: [], notes: [], textMessages: [], emails: [], calls: [], recordings: {} };
     ih.fub.add('b6r2-earlier-key-0001', { ...none, people: [{ id: 5601, firstName: 'Ezra', lastName: 'Earlier', phones: [valid(P)] }] });
     const e = await startFub(ih, admin, 'b6r2-earlier-key-0001');
     await commitContacts(e);
-    const ezra = await contactWithPhone('+14158205601');
+    const ezra = await contactWithPhone('+14155550144');
     ih.fub.add('b6r2-later-key-0001', {
       ...none,
       people: [
@@ -132,7 +132,7 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
       ['fub:people/5901', 'will_import', 'create'],
       ['fub:people/5903', 'duplicate', 'skip'],
     ]);
-    const nina = await contactWithPhone('+14158205901');
+    const nina = await contactWithPhone('+14155550145');
     const revoked = async (e164: string) =>
       (await q<{ channel: string; purpose: string }>("SELECT DISTINCT cs.channel, cs.purpose FROM consent_state cs JOIN contact_points p ON p.tenant_id = cs.tenant_id AND p.address_hmac = cs.address_hmac WHERE p.tenant_id = $1 AND p.address = $2 AND cs.status = 'revoked' ORDER BY 1, 2", [w.tenantId, e164]));
     const suppressed = async (e164: string) =>
@@ -142,11 +142,11 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     const TEXTS = [{ channel: 'sms', purpose: 'informational' }, { channel: 'sms', purpose: 'marketing' }];
     // in force from the contacts commit, before any later stage, on the contact the skip points at
     expect(stageOf(await batchOf(admin, l.id), 'consent').status).toBe('pending');
-    expect(await revoked('+14158205601')).toEqual(TEXTS);
-    expect(await revoked('+14158205901')).toEqual(TEXTS);
-    expect(await suppressed('+14158205901')).toEqual([{ reason: 'import_dnc' }]);
-    expect(await eventContacts('+14158205601')).toEqual([ezra.id]);
-    expect(await eventContacts('+14158205901')).toEqual([nina.id]);
+    expect(await revoked('+14155550144')).toEqual(TEXTS);
+    expect(await revoked('+14155550145')).toEqual(TEXTS);
+    expect(await suppressed('+14155550145')).toEqual([{ reason: 'import_dnc' }]);
+    expect(await eventContacts('+14155550144')).toEqual([ezra.id]);
+    expect(await eventContacts('+14155550145')).toEqual([nina.id]);
     const sent = ih.h.providers.telephony.sms.length;
     for (const c of [ezra, nina]) {
       const t = await sendText(w.owner, c.id, 'Hi, checking in about homes in your area');
@@ -161,8 +161,8 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     await ih.drain();
     expect((await batchOf(admin, l.id)).status).toBe('reverted');
     expect((await call(admin, 'POST', `/imports/${l.id}/abandon`)).status).toBe(200);
-    expect(await revoked('+14158205601')).toEqual(TEXTS);
-    expect(await suppressed('+14158205901')).toEqual([{ reason: 'import_dnc' }]);
+    expect(await revoked('+14155550144')).toEqual(TEXTS);
+    expect(await suppressed('+14155550145')).toEqual([{ reason: 'import_dnc' }]);
     const t = await sendText(w.owner, ezra.id, 'Hi again');
     expect(t.body.decision?.outcome).toBe('deny');
     expect(ih.h.providers.telephony.sms.length).toBe(sent);
@@ -174,13 +174,13 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
 // reverse order, so it could deadlock with an inquiry of the same person.
 describe('global lock order (review D8-R5)', () => {
   it('an import that records an opt-out onto an existing contact takes the address lock before the contact lock: behind an inquiry holding that address it waits without holding the contact', async () => {
-    const first = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'lia.csv', fileBase64: csvBase64('First Name,Last Name,Mobile Phone\nLia,Lock,(415) 301-8881\n') });
+    const first = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'lia.csv', fileBase64: csvBase64('First Name,Last Name,Mobile Phone\nLia,Lock,(415) 555-0112\n') });
     expect((await call(admin, 'POST', `/imports/${first.body.batch.id}/snapshot`)).status).toBe(202);
     await ih.drain();
     await commitContacts(await batchOf(admin, first.body.batch.id));
-    const lia = await contactWithPhone('+14153018881');
+    const lia = await contactWithPhone('+14155550112');
     // a second file: the same phone, now opted out, with a new email (attached to the contact, the opt-out recorded on it)
-    const r = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'lia2.csv', fileBase64: csvBase64('First Name,Last Name,Mobile Phone,Email,Opted Out\nLia,Lock,(415) 301-8881,lia.lock@example.test,yes\n') });
+    const r = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'lia2.csv', fileBase64: csvBase64('First Name,Last Name,Mobile Phone,Email,Opted Out\nLia,Lock,(415) 555-0112,lia.lock@example.test,yes\n') });
     expect((await call(admin, 'POST', `/imports/${r.body.batch.id}/snapshot`)).status).toBe(202);
     await ih.drain();
     const b = await batchOf(admin, r.body.batch.id);

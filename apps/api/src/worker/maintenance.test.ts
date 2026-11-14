@@ -154,7 +154,7 @@ describe('retention and the media job', () => {
     await suFixture(
       h.su,
       `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client_address, initiator, status, started_at, recording_mode, recording_decision)
-         VALUES ($1, $2, $3, $4, 'inbound', '+15550000003', 'client', 'completed', ${ago(800)}, 'announced_all_parties', '{}')`,
+         VALUES ($1, $2, $3, $4, 'inbound', '+15555550113', 'client', 'completed', ${ago(800)}, 'announced_all_parties', '{}')`,
       [T, ids.callId, uuid(), contactId],
     );
     await suFixture(

@@ -501,7 +501,7 @@ describe('R-LEM-7 R-LEM-9 R-LEM-10 the portal catalog and lead metadata', () => 
 
   it('R-LEM-10: a verified email carrying leadmetadata.org tags becomes a lead with parser_kind leadmetadata; lead_source never changes the lead source', async () => {
     const lead = leadAddress();
-    const html = LEADMETA_HEAD_HTML.replace('Avery.Sample@Example.test', lead).replace('(555) 010-2030', randomPhone());
+    const html = LEADMETA_HEAD_HTML.replace('Avery.Sample@Example.test', lead).replace('(555) 555-0120', randomPhone());
     expect(outcomeOf(await postLeadEmail(h, { to: address, from: 'leads@portal.test', dkim: [{ domain: 'portal.test', result: 'pass' }], html }))).toBe('lead_created');
     const [cid] = await contactsWith(h, w.tenantId, lead);
     expect((await messageRows(h, w.tenantId)).find((m) => m.contact_id === cid)).toMatchObject({ parser_kind: 'leadmetadata' });

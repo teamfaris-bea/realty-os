@@ -63,13 +63,13 @@ describe('CSV import', () => {
   }, 60_000);
 
   it('R-IMPORT-13 E45: phones normalize with the tenant default country; "555-0100" is rejected PHONE_INVALID with its reason in the review list', async () => {
-    const b = await upload('First Name,Last Name,Mobile Phone,Email\nAnn,One,(415) 301-0001,\nBen,Two,555-0100,ben.two@example.com\n,,555-0100,\n', 'e45.csv');
+    const b = await upload('First Name,Last Name,Mobile Phone,Email\nAnn,One,(415) 555-0106,\nBen,Two,555-0100,ben.two@example.com\n,,555-0100,\n', 'e45.csv');
     expect(b.connectionTest[0]).toBe('3 contacts found in your file.');
     const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
     expect(d.counts).toMatchObject({ source: 3, willImport: 1, needsReview: 1, rejected: 1 });
     const recs = await records(w.admin, b.id, 'contacts');
     const ann = recs.find((r) => r.sourceRef === 'e45.csv#row=2')!;
-    expect(ann.record).toMatchObject({ phones: ['+14153010001'] });
+    expect(ann.record).toMatchObject({ phones: ['+14155550106'] });
     const ben = recs.find((r) => r.sourceRef === 'e45.csv#row=3')!;
     expect(ben.issues.find((i) => i.code === 'PHONE_INVALID')!.sentence).toMatch(/area code/);
     const cal = recs.find((r) => r.sourceRef === 'e45.csv#row=4')!;
@@ -80,7 +80,7 @@ describe('CSV import', () => {
   });
 
   it('R-IMPORT-13 R-CONSENT-3: a CSV consent column yields only imported_unverified grants or revocations, with row-level provenance', async () => {
-    const b = await upload('First Name,Last Name,Mobile Phone,Email,SMS Opt In,Unsubscribed\nDee,Four,(415) 302-0001,dee@example.com,yes,\nEve,Five,(415) 302-0002,eve@example.com,,yes\n', 'consent.csv');
+    const b = await upload('First Name,Last Name,Mobile Phone,Email,SMS Opt In,Unsubscribed\nDee,Four,(415) 555-0113,dee@example.com,yes,\nEve,Five,(415) 555-0114,eve@example.com,,yes\n', 'consent.csv');
     await commitAll(b, 'contacts');
     await commitAll(b, 'consent');
     const ev = await q<{ event_type: string; consent_level: string; channel: string; source: string; original_provenance: { sourceRef: string } }>(
@@ -96,14 +96,14 @@ describe('CSV import', () => {
   });
 
   it('E39 R-CONSENT-1: a contact deleted then re-imported from an old CSV stays opted out ("will stay opted out")', async () => {
-    const c = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Fay', lastName: 'Six', phones: ['+14153030001'] });
+    const c = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Fay', lastName: 'Six', phones: ['+14155550115'] });
     expect([200, 201]).toContain(c.status);
     const pid = (await q<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.body.contact.id]))[0]!.id;
     const rv = await call(w.agents[0]!, 'POST', `/contacts/${c.body.contact.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: { note: 'asked us to stop texting' } });
     expect(rv.status).toBe(200);
     const del = await call(w.agents[0]!, 'POST', `/leads/${c.body.contact.id}/delete`, { commandId: randomUUID() });
     expect(del.status).toBe(200);
-    const b = await upload('First Name,Last Name,Mobile Phone,SMS Opt In\nFay,Six,(415) 303-0001,yes\n', 'old.csv');
+    const b = await upload('First Name,Last Name,Mobile Phone,SMS Opt In\nFay,Six,(415) 555-0115,yes\n', 'old.csv');
     await dryRunStage(ih, w.admin, b.id, 'contacts');
     const r = (await records(w.admin, b.id, 'contacts'))[0]!;
     expect(r.planned).toBe('create'); // a deleted contact never absorbs an import
@@ -126,9 +126,9 @@ describe('CSV import', () => {
     const seq = (await q<{ ownership_seq: string }>('SELECT ownership_seq FROM contacts WHERE id = $1', [pond.body.contact.id]))[0]!.ownership_seq;
     const rel = await call(w.agents[1]!, 'POST', `/leads/${pond.body.contact.id}/release`, { commandId: randomUUID(), reason: 'not_a_fit', expectedSeq: Number(seq) });
     expect(rel.status).toBe(200);
-    const named = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Hal', lastName: 'Eight', phones: ['+14153040009'] });
+    const named = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Hal', lastName: 'Eight', phones: ['+14155550118'] });
     expect([200, 201]).toContain(named.status);
-    const b = await upload('First Name,Last Name,Mobile Phone,Email\nGus,Seven,(415) 304-0001,gus@example.com\nHal,Eight,(415) 304-0002,\n', 'match.csv');
+    const b = await upload('First Name,Last Name,Mobile Phone,Email\nGus,Seven,(415) 555-0116,gus@example.com\nHal,Eight,(415) 555-0117,\n', 'match.csv');
     const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
     expect(d.counts).toMatchObject({ willImport: 2, needsReview: 0 });
     const recs = await records(w.admin, b.id, 'contacts');
@@ -143,7 +143,7 @@ describe('CSV import', () => {
       "SELECT last_name, first_name, ownership_state, (SELECT array_agg(address) FROM contact_points p WHERE p.contact_id = c.id AND p.kind = 'phone') AS phones FROM contacts c WHERE id = $1",
       [pond.body.contact.id],
     ))[0]!;
-    expect(g).toEqual({ first_name: 'Gus', last_name: 'Seven', ownership_state: 'in_pond', phones: ['+14153040001'] });
+    expect(g).toEqual({ first_name: 'Gus', last_name: 'Seven', ownership_state: 'in_pond', phones: ['+14155550116'] });
     const hals = await q<{ id: string }>("SELECT id FROM contacts WHERE tenant_id = $1 AND first_name = 'Hal' AND last_name = 'Eight'", [w.tenantId]);
     expect(hals).toHaveLength(2); // never merged
     const dup = await q<{ match_reason: string; status: string }>('SELECT match_reason, status FROM contact_duplicate_candidates WHERE tenant_id = $1 AND (contact_a_id = $2 OR contact_b_id = $2)', [w.tenantId, named.body.contact.id]);
@@ -151,7 +151,7 @@ describe('CSV import', () => {
   });
 
   it('a new column mapping resets the uncommitted CSV dry runs', async () => {
-    const b = await upload('Name,Phone\nIvy Nine,(415) 305-0001\n', 'map.csv');
+    const b = await upload('Name,Phone\nIvy Nine,(415) 555-0119\n', 'map.csv');
     const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
     expect(d.status).toBe('dry_run_ready');
     const r = await call<{ batch: BatchView }>(w.admin, 'PUT', `/imports/${b.id}/csv-mapping`, { mapping: [{ field: 'full_name' }, { field: 'ignore' }] });

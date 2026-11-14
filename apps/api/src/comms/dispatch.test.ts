@@ -292,7 +292,7 @@ describe('imports (path 10)', () => {
       { text: "INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1,$2,$3,'messages',4,'pending')", values: [w.tenantId, stage, batch] },
       { text: "INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at) VALUES ($1,$2,$3,'r1','will_import',now())", values: [w.tenantId, rec, stage] },
       { text: 'INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', values: [w.tenantId, conv, c.id] },
-      { text: "INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, imported, import_record_id, occurred_at) SELECT $1,$2,id,$3,'sms','outbound','+14155550000',$4,'old text','queued','import',true,$5,now() FROM conversations WHERE contact_id = $3", values: [w.tenantId, mid, c.id, c.phone, rec] },
+      { text: "INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, imported, import_record_id, occurred_at) SELECT $1,$2,id,$3,'sms','outbound','+14155550125',$4,'old text','queued','import',true,$5,now() FROM conversations WHERE contact_id = $3", values: [w.tenantId, mid, c.id, c.phone, rec] },
     ]);
     expect((await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId })).kind).toBe('noop');
     expect(smsTo(c.phone)).toHaveLength(0);

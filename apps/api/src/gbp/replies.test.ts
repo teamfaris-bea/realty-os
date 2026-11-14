@@ -120,7 +120,7 @@ describe('the one tap (R-GBP-1, R-GBP-4)', () => {
   it('E469 R-GBP-1: a final text naming the reviewer, a price, an address, a date, contact details or deal terms, or with a hard fair-housing term, is refused with each code and span; nothing is posted', async () => {
     const r = await aReview({ reviewer: 'Reviewer Quill' });
     const d = (await draft(r.id, { mode: 'manual', text: 'Thank you!' })).body.review.draft!;
-    for (const [text, code] of [['Thanks Quill!', 'REVIEWER_NAME'], ['Glad it sold for $1.2 million.', 'MONEY'], ['Enjoy 7 Oak Street.', 'ADDRESS'], ['See you June 4.', 'DATE'], ['Call 555 010 0199.', 'CONTACT'], ['Great closing!', 'DEAL'], ['Perfect for young families!', 'FAIR_HOUSING']] as const) {
+    for (const [text, code] of [['Thanks Quill!', 'REVIEWER_NAME'], ['Glad it sold for $1.2 million.', 'MONEY'], ['Enjoy 7 Oak Street.', 'ADDRESS'], ['See you June 4.', 'DATE'], ['Call 555 555 0117.', 'CONTACT'], ['Great closing!', 'DEAL'], ['Perfect for young families!', 'FAIR_HOUSING']] as const) {
       const res = await reply(r.id, d.actionId, text);
       expect([res.status, res.code], text).toEqual([422, 'REPLY_PRIVACY']);
       const details = (res.body as unknown as { error: { details: { codes: string[]; spans: { code: string; start: number; end: number }[] } } }).error.details;

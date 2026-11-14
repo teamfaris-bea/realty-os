@@ -79,7 +79,7 @@ describe('R-IMPORT-10 E43: work done on an imported contact makes it touched', (
     await q("INSERT INTO deals (tenant_id, id, name, side, stage_entered_at, primary_contact_id, owner_user_id, created_by_user_id) VALUES ($1, $2, 'Carla buy', 'buy', now(), $3, $4, $4)", [w.tenantId, randomUUID(), carla.id, agent]);
     await q("INSERT INTO saved_searches (tenant_id, id, contact_id, name, criteria) VALUES ($1, $2, $3, '3 beds', '{}')", [w.tenantId, randomUUID(), dan.id]);
     const manualPoint = randomUUID();
-    await q("INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label) VALUES ($1, $2::uuid, $3::uuid, 'phone', '+14155559876', decode(md5($2::text) || md5($3::text), 'hex'), 'mobile')", [w.tenantId, manualPoint, erin.id]);
+    await q("INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label) VALUES ($1, $2::uuid, $3::uuid, 'phone', '+14155550128', decode(md5($2::text) || md5($3::text), 'hex'), 'mobile')", [w.tenantId, manualPoint, erin.id]);
 
     const r = await call(w.admin, 'POST', `/imports/${b.id}/revert`, {});
     expect(r.status).toBe(202);
@@ -131,7 +131,7 @@ describe('R-CONSENT-3 E40: imported opt-outs cannot be skipped away', () => {
 
   it('R-CONSENT-3: a revocation that needs a human (a CSV bare "no") waits for the consent stage, which cannot be skipped while it is pending', async () => {
     const w = await importWorld(ih);
-    const csv = 'First Name,Last Name,Mobile Phone,Text Consent\nNora,Maybe,(415) 301-8811,no\n';
+    const csv = 'First Name,Last Name,Mobile Phone,Text Consent\nNora,Maybe,(415) 555-0110,no\n';
     const cr = await call<{ batch: BatchView }>(w.admin, 'POST', '/imports', { source: 'csv', fileName: 'amb.csv', fileBase64: csvBase64(csv) });
     const bid = cr.body.batch.id;
     await call(w.admin, 'POST', `/imports/${bid}/snapshot`);
@@ -164,7 +164,7 @@ describe('R-IMPORT-11: the FUB key purge follows the batch however it ends', () 
   it('R-IMPORT-11: when the last stage is settled by a skip, the batch is committed and the key purge is scheduled (≤ 30 days)', async () => {
     const clean: FubDataset = {
       users: [{ id: 11, name: 'Alex Agent' }],
-      people: [{ id: 1, created: '2024-01-01T00:00:00Z', firstName: 'Ann', lastName: 'Clean', assignedUserId: 11, phones: [{ value: '(415) 555-4411', type: 'mobile', status: 'Valid' }] }],
+      people: [{ id: 1, created: '2024-01-01T00:00:00Z', firstName: 'Ann', lastName: 'Clean', assignedUserId: 11, phones: [{ value: '(415) 555-0127', type: 'mobile', status: 'Valid' }] }],
       notes: [],
       textMessages: [],
       emails: [],

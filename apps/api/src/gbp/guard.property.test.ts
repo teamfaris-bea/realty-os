@@ -26,7 +26,7 @@ describe('guardReply examples (R-GBP-1)', () => {
       ['Since March 3rd it has been great.', 'DATE'],
       ['Since 3/14 it has been great.', 'DATE'],
       ['Write to us at team@example.test.', 'CONTACT'],
-      ['Call us on (555) 010-0199.', 'CONTACT'],
+      ['Call us on (555) 555-0117.', 'CONTACT'],
       ['Glad the inspection went well.', 'DEAL'],
       ['Happy the closing was smooth.', 'DEAL'],
       ['Your lender was great too.', 'DEAL'],
@@ -53,7 +53,7 @@ describe('guardReply examples (R-GBP-1)', () => {
 
 const TOKENS: [string, GuardCode][] = [
   ['Alpha', 'REVIEWER_NAME'], ['$900', 'MONEY'], ['250k', 'MONEY'], ['12 Elm Street', 'ADDRESS'], ['June 4', 'DATE'], ['4/6', 'DATE'],
-  ['someone@example.test', 'CONTACT'], ['555 010 0199', 'CONTACT'], ['escrow', 'DEAL'], ['under contract', 'DEAL'], ['commission', 'DEAL'],
+  ['someone@example.test', 'CONTACT'], ['555 555 0117', 'CONTACT'], ['escrow', 'DEAL'], ['under contract', 'DEAL'], ['commission', 'DEAL'],
 ];
 const variant = fc.constantFrom<(s: string) => string>((s) => s, (s) => s.toUpperCase(), (s) => s.toLowerCase());
 

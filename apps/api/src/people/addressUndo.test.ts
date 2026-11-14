@@ -58,7 +58,7 @@ describe('module 57: Undo of an address delete restores the deleted row', () => 
   it('module 57: an imported address with a 300-character line (over the add schema’s 200), a jurisdiction and its import batch is removed and put back by the Undo verbatim: the same id and every column, audited as a restore; the old re-add is refused for it, and a second Undo adds nothing', async () => {
     const street = `${'1200 Old Mill Pond Road Building Seven '.repeat(8)}Suite 4`.slice(0, 300);
     expect(street.length).toBe(300);
-    const b = await importCsv(`First Name,Last Name,Mobile Phone,Email,Address,City,State,Zip\nIma,Long,(415) 301-0901,ima.long@example.com,${street},Oakland,CA,94610\n`);
+    const b = await importCsv(`First Name,Last Name,Mobile Phone,Email,Address,City,State,Zip\nIma,Long,(415) 555-0107,ima.long@example.com,${street},Oakland,CA,94610\n`);
     const [addr] = await su<{ id: string; contact_id: string; import_batch_id: string; line1: string }>('SELECT id, contact_id, import_batch_id, line1 FROM contact_addresses WHERE import_batch_id = $1', [b.id]);
     expect(addr).toMatchObject({ import_batch_id: b.id, line1: street });
     // no application path writes a jurisdiction (seeds do): set as a fixture, it is the column an Undo must not lose

@@ -167,7 +167,7 @@ describe('click-to-call announcement and recordings (Twilio shapes)', () => {
     const placed = h.providers.telephony.calls.find((x) => x.idempotencyKey === r.body.callId)!;
     const s = subs.get(w.tenantId)!;
     // the agent leg completes without the client answer URL ever being fetched
-    await twilio('/webhooks/telephony/voice', { AccountSid: s.sid, CallSid: placed.providerRef, From: w.mainNumber, To: '+14155550000', Direction: 'outbound-api', CallStatus: 'completed' }, s.token);
+    await twilio('/webhooks/telephony/voice', { AccountSid: s.sid, CallSid: placed.providerRef, From: w.mainNumber, To: '+14155550125', Direction: 'outbound-api', CallStatus: 'completed' }, s.token);
     const rec = sid('RE');
     await twilio('/webhooks/telephony/recording', { AccountSid: s.sid, CallSid: placed.providerRef, RecordingSid: rec, RecordingDuration: '30' }, s.token);
     await runJobs(h, w.tenantId, ['comms.recording_copy']);

@@ -45,7 +45,7 @@ describe('webhook signatures', () => {
     // every table (tenant tables and the global ones: users, sessions, auth_events, ...)
     expect(Object.keys(before).length).toBeGreaterThanOrEqual(93); // 94 tables minus webhook_events
     const eventsBefore = (await h.su.query('SELECT count(*)::int AS n FROM webhook_events')).rows[0].n as number;
-    const params = { MessageSid: 'SM1', From: '+18435550100', To: '+18435550001', Body: 'STOP' };
+    const params = { MessageSid: 'SM1', From: '+18435550100', To: '+18435550102', Body: 'STOP' };
     const attempts = [
       h.app.inject({ method: 'POST', url: '/api/webhooks/test/telephony', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: form(params) }),
       h.app.inject({ method: 'POST', url: '/api/webhooks/test/telephony', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-twilio-signature': telephonySignature('wrong-secret-0000000', 'https://api.test.invalid/api/webhooks/test/telephony', params) }, payload: form(params) }),
@@ -68,7 +68,7 @@ describe('webhook signatures', () => {
   it('a valid Twilio-shaped signature (full URL + sorted params, HMAC-SHA1) passes; changing any parameter breaks it', async () => {
     const secret = h.config.webhookSecrets.telephony;
     const url = 'https://api.test.invalid/api/webhooks/test/telephony';
-    const params = { MessageSid: 'SM2', From: '+18435550100', To: '+18435550001', Body: 'Yes please' };
+    const params = { MessageSid: 'SM2', From: '+18435550100', To: '+18435550102', Body: 'Yes please' };
     const ok = await h.app.inject({ method: 'POST', url: '/api/webhooks/test/telephony', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-twilio-signature': telephonySignature(secret, url, params) }, payload: form(params) });
     expect(ok.statusCode).toBe(200);
     expect(handled).toEqual(['telephony']);

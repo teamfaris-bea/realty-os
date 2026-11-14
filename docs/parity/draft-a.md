@@ -147,7 +147,7 @@ RLS: `tags` select members; insert members except TC (`my_role() <> 'tc'`) as th
 | E-A14 | Agent adds spouse's mobile, which opted out last year | Point added; compose shows "Won't send: Opted out of texts"; nothing overridable |
 | E-A15 | Agent "fixes" a number by retyping one digit | New point + old removed; old one's STOP stays attached to the old number only |
 | E-A16 | ISA edits after the handoff window expired | 404 (collaborator expired ⇒ not visible) |
-| E-A17 | Phone typed as "(555) 010-2000 ext 4" | core normalize rejects the extension `PHONE_EXTENSION_UNSUPPORTED` (VERIFY whether FUB keeps extensions) |
+| E-A17 | Phone typed as "(555) 555-0119 ext 4" | core normalize rejects the extension `PHONE_EXTENSION_UNSUPPORTED` (VERIFY whether FUB keeps extensions) |
 | E-A18 | Change stage of a merged-away contact | Merged contacts are closed ⇒ `CONTACT_CLOSED` |
 
 **Cut:** birthday/anniversary as core columns (custom date fields, §6), photos/avatars, social profile URLs (custom text field), editing `imported_fields` (raw provenance stays read-only), unmerge (still deferred, PHASE2_3_PLAN §3).

@@ -8,7 +8,7 @@ export const ZILLOW_TEXT = [
   '',
   'Name: Jane Q. Buyer',
   'Email: Jane.Buyer@Example.test',
-  'Phone: (555) 123-4567',
+  'Phone: (555) 555-0127',
   'Property: 123 Maple Street, Springfield, IL 62704',
   'Zpid: 2081234567',
   'Message: Hi, I would like to see this home.',
@@ -28,7 +28,7 @@ export const ZILLOW_HTML = `<!doctype html><html><head><title>Zillow lead</title
 <table>
   <tr><td>Name:</td><td>Jane Q. Buyer</td></tr>
   <tr><td>Email:</td><td><a href="mailto:jane.buyer@example.test">Jane.Buyer@Example.test</a></td></tr>
-  <tr><td>Phone:</td><td>(555)&nbsp;123-4567</td></tr>
+  <tr><td>Phone:</td><td>(555)&nbsp;555-0127</td></tr>
   <tr><td>Property:</td><td><a href="https://www.zillow.com/homedetails/2081234567_zpid/?utm=x">123 Maple Street, Springfield, IL 62704</a></td></tr>
   <tr><td>Zpid:</td><td>2081234567</td></tr>
 </table>
@@ -44,7 +44,7 @@ export const REALTOR_TEXT = [
   '',
   'Contact: John Doe',
   'Email: john.doe@example.test',
-  'Phone: +1 555.987.6543',
+  'Phone: +1 555.555.0147',
   'Address: 456 Oak Ave, Austin, TX 78701-1234',
   'MLS #: TX-998877',
   'Comments: I want to sell my home this spring.',
@@ -61,7 +61,7 @@ export const REALTOR_HTML = `<html><body>
 <ul>
 <li>Contact: John Doe</li>
 <li>Email: john.doe@example.test</li>
-<li>Phone: +1 555.987.6543</li>
+<li>Phone: +1 555.555.0147</li>
 <li>Address: 456 Oak Ave, Austin, TX 78701-1234</li>
 <li>MLS #: TX-998877</li>
 <li>Comments: I want to sell my home this spring.</li>
@@ -74,7 +74,7 @@ export const GENERIC_TEXT = [
   'New website inquiry',
   '- Name: Maria Garcia',
   '- Email: maria@example.test',
-  '- Phone: 555 222 3333',
+  '- Phone: 555 555 0129',
   '- Interested in: Renting',
   '- Address: 9 Elm Ct, Portland, OR 97201',
   '- Listing ID: ABC-123',
@@ -90,7 +90,7 @@ export const GENERIC: ParseInput = { subject: 'Website inquiry', text: GENERIC_T
 
 // SYNTHETIC — our own generic labelled format
 export const GENERIC_HTML = `<div>New website inquiry</div>
-<div>Name: Maria Garcia</div><div>Email: maria@example.test</div><div>Phone: 555 222 3333</div>
+<div>Name: Maria Garcia</div><div>Email: maria@example.test</div><div>Phone: 555 555 0129</div>
 <div>Interested in: Renting</div><div>Address: 9 Elm Ct, Portland, OR 97201</div><div>Listing ID: ABC-123</div>
 <div>Message: Looking for a 2 bedroom place.<br>Pets ok?</div>`;
 
@@ -98,12 +98,12 @@ export const GENERIC_HTML = `<div>New website inquiry</div>
 export const ZILLOW_CHANGED_TEXT = [
   'New buyer inquiry from Zillow',
   'Lead full name - Jane Q. Buyer',
-  'Reach them at (555) 123-4567 or jane.buyer@example.test',
+  'Reach them at (555) 555-0127 or jane.buyer@example.test',
   'Home: 123 Maple Street',
 ].join('\n');
 
 // SYNTHETIC — a newsletter-like email that is no lead at all
-export const NEWSLETTER_TEXT = ['Market update for November', 'Prices rose 2% this month.', 'Contact us at hello@agency.test or (555) 444-5555.'].join('\n');
+export const NEWSLETTER_TEXT = ['Market update for November', 'Prices rose 2% this month.', 'Contact us at hello@agency.test or (555) 555-0131.'].join('\n');
 
 // ---- leadmetadata.org (R-LEM-10) -------------------------------------------------------------------------
 // SYNTHETIC — our own samples of the leadmetadata.org convention (VERIFY 3: lead_phone, lead_message and
@@ -115,7 +115,7 @@ export const LEADMETA_HEAD_HTML = `<!doctype html><html><head>
 <meta name="lead_information_version" content="1.0">
 <meta name="lead_name" content="Avery Sample">
 <meta name="lead_email" content="Avery.Sample@Example.test">
-<meta name="lead_phone" content="(555) 010-2030">
+<meta name="lead_phone" content="(555) 555-0120">
 <meta name="lead_type" content="Buyer">
 <meta name="lead_source" content="Some Other Portal">
 <meta name='lead_property_address' content='5 Birch Ln, Fairview, OR 97024'>
@@ -165,7 +165,7 @@ export const LEADMETA_HOSTILE_HTML = `<html><head>
 <metaname="lead_email" content="glued@attacker.test">
 </head><body>
 <textarea><meta name="lead_email" content="textarea@attacker.test"></textarea>
-<meta name="lead_phone" content="555-010-4455&#x0A;Bcc: x@attacker.test">
+<meta name="lead_phone" content="555-555-0122&#x0A;Bcc: x@attacker.test">
 <meta name="lead_unknown_field" content="ignored">
 <p>Lead</p>
 </body></html>`;
@@ -175,13 +175,13 @@ export const LEADMETA_HOSTILE_HTML = `<html><head>
 export const CATALOG_PORTAL_DOMAINS = ['redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com'] as const;
 export const catalogLabelled = (domain: string): ParseInput => ({
   subject: 'New lead',
-  text: ['You have a new lead.', '', 'Name: Morgan Sample', 'Email: morgan.sample@example.test', 'Phone: 555-010-7788', '', `Questions? support@${domain}`].join('\n'),
+  text: ['You have a new lead.', '', 'Name: Morgan Sample', 'Email: morgan.sample@example.test', 'Phone: 555-555-0124', '', `Questions? support@${domain}`].join('\n'),
   html: null,
   senderDomain: `mail.${domain}`,
 });
 export const catalogUnlabelled = (domain: string): ParseInput => ({
   subject: 'New lead',
-  text: ['Morgan Sample is interested in 5 Birch Ln.', 'Reach them at morgan.sample@example.test or 555-010-7788.'].join('\n'),
+  text: ['Morgan Sample is interested in 5 Birch Ln.', 'Reach them at morgan.sample@example.test or 555-555-0124.'].join('\n'),
   html: null,
   senderDomain: `mail.${domain}`,
 });
@@ -202,5 +202,5 @@ export const forwardedByHand = (marker: 'gmail' | 'outlook' | 'apple', o: { lead
       : marker === 'outlook'
         ? ['________________________________', 'From: Zillow <leads@zillow.com>', 'Sent: Monday, November 9, 2026 9:00 AM', `To: ${forwarder}`, 'Subject: New lead', '']
         : ['Begin forwarded message:', '', 'From: Zillow <leads@zillow.com>', 'Subject: New lead', `To: ${forwarder}`, ''];
-  return [...note, ...header, 'New lead from Zillow', `Name: ${o.name ?? 'Sam Lead'}`, `Email: ${lead}`, `Phone: ${o.phone ?? '555-010-3344'}`, 'Message: Is it still available?'].join('\n');
+  return [...note, ...header, 'New lead from Zillow', `Name: ${o.name ?? 'Sam Lead'}`, `Email: ${lead}`, `Phone: ${o.phone ?? '555-555-0121'}`, 'Message: Is it still available?'].join('\n');
 };

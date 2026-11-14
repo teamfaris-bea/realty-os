@@ -35,7 +35,7 @@ async function alertPhone(c: TestClient): Promise<void> {
 }
 
 const voice = (ref: string, status: string, extra: Record<string, string> = {}) =>
-  telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550000', CallStatus: status, Direction: 'outbound-api', ...extra });
+  telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550125', CallStatus: status, Direction: 'outbound-api', ...extra });
 
 /** The agent's tap-to-call to `contactId`, announced, answered and recorded; the recording is copied and transcribed. */
 async function recordedCall(agent: TestClient, contactId: string): Promise<{ callId: string; recordingId: string }> {

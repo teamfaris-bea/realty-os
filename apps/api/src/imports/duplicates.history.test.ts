@@ -46,7 +46,7 @@ async function history(batchId: string, cat: Category) {
   return { planned, recs, committed, failed: await failedOf(committed.id), verified: verified.res.status };
 }
 
-const CHAIN_PHONE = '(415) 820-0501';
+const CHAIN_PHONE = '(415) 555-0135';
 const CHAIN: FubDataset = {
   users: [],
   people: [
@@ -66,8 +66,8 @@ const CHAIN: FubDataset = {
   recordings: {},
 };
 
-const EXACT_PHONE = '(415) 820-0601';
-const EXACT_NEW_PHONE = '(415) 820-0602';
+const EXACT_PHONE = '(415) 555-0136';
+const EXACT_NEW_PHONE = '(415) 555-0137';
 const EXACT_EMAIL = 'dee.one@example.com';
 /** an earlier batch created Dee One */
 const EARLIER: FubDataset = { users: [], people: [{ id: 601, firstName: 'Dee', lastName: 'One', phones: [valid(EXACT_PHONE)], emails: [valid(EXACT_EMAIL, 'home')] }], notes: [], textMessages: [], emails: [], calls: [], recordings: {} };
@@ -180,7 +180,7 @@ describe('B6 R-IMPORT-4: history of a person whose contacts record was a skipped
     // the contact an earlier batch created is never deleted: only what this batch added to it goes
     expect(await q('SELECT deleted_at FROM contacts WHERE id = $1', [c601])).toEqual([{ deleted_at: null }]);
     expect((stageOf(b, 'contacts').revert as { manual: { sourceRef: string; reason: string }[] }).manual).toEqual([expect.objectContaining({ sourceRef: 'fub:people/702', reason: 'PRE_EXISTING_CONTACT' })]);
-    expect((await q<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' ORDER BY address", [c601])).map((x) => x.address)).toEqual(['+14158200601']);
+    expect((await q<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' ORDER BY address", [c601])).map((x) => x.address)).toEqual(['+14155550136']);
     expect(await contactOfRef('701')).toBeNull();
   });
 
@@ -219,7 +219,7 @@ describe('B6 R-IMPORT-4: history of a person whose contacts record was a skipped
 // writes none, so the baseline fell back to the start of the contact's ledger and every human event from BEFORE the
 // import (an assignment) counted as a touch: the rows were left for a human decision (TOUCHED) and never removed.
 describe('B6 review R1 R-IMPORT-10: undoing history put on a pre-existing contact through a skipped duplicate', () => {
-  const R1_PHONE = '(415) 820-1601';
+  const R1_PHONE = '(415) 555-0138';
   const counts = async (contactId: string) =>
     (
       await q<{ notes: number; messages: number; calls: number }>(
@@ -292,13 +292,13 @@ describe('B6 review R3 R4 R-IMPORT-4: later stages are planned against a contact
   }
 
   it('B6 R3: the contacts stage dry-run, then skipped: the notes dry run plans every note as the commit will find it (PARENT_NOT_FOUND: nothing of this batch was written, and no exact match is followed), the commit agrees and verifies, and nothing lands on the existing contact; a notes dry run made before the skip is no longer current and must be run again', async () => {
-    const ex = await earlier('b6r3-earlier-key-0001', [{ id: 2801, firstName: 'Eve', lastName: 'Exists', phones: [valid('(415) 820-2801')] }]);
+    const ex = await earlier('b6r3-earlier-key-0001', [{ id: 2801, firstName: 'Eve', lastName: 'Exists', phones: [valid('(415) 555-0139')] }]);
     ih.fub.add('b6r3-later-key-0001', {
       ...none,
       people: [
-        { id: 2901, firstName: 'Neil', lastName: 'New', phones: [valid('(415) 820-2901')] },
-        { id: 2902, firstName: 'Neil', lastName: 'Again', phones: [valid('(415) 820-2901')] }, // in-file duplicate of 2901
-        { id: 2903, firstName: 'Eve', lastName: 'Exists', phones: [valid('(415) 820-2801')] }, // exact match, nothing new
+        { id: 2901, firstName: 'Neil', lastName: 'New', phones: [valid('(415) 555-0140')] },
+        { id: 2902, firstName: 'Neil', lastName: 'Again', phones: [valid('(415) 555-0140')] }, // in-file duplicate of 2901
+        { id: 2903, firstName: 'Eve', lastName: 'Exists', phones: [valid('(415) 555-0139')] }, // exact match, nothing new
       ],
       notes: [noteOf(29001, 2901), noteOf(29002, 2902), noteOf(29003, 2903)],
     });
@@ -328,16 +328,16 @@ describe('B6 review R3 R4 R-IMPORT-4: later stages are planned against a contact
 
   it('B6 R4: a contacts record left undecided when its stage committed is final: its notes, and its in-file duplicate’s, are planned rejected (PARENT_REJECTED, never PARENT_NOT_LINKED, so no "import" can fail at commit); the stage commits, verifies, and the next stage can commit after it', async () => {
     const ex = await earlier('b6r4-earlier-key-0001', [
-      { id: 3101, firstName: 'Olga', lastName: 'Owned', phones: [valid('(415) 820-3101')] },
-      { id: 3102, firstName: 'Omar', lastName: 'Owned', phones: [valid('(415) 820-3102')] },
+      { id: 3101, firstName: 'Olga', lastName: 'Owned', phones: [valid('(415) 555-0141')] },
+      { id: 3102, firstName: 'Omar', lastName: 'Owned', phones: [valid('(415) 555-0143')] },
     ]);
     ih.fub.add('b6r4-later-key-0001', {
       ...none,
       people: [
-        { id: 3201, firstName: 'Olga', lastName: 'Owned', phones: [valid('(415) 820-3101')], emails: [valid('olga.new@example.com', 'home')] }, // owned match + a new email: needs review, left undecided
-        { id: 3202, firstName: 'Olga', lastName: 'Again', phones: [valid('(415) 820-3101')] }, // in-file duplicate of 3201
-        { id: 3301, firstName: 'Omar', lastName: 'Owned', phones: [valid('(415) 820-3102')], emails: [valid('omar.new@example.com', 'home')] }, // needs review, rejected by the Admin
-        { id: 3302, firstName: 'Omar', lastName: 'Again', phones: [valid('(415) 820-3102')] }, // in-file duplicate of 3301
+        { id: 3201, firstName: 'Olga', lastName: 'Owned', phones: [valid('(415) 555-0141')], emails: [valid('olga.new@example.com', 'home')] }, // owned match + a new email: needs review, left undecided
+        { id: 3202, firstName: 'Olga', lastName: 'Again', phones: [valid('(415) 555-0141')] }, // in-file duplicate of 3201
+        { id: 3301, firstName: 'Omar', lastName: 'Owned', phones: [valid('(415) 555-0143')], emails: [valid('omar.new@example.com', 'home')] }, // needs review, rejected by the Admin
+        { id: 3302, firstName: 'Omar', lastName: 'Again', phones: [valid('(415) 555-0143')] }, // in-file duplicate of 3301
       ],
       notes: [noteOf(33201, 3201), noteOf(33202, 3202), noteOf(33301, 3301), noteOf(33302, 3302)],
     });

@@ -41,7 +41,7 @@ async function providerRef(callId: string): Promise<string> {
   return (await h.su.query<{ r: string }>('SELECT provider_call_ref AS r FROM calls WHERE id = $1', [callId])).rows[0]!.r;
 }
 
-const voice = (ref: string, status: string, extra: Record<string, string> = {}) => telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550000', CallStatus: status, Direction: 'outbound-api', ...extra });
+const voice = (ref: string, status: string, extra: Record<string, string> = {}) => telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550125', CallStatus: status, Direction: 'outbound-api', ...extra });
 
 describe('tap-to-call (path 3)', () => {
   it('R-GATE-10: a call is gated at dial time; allowed ⇒ the call row (no gate decision row: blocked calls only), the provider bridges the agent first and announces the recording', async () => {

@@ -79,7 +79,7 @@ describe('happy paths (SYNTHETIC fixtures)', () => {
     expect(l.format).toBe('zillow');
     expect(l.name?.value).toBe('Jane Q. Buyer');
     expect(l.emails.map((e) => e.value)).toEqual(['jane.buyer@example.test']);
-    expect(l.phones.map((p) => p.value)).toEqual(['(555) 123-4567']);
+    expect(l.phones.map((p) => p.value)).toEqual(['(555) 555-0127']);
     expect(l.property?.value).toBe('123 Maple Street, Springfield, IL 62704');
     expect(l.postalCode).toBe('62704');
     expect(l.listingId?.value).toBe('2081234567');
@@ -94,7 +94,7 @@ describe('happy paths (SYNTHETIC fixtures)', () => {
     expect(l.format).toBe('realtor');
     expect(l.name?.value).toBe('John Doe');
     expect(l.emails.map((e) => e.value)).toEqual(['john.doe@example.test']);
-    expect(l.phones.map((p) => p.value)).toEqual(['+1 555.987.6543']);
+    expect(l.phones.map((p) => p.value)).toEqual(['+1 555.555.0147']);
     expect(l.property?.value).toBe('456 Oak Ave, Austin, TX 78701-1234');
     expect(l.postalCode).toBe('78701');
     expect(l.listingId?.value).toBe('TX-998877');
@@ -109,7 +109,7 @@ describe('happy paths (SYNTHETIC fixtures)', () => {
     expect(l.format).toBe('generic');
     expect(l.name?.value).toBe('Maria Garcia');
     expect(l.emails.map((e) => e.value)).toEqual(['maria@example.test']);
-    expect(l.phones.map((p) => p.value)).toEqual(['555 222 3333']);
+    expect(l.phones.map((p) => p.value)).toEqual(['555 555 0129']);
     expect(l.property?.value).toBe('9 Elm Ct, Portland, OR 97201');
     expect(l.postalCode).toBe('97201');
     expect(l.listingId?.value).toBe('ABC-123');
@@ -124,7 +124,7 @@ describe('happy paths (SYNTHETIC fixtures)', () => {
     expect(zl.format).toBe('zillow');
     expect(zl.name?.value).toBe('Jane Q. Buyer');
     expect(zl.emails.map((e) => e.value)).toEqual(['jane.buyer@example.test']);
-    expect(zl.phones.map((p) => p.value)).toEqual(['(555) 123-4567']);
+    expect(zl.phones.map((p) => p.value)).toEqual(['(555) 555-0127']);
     expect(zl.property?.value).toBe('123 Maple Street, Springfield, IL 62704');
     expect(zl.listingId?.value).toBe('2081234567');
     expect(zl.message?.value).toBe("Hi, I'd like to see this home & its yard.");
@@ -243,12 +243,12 @@ describe('R-INBOX-9: spans, empty fields, review', () => {
   });
 
   it('phones: 10–15 digits as written, optional +1/1, no letters; emails lowercased; max 5 each, deduped', () => {
-    const phones = ['555-111-2222', '(555) 111-2222', '+1 555 111 2222', '1-555-333-4444', '+44 20 7946 0958', '555 111 22', '555-CALL-NOW', '555 111 2222 ext 5', '1234567890123456'];
+    const phones = ['555-555-0126', '(555) 555-0126', '+1 555 555 0126', '1-555-555-0130', '+44 20 7946 0958', '555 111 22', '555-CALL-NOW', '555 555 0126 ext 5', '1234567890123456'];
     const l = okLead(parseLeadEmail(generic(['Name: A B', ...phones.map((p) => `Phone: ${p}`)].join('\n'))));
-    expect(l.phones.map((p) => p.value)).toEqual(['555-111-2222', '1-555-333-4444', '+44 20 7946 0958']);
+    expect(l.phones.map((p) => p.value)).toEqual(['555-555-0126', '1-555-555-0130', '+44 20 7946 0958']);
     const many = okLead(parseLeadEmail(generic(['Name: A B', ...Array.from({ length: 8 }, (_, i) => `Email: P${i}@Example.test`), 'Email: p0@example.test'].join('\n'))));
     expect(many.emails.map((e) => e.value)).toEqual(['p0@example.test', 'p1@example.test', 'p2@example.test', 'p3@example.test', 'p4@example.test']);
-    const manyPhones = okLead(parseLeadEmail(generic(['Name: A B', ...Array.from({ length: 8 }, (_, i) => `Phone: 555-000-000${i}`)].join('\n'))));
+    const manyPhones = okLead(parseLeadEmail(generic(['Name: A B', ...Array.from({ length: 8 }, (_, i) => `Phone: 555-555-010${i}`)].join('\n'))));
     expect(manyPhones.phones).toHaveLength(5);
   });
 
@@ -271,8 +271,8 @@ describe('header injection and invisible characters', () => {
   });
 
   it('a phone line with "\\r\\nTo:" yields only the phone', () => {
-    const l = okLead(parseLeadEmail(generic('Name: Eve\nPhone: 555-123-4567\r\nTo: victim@evil.test')));
-    expect(l.phones.map((p) => p.value)).toEqual(['555-123-4567']);
+    const l = okLead(parseLeadEmail(generic('Name: Eve\nPhone: 555-555-0127\r\nTo: victim@evil.test')));
+    expect(l.phones.map((p) => p.value)).toEqual(['555-555-0127']);
     expect(l.emails).toEqual([]);
   });
 
@@ -291,10 +291,10 @@ describe('header injection and invisible characters', () => {
   });
 
   it('bidi overrides, U+2028/2029 and controls are stripped from every value', () => {
-    const r = parseLeadEmail(generic('Name: \u202EevE\u202C Smith\u2028Bcc: x\nPhone: 555\u2066-123-4567\u2069\nMessage: hi\u2029there\u0085now\u200F'));
+    const r = parseLeadEmail(generic('Name: \u202EevE\u202C Smith\u2028Bcc: x\nPhone: 555\u2066-555-0127\u2069\nMessage: hi\u2029there\u0085now\u200F'));
     const l = okLead(r);
     expect(l.name?.value).toBe('evE Smith Bcc: x');
-    expect(l.phones.map((p) => p.value)).toEqual(['555-123-4567']);
+    expect(l.phones.map((p) => p.value)).toEqual(['555-555-0127']);
     // U+0085 (NEL) is a C1 control: normalizeBody already removed it
     expect(l.message?.value).toBe('hi therenow');
     for (const [, f] of fieldsOf(l)) expect(f.value).not.toMatch(FORBIDDEN);
@@ -315,7 +315,7 @@ describe('header injection and invisible characters', () => {
 
 describe("the portal's and sender's own addresses are never a lead's", () => {
   it('portal addresses on Email: lines and in the footer never become emails', () => {
-    const body = ['New lead from Zillow', 'Name: Ann Lee', 'Email: leads@zillow.com', 'Email: noreply@mail.zillow.com', 'Email: X@Realtor.com', 'Email: y@move.com', 'Phone: 555-123-4567', 'Contact us: support@zillow.com'].join('\n');
+    const body = ['New lead from Zillow', 'Name: Ann Lee', 'Email: leads@zillow.com', 'Email: noreply@mail.zillow.com', 'Email: X@Realtor.com', 'Email: y@move.com', 'Phone: 555-555-0127', 'Contact us: support@zillow.com'].join('\n');
     const l = okLead(parseLeadEmail(zillow(body)));
     expect(l.emails).toEqual([]);
     expect(l.phones).toHaveLength(1);
@@ -333,7 +333,7 @@ describe("the portal's and sender's own addresses are never a lead's", () => {
   });
 
   it('arbitrary addresses in the body (not on Email: lines) are never harvested', () => {
-    const r = parseLeadEmail(generic('Name: Ann\nPhone: 555-123-4567\nWrite to someone@example.test anytime'));
+    const r = parseLeadEmail(generic('Name: Ann\nPhone: 555-555-0127\nWrite to someone@example.test anytime'));
     expect(okLead(r).emails).toEqual([]);
   });
 
@@ -365,7 +365,7 @@ describe('format detection, E78, E153', () => {
   });
 
   it('E78: a partly changed Zillow template keeps what still parses, contact labels gone ⇒ NO_CONTACT_POINT', () => {
-    const r = parseLeadEmail(zillow('New lead from Zillow\nName: Ann Lee\nCustomer phone - 555-123-4567\nProperty: 1 Main St'));
+    const r = parseLeadEmail(zillow('New lead from Zillow\nName: Ann Lee\nCustomer phone - 555-555-0127\nProperty: 1 Main St'));
     expect(r).toMatchObject({ ok: false, reason: 'NO_CONTACT_POINT', partial: { format: 'zillow', name: { value: 'Ann Lee' }, phones: [], emails: [], message: null } });
   });
 
@@ -373,7 +373,7 @@ describe('format detection, E78, E153', () => {
     const noMarker = 'Name: Ann Lee\nEmail: ann@example.test';
     expect(okLead(parseLeadEmail(zillow(noMarker))).format).toBe('generic');
     expect(okLead(parseLeadEmail({ subject: null, text: noMarker, html: null, senderDomain: 'realtor.com' })).format).toBe('generic');
-    const r = parseLeadEmail(zillow('Email: ann@example.test\nPhone: 555-123-4567'));
+    const r = parseLeadEmail(zillow('Email: ann@example.test\nPhone: 555-555-0127'));
     expect(r).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT', partial: { format: 'zillow' } });
     expect(leadOf(r)?.emails.map((e) => e.value)).toEqual(['ann@example.test']);
     // a Zillow marker but no recognizable label at all
@@ -408,7 +408,7 @@ const NASTY = ['\r\n', '\r', '\n', '\u2028', '\u2029', '\u202E', '\u2066', '\u00
 const valueArb = fc.oneof(
   fc.string({ unit: 'binary', maxLength: 40 }),
   fc.emailAddress(),
-  fc.constantFrom('leads@zillow.com', 'noreply@mail.zillow.com', 'a@b.test', 'Ann@Example.test', '555-123-4567', '+1 (555) 123 4567', 'Jane Doe', '123 Main St, Reno, NV 89501', 'ABC-123'),
+  fc.constantFrom('leads@zillow.com', 'noreply@mail.zillow.com', 'a@b.test', 'Ann@Example.test', '555-555-0127', '+1 (555) 555 0127', 'Jane Doe', '123 Main St, Reno, NV 89501', 'ABC-123'),
   fc.array(fc.oneof(fc.constantFrom(...NASTY), fc.string({ maxLength: 6 })), { maxLength: 8 }).map((xs) => xs.join('')),
 );
 const labelledBody = fc
@@ -531,11 +531,11 @@ describe('R-LEM-9 catalog portals without a vendor parser', () => {
       expect([d, l.format]).toEqual([d, 'generic']);
       expect(l.name?.value).toBe('Morgan Sample');
       expect(l.emails.map((e) => e.value)).toEqual(['morgan.sample@example.test']);
-      expect(l.phones.map((p) => p.value)).toEqual(['555-010-7788']);
+      expect(l.phones.map((p) => p.value)).toEqual(['555-555-0124']);
       expectSpans(r);
       expect(parseLeadEmail(catalogUnlabelled(d)), d).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
       // a portal address on an Email: line, whoever sent it, is never a lead's
-      const own = parseLeadEmail(generic(`Name: A B\nEmail: leads@${d}\nEmail: x@mail.${d}\nPhone: 555-010-1212`, 'forms.agent-site.test'));
+      const own = parseLeadEmail(generic(`Name: A B\nEmail: leads@${d}\nEmail: x@mail.${d}\nPhone: 555-555-0118`, 'forms.agent-site.test'));
       expect(okLead(own).emails, d).toEqual([]);
     }
   });
@@ -548,7 +548,7 @@ describe('R-LEM-10 leadmetadata.org meta tags', () => {
     expect(l.format).toBe('leadmetadata');
     expect(l.name?.value).toBe('Avery Sample');
     expect(l.emails.map((e) => e.value)).toEqual(['avery.sample@example.test']);
-    expect(l.phones.map((p) => p.value)).toEqual(['(555) 010-2030']);
+    expect(l.phones.map((p) => p.value)).toEqual(['(555) 555-0120']);
     expect(l.property?.value).toBe('5 Birch Ln, Fairview, OR 97024');
     expect(l.postalCode).toBe('97024');
     expect(l.message?.value).toBe("I'd like a tour & the HOA fees.");
@@ -677,7 +677,7 @@ describe('R-LEM-11 personal mailboxes and hand forwards', () => {
       const l = okLead(r);
       expect([m, l.format, l.name?.value]).toEqual([m, 'generic', 'Sam Lead']);
       expect(l.emails.map((e) => e.value)).toEqual(['synthetic_lead-sam@gmail.com']);
-      expect(l.phones.map((p) => p.value)).toEqual(['555-010-3344']);
+      expect(l.phones.map((p) => p.value)).toEqual(['555-555-0121']);
       expect(l.name!.span.start).toBeGreaterThan(text.indexOf('From: Zillow'));
       expectSpans(r);
       // without forwardedOnly the forwarder's own note is read first
@@ -686,7 +686,7 @@ describe('R-LEM-11 personal mailboxes and hand forwards', () => {
   });
 
   it('R-LEM-11: forwardedOnly with no marker pre-fills nothing; lead metadata is not read from a hand forward', () => {
-    const r = parseLeadEmail({ subject: null, text: 'Name: Sam Lead\nEmail: synthetic_lead-sam@gmail.com\nPhone: 555-010-3344', html: null, senderDomain: 'gmail.com', forwardedOnly: true });
+    const r = parseLeadEmail({ subject: null, text: 'Name: Sam Lead\nEmail: synthetic_lead-sam@gmail.com\nPhone: 555-555-0121', html: null, senderDomain: 'gmail.com', forwardedOnly: true });
     expect(r).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
     const meta = parseLeadEmail({ subject: null, text: null, html: LEADMETA_HEAD_HTML, senderDomain: 'gmail.com', forwardedOnly: true });
     expect(meta).toMatchObject({ ok: false, partial: null });

@@ -29,8 +29,8 @@ const OPEN = [ev.disclosed(4000), ev.announced(7000), ev.model(7500, 'How can I 
 describe('R-VOICE-6 R-VOICE-4: the model\'s words never choose a target', () => {
   it('R-VOICE-6: an injected phone number, another member of the team and another tenant\'s member are never rung and never logged', async () => {
     const script = { name: 'targets', steps: [...OPEN, ev.claims(9000, HOT_CLAIMS), ev.caller(10_000, 'Can I talk to my agent? I want to go see it today.'),
-      ev.tool(10_400, 'warm_transfer', { target_user_id: '+15550100199' }), ev.tool(10_500, 'warm_transfer', { target_user_id: OTHER_MEMBER_ID }), ev.tool(10_600, 'warm_transfer', { target_user_id: b.agents[0]!.userId }),
-      ev.tool(10_700, 'dial_number', { number: '+15550100199' }), ev.hangup(12_000)] };
+      ev.tool(10_400, 'warm_transfer', { target_user_id: '+15555550117' }), ev.tool(10_500, 'warm_transfer', { target_user_id: OTHER_MEMBER_ID }), ev.tool(10_600, 'warm_transfer', { target_user_id: b.agents[0]!.userId }),
+      ev.tool(10_700, 'dial_number', { number: '+15555550117' }), ev.hangup(12_000)] };
     const c = await aiCall(h, a, script, { faults: { idMap: { [OTHER_MEMBER_ID]: a.agents[1]!.userId! } } });
     const l = await ledgerOf(h, c.callId);
     expect(l.filter((x) => x.tool === 'warm_transfer').map((x) => [x.decision, x.reason_code, x.args])).toEqual([
@@ -46,7 +46,7 @@ describe('R-VOICE-6 R-VOICE-4: the model\'s words never choose a target', () => 
   });
 
   it('R-DATA-6 R-VOICE-4: PII in tool arguments never reaches the ledger', async () => {
-    const script = { name: 'pii', steps: [...OPEN, ev.caller(10_000, 'Take a message'), ev.tool(10_500, 'take_message', { topic: 'CALLBACK', note: 'Jane Doe at +15550100123', email: 'jane@example.com' }),
+    const script = { name: 'pii', steps: [...OPEN, ev.caller(10_000, 'Take a message'), ev.tool(10_500, 'take_message', { topic: 'CALLBACK', note: 'Jane Doe at +15555550115', email: 'jane@example.com' }),
       ev.tool(10_600, 'take_message', { topic: 'Call Jane at 555 0100' }), ev.tool(10_700, 'end_call', { reason_code: 'MY NAME IS JANE' })] };
     const c = await aiCall(h, a, script);
     const l = await ledgerOf(h, c.callId);
