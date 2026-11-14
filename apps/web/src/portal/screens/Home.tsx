@@ -89,7 +89,7 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
     if (leaving) return;
     setLeaving(true);
     try {
-      await api.request('POST', '/api/portal/logout', noBody, {});
+      await api.request('POST', '/api/portal/logout', noBody);
     } catch {
       // a session already gone is signed out all the same
     }

@@ -82,7 +82,7 @@ async function readCapped(res: Response, max: number): Promise<Uint8Array | null
 }
 
 async function streamToken(api: PortalApi, itemId: string): Promise<StreamTokenView> {
-  return api.request('POST', `/api/portal/documents/${encodeURIComponent(itemId)}/stream-token`, parseStreamToken, {});
+  return api.request('POST', `/api/portal/documents/${encodeURIComponent(itemId)}/stream-token`, parseStreamToken);
 }
 
 async function fetchAndSave(api: PortalApi, t: StreamTokenView, save: SaveDeps): Promise<DownloadResult> {
