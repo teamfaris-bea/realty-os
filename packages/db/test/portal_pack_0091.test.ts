@@ -128,4 +128,17 @@ describe('Q-PORTAL-19: platform:portal@2026.11.1 ships unreviewed; a review reco
     expect(dry.code).toBe(0);
     expect(dry.out).toContain('dry run: 6 would be recorded');
   });
+
+  it('b15 (b14 low h, doc check): ARCHITECTURE §21.56 scopes "no function, policy or grant changes" to section 1 of 0091, whose section 2 replaces four definers', () => {
+    const arch = readFileSync(resolve(repo, 'docs/ARCHITECTURE.md'), 'utf8');
+    const start = arch.indexOf('### 21.56 ');
+    const section = arch.slice(start, arch.indexOf('\n### ', start + 1));
+    expect(start).toBeGreaterThan(0);
+    expect(section).not.toMatch(/(^|[.)] )No function, policy or grant changes\./m);
+    expect(section).toMatch(/Section 1 of `0091` changes no function, policy or grant/);
+    expect(section).toMatch(/section 2 \(B14-OWN-1\) replaces four definers/);
+    // and the migration says the same of itself
+    const mig = readFileSync(resolve(repo, 'packages/db/migrations/0091_b14_round2_portal.sql'), 'utf8');
+    expect(mig).toMatch(/Four\s+--\s+functions are replaced/);
+  });
 });
