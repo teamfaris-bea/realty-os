@@ -2,7 +2,9 @@
 // sign-in link they were sent (an SMS reaction "Liked “… <link>”", an email reply quoting the sign-in email, a link
 // pasted into web chat). Module 22 replaces the quoted token VALUE before the content is stored, so no stored body, text
 // part, handback snippet, feed card or log line carries it; the stored record is labelled `content_redacted =
-// 'portal_signin_token'` (0093), and the thread view shows the label. The timeline also hides a token in a message
+// 'portal_signin_token'` (0093), and the thread view shows the label. b18 review B18S-2: the intake does the same for
+// the inquiry it stores (a web-chat opening message, a lead form's or webhook's message, property text and raw payload;
+// lead_inquiries.content_redacted, 0097), and the person page and the assistant's prompt read it so. The timeline also hides a token in a message
 // stored before this change at read time ("display"), and never rewrites that stored record.
 //
 // Pure: no I/O. Conservative by design: ANY `#token=` value is removed (the sign-in link's fragment, PORTAL_PAGE

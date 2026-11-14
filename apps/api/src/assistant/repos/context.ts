@@ -11,6 +11,7 @@ import { sql } from 'kysely';
 import { redactNames } from '@realty/core/assistant';
 import { type ReactionAction, type ReactionName, reactionPhrase } from '@realty/core/compliance';
 import type { EnvelopeService } from '../../crypto/envelope.js';
+import { hideForDisplay } from '../../portal/shared/redact.js';
 
 export interface ContactCore {
   id: string;
@@ -75,8 +76,11 @@ export async function latestInquiry(tx: Tx, contactId: string): Promise<InquiryF
       LEFT JOIN listings l ON l.tenant_id = i.tenant_id AND l.id = i.listing_id
      WHERE i.tenant_id = app.tenant_id() AND i.contact_id = ${contactId} AND i.outcome <> 'duplicate_ignored'
      ORDER BY i.received_at DESC, i.id DESC LIMIT 1`.execute(tx);
-  const i = r.rows[0];
-  if (!i) return null;
+  const row = r.rows[0];
+  if (!row) return null;
+  // b18 review B18S-2 (R-PORTAL-20): the prompt never carries a quoted sign-in token, even from an inquiry stored before
+  // the intake redacted it (hidden here; the stored record is unchanged)
+  const i = { ...row, message: hideForDisplay(row.message).text, property_text: hideForDisplay(row.property_text).text };
   const d = i.source_detail ?? {};
   const flag = d.va_loan ?? d.vaLoan ?? d.va;
   const vaLoanIndicated = flag === true || (typeof flag === 'string' && /^(1|true|yes|y)$/i.test(flag.trim())) || (i.message !== null && VA_RE.test(i.message));

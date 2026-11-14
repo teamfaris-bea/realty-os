@@ -6,7 +6,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { renderStep, signOffFor } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { latestInquiry } from '../assistant/repos/context.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { chatSource, createWidget, openChat } from '../channels/testing.js';
+import { postIntake } from '../leads/testing.js';
 import { linkLine, portalLinkUrl } from '../portal/shared/copy.js';
 import { SIGNIN_TOKEN_HIDDEN, SIGNIN_TOKEN_PLACEHOLDER } from '../portal/shared/redact.js';
 import { systemActor } from '../worker/systemActor.js';
@@ -254,5 +257,87 @@ describe('R-PORTAL-20 a quoted portal sign-in token is never stored (Q-PORTAL-16
     await expect(h.su.query('UPDATE messages SET content_redacted = NULL WHERE id = $1', [a!.id])).rejects.toThrow(/CONTENT_REDACTED_FIXED/);
     await expect(h.su.query("UPDATE messages SET content_redacted = 'portal_signin_token' WHERE id = $1", [b!.id])).rejects.toThrow(/CONTENT_REDACTED_FIXED/);
     await expect(h.su.query("UPDATE messages SET content_redacted = 'other' WHERE id = $1", [b!.id])).rejects.toThrow();
+  });
+});
+
+// b18 review B18S-2: the inquiry an intake writes (lead_inquiries.message, property_text and the encrypted raw payload)
+// is a stored copy of what the person typed too: the opening web-chat message, a lead form or a lead webhook. It is
+// stored redacted and labelled (0097), the person page and the assistant's prompt never carry the value, and an older
+// inquiry is hidden at read time and never rewritten.
+describe('R-PORTAL-20 a quoted sign-in token is not stored in an inquiry either (b18 review B18S-2)', () => {
+  type InquiryRow = { id: string; message: string | null; property_text: string | null; content_redacted: string | null; raw_payload_enc: Buffer | null };
+  const inquiriesOf = async (contactId: string) =>
+    (await h.su.query<InquiryRow>('SELECT id, message, property_text, content_redacted, raw_payload_enc FROM lead_inquiries WHERE contact_id = $1 ORDER BY received_at', [contactId])).rows;
+  const rawOf = (row: InquiryRow) => withTenantTx(systemActor(w.tenantId, 'worker'), async (tx) =>
+    Buffer.from(await h.app.platform.envelope.inTx(tx, w.tenantId as never).decrypt(w.tenantId as never, { table: 'lead_inquiries', column: 'raw_payload_enc', rowId: row.id }, new Uint8Array(row.raw_payload_enc!))).toString('utf8'), { db: h.database });
+  const personInquiries = async (contactId: string) => {
+    const r = await call<{ contact: { inquiries: { message: string | null; propertyText: string | null; redaction: string | null }[] } }>(w.owner, 'GET', `/contacts/${contactId}`);
+    expect(r.status).toBe(200);
+    return r.body.contact.inquiries;
+  };
+  const promptInquiry = (contactId: string) => withTenantTx(systemActor(w.tenantId, 'assistant'), (tx) => latestInquiry(tx, contactId), { db: h.database });
+
+  it('R-PORTAL-20 B18S-2: a web-chat opening message quoting the sign-in link is stored without the token in the message AND the inquiry (plain text and raw payload), the inquiry is labelled, and the person page and the assistant prompt never carry it', async () => {
+    const src = await chatSource(h, w.owner, w.tenantId);
+    const widget = await createWidget(h, w.owner, src.sourceId);
+    const t = newToken();
+    const chat = await openChat(h, widget.key, src.disclosureId, { name: 'Sam Visitor', email: 'visitor.b18s2@example.test', message: `this sign-in link did not work ${portalLinkUrl(origin, t)}` });
+    const [m] = await inbound(chat.contactId);
+    expect(m!.body).not.toContain(t);
+    expect(m!.content_redacted).toBe('portal_signin_token');
+    const [i] = await inquiriesOf(chat.contactId);
+    expect(i!.message).not.toContain(t);
+    expect(i!.message).toContain(`/portal.html#token=${SIGNIN_TOKEN_PLACEHOLDER}`);
+    expect(i!.message!.startsWith('this sign-in link did not work')).toBe(true);
+    expect(i!.content_redacted).toBe('portal_signin_token');
+    const raw = await rawOf(i!);
+    expect(raw).not.toContain(t);
+    expect(raw).toContain(SIGNIN_TOKEN_PLACEHOLDER);
+    expect((await h.su.query('SELECT 1 FROM lead_inquiries WHERE tenant_id = $1 AND (message LIKE $2 OR property_text LIKE $2)', [w.tenantId, `%${t}%`])).rows).toEqual([]);
+    const [shown] = await personInquiries(chat.contactId);
+    expect(shown!.message).not.toContain(t);
+    expect(shown!.redaction).toBe('stored');
+    expect((await promptInquiry(chat.contactId))!.message).not.toContain(t);
+    for (const line of h.logs) expect(line).not.toContain(t);
+  });
+
+  it('R-PORTAL-20 B18S-2: a lead webhook inquiry quoting it in its message and its property text is stored without either token and labelled; one with no token is stored as received and unlabelled', async () => {
+    const [t1, t2] = [newToken(), newToken()];
+    const r = await postIntake(h, w.token, { inquiryType: 'buy', fullName: 'Pat Example', emails: [`pat.b18s2.${randomUUID().slice(0, 8)}@example.test`], message: `My link: ${portalLinkUrl(origin, t1)}`, propertyText: `12 Elm St ${origin}/portal.html%23token%3D${t2}` });
+    expect([200, 201]).toContain(r.statusCode);
+    const contactId = (JSON.parse(r.body) as { contactId: string }).contactId;
+    const [i] = await inquiriesOf(contactId);
+    expect(i!.message).not.toContain(t1);
+    expect(i!.property_text).not.toContain(t2);
+    expect(i!.property_text!.startsWith('12 Elm St')).toBe(true);
+    expect(i!.content_redacted).toBe('portal_signin_token');
+    const raw = await rawOf(i!);
+    expect(raw).not.toContain(t1);
+    expect(raw).not.toContain(t2);
+    const plain = await postIntake(h, w.token, { inquiryType: 'buy', fullName: 'Lee Example', emails: [`lee.b18s2.${randomUUID().slice(0, 8)}@example.test`], message: 'Is it still available?' });
+    const [p] = await inquiriesOf((JSON.parse(plain.body) as { contactId: string }).contactId);
+    expect(p).toMatchObject({ message: 'Is it still available?', content_redacted: null });
+  });
+
+  it('R-PORTAL-20 B18S-2: an inquiry stored before the redaction existed is shown on the person page and given to the assistant with the token hidden ("display") and never rewritten; the label is fixed once written (0097)', async () => {
+    const r = await postIntake(h, w.token, { inquiryType: 'buy', fullName: 'Kim Example', emails: [`kim.b18s2.${randomUUID().slice(0, 8)}@example.test`], message: 'Hello' });
+    const contactId = (JSON.parse(r.body) as { contactId: string }).contactId;
+    const [i] = await inquiriesOf(contactId);
+    const t = newToken();
+    const old = `Earlier: ${portalLinkUrl(origin, t)}`;
+    // fixture only: an inquiry as batch 17 stored it (no application path writes one any more)
+    await h.su.query('UPDATE lead_inquiries SET message = $2 WHERE id = $1', [i!.id, old]);
+    const [shown] = await personInquiries(contactId);
+    expect(shown!.message).not.toContain(t);
+    expect(shown!.message).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect(shown!.redaction).toBe('display');
+    expect((await promptInquiry(contactId))!.message).not.toContain(t);
+    expect((await inquiriesOf(contactId))[0]).toMatchObject({ message: old, content_redacted: null });
+    // the label cannot be put on a record stored as received, nor cleared from one stored redacted
+    await expect(h.su.query("UPDATE lead_inquiries SET content_redacted = 'portal_signin_token' WHERE id = $1", [i!.id])).rejects.toThrow(/CONTENT_REDACTED_FIXED/);
+    const red = await postIntake(h, w.token, { inquiryType: 'buy', fullName: 'Ray Example', emails: [`ray.b18s2.${randomUUID().slice(0, 8)}@example.test`], message: `See ${portalLinkUrl(origin, newToken())}` });
+    const [ri] = await inquiriesOf((JSON.parse(red.body) as { contactId: string }).contactId);
+    expect(ri!.content_redacted).toBe('portal_signin_token');
+    await expect(h.su.query('UPDATE lead_inquiries SET content_redacted = NULL WHERE id = $1', [ri!.id])).rejects.toThrow(/CONTENT_REDACTED_FIXED/);
   });
 });

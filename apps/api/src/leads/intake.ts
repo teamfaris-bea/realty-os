@@ -56,6 +56,7 @@ import { z } from 'zod';
 import { audit, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
+import { SIGNIN_TOKEN_REDACTION, redactNullable, redactSignInTokens } from '../portal/shared/redact.js';
 import { authorize } from '../rbac.js';
 import { systemActor } from '../worker/systemActor.js';
 import { leadsTx, platformOf } from './common.js';
@@ -276,8 +277,28 @@ export async function intakeLockKeys(tx: Tx, envelope: EnvelopeService, tenantId
   return (await intakeKeys(tx, envelope, tenantId, source?.id ?? input.leadSourceId, { ...parsed, leadSourceId: input.leadSourceId }, opts)).lockKeys;
 }
 
-async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
+/**
+ * b18 review B18S-2 (R-PORTAL-20, Q-PORTAL-16): what the person typed (a web-chat opening message, a lead form's or a
+ * lead webhook's message and property text) is stored in the inquiry, so a quoted portal sign-in token value is replaced
+ * before anything is written: in the message and the property text (plain columns) and in the whole raw payload
+ * (encrypted), as module 22 does for the message row. `redacted` is the row's label (0097).
+ */
+function redactInquiryInput(input: InquiryInput): { i: InquiryInput; rawPayload: string; redacted: boolean } {
+  const message = redactNullable(input.message ?? null);
+  const propertyText = redactNullable(input.propertyText ?? null);
+  const i: InquiryInput = {
+    ...input,
+    ...(input.message !== undefined ? { message: message.text ?? undefined } : {}),
+    ...(input.propertyText !== undefined ? { propertyText: propertyText.text ?? undefined } : {}),
+  };
+  // any other field (a name, a source detail) is covered in the raw payload; the regex never crosses a JSON quote
+  const raw = redactSignInTokens(JSON.stringify({ ...i, leadSourceId: undefined }));
+  return { i, rawPayload: raw.text, redacted: message.removed + propertyText.removed + raw.removed > 0 };
+}
+
+async function ingestInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
   const { ids, envelope } = deps;
+  const { i, rawPayload, redacted } = redactInquiryInput(input);
   const source = await repo.leadSource(tx, i.leadSourceId);
   if (!source || !source.active) throw new AppError('NOT_FOUND');
   if (opts.webChat && ((i.phones ?? []).length > 0 || (i.emails ?? []).length > 0)) throw new AppError('INTERNAL_ERROR');
@@ -301,7 +322,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     return { contactId: first.contact_id as ContactId, outcome: 'duplicate_ignored', inquiryId: first.id };
   }
   const rawPayloadEnc = async (inquiryId: string) =>
-    envelope.inTx(tx, actor.tenantId).encrypt(actor.tenantId, { table: 'lead_inquiries', column: 'raw_payload_enc', rowId: inquiryId }, Buffer.from(JSON.stringify({ ...i, leadSourceId: undefined })));
+    envelope.inTx(tx, actor.tenantId).encrypt(actor.tenantId, { table: 'lead_inquiries', column: 'raw_payload_enc', rowId: inquiryId }, Buffer.from(rawPayload));
   const noDisclosure = opts.disclosure === 'none';
   const inquiryRow = async (inquiryId: string, contactId: string, outcome: repo.InquiryInsert['outcome'], consentDisclosureId: string | null = noDisclosure ? null : source.consent_disclosure_id): Promise<repo.InquiryInsert> => ({
     id: inquiryId,
@@ -322,6 +343,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     rawPayloadEnc: await rawPayloadEnc(inquiryId),
     fingerprint,
     outcome,
+    contentRedacted: redacted ? SIGNIN_TOKEN_REDACTION : null,
     ...(opts.parse ? { parseStatus: opts.parse.status, parseEvidence: opts.parse.evidence } : {}),
   });
   if (dup === 'FINGERPRINT') {

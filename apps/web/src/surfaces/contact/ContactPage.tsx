@@ -28,6 +28,7 @@ import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, TimelineItem } from '../feed/lib/types.js';
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
+import { INQUIRY_REDACTION_NOTE } from '../thread/redaction.js';
 import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
@@ -197,10 +198,14 @@ function FullView({ contact }: { contact: ContactFullView }) {
           ))}
         </ul>
         {inquiry && (inquiry.message || inquiry.propertyText) ? (
-          <p className="rounded-xl bg-surface-2 px-3 py-2 text-[15px] text-ink">
-            {inquiry.propertyText ? <span className="font-medium">{inquiry.propertyText}. </span> : null}
-            {inquiry.message ? `“${inquiry.message}”` : null} <span className="text-ink-muted">· {inquiry.source ?? 'Inquiry'}, {formatDateTime(inquiry.receivedAt)}</span>
-          </p>
+          <div className="flex flex-col gap-1">
+            <p className="rounded-xl bg-surface-2 px-3 py-2 text-[15px] text-ink">
+              {inquiry.propertyText ? <span className="font-medium">{inquiry.propertyText}. </span> : null}
+              {inquiry.message ? `“${inquiry.message}”` : null} <span className="text-ink-muted">· {inquiry.source ?? 'Inquiry'}, {formatDateTime(inquiry.receivedAt)}</span>
+            </p>
+            {/* b18 review B18S-2 (R-PORTAL-20): a quoted sign-in link token not kept, or hidden here */}
+            {inquiry.redaction ? <p className="px-1 text-[12px] text-ink-muted">{INQUIRY_REDACTION_NOTE[inquiry.redaction]}</p> : null}
+          </div>
         ) : null}
       </Card>
 

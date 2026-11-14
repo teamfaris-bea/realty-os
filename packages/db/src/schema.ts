@@ -1498,6 +1498,7 @@ export interface LeadInquiriesTable {
   created_at: Generated<Timestamp>;
   parse_status: Generated<string>;
   parse_evidence: Generated<Json>;
+  content_redacted: string | null;
 }
 
 /** public.lead_ownership_events (table) */

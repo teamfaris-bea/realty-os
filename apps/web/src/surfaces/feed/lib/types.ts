@@ -140,6 +140,9 @@ export interface ContactFullView {
     propertyText: string | null;
     message: string | null;
     outcome: string;
+    /** b18 review B18S-2 (R-PORTAL-20): a quoted sign-in token removed at intake ('stored') or hidden here ('display');
+     *  absent from an older API */
+    redaction?: 'stored' | 'display' | null;
   }[];
   /**
    * R-OWN-24: merged into another record, so nothing is sent from this one (CONTACT_MERGED). `mergedIntoContactId` is

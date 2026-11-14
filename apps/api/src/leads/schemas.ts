@@ -142,6 +142,8 @@ export const InquiryView = z.object({
   propertyText: z.string().nullable(),
   message: z.string().nullable(),
   outcome: z.string(),
+  /** b18 review B18S-2 (R-PORTAL-20): 'stored' (labelled at intake, 0097), 'display' (hidden here; stored record unchanged) */
+  redaction: z.enum(['stored', 'display']).nullable(),
 });
 
 export const ContactFull = z.object({

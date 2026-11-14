@@ -144,13 +144,15 @@ export interface InquiryRow {
   property_text: string | null;
   message: string | null;
   outcome: string;
+  /** b18 review B18S-2 (0097): 'portal_signin_token' when stored with a quoted sign-in token removed */
+  content_redacted: string | null;
 }
 
 /** Recent inquiries (RLS: contact detail visible). */
 export async function contactInquiries(tx: Tx, contactId: string, limit = 10): Promise<InquiryRow[]> {
   const r = await sql<InquiryRow>`
     SELECT i.id, i.received_at, i.inquiry_type, s.name AS source_name, i.postal_code, i.price_min_cents, i.price_max_cents,
-           i.campaign_ref, i.ad_ref, i.property_text, left(i.message, 1000) AS message, i.outcome
+           i.campaign_ref, i.ad_ref, i.property_text, left(i.message, 1000) AS message, i.outcome, i.content_redacted
       FROM lead_inquiries i LEFT JOIN lead_sources s ON s.tenant_id = i.tenant_id AND s.id = i.lead_source_id
      WHERE i.tenant_id = app.tenant_id() AND i.contact_id = ${contactId}::uuid
      ORDER BY i.received_at DESC, i.id DESC LIMIT ${limit}`.execute(tx);

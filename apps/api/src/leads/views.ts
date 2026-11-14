@@ -3,6 +3,7 @@
 // serialized when the caller sees the contact's detail.
 import type { OwnershipProjection } from '@realty/core/ownership';
 import type { z } from 'zod';
+import { hideForDisplay } from '../portal/shared/redact.js';
 import type { ChatClaimRow, ContactRow, InquiryRow, PointRow } from './repos/contacts.js';
 import type { ContactCard, ContactFull, ProjectionView } from './schemas.js';
 
@@ -133,22 +134,34 @@ export function fullOf(r: ContactRow, points: readonly PointRow[], inquiries: re
     phones: points.filter((p) => p.kind === 'phone').map(pointView),
     emails: points.filter((p) => p.kind === 'email').map(pointView),
     typedInChat: typedInChat(claims, points),
-    inquiries: inquiries.map((i) => ({
-      id: i.id,
-      receivedAt: i.received_at.toISOString(),
-      inquiryType: i.inquiry_type,
-      source: i.source_name,
-      postalCode: i.postal_code,
-      priceMinCents: i.price_min_cents === null ? null : Number(i.price_min_cents),
-      priceMaxCents: i.price_max_cents === null ? null : Number(i.price_max_cents),
-      campaignRef: i.campaign_ref,
-      adRef: i.ad_ref,
-      propertyText: i.property_text,
-      message: i.message,
-      outcome: i.outcome,
-    })),
+    inquiries: inquiries.map((i) => inquiryView(i)),
     merged: r.merged_into_contact_id !== null,
     mergedIntoContactId: r.merged_into_contact_id,
+  };
+}
+
+/**
+ * One inquiry on the person page. b18 review B18S-2 (R-PORTAL-20): an inquiry stored with a quoted sign-in token removed
+ * says so ('stored', 0097); one stored before that is shown with the token hidden ('display', "[sign-in token hidden]")
+ * and its stored record is never rewritten.
+ */
+function inquiryView(i: InquiryRow) {
+  const message = hideForDisplay(i.message);
+  const propertyText = hideForDisplay(i.property_text);
+  return {
+    id: i.id,
+    receivedAt: i.received_at.toISOString(),
+    inquiryType: i.inquiry_type,
+    source: i.source_name,
+    postalCode: i.postal_code,
+    priceMinCents: i.price_min_cents === null ? null : Number(i.price_min_cents),
+    priceMaxCents: i.price_max_cents === null ? null : Number(i.price_max_cents),
+    campaignRef: i.campaign_ref,
+    adRef: i.ad_ref,
+    propertyText: propertyText.text,
+    message: message.text,
+    outcome: i.outcome,
+    redaction: i.content_redacted !== null ? ('stored' as const) : message.removed + propertyText.removed > 0 ? ('display' as const) : null,
   };
 }
 
