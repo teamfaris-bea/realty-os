@@ -343,6 +343,35 @@ describe('b17 FA-4, L16-5: busy buttons are aria-disabled, never disabled (a dis
   });
 });
 
+describe('b17 FA-5, L16-3: phone, a failure behind the hidden tab', () => {
+  it('FA-5: is announced only once its tab shows it, and once only', async () => {
+    const r = renderPortal({ routes: { ...signedIn, 'GET /portal/documents': offline } });
+    const seen = liveLog();
+    expect(await screen.findByText('Inspection')).toBeInTheDocument();
+    await waitFor(() => expect(r.queryClient.getQueryState(['portal', 'documents', F.GRANT_ID])?.status).toBe('error'));
+    await pause(200);
+    // the timeline tab is open: nothing on screen says the documents failed, so nothing is said
+    expect(screen.queryByText(COPY.generic, IGN)).toBeNull();
+    expect(said(seen, COPY.generic)).toBe(0);
+    await userEvent.click(screen.getByRole('tab', { name: VIEW_WORDS.documents }));
+    expect(await screen.findByText(COPY.generic, IGN)).toBeInTheDocument();
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(1));
+    expect(screen.getByRole('tab', { name: VIEW_WORDS.documents })).toHaveFocus();
+    // back and forth: the same failure is not said again
+    await userEvent.click(screen.getByRole('tab', { name: VIEW_WORDS.timeline }));
+    await userEvent.click(screen.getByRole('tab', { name: VIEW_WORDS.documents }));
+    await pause(200);
+    expect(said(seen, COPY.generic)).toBe(1);
+  });
+
+  it('FA-5: a failure in the open tab is announced at once', async () => {
+    renderPortal({ routes: { ...signedIn, 'GET /portal/timeline': offline } });
+    const seen = liveLog();
+    expect(await screen.findByText(COPY.generic, IGN)).toBeInTheDocument();
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(1));
+  });
+});
+
 // b17 (found with FA-1's browser test): a read of /me with no data puts the query back to 'pending' and clears its error
 // (TanStack), so the screen /me had settled on (the sign-in form, or the first /me's error screen) was swapped for
 // "Loading" while /me was read again: on Try again, and each time the tab is shown again (refetchOnWindowFocus). The

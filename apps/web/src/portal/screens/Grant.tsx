@@ -80,7 +80,13 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
   // b17 (b16 review L16-2): only a failure newer than the last one announced is said. failedAt is a max over the panels
   // failing now, so it fell back to the other panel's older failure when a retried panel succeeded, and that success
   // was answered "Something went wrong".
-  const failedAt = Math.max(tlFailed ? timeline.errorUpdatedAt : 0, docFailed ? documents.errorUpdatedAt : 0);
+  // b17 (b16 review FA-5, L16-3): only a panel on screen is announced. On a phone only the selected tab's panel is
+  // shown, so a failure behind the other tab was announced with no sentence and no Try again to match it. It is said
+  // when its tab is opened instead (failedAt rises then), and once only. Chosen over naming the tab in the sentence:
+  // what is said then always has its sentence and Try again on screen, as on desktop (honest UI), and no new client
+  // wording is needed.
+  const shown = (panel: GrantTab) => wide || tab === panel;
+  const failedAt = Math.max(tlFailed && shown('timeline') ? timeline.errorUpdatedAt : 0, docFailed && shown('documents') ? documents.errorUpdatedAt : 0);
   const announcedAt = useRef(0);
   useEffect(() => {
     if (failedAt <= announcedAt.current) return;

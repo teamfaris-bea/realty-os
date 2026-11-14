@@ -8,6 +8,7 @@
 //   L16-2 (desktop) a successful Try again while the other panel still fails announces no failure
 //   FA-3  reopening a grant whose read failed shows Loading (no failure sentence, nothing announced) until the fresh
 //         read settles
+//   FA-5  (phone) a failure behind the hidden tab is announced only when its tab shows it, and once
 //   FA-4  the sign-in submit, Download and the link's Sign in keep focus while busy and after a failure (a `disabled`
 //         button loses it: the browser's focus fix-up)
 // Where the real stack cannot fail on cue, the browser answers with module 45's own error body (a 500 INTERNAL_ERROR).
@@ -248,4 +249,26 @@ test('FA-4, L16-5: the sign-in submit and the link\'s Sign in keep focus after a
   await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
   await expect(signIn).toBeFocused();
   await expect(signIn).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+test('FA-5, L16-3: phone, a failure behind the hidden Documents tab is announced only when its tab shows it', async () => {
+  test.skip(!isPhone(), 'the tabs are the phone layout');
+  const reads = count(documentsOf);
+  await p.route(documentsOf, failed);
+  await home();
+  await expect(p.getByText('Inspection', { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => reads.n).toBeGreaterThan(0);
+  await p.waitForLoadState('networkidle').catch(() => undefined);
+  await p.waitForTimeout(500);
+  // nothing on screen says it failed, so nothing is said
+  await expect(p.getByText(GENERIC)).toHaveCount(0);
+  expect(await liveLog()).not.toContain(GENERIC);
+  await p.getByRole('tab', { name: 'Documents' }).tap();
+  await expect(section('Documents').getByText(GENERIC)).toBeVisible();
+  await expect.poll(() => times(GENERIC), { message: 'announced once its tab shows it' }).toBe(1);
+  // back and forth: the same failure is not announced again
+  await p.getByRole('tab', { name: 'Timeline' }).tap();
+  await p.getByRole('tab', { name: 'Documents' }).tap();
+  await p.waitForTimeout(300);
+  expect(await times(GENERIC)).toBe(1);
 });
