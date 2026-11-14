@@ -6,6 +6,8 @@
 //         after two failures and holds it twice; the first /me's error screen keeps its focused Try again meanwhile
 //   FA-2  a Try again that succeeds moves focus to that panel's heading, and announces nothing
 //   L16-2 (desktop) a successful Try again while the other panel still fails announces no failure
+//   FA-6  (phone) each announcement is keyed to its panel: an older failure behind the hidden tab is still said when
+//         its tab is opened after the other panel failed
 //   FA-3  reopening a grant whose read failed shows Loading (no failure sentence, nothing announced) until the fresh
 //         read settles
 //   FA-5  (phone) a failure behind the hidden tab is announced only when its tab shows it, and once
@@ -271,4 +273,25 @@ test('FA-5, L16-3: phone, a failure behind the hidden Documents tab is announced
   await p.getByRole('tab', { name: 'Documents' }).tap();
   await p.waitForTimeout(300);
   expect(await times(GENERIC)).toBe(1);
+});
+
+test('FA-6: phone, the documents fail behind Timeline, then the timeline fails: opening Documents still says its failure', async () => {
+  test.skip(!isPhone(), 'the tabs are the phone layout');
+  await p.route(documentsOf, failed);
+  const slow = async (r: Route) => {
+    await new Promise((ok) => setTimeout(ok, 400)); // the timeline fails after the documents
+    await failed(r);
+  };
+  await p.route(timelineOf, slow);
+  await home();
+  await expect(section('Timeline').getByText(GENERIC)).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => times(GENERIC)).toBe(1);
+  // one "newest failure said" time for both panels left the documents' older failure unsaid when its tab opened
+  await p.getByRole('tab', { name: 'Documents' }).tap();
+  await expect(section('Documents').getByText(GENERIC)).toBeVisible();
+  await expect.poll(() => times(GENERIC), { message: "the documents' own failure is said when its tab shows it" }).toBe(2);
+  await p.getByRole('tab', { name: 'Timeline' }).tap();
+  await p.getByRole('tab', { name: 'Documents' }).tap();
+  await p.waitForTimeout(300);
+  expect(await times(GENERIC)).toBe(2);
 });

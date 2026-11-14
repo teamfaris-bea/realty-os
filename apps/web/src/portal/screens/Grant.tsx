@@ -77,31 +77,43 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
   // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
   // which reads the failed parts again (busy while they run; aria-disabled keeps focus). Only a panel that shows the
   // failure counts (b16): a loaded panel's failed background refetch is not announced.
-  // b17 (b16 review L16-2): only a failure newer than the last one announced is said. failedAt is a max over the panels
-  // failing now, so it fell back to the other panel's older failure when a retried panel succeeded, and that success
-  // was answered "Something went wrong".
-  // b17 (b16 review FA-5, L16-3): only a panel on screen is announced. On a phone only the selected tab's panel is
-  // shown, so a failure behind the other tab was announced with no sentence and no Try again to match it. It is said
-  // when its tab is opened instead (failedAt rises then), and once only. Chosen over naming the tab in the sentence:
-  // what is said then always has its sentence and Try again on screen, as on desktop (honest UI), and no new client
-  // wording is needed.
+  // b17: each failure is said once, when its panel shows it, and keyed to that panel (b16 review FA-6): a panel is
+  // announced when its own errorUpdateCount passes the last one said for it. b16 took a max of errorUpdatedAt over the
+  // panels failing now, which fell back to the other panel's older failure when a retried panel succeeded, and that
+  // success was answered "Something went wrong" (L16-2); one "newest failure said" time for both panels also left
+  // unsaid an older failure that only came into view later.
+  // FA-5, L16-3: only a panel on screen is announced. On a phone only the selected tab's panel is shown, so a failure
+  // behind the other tab was announced with no sentence and no Try again to match it. It is said when its tab is opened
+  // instead, and once only. Chosen over naming the tab in the sentence: what is said then always has its sentence and
+  // Try again on screen, as on desktop (honest UI), and no new client wording is needed.
   const shown = (panel: GrantTab) => wide || tab === panel;
-  const failedAt = Math.max(tlFailed && shown('timeline') ? timeline.errorUpdatedAt : 0, docFailed && shown('documents') ? documents.errorUpdatedAt : 0);
-  const announcedAt = useRef(0);
+  const tlKey = tlFailed && shown('timeline') ? timeline.errorUpdateCount : 0;
+  const docKey = docFailed && shown('documents') ? documents.errorUpdateCount : 0;
+  const announced = useRef({ ...before.current });
+  const saidAny = useRef(false);
   useEffect(() => {
-    if (failedAt <= announcedAt.current) return;
-    announcedAt.current = failedAt;
-    announce(COPY.generic);
-  }, [failedAt, announce]);
+    let fresh = false;
+    if (tlKey > announced.current.timeline) {
+      announced.current.timeline = tlKey;
+      fresh = true;
+    }
+    if (docKey > announced.current.documents) {
+      announced.current.documents = docKey;
+      fresh = true;
+    }
+    if (!fresh) return;
+    saidAny.current = true;
+    announce(COPY.generic); // both at once: one announcement
+  }, [tlKey, docKey, announce]);
   // nothing fails any more (a Try again worked): the sentence is no longer true, and the live region drops it
   const anyFailed = tlFailed || docFailed;
   useEffect(() => {
-    if (!anyFailed && announcedAt.current > 0) forget(COPY.generic);
+    if (!anyFailed && saidAny.current) forget(COPY.generic);
   }, [anyFailed, forget]);
   // nor once the client leaves the grant (back to the list): its failure is not what is on screen
   useEffect(
     () => () => {
-      if (announcedAt.current > 0) forget(COPY.generic);
+      if (saidAny.current) forget(COPY.generic);
     },
     [forget],
   );

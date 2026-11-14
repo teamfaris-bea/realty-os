@@ -372,6 +372,73 @@ describe('b17 FA-5, L16-3: phone, a failure behind the hidden tab', () => {
   });
 });
 
+describe('b17 FA-6: each announcement is keyed to its panel', () => {
+  it('FA-6: phone, the documents fail behind Timeline, then the timeline fails: opening Documents still says its failure', async () => {
+    renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/documents': offline,
+        'GET /portal/timeline': async () => {
+          await new Promise((res) => setTimeout(res, 40)); // after the documents
+          throw new TypeError('Failed to fetch');
+        },
+      },
+    });
+    const seen = liveLog();
+    await waitFor(() => expect(within(tl()).getByText(COPY.generic)).toBeInTheDocument());
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(1));
+    // b17 item 5 kept one "newest failure announced" time for both panels: the documents' failure is older than the
+    // timeline's, so opening its tab said nothing
+    await userEvent.click(screen.getByRole('tab', { name: VIEW_WORDS.documents }));
+    expect(within(docs()).getByText(COPY.generic)).toBeInTheDocument();
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(2));
+    await userEvent.click(screen.getByRole('tab', { name: VIEW_WORDS.timeline }));
+    await userEvent.click(screen.getByRole('tab', { name: VIEW_WORDS.documents }));
+    await pause(200);
+    expect(said(seen, COPY.generic)).toBe(2);
+  });
+
+  it('FA-6: desktop, both fail at once: one announcement; a failed retry of either is said again', async () => {
+    const r = renderPortal({ wide: true, routes: { ...signedIn, 'GET /portal/documents': offline, 'GET /portal/timeline': offline } });
+    const seen = liveLog();
+    await waitFor(() => expect(within(docs()).getByText(COPY.generic)).toBeInTheDocument());
+    await waitFor(() => expect(within(tl()).getByText(COPY.generic)).toBeInTheDocument());
+    await pause(200);
+    expect(said(seen, COPY.generic)).toBe(1);
+    await userEvent.click(within(docs()).getByRole('button', { name: COPY.tryAgain }));
+    await waitFor(() => expect(count(r, 'GET /portal/documents')).toBe(2));
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(2));
+  });
+
+  it("FA-6: each panel's announcement is its own: a loaded panel's failed background refetch says nothing, and the other panel's failure is not said again", async () => {
+    let docDown = false;
+    const r = renderPortal({
+      wide: true,
+      routes: {
+        ...signedIn,
+        'GET /portal/timeline': offline,
+        'GET /portal/documents': (x) => {
+          if (docDown) throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.documents(x.query.grantId) };
+        },
+      },
+    });
+    const seen = liveLog();
+    await waitFor(() => expect(within(tl()).getByText(COPY.generic)).toBeInTheDocument());
+    expect(await screen.findByText('Purchase contract.pdf')).toBeInTheDocument();
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(1));
+    // a loaded panel's background refetch that fails says nothing (b16), and the timeline's failure is not said again
+    docDown = true;
+    await act(async () => {
+      await r.queryClient.invalidateQueries({ queryKey: ['portal', 'documents'] });
+    });
+    await waitFor(() => expect(r.queryClient.getQueryState(['portal', 'documents', F.GRANT_ID])?.status).toBe('error'));
+    await pause(200);
+    expect(screen.getByText('Purchase contract.pdf')).toBeInTheDocument();
+    expect(said(seen, COPY.generic)).toBe(1);
+  });
+});
+
 // b17 (found with FA-1's browser test): a read of /me with no data puts the query back to 'pending' and clears its error
 // (TanStack), so the screen /me had settled on (the sign-in form, or the first /me's error screen) was swapped for
 // "Loading" while /me was read again: on Try again, and each time the tab is shown again (refetchOnWindowFocus). The
