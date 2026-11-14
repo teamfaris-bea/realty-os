@@ -9,6 +9,7 @@ import { SESSION_KEY, ShellProvider } from '../../shell/context.js';
 import { FakeFetch, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
 import { ToastProvider } from '../people-edit/hooks.js';
 import type { TimelineItem } from '../feed/lib/types.js';
+import { type AttachmentsResponse, RowAttachments } from './Attachments.js';
 import { MessageRow, REDACTION_NOTE } from './ThreadPage.js';
 
 const item = (redaction: TimelineItem['redaction']): TimelineItem => ({
@@ -23,8 +24,8 @@ const item = (redaction: TimelineItem['redaction']): TimelineItem => ({
   provenance: 'native',
 });
 
-function mount(children: ReactNode) {
-  const api = new ApiClient({ fetch: new FakeFetch().fetch });
+function mount(children: ReactNode, fake: FakeFetch = new FakeFetch()) {
+  const api = new ApiClient({ fetch: fake.fetch });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   qc.setQueryData(SESSION_KEY, sessionFixture());
   return render(
@@ -53,6 +54,36 @@ describe('R-PORTAL-20 the thread says when a sign-in link token is not shown', (
 
   it('R-PORTAL-20: a message with no redaction carries no label', () => {
     mount(<MessageRow item={item(null)} />);
+    expect(screen.queryByText(REDACTION_NOTE.stored)).toBeNull();
+    expect(screen.queryByText(REDACTION_NOTE.display)).toBeNull();
+  });
+});
+
+// b18 review F4: an MMS text part carries its own label (message_text_parts.content_redacted); the message row's label
+// is null when only the part quoted the link, so the thread labels the part where it is shown
+describe('R-PORTAL-20 the thread labels an MMS text part whose sign-in link token is not shown', () => {
+  const C = '01900000-0000-7000-8000-0000000000c9';
+  const M = '01900000-0000-7000-8000-0000000000d9';
+  const withPart = (part: NonNullable<AttachmentsResponse['messages'][number]['textParts']>[number]) => {
+    const body: AttachmentsResponse = { messages: [{ messageId: M, media: [], skipped: [], textParts: [part] }], voicemails: [] };
+    return new FakeFetch().on(`GET /contacts/${C}/attachments`, { status: 200, body });
+  };
+
+  it('R-PORTAL-20 (b18 review F4): a part stored redacted says it is not the exact original', async () => {
+    mount(<li><RowAttachments contactId={C} item={{ id: M, type: 'message' }} /></li>, withPart({ position: 0, status: 'read', text: 'See https://app.realty-os.invalid/portal.html#token=[sign-in token removed]', redaction: 'stored' }));
+    expect(await screen.findByText(REDACTION_NOTE.stored)).toBeTruthy();
+    expect(screen.queryByText(REDACTION_NOTE.display)).toBeNull();
+  });
+
+  it('R-PORTAL-20 (b18 review F4): an older part hidden on screen only says it is hidden here, never that it was not kept', async () => {
+    mount(<li><RowAttachments contactId={C} item={{ id: M, type: 'message' }} /></li>, withPart({ position: 0, status: 'read', text: 'Earlier: https://app.realty-os.invalid/portal.html#token=[sign-in token hidden]', redaction: 'display' }));
+    expect(await screen.findByText(REDACTION_NOTE.display)).toBeTruthy();
+    expect(screen.queryByText(REDACTION_NOTE.stored)).toBeNull();
+  });
+
+  it('R-PORTAL-20 (b18 review F4): a part with no redaction (or from an older server) carries no label', async () => {
+    mount(<li><RowAttachments contactId={C} item={{ id: M, type: 'message' }} /></li>, withPart({ position: 0, status: 'read', text: 'Saturday works.', redaction: null }));
+    expect(await screen.findByText('Text in this message: Saturday works.')).toBeTruthy();
     expect(screen.queryByText(REDACTION_NOTE.stored)).toBeNull();
     expect(screen.queryByText(REDACTION_NOTE.display)).toBeNull();
   });

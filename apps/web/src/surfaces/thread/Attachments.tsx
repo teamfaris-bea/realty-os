@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { Button } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import type { TimelineItem } from '../feed/lib/types.js';
+import { REDACTION_NOTE } from './redaction.js';
 
 
 /** b18 item h (E725): a voicemail on a deployment with no transcription vendor: honest, never "not ready yet" */
@@ -20,8 +21,9 @@ export interface AttachmentsResponse {
     messageId: string;
     media: { position: number; contentType: string; byteSize: number; inline: boolean; url: string }[];
     skipped: { position: number; reason: string }[];
-    /** R-TWL-11: MMS text parts (absent from older servers) */
-    textParts?: { position: number; status: 'read' | 'pending'; text: string | null }[];
+    /** R-TWL-11: MMS text parts (absent from older servers). b18 review F4 (R-PORTAL-20): `redaction` says a quoted
+     *  sign-in token was removed before the part was stored ('stored') or is hidden here in an older part ('display') */
+    textParts?: { position: number; status: 'read' | 'pending'; text: string | null; redaction?: 'stored' | 'display' | null }[];
   }[];
   /** b18 item h: transcriptUnavailable = no transcript and none will come (no transcription vendor on this deployment) */
   voicemails: { callId: string; recordingId: string; durationS: number | null; transcriptReady: boolean; transcriptUnavailable?: boolean }[];
@@ -89,9 +91,13 @@ export function RowAttachments({ contactId, item, notSent = null }: { contactId:
       {parts.map((x) =>
         // plain text only: React escapes it; never HTML, never a link (R-TWL-11)
         x.status === 'read' ? (
-          <p key={`t${x.position}`} className="max-w-[85%] whitespace-pre-wrap break-words text-[14px] text-ink">
-            Text in this message: {x.text}
-          </p>
+          <div key={`t${x.position}`} className="flex flex-col gap-0.5">
+            <p className="max-w-[85%] whitespace-pre-wrap break-words text-[14px] text-ink">
+              Text in this message: {x.text}
+            </p>
+            {/* b18 review F4 (R-PORTAL-20): the part's own label; the message row's label covers only its body */}
+            {x.redaction ? <p className="text-[12px] text-ink-muted">{REDACTION_NOTE[x.redaction]}</p> : null}
+          </div>
         ) : (
           <p key={`t${x.position}`} className="text-[13px] text-ink-muted">
             Part of this text hasn't been read yet.

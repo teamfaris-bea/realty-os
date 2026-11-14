@@ -31,6 +31,7 @@ import { ComposeBox } from '../compose/ComposeBox.js';
 import type { ComposeChannel } from '../compose/channelApi.js';
 import { composeChannelOf } from '../compose/channelChoice.js';
 import { RowAttachments } from './Attachments.js';
+import { REDACTION_NOTE } from './redaction.js';
 import { MergedAwayNotice, isMergedAway } from '../contact/MergedAway.js';
 import { GmailEntry, MailCoverage, type MailMessageView, lastInboundAcross, mergeByTime, useSyncedMail } from './gmail.js'; // module 69 (flagged edit)
 import { ReactedWithChip, ReactionLine } from './Reactions.js';
@@ -232,15 +233,9 @@ export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusR
   return line ? { text: line.text, failed: line.tone === 'failed', held: line.tone === 'held' } : null;
 }
 
-/**
- * b18 Q-PORTAL-16: the label of a message whose quoted sign-in link token is not shown. Honest about what was kept: a
- * 'stored' message was saved without the token (so the history is not the exact original); a 'display' one is an older
- * message whose stored copy still has it, hidden on this screen only.
- */
-export const REDACTION_NOTE: Record<'stored' | 'display', string> = {
-  stored: 'A sign-in link in this message was not kept: its token was removed before the message was saved, so this is not the exact original.',
-  display: 'A sign-in link in this message is hidden here.',
-};
+// b18 Q-PORTAL-16: the label of a message whose quoted sign-in link token is not shown (./redaction.ts, shared with the
+// MMS text parts under it, b18 review F4)
+export { REDACTION_NOTE };
 
 export function MessageRow({ item, contact, loaded }: { item: TimelineItem; contact?: { id: string; name: string }; loaded?: ReadonlySet<string> }) {
   // module 76 (R-ISA-7): an AI message the turns route covers says the AI assistant's, with a verb its status supports

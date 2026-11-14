@@ -10,7 +10,7 @@ import { messageStatusExtras } from '../comms/reachability.js';
 import { reactionExtras } from '../comms/reactions.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
-import { redactNullable } from '../portal/shared/redact.js';
+import { hideForDisplay } from '../portal/shared/redact.js';
 import { leadsTx } from './common.js';
 import { factsOf } from './contacts.js';
 import * as contacts from './repos/contacts.js';
@@ -55,8 +55,9 @@ export async function registerTimelineRoutes(app: FastifyInstance): Promise<void
       return {
         items: page.map((t) => {
           // b18 Q-PORTAL-16: a message stored with a quoted sign-in token removed says so ('stored'); one stored before
-          // the redaction existed is shown with the token hidden ('display') and its stored record is never rewritten
-          const shown = t.item_type === 'message' ? redactNullable(t.preview) : { text: t.preview, removed: 0 };
+          // the redaction existed is shown with the token hidden ('display', "[sign-in token hidden]": b18 review F4) and
+          // its stored record is never rewritten
+          const shown = t.item_type === 'message' ? hideForDisplay(t.preview) : { text: t.preview, removed: 0 };
           return {
             id: t.item_id,
             type: t.item_type,

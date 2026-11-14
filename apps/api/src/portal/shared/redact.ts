@@ -16,6 +16,11 @@
 export const SIGNIN_TOKEN_REDACTION = 'portal_signin_token' as const;
 /** What replaces the token value: the link stays recognisable, its secret part does not. */
 export const SIGNIN_TOKEN_PLACEHOLDER = '[sign-in token removed]';
+/**
+ * b18 review F4: what replaces it on screen only, in a record stored before the redaction existed ('display'): the
+ * stored copy still has the value, so the shown text says hidden, never removed.
+ */
+export const SIGNIN_TOKEN_HIDDEN = '[sign-in token hidden]';
 
 // `#` as written, percent-encoded (once or twice: link wrappers such as safe-links re-encode), or as an HTML entity
 const HASH = String.raw`(?:#|%23|%2523|&#0*35;|&#x0*23;|&num;)`;
@@ -31,12 +36,12 @@ export interface Redacted {
   removed: number;
 }
 
-/** Removes every quoted sign-in token value from `text`. */
-export function redactSignInTokens(text: string): Redacted {
+/** Removes every quoted sign-in token value from `text` (before it is stored: SIGNIN_TOKEN_PLACEHOLDER). */
+export function redactSignInTokens(text: string, placeholder: string = SIGNIN_TOKEN_PLACEHOLDER): Redacted {
   let removed = 0;
   const out = text.replace(TOKEN, (_m, prefix: string) => {
     removed += 1;
-    return `${prefix}${SIGNIN_TOKEN_PLACEHOLDER}`;
+    return `${prefix}${placeholder}`;
   });
   return { text: removed === 0 ? text : out, removed };
 }
@@ -44,4 +49,13 @@ export function redactSignInTokens(text: string): Redacted {
 /** The same for a nullable field (a subject, a preview). */
 export function redactNullable(text: string | null): { text: string | null; removed: number } {
   return text === null ? { text: null, removed: 0 } : redactSignInTokens(text);
+}
+
+/**
+ * b18 review F4: hides every token value in a record read back for display (SIGNIN_TOKEN_HIDDEN), for a record stored
+ * before the redaction existed. The stored record is never rewritten; `removed` > 0 is the caller's 'display' label.
+ * A value already replaced at storage ("[sign-in token removed]") is not matched again.
+ */
+export function hideForDisplay(text: string | null): { text: string | null; removed: number } {
+  return text === null ? { text: null, removed: 0 } : redactSignInTokens(text, SIGNIN_TOKEN_HIDDEN);
 }

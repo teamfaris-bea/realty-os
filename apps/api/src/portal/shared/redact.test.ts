@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { portalLinkUrl } from './copy.js';
-import { SIGNIN_TOKEN_PLACEHOLDER, redactNullable, redactSignInTokens } from './redact.js';
+import { SIGNIN_TOKEN_HIDDEN, SIGNIN_TOKEN_PLACEHOLDER, hideForDisplay, redactNullable, redactSignInTokens } from './redact.js';
 
 const token = () => randomBytes(32).toString('base64url');
 const origin = 'https://app.realty-os.invalid';
@@ -52,5 +52,18 @@ describe('R-PORTAL-20 redactSignInTokens', () => {
   it('R-PORTAL-20: the opt-out words around a quoted link survive the redaction', () => {
     const r = redactSignInTokens(`STOP ${portalLinkUrl(origin, token())}`);
     expect(r.text.startsWith('STOP ')).toBe(true);
+  });
+});
+
+describe('R-PORTAL-20 hideForDisplay (b18 review F4)', () => {
+  it('R-PORTAL-20 (b18 review F4): an older record read back for display says hidden, never removed; a value already removed at storage is not matched again; null stays null', () => {
+    const t = token();
+    const r = hideForDisplay(`Earlier: ${portalLinkUrl(origin, t)}`);
+    expect(r.removed).toBe(1);
+    expect(r.text).toBe(`Earlier: ${origin}/portal.html#token=${SIGNIN_TOKEN_HIDDEN}`);
+    expect(r.text).not.toContain(SIGNIN_TOKEN_PLACEHOLDER);
+    const stored = redactSignInTokens(`See ${portalLinkUrl(origin, token())}`).text;
+    expect(hideForDisplay(stored)).toEqual({ text: stored, removed: 0 });
+    expect(hideForDisplay(null)).toEqual({ text: null, removed: 0 });
   });
 });

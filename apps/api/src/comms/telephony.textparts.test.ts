@@ -244,7 +244,7 @@ describe('R-TWL-11 the thread, visibility, prompts and erasure', () => {
     expect(view.textParts[0]!.text).toBe('<b>See you at 5</b>');
     const pending = await mms(c.phone, w.mainNumber, '', [{ bytes: utf8('not yet') }]);
     const v2 = (await call<{ messages: { messageId: string; textParts: { status: string; text: string | null }[] }[] }>(agent, 'GET', `/contacts/${c.id}/attachments`)).body.messages.find((m) => m.messageId === pending.messageId)!;
-    expect(v2.textParts).toEqual([{ position: 0, status: 'pending', text: null }]);
+    expect(v2.textParts).toEqual([{ position: 0, status: 'pending', text: null, redaction: null }]); // b18 review F4: every part carries its redaction label
     expect(PENDING_PART_SENTENCE).toBe("Part of this text hasn't been read yet.");
   });
 

@@ -8,7 +8,7 @@ import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { linkLine, portalLinkUrl } from '../portal/shared/copy.js';
-import { SIGNIN_TOKEN_PLACEHOLDER } from '../portal/shared/redact.js';
+import { SIGNIN_TOKEN_HIDDEN, SIGNIN_TOKEN_PLACEHOLDER } from '../portal/shared/redact.js';
 import { systemActor } from '../worker/systemActor.js';
 import { queueOutboundInTx } from './compose.js';
 import { readTextParts } from './mmsTextJob.js';
@@ -68,6 +68,13 @@ async function timeline(contactId: string) {
   const r = await call<{ items: { id: string; preview: string | null; redaction: string | null }[] }>(w.agents[0]!, 'GET', `/contacts/${contactId}/timeline?limit=100`);
   expect(r.status).toBe(200);
   return r.body.items;
+}
+
+/** b18 review F4: the thread's attachments view (MMS text parts), as the web thread reads it */
+async function textPartsOf(contactId: string, messageId: string) {
+  const r = await call<{ messages: { messageId: string; textParts: { position: number; status: string; text: string | null; redaction: string | null }[] }[] }>(w.agents[0]!, 'GET', `/contacts/${contactId}/attachments`);
+  expect(r.status).toBe(200);
+  return r.body.messages.find((m) => m.messageId === messageId)!.textParts;
 }
 
 describe('R-PORTAL-20 a quoted portal sign-in token is never stored (Q-PORTAL-16)', () => {
@@ -152,7 +159,7 @@ describe('R-PORTAL-20 a quoted portal sign-in token is never stored (Q-PORTAL-16
     expect((await h.su.query("SELECT 1 FROM consent_events WHERE contact_id = $1 AND event_type = 'revoke'", [c.id])).rows.length).toBeGreaterThan(0);
   });
 
-  it('R-PORTAL-20: an MMS text part quoting the link is stored without the token and labelled; the attachments view shows it hidden', async () => {
+  it('R-PORTAL-20: an MMS text part quoting the link is stored without the token and labelled; the attachments view returns that label (b18 review F4)', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const t = newToken();
@@ -170,6 +177,48 @@ describe('R-PORTAL-20 a quoted portal sign-in token is never stored (Q-PORTAL-16
     expect(part.body).toContain(SIGNIN_TOKEN_PLACEHOLDER);
     expect(part.content_redacted).toBe('portal_signin_token');
     expect(await storedAnywhere(t)).toEqual([]);
+    // b18 review F4: the attachments view (what the thread shows under the message) labels the part as stored redacted;
+    // the message row itself held no token, so its own label stays null and only the part's label says it
+    const [shown] = await textPartsOf(c.id, messageId);
+    expect(shown).toMatchObject({ status: 'read', redaction: 'stored' });
+    expect(shown!.text).toContain(SIGNIN_TOKEN_PLACEHOLDER);
+    expect(shown!.text).not.toContain(t);
+    expect((await h.su.query('SELECT content_redacted FROM messages WHERE id = $1', [messageId])).rows[0]!.content_redacted).toBeNull();
+  });
+
+  it('R-PORTAL-20 (b18 review F4): an MMS text part stored before the redaction existed is shown hidden ("display", "[sign-in token hidden]", never "removed") and its stored record is never rewritten; a part with no token carries no label', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const parts = async (text: string) => {
+      const mm = `MM${randomBytes(16).toString('hex')}`;
+      const me = `ME${randomBytes(16).toString('hex')}`;
+      h.providers.telephony.media.set(me, { bytes: new Uint8Array(Buffer.from(text, 'utf8')), contentType: 'text/plain' });
+      const form = { MessageSid: mm, From: c.phone, To: w.mainNumber, Body: '', NumMedia: '1', MediaUrl0: `https://api.twilio.com/2010-04-01/Accounts/AC${'1'.repeat(32)}/Messages/${mm}/Media/${me}`, MediaContentType0: 'text/plain' };
+      expect((await telephonyWebhook(h, '/webhooks/telephony/sms', form)).statusCode).toBe(200);
+      const messageId = (await h.su.query<{ id: string }>('SELECT id FROM messages WHERE provider_message_ref = $1', [mm])).rows[0]!.id;
+      const j = (await h.su.query<{ payload: { messageRef: string; parts: { position: number; ref: string | null }[] } }>("SELECT payload FROM jobs WHERE kind = 'comms.mms_text' AND payload->>'messageId' = $1", [messageId])).rows[0]!.payload;
+      await readTextParts(systemActor(w.tenantId, 'provider'), { messageId, messageRef: j.messageRef, parts: j.parts }, w.deps);
+      return messageId;
+    };
+    const older = await parts('See you at the open house.');
+    const t = newToken();
+    const old = `Earlier: ${portalLinkUrl(origin, t)}`;
+    // fixture only: a part as batch 17 stored it (no application path writes one any more; a read part's body is
+    // otherwise fixed by its trigger)
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query('UPDATE message_text_parts SET body = $2 WHERE message_id = $1', [older, old]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const [shown] = await textPartsOf(c.id, older);
+    expect(shown).toMatchObject({ status: 'read', redaction: 'display' });
+    expect(shown!.text).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect(shown!.text).not.toContain(SIGNIN_TOKEN_PLACEHOLDER);
+    expect(shown!.text).not.toContain(t);
+    expect((await h.su.query('SELECT body, content_redacted FROM message_text_parts WHERE message_id = $1', [older])).rows[0]).toEqual({ body: old, content_redacted: null });
+    const plain = await parts('Saturday works.');
+    expect((await textPartsOf(c.id, plain))[0]).toMatchObject({ text: 'Saturday works.', redaction: null });
   });
 
   it('R-PORTAL-20: a message stored before the redaction existed is shown with the token hidden ("display") and its stored record is never rewritten', async () => {
@@ -183,7 +232,9 @@ describe('R-PORTAL-20 a quoted portal sign-in token is never stored (Q-PORTAL-16
     await h.su.query('UPDATE messages SET body = $2 WHERE id = $1', [m!.id, old]);
     const item = (await timeline(c.id)).find((i) => i.id === m!.id)!;
     expect(item.preview).not.toContain(t);
-    expect(item.preview).toContain(SIGNIN_TOKEN_PLACEHOLDER);
+    // b18 review F4: hidden on screen only, so the shown text says hidden, never "removed" (the stored copy keeps it)
+    expect(item.preview).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect(item.preview).not.toContain(SIGNIN_TOKEN_PLACEHOLDER);
     expect(item.redaction).toBe('display');
     expect((await inbound(c.id))[0]!.body).toBe(old);
     expect((await inbound(c.id))[0]!.content_redacted).toBeNull();
