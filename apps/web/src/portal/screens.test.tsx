@@ -342,6 +342,39 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     });
   }
 
+  // b16 (b15 review new problem 3): a failed sign out stays on Home, so the focused Sign out must keep focus. A
+  // `disabled` button loses focus in browsers that apply the focus fix-up rule (jsdom does not), so the busy button is
+  // aria-disabled (a tap while busy posts nothing more) and never `disabled`.
+  it('b16: Sign out keeps focus while it runs and after it fails: aria-disabled while busy, never disabled, no second post', async () => {
+    let release!: () => void;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'POST /portal/logout': async () => {
+          await new Promise<void>((res) => (release = res));
+          throw new TypeError('Failed to fetch');
+        },
+      },
+    });
+    await screen.findByText('Inspection');
+    const out = screen.getByRole('button', { name: COPY.signOut });
+    await userEvent.click(out);
+    await waitFor(() => expect(r.keys().filter((k) => k === 'POST /portal/logout')).toHaveLength(1));
+    expect(out).toHaveAttribute('aria-disabled', 'true');
+    expect(out).not.toHaveAttribute('disabled');
+    expect(out).toHaveFocus();
+    await userEvent.click(out); // a tap while busy posts nothing more
+    await act(async () => {
+      release();
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    expect(await screen.findByText(COPY.network, IGN)).toBeInTheDocument();
+    expect(out).not.toHaveAttribute('aria-disabled');
+    expect(out).not.toHaveAttribute('disabled');
+    expect(out).toHaveFocus();
+    expect(r.keys().filter((k) => k === 'POST /portal/logout')).toHaveLength(1);
+  });
+
   it('B15R-PORTAL-1, E716: sign out answered CSRF_INVALID (a sign-in in another tab): /me refetched, one retry with the fresh token, then signed out', async () => {
     let rotated = false;
     const r = renderPortal({

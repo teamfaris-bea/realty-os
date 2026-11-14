@@ -123,9 +123,11 @@ export function Home({ onSignedOut, lead }: { onSignedOut(): void; lead: string 
   const chosen = url.grant ? (grants.find((g) => g.id === url.grant) ?? null) : null;
   const open: GrantView | null = chosen ?? only;
 
+  // b16 (b15 review new problem 3): busy is aria-disabled, never `disabled`: a failed sign out stays here, and a disabled
+  // button loses focus (the browsers' focus fix-up) with nothing to put it back; signOut() returns early while busy
   const signOutButton = (
     <>
-      <button type="button" onClick={() => void signOut()} disabled={leaving} className={secondaryButton}>
+      <button type="button" onClick={() => void signOut()} aria-disabled={leaving || undefined} className={`${secondaryButton} ${leaving ? 'opacity-60' : ''}`}>
         {COPY.signOut}
       </button>
       {signOutError ? <p className="w-full rounded-lg bg-warn-soft px-3 py-2 text-[16px] text-ink">{signOutError}</p> : null}
