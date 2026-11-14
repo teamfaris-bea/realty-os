@@ -39,13 +39,16 @@ export function SignInForm({ onUnavailable }: { onUnavailable(): void }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (pending) return;
-    if (address.trim().length < 3) {
+    // b15 audit P46-UI-1: 45 sends by email when the address holds '@' and by text otherwise, so an address that does
+    // not fit the chosen channel is refused here, with 45's sentence: the page never claims a choice it does not apply
+    const a = address.trim();
+    if (a.length < 3 || (channel === 'email') !== a.includes('@')) {
       say(channel === 'email' ? API_SENTENCES.EMAIL_INVALID : API_SENTENCES.PHONE_INVALID, 'error');
       return;
     }
     setPending(true);
     try {
-      await api.request('POST', '/api/portal/login', parseLoginAccepted, { team, address: address.trim() });
+      await api.request('POST', '/api/portal/login', parseLoginAccepted, { team, address: a });
       setAccepted(true);
       setAddress('');
       say(API_SENTENCES.SIGNIN_ACCEPTED, 'ok');

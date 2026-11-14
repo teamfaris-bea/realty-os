@@ -125,6 +125,27 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     expect(screen.getByLabelText(COPY.phoneLabel)).toHaveValue('5555550123');
   });
 
+  it('b15 audit P46-UI-1: the chosen channel is the one 45 uses: Email with a number, or Text message with an email, is refused before any request with 45\'s sentence, the address kept', async () => {
+    const r = renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => ({ status: 202, body: F.accepted() }) } });
+    await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
+    await userEvent.type(screen.getByLabelText(COPY.emailLabel), '555-555-0123');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    expect(await screen.findByText(API_SENTENCES.EMAIL_INVALID, IGN)).toBeInTheDocument();
+    expect(screen.getByLabelText(COPY.emailLabel)).toHaveValue('555-555-0123');
+    await userEvent.click(screen.getByRole('radio', { name: COPY.byText }));
+    await userEvent.type(screen.getByLabelText(COPY.phoneLabel), 'jane@example.test');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    expect(await screen.findByText(API_SENTENCES.PHONE_INVALID, IGN)).toBeInTheDocument();
+    expect(screen.getByLabelText(COPY.phoneLabel)).toHaveValue('jane@example.test');
+    expect(r.keys()).not.toContain('POST /portal/login');
+    // the matching address is sent as before
+    await userEvent.clear(screen.getByLabelText(COPY.phoneLabel));
+    await userEvent.type(screen.getByLabelText(COPY.phoneLabel), '(555) 555-0123');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN);
+    expect(r.seen.filter((x) => x.key === 'POST /portal/login').map((x) => x.body)).toEqual([{ team: 'harbor', address: '(555) 555-0123' }]);
+  });
+
   it('E704: uncleared at the request: the not-available screen, nothing sent', async () => {
     renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => portalApiError('PORTAL_NOT_AVAILABLE') } });
     await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
