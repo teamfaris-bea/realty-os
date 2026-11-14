@@ -49,10 +49,18 @@ export interface PerUser {
   sentence: string;
 }
 
+/** b18 item d (OQ-1114-14): the deployment-wide AI sending switch (AI_ISA_LIVE_SENDS), shown only; the page changes nothing */
+export interface AiSending {
+  live: boolean;
+  sentence: string;
+}
+
 export interface Integrations {
   adapterMode: AdapterMode;
   services: Service[];
   platformPacks: PlatformPack[];
+  /** null when the answer has none (an older API): the page then shows no line rather than guess */
+  aiSending: AiSending | null;
   perUser: PerUser[];
 }
 
@@ -91,6 +99,10 @@ export function pickIntegrations(raw: unknown): Integrations {
       const p = obj(x);
       return { key: str(p.key), version: str(p.version), reviewed: p.reviewed === true, sentence: str(p.sentence) };
     }),
+    aiSending: (() => {
+      const a = obj(o.aiSending);
+      return typeof a.live === 'boolean' && typeof a.sentence === 'string' ? { live: a.live, sentence: a.sentence } : null;
+    })(),
     perUser: arr(o.perUser).map((x) => {
       const p = obj(x);
       return { key: str(p.key), name: str(p.name), sentence: str(p.sentence) };

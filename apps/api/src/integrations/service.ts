@@ -27,7 +27,7 @@ import { AppError } from '../errors.js';
 import type { ConnectionKind, IntegrationAdapters, OAuthProviderName, OAuthToken } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { type CapabilityView, type MlsDeployment, PER_USER_SERVICES, PUBLISHING_KINDS, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
+import { type CapabilityView, type MlsDeployment, PER_USER_SERVICES, PUBLISHING_KINDS, SERVICES, aiSendingLine, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
 import { type OAuthState, STATE_TTL_MS, pkceChallengeOf, pkceVerifier, signState, verifyState } from './oauthState.js';
 import * as repo from './repos/connections.js';
 import { CONNECTABLE_STATUSES, type ConnectionRow, ConnectionTransitionError, transitionConnection } from './status.js';
@@ -83,6 +83,7 @@ export interface IntegrationsView {
   adapterMode: 'fake' | 'unconfigured' | 'real';
   services: { kind: ConnectionKind; name: string; connect: string; canConnect: boolean; sentence: string; connections: ConnectionView[] }[];
   platformPacks: { key: string; version: string; reviewed: boolean; sentence: string }[];
+  aiSending: { live: boolean; sentence: string };
   perUser: { key: string; name: string; sentence: string }[];
 }
 
@@ -108,7 +109,7 @@ export function connectionView(r: repo.ConnectionDbRow, packs: readonly Platform
   };
 }
 
-export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters, mls?: MlsDeployment): Promise<IntegrationsView> {
+export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters, mls?: MlsDeployment, liveSends?: boolean): Promise<IntegrationsView> {
   const packs = await loadPlatformPacks(tx);
   const rows = await repo.listConnections(tx);
   return {
@@ -122,6 +123,7 @@ export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters, ml
       connections: rows.filter((r) => r.kind === s.kind).map((r) => connectionView(r, packs)),
     })),
     platformPacks: packs.map((p) => ({ key: p.key, version: p.version, reviewed: p.reviewedByCounselAt !== null, sentence: packSentence(p, packs) })),
+    aiSending: aiSendingLine(liveSends === true),
     perUser: PER_USER_SERVICES.map((x) => ({ ...x })),
   };
 }

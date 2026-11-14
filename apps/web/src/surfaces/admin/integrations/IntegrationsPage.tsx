@@ -9,13 +9,13 @@
 // Meta ads are never offered (filtered by kind here whatever the server sends), and platform:meta is never shown
 // as a review to clear. A row of those kinds made before D2 is listed only so it can be disconnected.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ReactNode, useId, useState } from 'react';
+import { Fragment, type ReactNode, useId, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, ButtonLink, Card, Dialog, Notice } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { Pill, StatusLine } from '../lib/ui.js';
 import { keepFocus, useRequest } from './request.js';
-import { type Connection, type Integrations, type PlatformPack, type Service, NEVER_CLEARED_PACKS, offered, pickIntegrations, stillThere } from './types.js';
+import { type AiSending, type Connection, type Integrations, type PlatformPack, type Service, NEVER_CLEARED_PACKS, offered, pickIntegrations, stillThere } from './types.js';
 import { ERROR_MESSAGES, adapterModeWords, callbackResultWords, capabilityName, capabilityReason, manageLink, packName, plainSentence, statusLabel } from './words.js';
 
 export const INTEGRATIONS_KEY = ['admin', 'integrations'] as const;
@@ -69,7 +69,7 @@ export default function IntegrationsPage() {
             </ul>
           </Block>
 
-          <PacksBlock packs={packs} />
+          <PacksBlock packs={packs} aiSending={d.aiSending} />
 
           {d.perUser.length > 0 ? (
             <Block title="Connected by each person" description="These are not set up here.">
@@ -186,8 +186,30 @@ function ConnectionRow({ c }: { c: Connection }) {
   );
 }
 
-function PacksBlock({ packs }: { packs: PlatformPack[] }) {
+/** The AI packs whose messages the deployment-wide AI sending switch also holds (R-ISA-25). */
+const AI_PACK_KEYS: readonly string[] = ['platform:ai_isa', 'platform:ai_isa_seller_data'];
+
+/**
+ * b18 item d (OQ-1114-14): the deployment-wide AI sending switch, beside the AI pack lines. Display only: a name, a
+ * pill and the API's sentence; no control (the switch is set where the deployment is configured, and only
+ * comms/dispatch.ts enforces it).
+ */
+function AiSendingLine({ aiSending }: { aiSending: AiSending }) {
+  return (
+    <li className="flex flex-col gap-1" data-testid="ai-sending">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[16px] font-medium text-ink">AI assistant sending (whole deployment)</span>
+        <Pill tone={aiSending.live ? 'ok' : 'warn'}>{aiSending.live ? 'Allowed on this deployment' : 'Off on this deployment'}</Pill>
+      </div>
+      <p className="text-[15px] text-ink-muted">{plainSentence(aiSending.sentence)}</p>
+    </li>
+  );
+}
+
+function PacksBlock({ packs, aiSending }: { packs: PlatformPack[]; aiSending: AiSending | null }) {
   const open = packs.filter((p) => !p.reviewed).length;
+  // the switch's line goes straight after the last AI pack's line, or closes the list when none is listed
+  const lastAi = packs.reduce((at, p, i) => (AI_PACK_KEYS.includes(p.key) ? i : at), -1);
   return (
     <Block title="Counsel review" description="Some features stay off until counsel has reviewed the rules they follow. Reviews are recorded by the platform, not on this page.">
       {packs.length === 0 ? (
@@ -202,15 +224,19 @@ function PacksBlock({ packs }: { packs: PlatformPack[] }) {
         </Notice>
       )}
       <ul className="flex flex-col gap-3">
-        {packs.map((p) => (
-          <li key={p.key} className="flex flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[16px] font-medium text-ink">{packName(p.key)}</span>
-              <Pill tone={p.reviewed ? 'ok' : 'warn'}>{p.reviewed ? 'Reviewed by counsel' : 'Not reviewed by counsel'}</Pill>
-            </div>
-            <p className="text-[15px] text-ink-muted">{plainSentence(p.sentence)}</p>
-          </li>
+        {packs.map((p, i) => (
+          <Fragment key={p.key}>
+            <li className="flex flex-col gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[16px] font-medium text-ink">{packName(p.key)}</span>
+                <Pill tone={p.reviewed ? 'ok' : 'warn'}>{p.reviewed ? 'Reviewed by counsel' : 'Not reviewed by counsel'}</Pill>
+              </div>
+              <p className="text-[15px] text-ink-muted">{plainSentence(p.sentence)}</p>
+            </li>
+            {aiSending && i === lastAi ? <AiSendingLine aiSending={aiSending} /> : null}
+          </Fragment>
         ))}
+        {aiSending && lastAi < 0 ? <AiSendingLine aiSending={aiSending} /> : null}
       </ul>
     </Block>
   );

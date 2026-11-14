@@ -69,7 +69,7 @@ const conn = (over: Record<string, unknown>) => ({
 });
 
 /** GET /admin/integrations as the API answers on the test adapters (every service in the API catalog). */
-export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null; packsReviewed?: boolean; mode?: 'fake' | 'unconfigured' | 'real'; fbCapability?: { available: boolean; reason: string | null }; adsRow?: boolean } = {}) {
+export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null; packsReviewed?: boolean; mode?: 'fake' | 'unconfigured' | 'real'; fbCapability?: { available: boolean; reason: string | null }; adsRow?: boolean; aiSending?: { live: boolean; sentence: string } } = {}) {
   const svc = (kind: string, name: string, connect: string, sentence: string, connections: unknown[] = []) => ({ kind, name, connect, canConnect: connect === 'oauth', sentence, connections });
   const notOffered = 'Not offered: the owner has taken this out of scope.';
   return {
@@ -112,7 +112,20 @@ export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null;
       { key: 'platform:gmail', version: 'v1', reviewed: o.packsReviewed ?? false, sentence: o.packsReviewed ? 'Gmail inbox sync: off, awaiting the vendor check; counsel reviewed the pack on 2026-11-01 (pack v1).' : 'Gmail inbox sync: off, awaiting counsel review and the vendor check (pack v1, not yet reviewed).' },
     ],
     perUser: [{ key: 'google_calendar', name: 'Google Calendar', sentence: 'Each person connects their own calendar from their settings.' }],
+    // b18 item d (OQ-1114-14): the deployment-wide AI sending switch, display only (API catalog.ts AI_SENDING_OFF)
+    aiSending: o.aiSending ?? AI_SENDING_OFF_FIXTURE,
   };
 }
+
+/** The API's AI_SENDING_OFF / AI_SENDING_ON lines (integrations/catalog.ts), checked against it in IntegrationsPage.test.tsx. */
+export const AI_SENDING_OFF_FIXTURE = {
+  live: false,
+  sentence: "AI assistant sending is off on this deployment. While the deployment's AI sending switch is off, no text or email from the assistant reaches a real provider, even once counsel has reviewed the packs above. It stays off until the written pilot approval. This page only shows the switch; it is set where the deployment is configured.",
+};
+export const AI_SENDING_ON_FIXTURE = { live: true, sentence: 'AI assistant sending is allowed on this deployment. Each message still waits for the packs above and every check at send time. This page only shows the switch.' };
+export const AI_PACKS = [
+  { key: 'platform:ai_isa', version: 'v1', reviewed: false, sentence: "The assistant's ISA texts and emails: off, awaiting counsel review (pack v1, not yet reviewed)." },
+  { key: 'platform:ai_isa_seller_data', version: 'v1', reviewed: false, sentence: "The assistant's recent-sales emails: off, awaiting counsel review (pack v1, not yet reviewed)." },
+];
 
 export { FakeFetch, err };

@@ -195,6 +195,22 @@ export const PACK_ALSO_LICENCE: Readonly<Record<string, string>> = {
 export const PACK_ALSO_HELD: Readonly<Record<string, string>> = {};
 
 /**
+ * b18 item d (PHASE2_3_PLAN OQ-1114-14; R-ISA-25): the deployment-wide AI sending switch, AI_ISA_LIVE_SENDS, as the
+ * Integrations page shows it beside the AI pack lines. Display only: config sets it (false by default everywhere,
+ * production included, until a written pilot approval), comms/dispatch.ts enforces it, and nothing here changes it. The
+ * off sentence opens with the AI care screens' own hold sentence (isa/settings.ts, gateInput.ts AI_ISA_LIVE_OFF).
+ */
+export const AI_SENDING_OFF =
+  "AI assistant sending is off on this deployment. While the deployment's AI sending switch is off, no text or email from the assistant reaches a real provider, even once counsel has reviewed the packs above. It stays off until the written pilot approval. This page only shows the switch; it is set where the deployment is configured.";
+export const AI_SENDING_ON =
+  'AI assistant sending is allowed on this deployment. Each message still waits for the packs above and every check at send time. This page only shows the switch.';
+
+/** The switch's line for GET /admin/integrations. */
+export function aiSendingLine(liveSends: boolean): { live: boolean; sentence: string } {
+  return { live: liveSends, sentence: liveSends ? AI_SENDING_ON : AI_SENDING_OFF };
+}
+
+/**
  * A capability that also waits on platform clearance packs (one, or several that must all be cleared). A pack in
  * VENDOR_CHECKED_PACKS also needs its vendor check (`rules.vendor_ready_at`), exactly as the database clears it:
  * `change_budget` waits for `platform:ads`, which the module 52 gates read with `app.platform_cleared('platform:ads', true)`.

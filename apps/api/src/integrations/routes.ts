@@ -41,6 +41,8 @@ export const IntegrationsResponse = z.object({
     z.object({ kind: z.enum(CONNECTION_KINDS), name: z.string(), connect: z.string(), canConnect: z.boolean(), sentence: z.string(), connections: z.array(ConnectionResponse) }),
   ),
   platformPacks: z.array(z.object({ key: z.string(), version: z.string(), reviewed: z.boolean(), sentence: z.string() })),
+  /** b18 item d (OQ-1114-14): the deployment-wide AI sending switch (AI_ISA_LIVE_SENDS), shown only; no route changes it */
+  aiSending: z.object({ live: z.boolean(), sentence: z.string() }),
   perUser: z.array(z.object({ key: z.string(), name: z.string(), sentence: z.string() })),
 });
 export const ConnectStartResponse = z.object({ connectionId: z.uuid(), authorizeUrl: z.string(), expiresAt: z.string() });
@@ -69,7 +71,7 @@ async function register(app: FastifyInstance): Promise<void> {
   const manage = { config: { auth: 'integration.manage' as const }, preHandler: authorize('integration.manage', () => ({})) };
 
   r.get('/admin/integrations', { ...view, schema: { response: { 200: IntegrationsResponse } } }, async (req) =>
-    adminTx(req, (tx) => listIntegrations(tx, platformOf(req).providers.integrations, platformOf(req).config.mls)),
+    adminTx(req, (tx) => listIntegrations(tx, platformOf(req).providers.integrations, platformOf(req).config.mls, platformOf(req).config.aiIsaLiveSends)),
   );
 
   r.post(

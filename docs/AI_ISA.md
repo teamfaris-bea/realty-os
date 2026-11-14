@@ -1263,7 +1263,7 @@ The lane briefs are in <lane_briefs>.
 - **R-ISA-22 Visibility.** The list and panel show what it may do, why, its last decision, held topics, deadlines and inactivity dates. No confidence fields. [api + web]
 - **R-ISA-23 Always-human topics.** Money, offers, contracts, negotiation, commission, legal and lending are never AI content. The DB CHECK ties the mandate to the AI ISA categories. [DB + core]
 - **R-ISA-24 Channels.** SMS and email only. No calls, MMS or chat. Never touches, SLA or scoreboard. [core + DB]
-- **R-ISA-25 Live safeguards.** AI_ISA_LIVE_SENDS and TELEPHONY_LIVE_REQUESTS default false. The switches and caps hold. No self-retry. [api]
+- **R-ISA-25 Live safeguards.** AI_ISA_LIVE_SENDS and TELEPHONY_LIVE_REQUESTS default false. The switches and caps hold. No self-retry. The Integrations page shows the AI_ISA_LIVE_SENDS state beside the AI pack lines ("AI assistant sending is off on this deployment. ..."; batch 18 item d, PHASE2_3_PLAN OQ-1114-14): display only, no control and no second bypass (`integrations/catalog.ts` `AI_SENDING_OFF` / `AI_SENDING_ON`; only `comms/dispatch.ts` enforces the switch). [api + web]
 - **R-ISA-26 Represented elsewhere.** A listing by another brokerage at the subject, or a confirmed other agent, ends care. A near match pauses. **VERIFY WITH COUNSEL.** [api]
 - **R-ISA-27 Client own text.** Quotes for qualification, readiness, booking and end come only from client own text on a bound point. Quoted email history is stripped. QUOTE_IS_TEAM_TEXT. [core]
 - **R-ISA-28 Bound points.** Points are bound at start and immutable. A turn only from a bound point (with an aligned DKIM pass for email). Outbound only to a bound point. A removed bound point ends care. [api + DB]

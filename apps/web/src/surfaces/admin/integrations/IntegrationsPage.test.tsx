@@ -5,10 +5,73 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, ID, NOT_ADMINS, err, integrations, mount, reauthOk, violations } from './testing.js';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { AI_PACKS, AI_SENDING_OFF_FIXTURE, AI_SENDING_ON_FIXTURE, FakeFetch, ID, NOT_ADMINS, err, integrations, mount, reauthOk, violations } from './testing.js';
 import { GOOGLE_ADS_HINT, PAGE_PATH, PARTNER_FEED_HINT } from './words.js';
 
 const OUT_OF_SCOPE_NAMES = ['Facebook Messenger', 'Instagram direct messages', 'Meta Lead Ads', 'Meta ads account'];
+
+/** A double-quoted or single-quoted string constant of the API's integrations/catalog.ts, read as text (web never imports the API). */
+function catalogConstant(name: string): string {
+  const catalog = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../api/src/integrations/catalog.ts'), 'utf8');
+  const m = new RegExp(`export const ${name} =\\s*\\n?\\s*(["'])((?:(?!\\1)[^\\\\]|\\\\.)*)\\1;`).exec(catalog);
+  if (!m) throw new Error(`${name} is not a string constant of catalog.ts`);
+  return m[2]!.replace(/\\'/g, "'");
+}
+
+// b18 item d (OQ-1114-14, owner queued recommendation 2026-11-14): the deployment-wide AI sending switch beside the AI
+// pack lines, display only
+describe('Integrations page: the deployment-wide AI sending switch (b18 OQ-1114-14, R-ISA-25)', () => {
+  const withAi = (aiSending = AI_SENDING_OFF_FIXTURE) => {
+    const body = integrations({ aiSending });
+    body.platformPacks = [...body.platformPacks, ...AI_PACKS];
+    return body;
+  };
+
+  it('R-ISA-25: the fixture lines are the API catalog\'s, verbatim', () => {
+    expect(AI_SENDING_OFF_FIXTURE.sentence).toBe(catalogConstant('AI_SENDING_OFF'));
+    expect(AI_SENDING_ON_FIXTURE.sentence).toBe(catalogConstant('AI_SENDING_ON'));
+  });
+
+  it('R-ISA-25: off: "AI assistant sending is off on this deployment." right after the AI pack lines, with an Off pill, and no control of any kind in it', async () => {
+    mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: withAi() }), PAGE_PATH);
+    const row = await screen.findByTestId('ai-sending');
+    expect(within(row).getByText(AI_SENDING_OFF_FIXTURE.sentence)).toBeInTheDocument();
+    expect(within(row).getByText('Off on this deployment')).toBeInTheDocument();
+    expect(within(row).getByText('AI assistant sending (whole deployment)')).toBeInTheDocument();
+    // beside the AI pack lines: the row comes straight after the last AI pack's line in the same list
+    const items = [...row.parentElement!.children];
+    const at = items.indexOf(row);
+    expect(items[at - 1]!.textContent).toMatch(/recent-sales emails/);
+    expect(items[at - 2]!.textContent).toMatch(/ISA texts and emails/);
+    // display only: no button, switch, checkbox, link or input in the row, and none was added to the page for it
+    expect(within(row).queryAllByRole('button')).toEqual([]);
+    expect(within(row).queryAllByRole('switch')).toEqual([]);
+    expect(within(row).queryAllByRole('checkbox')).toEqual([]);
+    expect(within(row).queryAllByRole('link')).toEqual([]);
+    expect(row.querySelectorAll('input, select, textarea, form')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /sending|turn (on|off)/i })).toBeNull();
+    expect(await violations()).toEqual([]);
+  });
+
+  it('R-ISA-25: on: it says sending is allowed and still waits for the packs; with no AI pack listed it closes the list', async () => {
+    mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations({ aiSending: AI_SENDING_ON_FIXTURE }) }), PAGE_PATH);
+    const row = await screen.findByTestId('ai-sending');
+    expect(within(row).getByText(AI_SENDING_ON_FIXTURE.sentence)).toBeInTheDocument();
+    expect(within(row).getByText('Allowed on this deployment')).toBeInTheDocument();
+    expect(row.parentElement!.lastElementChild).toBe(row);
+  });
+
+  it('R-ISA-25: an answer without the switch (an older API) shows no line rather than guessing', async () => {
+    const body = withAi() as Record<string, unknown>;
+    delete body.aiSending;
+    mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body }), PAGE_PATH);
+    await screen.findByRole('heading', { level: 2, name: 'Counsel review' });
+    expect(screen.queryByTestId('ai-sending')).toBeNull();
+  });
+});
 
 describe('Integrations page', () => {
   it('shows every in-scope service with its state in words, on the test adapters', async () => {
