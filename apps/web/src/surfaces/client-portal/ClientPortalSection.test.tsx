@@ -4,7 +4,7 @@ import type { Role } from '@realty/core/foundation';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { contractSentence, copyEntry } from '../../portal/test/portalContract.js';
+import { contractSentence, copyEntry, portalCopySource } from '../../portal/test/portalContract.js';
 import type { SurfaceModule } from '../../shell/index.js';
 import { FakeFetch } from '../../shell/testing/fakeApi.js';
 import { ME, OTHER, app } from '../documents/fixtures.js';
@@ -27,6 +27,15 @@ const INVITE = `POST /deals/${F.DEAL}/portal/invite`;
 describe('ClientPortalSection (R-PORTALWEB-10)', () => {
   it("staff words: 45's sentences verbatim", () => {
     for (const [code, s] of Object.entries(PORTAL_STAFF_MESSAGES)) expect(s, code).toBe(contractSentence(code));
+  });
+
+  it("b15 review L3: 45's repeat-invite answers name the section's own control (\"Send the invite again\"), never a \"Resend\" the section does not have", () => {
+    const line = (name: string) => portalCopySource.split('\n').find((l) => l.startsWith(`export const ${name} =`)) ?? '';
+    for (const name of ['inviteNoteInFlight', 'inviteNoteNotReached']) {
+      expect(line(name), name).toContain(STAFF_WORDS.resend.toLowerCase().replace(/^s/, ''));
+      expect(line(name), name).not.toMatch(/\bresend\b/i);
+    }
+    expect(line('inviteNoteNotReached')).toContain(`tap ${STAFF_WORDS.resend}`);
   });
 
   it('E718: a 404 (an ISA, support, another agent) hides the section', async () => {

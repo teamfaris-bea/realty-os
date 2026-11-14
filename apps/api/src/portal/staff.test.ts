@@ -142,7 +142,7 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
   });
 
   it('E692 (b14 F7 regression): two taps at once: the first tap sends the note, the other answers from that note\'s status and never says it was not sent', async () => {
-    const IN_FLIGHT = (first: string) => `A note to ${first} is still being sent. Check the conversation before you resend.`;
+    const IN_FLIGHT = (first: string) => `A note to ${first} is still being sent. Check the conversation before you send the invite again.`;
     const ALREADY = (first: string) => `${first} was already invited; no second note was sent.`;
     for (const first of ['Tapa', 'Tapb', 'Tapc']) {
       const c = await client(agent(), { firstName: first });
@@ -165,12 +165,12 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     const text = (status: string, d: typeof decision | null = null) => noticeFromNote('Ivy', 'email', status, d);
     for (const s of ['sent', 'delivered']) expect(text(s)).toEqual({ sent: false, text: 'Ivy was already invited; no second note was sent.', channel: null, decision: null });
     for (const s of ['queued', 'scheduled', 'dispatching', 'dispatch_unknown']) {
-      expect(text(s, decision)).toEqual({ sent: false, text: 'A note to Ivy is still being sent. Check the conversation before you resend.', channel: null, decision: null });
+      expect(text(s, decision)).toEqual({ sent: false, text: 'A note to Ivy is still being sent. Check the conversation before you send the invite again.', channel: null, decision: null });
     }
     expect(text('blocked', decision)).toEqual({ sent: false, text: 'The note to Ivy was not sent; the reason is below. The invite stands.', channel: 'email', decision });
     // never "the reason is below" with no reason
     for (const s of ['blocked', 'failed', 'undelivered', 'bounced', 'canceled']) {
-      expect(text(s)).toEqual({ sent: false, text: 'No note has reached Ivy yet. Tap Resend to try again.', channel: null, decision: null });
+      expect(text(s)).toEqual({ sent: false, text: 'No note has reached Ivy yet. To try again, tap Send the invite again.', channel: null, decision: null });
     }
   });
 
@@ -235,7 +235,7 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     const again = await invite(agent(), d, c.id);
     expect(again.body.notice.sent).toBe(false);
     expect(again.body.notice.text).not.toMatch(/already invited; no second note/);
-    expect(again.body.notice.text).toBe('No note has reached Bree yet. Tap Resend to try again.');
+    expect(again.body.notice.text).toBe('No note has reached Bree yet. To try again, tap Send the invite again.');
   });
 
   it('R-PORTAL-13: the notice is the inviter\'s own message (a human touch), carries no token, and its decision is returned when blocked', async () => {

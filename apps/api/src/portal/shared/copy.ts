@@ -36,9 +36,12 @@ export const inviteBlocked = (first: string): string => `The note to ${first} wa
 /** A repeat invite when a note to this grant was sent (b14 audit F7: said only when one really was). */
 export const inviteNoNotice = (first: string): string => `${first} was already invited; no second note was sent.`;
 /** A repeat invite while a note to this grant is still on its way (queued, sending, or its outcome unknown). */
-export const inviteNoteInFlight = (first: string): string => `A note to ${first} is still being sent. Check the conversation before you resend.`;
-/** A repeat invite when every note to this grant was blocked, failed, canceled or never arrived. */
-export const inviteNoteNotReached = (first: string): string => `No note has reached ${first} yet. Tap Resend to try again.`;
+export const inviteNoteInFlight = (first: string): string => `A note to ${first} is still being sent. Check the conversation before you send the invite again.`;
+/**
+ * A repeat invite when every note to this grant was blocked, failed, canceled or never arrived. b15 review L3: both
+ * sentences name module 46's control as it reads ("Send the invite again"; ClientPortalSection.test pins them).
+ */
+export const inviteNoteNotReached = (first: string): string => `No note has reached ${first} yet. To try again, tap Send the invite again.`;
 export const LOGIN_POINT_CHANGED =
   'Sign-in links sent to the old address no longer work. To end their open sessions now, disable the account and invite them again.';
 
