@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CommsWorld, commsWorld, freshReauth, sendText } from '../comms/testing.js';
 import type { TestClient } from '../auth/testHarness.js';
-import { type BatchView, type ImportsHarness, approve, batchOf, call, commitStage, dryRunStage, importsHarness, records } from './testing.js';
+import { type BatchView, type ImportsHarness, approve, batchOf, call, commitStage, dryRunStage, importsHarness, records, writtenBulkPhone } from './testing.js';
 
 let ih: ImportsHarness;
 let w: CommsWorld;
@@ -32,7 +32,7 @@ describe('secreview: opt-out tag conversion vs tag normalization', () => {
   it('R-PAR-46 R-CONSENT-3: a tag that lands in the catalog as "DNC" also blocks the person', async () => {
     const people = VARIANTS.map(([name, tag], i) => ({
       id: 93000 + i, created: '2023-01-01T00:00:00Z', firstName: 'Tag', lastName: `Variant${name}`, stage: 'Lead',
-      tags: [tag], phones: [{ value: `(415) 309-${String(1000 + i)}`, type: 'mobile', status: 'Valid', isPrimary: 1 }],
+      tags: [tag], phones: [{ value: writtenBulkPhone(3000 + i), type: 'mobile', status: 'Valid', isPrimary: 1 }],
     }));
     const key = 'key-secreview-tag-1';
     ih.fub.add(key, { users: [], people, notes: [], textMessages: [], emails: [], calls: [], recordings: {} } as never);

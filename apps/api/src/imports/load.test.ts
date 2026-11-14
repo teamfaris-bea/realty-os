@@ -6,7 +6,7 @@
 //   - the dry run of a 50,000-row file (the largest single step that must stay interactive).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FubDataset } from './fub.js';
-import { type BatchView, type ImportWorld, type ImportsHarness, batchOf, call, csvBase64, csvOf, dryRunStage, fullStage, importWorld, importsHarness, mapAgents, records, startFub } from './testing.js';
+import { type BatchView, type ImportWorld, type ImportsHarness, batchOf, call, csvBase64, csvOf, dryRunStage, fullStage, importWorld, importsHarness, mapAgents, records, startFub, writtenBulkPhone } from './testing.js';
 
 let ih: ImportsHarness;
 let w: ImportWorld;
@@ -26,7 +26,7 @@ function bigFub(n: number): FubDataset {
     lastName: `Last${i}`,
     stage: i % 3 === 0 ? 'Lead' : 'Nurture',
     assignedUserId: i % 2 === 0 ? 11 : 12,
-    phones: [{ value: `(415) ${400 + Math.floor(i / 10000)}-${String(i % 10000).padStart(4, '0')}`, type: 'mobile', status: 'Valid' }],
+    phones: [{ value: writtenBulkPhone(10_000 + i), type: 'mobile', status: 'Valid' }],
     emails: [{ value: `p${i}@load.example.com`, type: 'home', status: i % 10 === 0 ? 'Unsubscribed' : 'Valid' }],
     smsOptIn: i % 4 === 0,
   }));

@@ -12,6 +12,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
 import type { Role, TenantId, UserId } from '@realty/core/foundation';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
+import { BULK_FICTIONAL_PHONES, bulkFictionalPhone } from '@realty/core/testing';
 import { type Database, createDatabase } from '@realty/db';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
@@ -507,10 +508,12 @@ export async function benchImportDryRun(b: LoadBench, a: Actors, rows: number): 
   const drain = () =>
     createWorker({ db: p.db, registry: new HandlerRegistry().registerAll(makeImportHandlers(() => deps)), providers: p.providers, queues: ['bulk'], concurrency: 1, worker: `load-imports-${randomUUID().slice(0, 8)}`, idleMs: 5, log: silentLogger }).drain(400);
   const lines = ['First Name,Last Name,Mobile Phone,Email,Tags'];
-  // half the rows match existing contacts' numbers (the dedupe index path), half are new
+  // half the rows match existing contacts' numbers (the dedupe index path), half are new. b17 (B17R-2): the new half is
+  // fictional (packages/core/src/testing/phones.ts), so against a large load set some of it matches existing numbers
+  // too (before b17 these numbers did not parse at all: their exchange started with 1)
   const existing = await b.q<{ address: string }>(`SELECT address FROM contact_points WHERE tenant_id = $1 AND kind = 'phone' AND is_primary ORDER BY hashtext(id::text) LIMIT $2`, [b.tenantId, Math.floor(rows / 2)]);
   for (let i = 0; i < rows; i++) {
-    const phone = i < existing.length ? existing[i]!.address : `+1628${String(1000000 + i).padStart(7, '0')}`;
+    const phone = i < existing.length ? existing[i]!.address : bulkFictionalPhone(i % BULK_FICTIONAL_PHONES);
     lines.push(`Pat${i},Import${i},${phone},pat.import${i}@example.com,imported`);
   }
   const t0 = performance.now();

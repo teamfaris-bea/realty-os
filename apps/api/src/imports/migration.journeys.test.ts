@@ -44,6 +44,7 @@ import {
   stageOf,
   startFub,
   verify,
+  writtenBulkPhone,
 } from './testing.js';
 
 let ih: ImportsHarness;
@@ -64,7 +65,7 @@ const ORDER: readonly Category[] = ['contacts', 'ownership', 'notes', 'messages'
  * at first (blocks the ownership approval until it is mapped).
  */
 function account(p: number, seed: number): FubDataset & Record<string, unknown> {
-  const ph = (n: number) => `(415) 6${String(seed % 10)}${String(n % 10)}-${String(1000 + seed * 10 + n).slice(-4)}`;
+  const ph = (n: number) => writtenBulkPhone(1000 + 100 * (seed % 10) + (n % 100));
   return {
     users: [
       { id: 11, name: 'Alex Agent' },
@@ -1153,7 +1154,7 @@ describe('M4: re-running the same FUB export creates nothing twice; an increment
   it('after FUB changes, a new import plans and writes only the new person, the new email, note and text', async () => {
     ih.fub.mutate(key, (d) => {
       const people = d.people as Record<string, unknown>[];
-      people.push({ id: 7308, created: '2026-10-01T00:00:00Z', firstName: 'Tess', lastName: 'Newperson5', stage: 'Nurture', assignedUserId: 11, phones: [{ value: '(415) 677-7308', type: 'mobile', status: 'Valid' }] });
+      people.push({ id: 7308, created: '2026-10-01T00:00:00Z', firstName: 'Tess', lastName: 'Newperson5', stage: 'Nurture', assignedUserId: 11, phones: [{ value: '(415) 555-0129', type: 'mobile', status: 'Valid' }] });
       const rae = people.find((p) => p.id === 7305)!;
       (rae.emails as unknown[]).push({ value: 'rae.second.7300@example.com', type: 'work', status: 'Valid' });
       // changed in FUB, but an import fills only what is empty and never changes an owner (E41, R-IMPORT-7)

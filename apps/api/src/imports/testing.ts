@@ -16,6 +16,15 @@ import { FakeFub, type FubDataset } from './fub.js';
 import { makeImportHandlers } from './handlers.js';
 import { makeImportsRoutes } from './routes.js';
 import type { ImportDeps } from './types.js';
+import { BULK_FICTIONAL_PHONES, bulkFictionalPhone, written } from '@realty/core/testing';
+
+/**
+ * b17 (B17R-2): the i-th bulk fictional number (packages/core/src/testing/phones.ts: NANP 555-0100 to 555-0199 area
+ * code by area code, then the UK drama ranges) as people write it, (989) 555-0100. Fixtures keep to their own ranges
+ * of i: fubFixture 0-999, migration journeys 1,000-1,999, parity 2,000-2,999, secreview 3,000-3,999, csvOf from
+ * 5,000, the load smoke's FUB export from 10,000, the web e2e journeys from 20,000.
+ */
+export const writtenBulkPhone = (i: number): string => written(bulkFictionalPhone(i % BULK_FICTIONAL_PHONES));
 
 export { call, freshReauth };
 
@@ -76,7 +85,7 @@ export const FUB_KEY = 'fub-test-key-0001';
 export function fubFixture(o: { prefix?: number; phoneSeed?: number } = {}): FubDataset {
   const p = o.prefix ?? 1000;
   const s = String((o.phoneSeed ?? 1) % 9).padStart(1, '0');
-  const ph = (n: number) => `(415) 55${s}-${String(1000 + n).slice(-4)}`;
+  const ph = (n: number) => writtenBulkPhone(100 * Number(s) + n);
   return {
     users: [
       { id: 11, name: 'Alex Agent' },
@@ -298,11 +307,14 @@ export function csvBase64(text: string): string {
   return Buffer.from(text, 'utf8').toString('base64');
 }
 
-/** n distinct, valid US mobile numbers and emails. */
+/**
+ * n rows with distinct emails and valid, fictional phone numbers (b17 B17R-2), distinct up to 58,900 of them
+ * (BULK_FICTIONAL_PHONES); a larger file repeats numbers, which the importer reads as in-file duplicates.
+ */
 export function csvOf(n: number, offset = 0): string {
   const rows = ['First Name,Last Name,Mobile Phone,Email,Tags'];
   for (let i = offset; i < offset + n; i++) {
-    rows.push(`Pat${i},Lead${i},(415) ${300 + Math.floor(i / 10000)}-${String(i % 10000).padStart(4, '0')},pat${i}@example.com,imported`);
+    rows.push(`Pat${i},Lead${i},${writtenBulkPhone(5000 + i)},pat${i}@example.com,imported`);
   }
   return `${rows.join('\n')}\n`;
 }

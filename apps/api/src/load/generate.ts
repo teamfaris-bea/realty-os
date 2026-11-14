@@ -192,13 +192,15 @@ async function seedTenant(c: pg.Client, kek: Kek, spec: LoadSpec, t: TenantSpec,
     await c.query(`INSERT INTO pond_members (tenant_id, pond_id, user_id) SELECT $1, $2, user_id FROM ld_people WHERE team_id = $3 OR user_id = $4`,
       [T, pond, loadUuid(S, `team:${i}`), loadUuid(S, `user:lead:${i}`)]);
   }
-  // numbers: one agent_direct number per agent plus a team main line
+  // numbers: one agent_direct number per agent plus a team main line, fictional (b17 B17R-2): the tenant's own area
+  // code, 555-0100 to 555-0149 for agents (at most 50) and 555-0199 for the main line
   const area = 510 + t.index;
-  await c.query(`UPDATE ld_people SET phone_id = pg_temp.uid($1 || ':phone:' || user_id), phone = '+1${area}20' || lpad(k::text, 5, '0') WHERE role = 'agent'`, [S]);
+  if (t.agents > 50) throw new Error(`load: ${t.agents} agents, more than the 50 fictional numbers an area code gives them`);
+  await c.query(`UPDATE ld_people SET phone_id = pg_temp.uid($1 || ':phone:' || user_id), phone = '+1${area}55501' || lpad(k::text, 2, '0') WHERE role = 'agent'`, [S]);
   await c.query(`INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, assigned_user_id, sms_capable, voice_capable, inbound_route, acquired_at)
                  SELECT $1, phone_id, phone, 'fake', 'PN' || md5(phone), 'local', 'agent_direct', user_id, true, true, 'contact_owner', pg_temp.t0() - interval '400 days' FROM ld_people WHERE role = 'agent'`, [T]);
   await c.query(`INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, inbound_route, acquired_at)
-                 VALUES ($1, $2, '+1${area}2999999', 'fake', 'PNmain${t.index}', 'local', 'team_main', true, true, 'team_ring', pg_temp.t0() - interval '400 days')`, [T, loadUuid(S, 'phone:main')]);
+                 VALUES ($1, $2, '+1${area}5550199', 'fake', 'PNmain${t.index}', 'local', 'team_main', true, true, 'team_ring', pg_temp.t0() - interval '400 days')`, [T, loadUuid(S, 'phone:main')]);
   const sources = ['Zillow', 'Realtor.com', 'Website', 'Referral', 'Open house', 'Facebook ads'];
   const kinds = ['portal', 'portal', 'website', 'referral', 'open_house', 'ads'];
   for (const [i, name] of sources.entries()) {
@@ -304,17 +306,20 @@ async function seedTenant(c: pg.Client, kek: Kek, spec: LoadSpec, t: TenantSpec,
   await c.query(`SELECT set_config('app.ownership_command', '', true)`);
 
   // ---- contact points: phones (with HMACs under the tenant key), second phones, emails ------------------
+  // b17 (B17R-2): every number is fictional, +1 NXX 555-0100 to 555-0199. Person g's phone is number g * 7919 mod
+  // 79,800 of the 79,800 such numbers in area codes 201 to 998 (a permutation, so the area codes stay spread), and a
+  // second phone is number g + 39,900; both are unique up to 39,900 people. A larger set (250k) repeats numbers.
   await step(c, log, 'contact points', `
     INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label, line_type, status, is_primary, created_at)
     SELECT $1, pg_temp.uid($2 || ':cp:' || kind || ':' || g), id, CASE WHEN kind = 'email' THEN 'email' ELSE 'phone' END, address,
            hmac(convert_to(address, 'UTF8'), $3::bytea, 'sha256'), label, line_type, 'active', kind <> 'phone2', created_at
       FROM (
         SELECT g, id, created_at, 'phone' AS kind, 'mobile' AS label, 'mobile' AS line_type,
-               '+1' || (201 + pg_temp.ri(g, ${salt(30)}, 798))::text || lpad(pg_temp.ri(g, ${salt(31)}, 10000000)::text, 7, '0') AS address
+               '+1' || (201 + (g::bigint * 7919 % 79800) / 100)::text || '55501' || lpad((g::bigint * 7919 % 79800 % 100)::text, 2, '0') AS address
           FROM ld_c WHERE has_phone
         UNION ALL
         SELECT g, id, created_at, 'phone2', 'home', 'landline',
-               '+1' || (201 + pg_temp.ri(g, ${salt(32)}, 798))::text || lpad(pg_temp.ri(g, ${salt(33)}, 10000000)::text, 7, '0')
+               '+1' || (201 + ((g::bigint + 39900) * 7919 % 79800) / 100)::text || '55501' || lpad(((g::bigint + 39900) * 7919 % 79800 % 100)::text, 2, '0')
           FROM ld_c WHERE has_phone2
         UNION ALL
         SELECT g, id, created_at, 'email', 'other', 'unknown',

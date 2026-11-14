@@ -32,6 +32,7 @@ import type { FubDataset } from './fub.js';
 import { BULK_STATEMENT_TIMEOUT } from './repos/existing.js';
 import { CHUNKS_PER_RUN } from './commit.js';
 import { type ImportWorld, type ImportsHarness, type StageView, approve, batchOf, call, commitStage, dryRunStage, freshReauth, importWorld, importsHarness, mapAgents, startFub, stageOf, verify } from './testing.js';
+import { BULK_FICTIONAL_PHONES, bulkFictionalPhone, written } from '@realty/core/testing';
 
 const ENABLED = process.env.IMPORT_LARGE === '1' || process.env.IMPORT_LARGE === 'true';
 const N = Number(process.env.IMPORT_LARGE_PEOPLE ?? 50_000);
@@ -58,7 +59,6 @@ const LAST = ['Nguyen', 'Smith', 'Garcia', 'Okafor', 'Kowalski', 'Haddad', 'Pate
 const STAGES = ['Lead', 'Nurture', 'Hot Prospect', 'Past Client', 'Sphere'];
 const SOURCES = ['Zillow', 'Realtor.com', 'Open House', 'Referral', 'Website', null];
 const TAGS = ['Buyer', 'Seller', 'Investor', 'Pre-approved', 'First-time buyer', 'Relocation', 'Luxury'];
-const AREAS = ['415', '510', '650', '312', '512', '617', '206', '303'];
 const CITIES: [string, string, string][] = [
   ['Springfield', 'IL', '62701'],
   ['Austin', 'TX', '78701'],
@@ -67,13 +67,18 @@ const CITIES: [string, string, string][] = [
   ['Boston', 'MA', '02108'],
 ];
 
-/** A unique, valid US number for slot k (two disjoint exchange ranges: primary and secondary). */
+/**
+ * A unique, valid, fictional number for slot k (b17 B17R-2: packages/core/src/testing/phones.ts), primary slots first
+ * and the secondary slots (one in SECONDARY_EVERY people) after them. At 50,000 people that is 58,334 of the 58,900
+ * distinct fictional numbers there are, so a larger IMPORT_LARGE_PEOPLE than 50,400 is refused.
+ */
 function phoneOf(k: number, secondary = false): string {
-  const area = AREAS[k % AREAS.length] as string;
-  const rest = Math.floor(k / AREAS.length);
-  const exchange = (secondary ? 700 : 300) + Math.floor(rest / 10_000);
-  return `(${area}) ${exchange}-${String(rest % 10_000).padStart(4, '0')}`;
+  const slot = secondary ? N + Math.floor(k / SECONDARY_EVERY) : k;
+  if (slot >= BULK_FICTIONAL_PHONES) throw new Error(`fub.large: ${N} people need more than ${BULK_FICTIONAL_PHONES} fictional numbers`);
+  return written(bulkFictionalPhone(slot));
 }
+/** One person in SECONDARY_EVERY has a second phone (every third before b17; the fictional numbers run out at 50k). */
+const SECONDARY_EVERY = 6;
 
 /** The expected shape of the export, counted while it is generated. */
 interface Expect {
@@ -111,7 +116,7 @@ function largeFub(n: number): { data: FubDataset; ex: Expect } {
     if (optedOut) ex.optedOutPhones += 1;
     phones.push({ value: phoneOf(dupOf ?? i), type: 'mobile', status: optedOut ? 'Opted Out' : 'Valid', isPrimary: 1 });
     if (dupOf !== null) ex.inFileDuplicates += 1;
-    if (i % 3 === 0) phones.push({ value: phoneOf(i, true), type: pick(['home', 'work']), status: 'Valid', isPrimary: 0 });
+    if (i % SECONDARY_EVERY === 0) phones.push({ value: phoneOf(i, true), type: pick(['home', 'work']), status: 'Valid', isPrimary: 0 });
     if (i % 100 === 53) {
       phones.push({ value: `555-${String(i % 10_000).padStart(4, '0')}`, type: 'home', status: 'Valid', isPrimary: 0 }); // no area code: E45
       ex.invalidPhone += 1;
@@ -403,7 +408,7 @@ describe('found by M6: history of a person whose contacts record was a skipped d
     await ih?.close();
   });
 
-  const PHONE = '(415) 820-0001';
+  const PHONE = '(415) 555-0130';
   /** contacts (dry run → approve → commit → verify), ownership skipped, then the notes dry run → approve → commit */
   async function importWithNote(key: string, people: unknown[], notePersonId: number): Promise<{ contacts: StageView; planned: StageView; committed: StageView; failed: { source_ref: string; detail: string }[] }> {
     ih.fub.add(key, { users: [], people, notes: [{ id: 9_000 + notePersonId, personId: notePersonId, body: 'Note on the duplicate row', created: '2025-01-15T16:00:00Z' }] });

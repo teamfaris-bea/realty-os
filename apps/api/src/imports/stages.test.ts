@@ -2,6 +2,7 @@
 // idempotent re-runs, re-authentication (BUILD_PLAN module 16: "The stage-order DB guard", "Commit
 // only of reviewed records"; R-IMPORT-2…5, R-IMPORT-9, R-PERM-13, R-AUDIT-5; E42, E44).
 import { withTenantTx } from '@realty/db';
+import { bulkFictionalPhone } from '@realty/core/testing';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { auditRows, staleReauth } from '../admin/testing.js';
@@ -117,8 +118,8 @@ describe('R-IMPORT-4: a commit applies exactly the reviewed snapshot records', (
     const { w, b } = await world('key-r4-000001', 5000);
     // existing: an agent's "Jane Doe" (name-only match → candidate, never merged on its own: R-IMPORT-7)
     // and another agent's contact holding Bob's phone (an exact match on an owned contact → review, E41)
-    const janeX = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: crypto.randomUUID(), firstName: 'Jane', lastName: 'Doe', phones: ['+14155524876'] });
-    const robX = await call<{ contact: { id: string } }>(w.agents[1]!, 'POST', '/contacts', { commandId: crypto.randomUUID(), firstName: 'Robert', lastName: 'Smith', phones: ['+14155511002'] });
+    const janeX = await call<{ contact: { id: string } }>(w.agents[0]!, 'POST', '/contacts', { commandId: crypto.randomUUID(), firstName: 'Jane', lastName: 'Doe', phones: ['+14155550121'] });
+    const robX = await call<{ contact: { id: string } }>(w.agents[1]!, 'POST', '/contacts', { commandId: crypto.randomUUID(), firstName: 'Robert', lastName: 'Smith', phones: [bulkFictionalPhone(102)] }); // the fixture's Bob (fubFixture's ph(2) with phoneSeed 1)
     expect([janeX.status, robX.status].every((x) => x === 200 || x === 201)).toBe(true);
     const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
     const recs = await records(w.admin, b.id, 'contacts');

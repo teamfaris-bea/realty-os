@@ -20,6 +20,7 @@ import {
   records,
   stageOf,
   verify,
+  writtenBulkPhone,
 } from './testing.js';
 
 let ih: ImportsHarness;
@@ -46,7 +47,7 @@ let seq = 0;
 /** People with custom fields of each type, a protected-looking field, FUB stages, tags and a DNC-looking tag. */
 function parityFixture(): FubDataset {
   const p = 5000 + ++seq * 100;
-  const ph = (n: number) => `(415) 56${seq % 10}-${String(1000 + n).slice(-4)}`;
+  const ph = (n: number) => writtenBulkPhone(2000 + 100 * (seq % 10) + (n % 100));
   return {
     users: [{ id: 11, name: 'Alex Agent' }],
     people: [
