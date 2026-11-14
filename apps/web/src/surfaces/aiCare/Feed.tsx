@@ -348,6 +348,9 @@ function HandoffBody({ card, viewer, ownerUserId }: { card: FeedCard; viewer: Vi
         Read the conversation
       </Link>
       {d.slaMetAt ? (
+        // batch 13 skeptic low (kept in batch 14 round 2): rarely seen, since meeting the deadline also sets closedReason
+        // and the closed card leaves the feed; a feed page loaded before the touch can still open it, and then this says
+        // Done with the time instead of a deadline. feed.test.tsx "V9 Q10" covers it.
         <p className="text-[15px] font-semibold text-ok">
           Done: {first} was reached at {localTime(d.slaMetAt)}
         </p>

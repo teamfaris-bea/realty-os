@@ -1137,6 +1137,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 - The person page: a strip under the channel actions (and a sticky phone bar while care is live) and the panel section (contact/sections.ts, order 1); Start in 2 taps; refusals with one fix; the Lift sheet for liftable blocks (their message since the block, a typed confirmation of at least 20 characters).
 - The thread: the banner (state, controls, hold) hosting the Undo toast; AI labels from the turns route; the pending post-handoff message and what stops it.
 - The feed: AiCareFeedCard for `ai_isa_*` items (activity, escalation, the handoff card with the full package), and the strip "AI care is on" on other cards of a live contact.
+- A closed handoff (batch 13 skeptic low, recorded in batch 14 round 2): once `closedReason` is set, the person-page strip reads "You got the handoff." with no feed link, the panel's handoff section ends at its Done line ("Done: {first} was reached at …" or the closed reason in words), and the card leaves the feed.
 - Compose, dial and approvals: the warning before Send/Call, the owner's "Resume AI care" toast after a send, the inbox filter, "Let the AI assistant continue" on the viewer's handback.
 - Bulk: "People under AI care, live or paused, are skipped." CompliancePage: the AI ISA notice from `GET /admin/ai-isa`. Playbooks: kind `ai_isa` is never listed there (batch 12 review ui-3, kept at the batch 13 merge); its detail page shows batch 12's "not a playbook" notice and the pointer to the team page.
 
@@ -1391,6 +1392,7 @@ The lane briefs are in <lane_briefs>.
 - **J5 quiet hours:** an inbound at 22:30 recipient time → the reply at 09:00 on the fake clock, with "Reply scheduled" shown.
 - **J6 kill switch and AI_ISA_LIVE_SENDS:** the hold banner, then resumed with no clicks.
 - **J7 tenant off:** all ended, cancels, notices.
+- **A closed handoff in a7 (batch 13 skeptic low, recorded in batch 14 round 2):** the a7 journey ends at the panel's Done line ("Done: Jane was reached at …"); with `closedReason` set the strip reads "You got the handoff." with no feed link, and the closed card has left the feed.
 - **Web specs (ISA-4, apps/web/e2e/ai-care, phone and desktop, taps counted, axe on each screen):** a1-setup (R-ISA-32: the switch, the Admin's cap refusal, the opt-in, the first-touch refusal and a 2-tap Start; V19); a2-controls (J3 web part: Pause in 1 tap from the list, the team lead without Resume, the owner's Resume, Take over with Undo, the finalize job and the handoff card, End in 2 taps with Undo, the hand-typed text's warning and Resume toast); a3-stop (J4 without the removed phone: covered by ISA-2's API tests); a4-quiet (J5 web part: the planned time in the viewer's zone with their time); a5-hold (J6); a6-tenant-off (J7 web part); a7-handoff (J1 partial: start from the person page, the AI label, AGENT, the handoff card, Got it, the owner's text and the sweep; the handback path is covered by component tests, the world has no first-response playbook). J2 (seller) is not built (ISA-3).
 
 ### 13.5 Runs
