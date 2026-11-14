@@ -143,6 +143,32 @@ describe('R-PORTAL-15 portal.sync', () => {
     const again = await exp(closed.g);
     await sync();
     expect((await exp(closed.g)).e.getTime()).toBe(again.e.getTime()); // stored once
+    // b14 review B14-OWN-5: each stored expiry is audited once, as the system, with why (a lost deal ends access at once)
+    const audits = await h.su.query<{ entity_id: string; reason: string; actor_kind: string }>(
+      `SELECT entity_id, reason, actor_kind FROM audit_log WHERE action = 'portal.grant_expiry_stored' AND entity_id = ANY ($1::uuid[]) ORDER BY reason, entity_id`,
+      [[closed.g, late.g, lost.g]],
+    );
+    expect(audits.rows).toEqual(
+      [
+        { entity_id: closed.g, reason: 'deal_closed', actor_kind: 'system' },
+        { entity_id: late.g, reason: 'deal_closed', actor_kind: 'system' },
+        { entity_id: lost.g, reason: 'deal_lost', actor_kind: 'system' },
+      ].sort((a, b) => a.reason.localeCompare(b.reason) || a.entity_id.localeCompare(b.entity_id)),
+    );
+  });
+
+  it('E698 (b14 review B14-OWN-5): a listing grant\'s expiry, stored when the listing is sold, is audited listing_ended once', async () => {
+    const c = await client(agent());
+    const l = (await call<{ listing: { id: string } }>(agent(), 'POST', '/listings', { status: 'active', addressLine1: '9 Elm Court', city: 'Exampleville', region: 'CA', postalCode: '94000' })).body.listing.id;
+    expect((await call(agent(), 'POST', `/listings/${l}/contacts`, { contactId: c.id, role: 'seller' })).status).toBe(200);
+    const inv = await invite(agent(), l, c.id, {}, 'listings');
+    expect(inv.status, JSON.stringify(inv.body)).toBe(200);
+    const g = inv.body.grant.id;
+    await h.su.query(`ALTER TABLE listings DISABLE TRIGGER USER; UPDATE listings SET status = 'sold' WHERE id = '${l}'; ALTER TABLE listings ENABLE TRIGGER USER`);
+    await sync();
+    await sync();
+    const audits = await h.su.query<{ reason: string; actor_kind: string }>(`SELECT reason, actor_kind FROM audit_log WHERE action = 'portal.grant_expiry_stored' AND entity_id = $1`, [g]);
+    expect(audits.rows).toEqual([{ reason: 'listing_ended', actor_kind: 'system' }]);
   });
 
   it('R-PORTAL-15: tenant A\'s sync never touches tenant B; it never publishes documents, showings, feedback, seller updates or next steps', async () => {

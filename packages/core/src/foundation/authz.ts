@@ -422,6 +422,7 @@ export const AUDIT_ACTIONS = [
   'portal.item_published', // module 45: a person or the sync published an item (kind, source ids)
   'portal.item_retracted', // module 45: a person or the sync retracted an item (reason code)
   'portal.display_updated', // module 45: a grant's published title or contact card changed (field names only)
+  'portal.grant_expiry_stored', // module 45 (b14 review B14-OWN-5): the sync stored a grant's expiry once (reason code: deal_closed, deal_lost, listing_ended)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

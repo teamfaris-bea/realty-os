@@ -8,7 +8,8 @@
 //   2 publish each confirmed milestone of each live deal grant whose (grant, deal date, due_version) has no row at all,
 //     unless a person retracted any version of it in that grant (E696)
 //   3 store expiry once (F10): closed ⇒ GREATEST(closed_at, granted_at) + 90 days; lost ⇒ GREATEST(now, granted_at +
-//     1 s); a listing sold, withdrawn or expired ⇒ now + 90 days (VERIFY WITH COUNSEL, Q-PORTAL-4)
+//     1 s); a listing sold, withdrawn or expired ⇒ now + 90 days (VERIFY WITH COUNSEL, Q-PORTAL-4); each audited
+//     portal.grant_expiry_stored as the system (deal_closed, deal_lost, listing_ended; b14 review B14-OWN-5)
 //   4 refresh the contact card when the deal owner, listing agent or team sender changed (audited)
 //   5 backstop: sign-in links still queued after 15 minutes canceled; expired sealed links and those of final messages dropped
 import type { Instant, SystemActor } from '@realty/core/foundation';
@@ -115,10 +116,10 @@ async function publishMilestones(tx: Tx, actor: SystemActor, limit: number): Pro
   return n;
 }
 
-async function storeExpiry(tx: Tx, limit: number): Promise<number> {
+async function storeExpiry(tx: Tx, actor: SystemActor, limit: number): Promise<number> {
   // the candidates are chosen among the grants that need an expiry now (closed or lost deals, listings off the market),
   // so a tenant with more open grants than one batch still gets every ended one in turn
-  const deals = await sql`
+  const deals = await sql<{ id: string; stage: string }>`
     UPDATE portal_grants g SET expires_at = CASE WHEN d.stage = 'closed' THEN GREATEST(d.closed_at, g.granted_at) + interval '90 days'
                                                  ELSE GREATEST(now(), g.granted_at + interval '1 second') END
       FROM deals d
@@ -126,15 +127,21 @@ async function storeExpiry(tx: Tx, limit: number): Promise<number> {
        AND g.id IN (SELECT g2.id FROM portal_grants g2 JOIN deals d2 ON d2.tenant_id = g2.tenant_id AND d2.id = g2.deal_id
                      WHERE g2.tenant_id = app.tenant_id() AND g2.expires_at IS NULL AND g2.revoked_at IS NULL
                        AND (d2.stage = 'lost' OR (d2.stage = 'closed' AND d2.closed_at IS NOT NULL))
-                     ORDER BY g2.granted_at LIMIT ${limit})`.execute(tx);
-  const listings = await sql`
+                     ORDER BY g2.granted_at LIMIT ${limit})
+    RETURNING g.id, d.stage`.execute(tx);
+  const listings = await sql<{ id: string }>`
     UPDATE portal_grants g SET expires_at = now() + interval '90 days'
      WHERE g.tenant_id = app.tenant_id()
        AND g.id IN (SELECT g2.id FROM portal_grants g2 JOIN listings l ON l.tenant_id = g2.tenant_id AND l.id = g2.listing_id
                      WHERE g2.tenant_id = app.tenant_id() AND g2.expires_at IS NULL AND g2.revoked_at IS NULL
                        AND l.status IN ('sold','withdrawn','expired')
-                     ORDER BY g2.granted_at LIMIT ${limit})`.execute(tx);
-  return Number(deals.numAffectedRows ?? 0) + Number(listings.numAffectedRows ?? 0);
+                     ORDER BY g2.granted_at LIMIT ${limit})
+    RETURNING g.id`.execute(tx);
+  // b14 review B14-OWN-5: each stored expiry is audited as the system, like every other access change of the sync (a
+  // lost deal's ends the client's access at once)
+  for (const g of deals.rows) await audit(tx, actor, { action: 'portal.grant_expiry_stored', entity: { type: 'portal_grant', id: g.id }, reason: g.stage === 'closed' ? 'deal_closed' : 'deal_lost' });
+  for (const g of listings.rows) await audit(tx, actor, { action: 'portal.grant_expiry_stored', entity: { type: 'portal_grant', id: g.id }, reason: 'listing_ended' });
+  return deals.rows.length + listings.rows.length;
 }
 
 async function refreshCards(tx: Tx, actor: SystemActor, deps: CardDeps, limit: number): Promise<number> {
@@ -168,7 +175,7 @@ async function refreshCards(tx: Tx, actor: SystemActor, deps: CardDeps, limit: n
 export async function portalSyncInTx(tx: Tx, actor: SystemActor, deps: CardDeps, _now: Instant, limit = PORTAL_SYNC_BATCH): Promise<SyncCounts> {
   const retracted = await retractStale(tx, actor, limit);
   const published = await publishMilestones(tx, actor, limit);
-  const expired = await storeExpiry(tx, limit);
+  const expired = await storeExpiry(tx, actor, limit);
   const cards = await refreshCards(tx, actor, deps, limit);
   const links = await linkBackstopInTx(tx, limit);
   return { retracted, published, expired, cards, links };
