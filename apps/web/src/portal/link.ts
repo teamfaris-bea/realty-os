@@ -60,7 +60,7 @@ export function classifyHash(hash: string): { kind: LinkKind; token: string | nu
 export function teamFromSearch(search: string): { present: boolean; slug: string | null } {
   const raw = new URLSearchParams(search).get('team');
   if (raw === null) return { present: false, slug: null };
-  const slug = raw.trim().toLowerCase();
+  const slug = raw.toLowerCase();
   return { present: true, slug: TEAM_SLUG_RE.test(slug) ? slug : null };
 }
 
