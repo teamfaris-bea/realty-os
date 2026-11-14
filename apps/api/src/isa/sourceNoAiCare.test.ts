@@ -49,7 +49,7 @@ const setNoAiCare = async (c: TestClient, on: boolean, src = source) => {
   return call<{ source: { id: string; noAiCare: boolean; noAiCareSentence: string }; pausing: number }>(c, 'PUT', `/lead-sources/${src}/ai-care`, { noAiCare: on });
 };
 const panel = (c: TestClient, contactId: string) =>
-  call<{ canStart: boolean; canResume: boolean; startRefusal: { code: string; sentence: string } | null; chain: { link: number; effect: string; code: string | null; sentence: string }[]; assignment: { pauseReason: string | null } | null }>(c, 'GET', `/contacts/${contactId}/ai-isa`);
+  call<{ canStart: boolean; canResume: boolean; canContinue: boolean; continueRefusal: { code: string; sentence: string } | null; startRefusal: { code: string; sentence: string } | null; chain: { link: number; effect: string; code: string | null; sentence: string }[]; assignment: { pauseReason: string | null } | null }>(c, 'GET', `/contacts/${contactId}/ai-isa`);
 
 describe('b18 item f: "No AI care for leads from this source" (Owner-only, R-ISA-1)', () => {
   it('E723: only the Owner may change it; an Admin and an agent get 404 from the route, and the database refuses anyone else too', async () => {
@@ -208,7 +208,7 @@ describe('B18S-1: "No AI care for leads from this source" covers an inquiry atta
       WHERE tenant_id = app.tenant_id() AND id = ${a.id}::uuid`.execute(tx), { db: h.database })).rejects.toThrow(/AI_ISA_SOURCE_NO_AI_CARE/);
   });
 
-  it('B18S-1 E723: a re-inquiry from the marked source that pauses care REINQUIRY cannot be continued: Continue is refused AI_ISA_SOURCE_NO_AI_CARE and nothing ends', async () => {
+  it('B18S-1 E723: a re-inquiry from the marked source that pauses care REINQUIRY cannot be continued: the panel offers no Continue and says why, Continue is refused AI_ISA_SOURCE_NO_AI_CARE and nothing ends', async () => {
     const agent = w.agents[0]!;
     const l = await isaLead(h, agent);
     await fromSource(l.id, other);
@@ -230,6 +230,10 @@ describe('B18S-1: "No AI care for leads from this source" covers an inquiry atta
     // the panel offers no start while care is paused (startRefusal is for a person with no live care): link 11 says why
     const p = await panel(agent, l.id);
     expect(p.body.chain.find((x) => x.link === 11)).toMatchObject({ effect: 'pause', code: 'AI_ISA_SOURCE_NO_AI_CARE' });
+    // b18 review item 3: the panel does not offer Continue: it says why instead (canContinue false, the refusal's sentence)
+    expect(p.body.canContinue).toBe(false);
+    expect(p.body.continueRefusal).toMatchObject({ code: 'AI_ISA_SOURCE_NO_AI_CARE' });
+    expect(p.body.continueRefusal!.sentence).toMatch(/No automated contact for leads from this source/);
     const c = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
     expect([c.status, c.code]).toEqual([409, 'AI_ISA_SOURCE_NO_AI_CARE']);
     expect(await assignmentOf(h, l.id)).toMatchObject({ id: a0.id, pause_reason: 'reinquiry', ended_at: null });

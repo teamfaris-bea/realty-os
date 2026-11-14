@@ -13,10 +13,10 @@ import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, platformOf } from '../workspace/common.js';
-import { continueCare, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
+import { continueCare, continueEndReasonOf, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
 import { closeHandoffInTx, confirmationNotSentOf, type HandoffCloseReason } from './handoff.js';
-import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf } from './repo.js';
+import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf, personNoAiCareSource } from './repo.js';
 import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
 import { adminLoosening, adminPut, adminView, meView, optIn, optInLoosening, reattest, revokeOptIn } from './settings.js';
@@ -47,7 +47,7 @@ async function panel(req: FastifyRequest, contactId: string) {
       inactivitySentence: c.rows[0]?.release ? "AI messages don't reset this." : null,
     };
     if (a === null) {
-      return { ...base, assignment: null, canResume: false, chain: [], capabilities: [], consent: [], zones: { zones: [], source: 'union' as const, sentence: 'Not under AI care.' },
+      return { ...base, assignment: null, canResume: false, canContinue: false, continueRefusal: null, chain: [], capabilities: [], consent: [], zones: { zones: [], source: 'union' as const, sentence: 'Not under AI care.' },
         nextAllowedSendAt: null, capsSentence: '', lastDecision: null, factsSent: [], openOffer: null, heldTopics: [], handoff: null, earlierHandoff: null };
     }
     // b12 review F6: the latest assignment can be a merged-away record's (ended by the merge): read-only history, its
@@ -95,6 +95,11 @@ async function panel(req: FastifyRequest, contactId: string) {
     };
     const hdPending = await pendingKind(hd);
     const edPending = await pendingKind(ed);
+    // b18 review item 3 (B18S-1, B18S-5): Continue (care paused by a re-inquiry or a policy change, continueCare) is always
+    // refused for a person a source marked "No automated contact for leads from this source" sent, so the panel says why
+    // instead of offering it; any other refusal still comes back on the tap, as before
+    const continuable = !history && a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && continueEndReasonOf(a.pauseReason) !== null;
+    const continueBlocked = continuable && (await personNoAiCareSource(tx, contactId));
     return {
       ...base,
       assignment: {
@@ -104,6 +109,8 @@ async function panel(req: FastifyRequest, contactId: string) {
         undoUntil: a.finalizeAt ? new Date(a.finalizeAt).toISOString() : null, ownerUserId: a.ownerUserId,
       },
       canResume: !history && a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && actor.userId === a.ownerUserId && (chain.effect === 'ok' || chain.effect === 'hold'),
+      canContinue: continuable && !continueBlocked && actor.userId === a.ownerUserId,
+      continueRefusal: continueBlocked ? { code: 'AI_ISA_SOURCE_NO_AI_CARE', sentence: startRefusalSentence('AI_ISA_SOURCE_NO_AI_CARE') } : null,
       chain: chain.links.map((l) => ({ link: l.link, name: l.name, effect: l.effect, code: l.code, sentence: l.sentence })),
       // b13 review B13S-2: allowed is what turn.ts grants (the policy and the opt-in, capabilitiesInEffect), for every
       // capability this tree builds (ISA_BUILT_CAPABILITIES), never converse alone

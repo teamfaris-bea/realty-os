@@ -143,6 +143,9 @@ export const PanelResponse = z.object({
   canStart: z.boolean(),
   startRefusal: z.object({ code: z.string(), sentence: z.string() }).nullable(),
   canResume: z.boolean(),
+  // b18 review item 3: whether the viewer may tap Continue AI care now, and why not when a lead-source setting refuses it
+  canContinue: z.boolean(),
+  continueRefusal: z.object({ code: z.string(), sentence: z.string() }).nullable(),
   chain: z.array(ChainLink),
   // b13 review B13S-2: built says this tree implements it (isa/sentences.ts ISA_BUILT_CAPABILITIES); the web reads it
   // b14 to-do (B13S-2 low): calendarConnected on the book_appointments row only (the owner's calendar is live now)

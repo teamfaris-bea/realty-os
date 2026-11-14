@@ -269,7 +269,7 @@ function PausedLines({ p, viewer, contact }: { p: PanelResponse; viewer: ViewerI
   const expiry = a.pausedAt ? new Date(Date.parse(a.pausedAt) + PAUSE_EXPIRY_MS).toISOString() : null;
   return (
     <div className="flex flex-col gap-2">
-      {reason === 'reinquiry' ? <ContinueCare contact={contact} viewer={viewer} /> : null}
+      {reason === 'reinquiry' ? <ContinueCare contact={contact} viewer={viewer} refusal={p.continueRefusal ?? null} /> : null}
       {(reason === 'policy_updated' || reason === 'approval_revoked') && viewer.isOwner ? (
         <p className="text-[15px]">
           The team changed the AI rules.{' '}
@@ -284,14 +284,17 @@ function PausedLines({ p, viewer, contact }: { p: PanelResponse; viewer: ViewerI
   );
 }
 
-function ContinueCare({ contact, viewer }: { contact: ContactFullView; viewer: ViewerInfo }) {
+/** b18 review item 3: when the panel says Continue is refused (a lead source marked "No automated contact for leads from
+ *  this source"), its sentence replaces the button, which would always be refused. */
+function ContinueCare({ contact, viewer, refusal }: { contact: ContactFullView; viewer: ViewerInfo; refusal: { code: string; sentence: string } | null }) {
   const act = useIsaAction<Record<string, never>, StartResult>('POST', { kind: 'continue', contactId: contact.id });
   const [line, setLine] = useState<string | null>(null);
   const first = firstOf(contact.displayName, 'They');
   return (
     <div className="flex flex-col gap-2">
       <p className="text-[15px]">{first} inquired again. AI care is paused so you can see the new inquiry.</p>
-      {viewer.isOwner ? (
+      {refusal ? <p className="text-[15px]">{refusal.sentence}</p> : null}
+      {viewer.isOwner && !refusal ? (
         <div>
           <Button
             variant="secondary"

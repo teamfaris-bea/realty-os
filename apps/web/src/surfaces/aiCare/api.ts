@@ -137,6 +137,10 @@ export interface PanelResponse {
   canStart: boolean;
   startRefusal: { code: string; sentence: string } | null;
   canResume: boolean;
+  /** b18 review item 3: whether the viewer may tap Continue AI care, and the refusal's sentence when a lead-source
+   *  setting refuses it (absent from an older API: Continue is offered as before) */
+  canContinue?: boolean;
+  continueRefusal?: { code: string; sentence: string } | null;
   chain: ChainLink[];
   /** b14 to-do (B13S-2 low): calendarConnected on the book_appointments row only (the owner's calendar is live now) */
   capabilities: { capability: string; allowed: boolean; built: boolean; calendarConnected?: boolean; sentence: string }[];

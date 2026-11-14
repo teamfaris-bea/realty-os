@@ -1002,6 +1002,32 @@
           "canResume": {
             "type": "boolean"
           },
+          "canContinue": {
+            "type": "boolean"
+          },
+          "continueRefusal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "chain": {
             "type": "array",
             "items": {
@@ -1483,6 +1509,8 @@
           "canStart",
           "startRefusal",
           "canResume",
+          "canContinue",
+          "continueRefusal",
           "chain",
           "capabilities",
           "consent",
