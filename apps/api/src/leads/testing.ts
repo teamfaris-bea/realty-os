@@ -116,12 +116,29 @@ export async function intake(h: ApiHarness, w: LeadsWorld, body: Record<string, 
   return { ...(JSON.parse(r.body) as { contactId: string; inquiryId: string | null; outcome: string }), status: r.statusCode };
 }
 
+/**
+ * b17 (B17R-2): the area codes made-up test numbers use. All are California's (one zone, as the old 415 numbers were),
+ * none is an area code any test writes a number in, and each takes the fictional line 555-0100 to 555-0199 as valid.
+ */
+export const FICTIONAL_PHONE_AREAS = ['209', '213', '323', '408', '424', '530', '559', '562', '619', '626', '650', '657', '661', '669', '707', '714', '747', '760', '805', '818', '831', '858', '909', '916', '925', '949', '951'] as const;
+
+/**
+ * The n-th made-up test number (n from 0), fictional: +1 NXX 555-0100 to 555-0149. One area code holds only 100
+ * fictional numbers, so the area code is the second dimension: number n takes FICTIONAL_PHONE_AREAS[n / 50] and line
+ * 0100 + n % 50, 1,350 numbers in all. Lines from 0150 are left out, so a made-up number's last seven digits never
+ * equal a number the fake telephony provider sells (555-0150 to 555-0176). A test file has its own database, so
+ * numbers need only differ within one file.
+ */
+export function fictionalPhone(n: number): string {
+  const area = FICTIONAL_PHONE_AREAS[Math.floor(n / 50)];
+  if (!Number.isInteger(n) || n < 0 || area === undefined) throw new Error(`fictionalPhone: ${n} is outside 0 to ${FICTIONAL_PHONE_AREAS.length * 50 - 1}`);
+  return `+1${area}55501${String(n % 50).padStart(2, '0')}`;
+}
+
 let phoneSeq = 0;
-/** A valid, unique US mobile number (NANP 555 exchange numbers are invalid, so a real-looking range). */
+/** A valid US mobile number, fictional (555-0100 to 555-0199) and new in this test file: the next fictionalPhone. */
 export function randomPhone(): string {
-  phoneSeq += 1;
-  const n = (Date.now() % 1_000_0000) + phoneSeq * 7919;
-  return `+1415${String(2000000 + (n % 7_999_999)).padStart(7, '0')}`;
+  return fictionalPhone(phoneSeq++);
 }
 
 export interface ContactState {

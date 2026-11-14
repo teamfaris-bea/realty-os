@@ -5,7 +5,7 @@ import { canContact } from '@realty/core/compliance';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { csrfTokenFor } from '../auth/tokens.js';
-import { PortalClient, askLink, call, client, deal, invite, json, lastToken, portalWorld, publish, setPortalCleared, sharedDocument, signIn, slugOf, type PortalWorld } from './testing.js';
+import { PortalClient, askLink, call, client, deal, invite, json, lastToken, portalWorld, publish, randomPhone, setPortalCleared, sharedDocument, signIn, slugOf, type PortalWorld } from './testing.js';
 
 let h: ApiHarness;
 let w: PortalWorld;
@@ -107,7 +107,7 @@ describe('adversarial: opt-outs and autonomy (D1, R-PAR-12, R-GATE-14, R-PORTAL-
   it('R-PAR-12: a STOP on another of the client\'s phones, removed but not as a wrong number, still blocks a link by text; nothing reaches the provider', async () => {
     const a = w.agents[0]!;
     const c = await client(a, { firstName: 'Par' });
-    const other = '+1415555' + String(1000 + Math.floor(Math.random() * 8999));
+    const other = randomPhone();
     const add = await call(a, 'PATCH', `/contacts/${c.id}`, { phones: [c.phone, other] });
     const otherPoint = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone' AND address = $2`, [c.id, other])).rows[0]?.id;
     if (add.status !== 200 || !otherPoint) {

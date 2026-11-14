@@ -5,7 +5,7 @@ import { SCRIPTS, SCRIPT_EVENTS as ev, SLOT_A, SLOT_ARGS } from '@realty/core/vo
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { call } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { inboundSms, ownedContact, randomEmail } from '../comms/testing.js';
+import { inboundSms, ownedContact, randomEmail, randomPhone } from '../comms/testing.js';
 import { type VoiceWorld, aiCall, handbacksOf, ledgerOf, setVoicePack, settled, voiceWorld } from './testing.js';
 
 let h: ApiHarness;
@@ -27,7 +27,7 @@ const OPEN = [ev.disclosed(4000), ev.announced(7000), ev.model(7500, 'How can I 
 
 describe('R-VOICE-18 R-CONSENT-7: an opt-out heard in the call is applied as planInboundEffects on voice', () => {
   it('R-CONSENT-7: a spoken STOP revokes voice on the caller\'s address only, cites the call, and the ledger carries core\'s channel', async () => {
-    const second = `+1555010${String(Date.now()).slice(-4)}`;
+    const second = randomPhone();
     const c0 = await ownedContact(w.agents[0]!, { consent: false });
     await h.su.query("INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label, is_primary) SELECT tenant_id, $2, contact_id, 'phone', $3, decode(repeat('ab', 32), 'hex'), 'work', false FROM contact_points WHERE contact_id = $1 LIMIT 1", [c0.id, randomUUID(), second]);
     const c = await aiCall(h, w, SCRIPTS.spokenStop, { contact: c0 });
@@ -44,7 +44,7 @@ describe('R-VOICE-18 R-CONSENT-7: an opt-out heard in the call is applied as pla
 
   it('R-CHAN-3 R-PAR-12: "please stop calling me" revokes voice (needs review) on every phone of the person, removed ones that still count included, and sets the person-level do-not-contact; by SMS the same words also revoke texts', async () => {
     const c0 = await ownedContact(w.agents[0]!, { consent: false });
-    await h.su.query("INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label, is_primary, status, removed_at, removed_reason) SELECT tenant_id, $2, contact_id, 'phone', '+15550100177', decode(repeat('cd', 32), 'hex'), 'other', false, 'removed', now(), 'old' FROM contact_points WHERE contact_id = $1 LIMIT 1", [c0.id, randomUUID()]);
+    await h.su.query("INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label, is_primary, status, removed_at, removed_reason) SELECT tenant_id, $2, contact_id, 'phone', '+15555550116', decode(repeat('cd', 32), 'hex'), 'other', false, 'removed', now(), 'old' FROM contact_points WHERE contact_id = $1 LIMIT 1", [c0.id, randomUUID()]);
     const c = await aiCall(h, w, SCRIPTS.stopCalling, { contact: c0 });
     const rows = await consentOf(c.contactId);
     expect(new Set(rows.map((r) => r.channel))).toEqual(new Set(['voice']));

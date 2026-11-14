@@ -101,7 +101,7 @@ describe('R-TWL-10 toll-free keyword replies', () => {
   it('R-TWL-10: a STOP or HELP to a toll-free number gets no platform reply (the carrier answers); the same to a local number does (platform policy)', async () => {
     await usePlatformConfirmations(true);
     try {
-      const tf = '+1855' + String(5_550_100 + Math.floor(Math.random() * 99)).padStart(7, '0');
+      const tf = '+18555550120'; // a fictional toll-free number (855 555-0120)
       await h.su.query(`
         INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, registration_id, acquired_at)
         VALUES ($1, $2, $3, 'telephony', $4, 'toll_free', 'tracking', true, true, $5, now())`, [w.tenantId, randomUUID(), tf, 'PN' + 'b'.repeat(32), w.registrationId]);

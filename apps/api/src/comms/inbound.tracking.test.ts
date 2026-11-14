@@ -46,7 +46,7 @@ describe('R-TRK-2 an unknown caller or texter on a tracked number becomes a lead
     expect(contactId).toBeDefined();
     const c = (await h.su.query('SELECT display_name, original_lead_source_id, pond_summary FROM contacts WHERE id = $1', [contactId])).rows[0]!;
     expect(c).toMatchObject({ original_lead_source_id: yard.id, pond_summary: 'Called in' });
-    expect(c.display_name).toMatch(/^Unknown \(415\)/);
+    expect(c.display_name).toBe(`Unknown (${from.slice(2, 5)}) ${from.slice(5, 8)}-${from.slice(8)}`);
     const st = await contactState(h, contactId!);
     expect([st.ownership_state, st.offered_to_user_id]).toEqual(['offered', w.agents[0]!.userId]);
     const inq = await inquiriesOf(contactId!);

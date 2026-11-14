@@ -109,7 +109,7 @@ describe('alert phone (E54)', () => {
     const { challenge } = r.json() as { challenge: string };
     const sent = h.providers.telephony.verificationCodes.at(-1)!;
     const [payload, mac] = challenge.split('.');
-    const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload!, 'base64url').toString()), p: '+18435550999' })).toString('base64url');
+    const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload!, 'base64url').toString()), p: '+18435550103' })).toString('base64url');
     expect(code(await other.post('/api/me/alert-phone/verify', { challenge: `${forged}.${mac}`, code: sent.code }))).toBe('VERIFICATION_INVALID');
     const expired = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload!, 'base64url').toString()), e: Date.now() - 1000 })).toString('base64url');
     expect(code(await other.post('/api/me/alert-phone/verify', { challenge: `${expired}.${mac}`, code: sent.code }))).toBe('VERIFICATION_INVALID');
@@ -141,7 +141,7 @@ describe('alert phone (E54)', () => {
     const isa = await h.invite(owner, 'isa');
     expect(code(await isa.post('/api/me/alert-phone', { phone: '555-0100' }))).toBe('PHONE_INVALID');
     const st: number[] = [];
-    for (let i = 0; i < 4; i++) st.push((await isa.post('/api/me/alert-phone', { phone: `+1843555016${i}` })).statusCode);
+    for (let i = 0; i < 4; i++) st.push((await isa.post('/api/me/alert-phone', { phone: `+1843555013${i}` })).statusCode);
     expect(st).toEqual([200, 200, 200, 429]);
   });
 });

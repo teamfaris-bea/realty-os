@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { type AssistantWorld, assistantWorld, inboundSms } from '../assistant/testing.js';
+import { type AssistantWorld, assistantWorld, inboundSms, randomPhone } from '../assistant/testing.js';
 import { mlsConnection, reso, mlsDeps, pagedFeed, makeDue, REVIEWED_PACK, TEST_ATTRIBUTION } from '../mls/testing.js';
 import { syncConnection } from '../mls/sync.js';
 import { handlers } from '../worker/handlers/index.js';
@@ -244,7 +244,7 @@ describe('R-SELL-4: the assembled_through watermark', () => {
 describe('R-SELL-5 / D1: each seller through dispatchOutbound; an opted-out seller is shown before the tap', () => {
   it('a seller who texted STOP (with no email) is shown as not reachable before the tap and is never sent to; the co-seller gets the update', async () => {
     const l = await sellerListing(agent(), { sellers: 0 });
-    const phone = `+1415555${String(Math.floor(Math.random() * 9000) + 1000)}`;
+    const phone = randomPhone();
     const stopper = (await call<{ contact: { id: string } }>(agent(), 'POST', '/contacts', { commandId: cmd(), firstName: 'Stop', lastName: 'Per', phones: [phone], emails: [] })).body.contact.id;
     await call(agent(), 'POST', `/listings/${l.listingId}/contacts`, { contactId: stopper, role: 'seller' });
     const co = (await call<{ contact: { id: string } }>(agent(), 'POST', '/contacts', { commandId: cmd(), firstName: 'Co', lastName: 'Seller', phones: [], emails: [`co-${randomUUID().slice(0, 6)}@example.test`] })).body.contact.id;
@@ -278,8 +278,8 @@ describe('R-SELL-5 / D1: each seller through dispatchOutbound; an opted-out sell
 
   it('R-PAR-12: a STOP from a phone since removed (not as a wrong number) still blocks the seller before the tap', async () => {
     const l = await sellerListing(agent(), { sellers: 0 });
-    const p1 = `+1415556${String(Math.floor(Math.random() * 9000) + 1000)}`;
-    const p2 = `+1415557${String(Math.floor(Math.random() * 9000) + 1000)}`;
+    const p1 = randomPhone();
+    const p2 = randomPhone();
     const c = (await call<{ contact: { id: string } }>(agent(), 'POST', '/contacts', { commandId: cmd(), firstName: 'Two', lastName: 'Phones', phones: [p1, p2], emails: [] })).body.contact.id;
     await call(agent(), 'POST', `/listings/${l.listingId}/contacts`, { contactId: c, role: 'seller' });
     await inboundSms(h, p1, w.mainNumber, 'STOP');

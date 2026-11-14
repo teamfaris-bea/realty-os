@@ -58,14 +58,15 @@ describe('load smoke', () => {
       },
       {
         text: `INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, is_primary)
-               SELECT c.tenant_id, gen_random_uuid(), c.id, 'phone', '+1503' || lpad((row_number() OVER (ORDER BY c.id))::text, 7, '0'),
+               -- b17 (B17R-2): fictional numbers, 100 per area code from 201 up (row n: area 201 + (n - 1) / 100, line 555-0100 + (n - 1) % 100)
+               SELECT c.tenant_id, gen_random_uuid(), c.id, 'phone', '+1' || (201 + (row_number() OVER (ORDER BY c.id) - 1) / 100 % 799)::text || '55501' || lpad(((row_number() OVER (ORDER BY c.id) - 1) % 100)::text, 2, '0'),
                       sha256(convert_to(c.id::text, 'UTF8')), true
                  FROM contacts c WHERE c.tenant_id = $1 AND c.first_name LIKE 'Loadfirst%'`,
         values: [w.tenantId],
       },
     ]);
     await h.su.query('ANALYZE contacts; ANALYZE contact_points');
-    const queries = ['loadfirst12', 'Loadfirst2 Surn', '(503) 000-1250', '5030002000', 'surname41', 'nobody-matches-this', 'loadf', '503 000 0'];
+    const queries = ['loadfirst12', 'Loadfirst2 Surn', '(213) 555-0149', '2205550199', 'surname41', 'nobody-matches-this', 'loadf', '201 555 0'];
     const times: number[] = [];
     let found = 0;
     for (let i = 0; i < 24; i++) {

@@ -8,7 +8,7 @@ import type { Instant, TenantId, UserActor, UserId } from '@realty/core/foundati
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
-import { runJobs as commsJobs, telephonyWebhook } from '../comms/testing.js';
+import { runJobs as commsJobs, randomPhone, telephonyWebhook } from '../comms/testing.js';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
 import { type AssistantWorld, assistantWorld, call, depsOf, ownedContact, transcribedCall } from '../assistant/testing.js';
 import { freshReauth } from '../admin/testing.js';
@@ -145,7 +145,7 @@ export async function playableCall(h: ApiHarness, w: CoachingWorld, agent: TestC
   if (r.status !== 200) throw new Error(`dial: ${r.status} ${JSON.stringify(r.body)}`);
   const callId = r.body.callId;
   const ref = (await h.su.query<{ r: string }>('SELECT provider_call_ref AS r FROM calls WHERE id = $1', [callId])).rows[0]!.r;
-  const voice = (status: string, extra: Record<string, string> = {}) => telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550000', CallStatus: status, Direction: 'outbound-api', ...extra });
+  const voice = (status: string, extra: Record<string, string> = {}) => telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550125', CallStatus: status, Direction: 'outbound-api', ...extra });
   await voice('ringing');
   await voice('in-progress', { AnnouncementStatus: 'played' });
   await voice('completed', { CallDuration: '80' });
@@ -166,7 +166,7 @@ const verified = new WeakSet<TestClient>();
 /** The agent's verified alert phone (the dial path bridges the agent first). */
 export async function alertPhone(h: ApiHarness, c: TestClient): Promise<void> {
   if (verified.has(c)) return;
-  const phone = `+1415${String(2000000 + Math.floor(Math.random() * 7_000_000)).padStart(7, '0')}`;
+  const phone = randomPhone();
   const ch = await c.post('/api/me/alert-phone', { phone });
   const code = h.providers.telephony.verificationCodes.at(-1)!.code;
   const r = await c.post('/api/me/alert-phone/verify', { challenge: (ch.json() as { challenge: string }).challenge, code });

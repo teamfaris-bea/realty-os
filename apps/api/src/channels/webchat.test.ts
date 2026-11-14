@@ -6,7 +6,7 @@ import { withTenantTx } from '@realty/db';
 import { systemActor } from '../worker/systemActor.js';
 import { purgeWebchatSessions } from './handlers.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type AssistantWorld, approvedPlaybook, assistantWorld, call, decisionsFor, messagesOf, ownedContact, randomEmail, runJobs } from '../assistant/testing.js';
+import { type AssistantWorld, approvedPlaybook, assistantWorld, call, decisionsFor, messagesOf, ownedContact, randomEmail, randomPhone, runJobs } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { BUILT_IN_TEMPLATES as TEMPLATES } from '../assistant/templates.js';
 import { acceptLead, chatConfig, chatMessage, chatSource, codeOf, createWidget, openChat, pointsOf, pollBody, scheduledTriggerRun, startChat, visitorIp } from './testing.js';
@@ -152,7 +152,7 @@ describe('R-CHAN-3 / E155 opt-out language in chat', () => {
     expect(ev).toEqual([{ channel: 'web_chat', source: 'inbound_language', needs_review: true }]);
     // an agent who later adds a phone by hand cannot text, email or chat the person
     const agent = await acceptLead(h, w.agents, c.contactId);
-    const phone = `+1415555${String(Math.floor(Math.random() * 9000) + 1000)}`;
+    const phone = randomPhone();
     const added = await call(agent, 'POST', `/contacts/${c.contactId}/points`, { kind: 'phone', address: phone, label: 'mobile' });
     expect(added.status).toBe(201);
     for (const channel of ['sms', 'web_chat'] as const) {
