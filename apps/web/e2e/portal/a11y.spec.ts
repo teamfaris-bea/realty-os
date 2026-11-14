@@ -3,6 +3,11 @@
 // AXE_TAGS: WCAG 2.0/2.1/2.2 A and AA plus best practices). On the phone: no sideways scroll, 44 px targets and no
 // clipped text at 390 px, at 320 px and at 200 % text. On desktop: keyboard only through sign-in, the tabs (phone
 // layout at 390 px), a download and sign out, with focus never hidden.
+// b15 audit F5: the sweep covers every screen and state of the brief's steps 4-5: sign-in, its error, link requested,
+// incomplete, no team, link landing, home (timeline, phone documents), several grants, nothing shared, no longer shared,
+// a failed download, signed out, a used link, 429, text messages off, and not available. Where the real stack cannot
+// reach a state without changing the world later tests use (a revoke is final; SMS is a config), the browser answers
+// that one request with module 45's own error body, or /me with its grants changed: the screen is the client's own.
 import { AxeBuilder } from '@axe-core/playwright';
 import { type Page, expect, test } from 'playwright/test';
 // the sweep's tags (e2e/a11y/a11y.spec.ts AXE_TAGS; a spec file cannot import another spec)
@@ -37,6 +42,16 @@ test.afterAll(async () => {
 });
 
 const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
+/** module 45's error body (webContract.json errors), as the API sends it */
+const apiError = (status: number, code: string, details?: Record<string, unknown>) => ({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, requestId: '01900000-0000-7000-8000-0000000000ee', ...(details ? { details } : {}) } }) });
+const SECOND_GRANT = '01900000-0000-7000-8000-00000000f5a2';
+/** /me as the API answered it, with its grants changed */
+const meWith = (page: Page, grants: (real: Record<string, unknown>[]) => Record<string, unknown>[]) =>
+  page.route('**/api/portal/me', async (r) => {
+    const res = await r.fetch();
+    const me = (await res.json()) as { grants: Record<string, unknown>[] };
+    await r.fulfill({ response: res, json: { ...me, grants: grants(me.grants) } });
+  });
 
 async function axe(page: Page): Promise<string[]> {
   const r = await new AxeBuilder({ page: page as never }).withTags(AXE_TAGS).analyze();
@@ -109,9 +124,57 @@ test('R-PORTALWEB-11: every portal screen and state passes axe in both themes an
     await expect(p.getByText('Purchase contract.pdf', { exact: true })).toBeVisible();
     found.push(...(await check(p, 'home documents')));
   }
+
+  // several grants: a one-tap list (a second grant beside the real one; it is never opened)
+  await meWith(p, (g) => [...g, { ...g[0], id: SECOND_GRANT, title: 'Your home sale', scope: 'sale' }]);
+  await p.goto(portalUrl(stack, pw.slug));
+  await expect(p.getByRole('navigation', { name: 'Choose what to open' })).toBeVisible({ timeout: 20_000 });
+  found.push(...(await check(p, 'several grants')));
+  await p.unroute('**/api/portal/me');
+  // nothing shared (E711)
+  await meWith(p, () => []);
+  await p.reload();
+  await expect(p.locator('main').getByText('Nothing is shared with you right now.', { exact: false })).toBeVisible({ timeout: 20_000 });
+  found.push(...(await check(p, 'nothing shared')));
+  await p.unroute('**/api/portal/me');
+  // no longer shared (E712): the timeline answers 404 once
+  await p.route('**/api/portal/timeline**', (r) => r.fulfill(apiError(404, 'NOT_FOUND')), { times: 1 });
+  await p.reload();
+  await expect(p.locator('main').getByText('This is no longer shared with you.')).toBeVisible({ timeout: 20_000 });
+  found.push(...(await check(p, 'no longer shared')));
+  // a failed download (E713): the stream token answers 404 once
+  await p.goto(portalUrl(stack, pw.slug));
+  await h1('Your home purchase');
+  if (isPhone(p)) await tap(p, p.getByRole('tab', { name: 'Documents' }));
+  await p.route('**/api/portal/documents/*/stream-token', (r) => r.fulfill(apiError(404, 'NOT_FOUND')), { times: 1 });
+  await tap(p, p.getByRole('button', { name: `Download ${pw.documentName}` }));
+  await expect(p.locator('main').getByText("This file isn't available now.", { exact: false })).toBeVisible({ timeout: 20_000 });
+  found.push(...(await check(p, 'download failed')));
+
   await tap(p, p.getByRole('button', { name: 'Sign out' }));
   await h1("You're signed out");
   found.push(...(await check(p, 'signed out')));
+
+  // a used link (E701): the link, opened again and tapped, then the form with 45's sentence
+  await p.goto(link);
+  await h1('Sign in');
+  await tap(p, p.getByRole('button', { name: 'Sign in' }));
+  await h1('Sign in to your client portal');
+  await expect(p.locator('main').getByText('That sign-in link no longer works.', { exact: false })).toBeVisible();
+  found.push(...(await check(p, 'used link')));
+  // 429 (E707), then text messages off (E706): each answered once with 45's error
+  await p.route('**/api/portal/login', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
+  await p.getByLabel('Email address').fill(pw.jane.email);
+  await tap(p, p.getByRole('button', { name: 'Send me a sign-in link' }));
+  await expect(p.locator('main').getByText('Too many tries. Wait a few minutes and try again.')).toBeVisible();
+  found.push(...(await check(p, '429')));
+  await p.route('**/api/portal/login', (r) => r.fulfill(apiError(503, 'PORTAL_NOT_AVAILABLE', { channel: 'sms' })), { times: 1 });
+  await tap(p, p.getByRole('radio', { name: 'Text message' }));
+  await p.getByLabel('Mobile number').fill(pw.jane.phone);
+  await tap(p, p.getByRole('button', { name: 'Send me a sign-in link' }));
+  await expect(p.locator('main').getByText("Sign-in links can't be sent by text message right now", { exact: false })).toBeVisible();
+  found.push(...(await check(p, 'text messages off')));
+  await tap(p, p.getByRole('radio', { name: 'Email' }));
 
   await stack.setCleared(false);
   try {
