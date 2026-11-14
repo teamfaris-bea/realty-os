@@ -80,14 +80,26 @@ test('E699, E705: the clearance withdrawn mid-session signs Jane out on her next
     const link = await requestLink(jane, stack, pw.slug, pw.jane.email);
     await openLinkAndSignIn(jane, link);
     await expect(jane.getByRole('heading', { level: 1, name: 'Your home purchase' })).toBeVisible({ timeout: 20_000 });
+    // registered before the withdrawal, so a refetch that lands at once is caught too (no portal request is refused before it)
+    const refused = jane.waitForResponse((r) => new URL(r.url()).pathname.startsWith('/api/portal/') && r.status() === 401, { timeout: 60_000 });
     await stack.setCleared(false);
-    // b15 audit F9: her next request is driven and asserted, never swallowed: the Download tap (the documents are
-    // already loaded, so the phone's tab tap asks nothing) posts for a stream token, which answers 401
-    if ((jane.viewportSize()?.width ?? 1440) < 768) await tap(jane, jane.getByRole('tab', { name: 'Documents' }));
-    const refused = jane.waitForResponse((r) => /^\/api\/portal\/documents\/[^/]+\/stream-token$/.test(new URL(r.url()).pathname) && r.status() === 401, { timeout: 20_000 });
-    await tap(jane, jane.getByRole('button', { name: 'Download Purchase contract.pdf' }));
-    await refused;
-    await expect(jane.getByRole('heading', { level: 1, name: "You're signed out" })).toBeVisible({ timeout: 20_000 });
+    // b15 audit F9: her next request is driven and asserted, never swallowed. It is the Download tap's stream-token
+    // POST, unless a refetch on window focus (App.tsx refetchOnWindowFocus) reaches 45 first. Either way her first
+    // portal request after the withdrawal answers 401 and signs her out (E699): the wait takes the first portal 401,
+    // whichever request it is, and a tap that cannot happen because she is already signed out is the only error let
+    // through (b15 suite: the desktop run lost this race 1 time in 4; a forced focus refetch reproduces it).
+    const signedOut = jane.getByRole('heading', { level: 1, name: "You're signed out" });
+    const phone = (jane.viewportSize()?.width ?? 1440) < 768;
+    const press = (l: ReturnType<typeof jane.getByRole>) => (phone ? l.tap({ timeout: 10_000 }) : l.click({ timeout: 10_000 }));
+    try {
+      if (phone) await press(jane.getByRole('tab', { name: 'Documents' }));
+      await press(jane.getByRole('button', { name: 'Download Purchase contract.pdf' }));
+    } catch (e) {
+      if (!(await signedOut.isVisible())) throw e;
+    }
+    const first = await refused;
+    expect(first.status()).toBe(401);
+    await expect(signedOut).toBeVisible({ timeout: 20_000 });
     await expect(jane.getByText('Inspection', { exact: true })).toHaveCount(0);
   } finally {
     await stack.setCleared(false);
