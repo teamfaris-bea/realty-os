@@ -2,12 +2,12 @@
 // compact contact card, then the "Timeline | Documents" tabs. Desktop: two columns, documents in view with no tap. A
 // 404 means it is no longer shared: the sentence, and /me is refetched (no stale item stays on screen).
 import { type UseQueryResult, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { PortalError } from '../api.js';
 import { COPY } from '../copy.js';
 import { usePortal } from '../context.js';
 import { downloadDocument } from '../download.js';
-import { type DocumentView, type DocumentsView, GrantBody, type GrantTab, type GrantView, type TimelineView, VIEW_WORDS, parseDocuments, parseTimeline } from '../view/index.js';
+import { type DocumentView, type DocumentsView, GrantBody, type GrantTab, type GrantView, PANEL_HEADING_ID, type TimelineView, VIEW_WORDS, parseDocuments, parseTimeline } from '../view/index.js';
 import { Page, secondaryButton, useFocusHeading } from './common.js';
 import { ME_KEY } from './Home.js';
 
@@ -49,7 +49,7 @@ function failing(q: UseQueryResult<unknown, PortalError>): boolean {
 }
 
 export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps) {
-  const { api, announce, save } = usePortal();
+  const { api, announce, forget, save } = usePortal();
   const qc = useQueryClient();
   const wide = useWide();
   const h = useFocusHeading(grant.id);
@@ -72,10 +72,39 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
   // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
   // which reads the failed parts again (busy while they run; aria-disabled keeps focus). Only a panel that shows the
   // failure counts (b16): a loaded panel's failed background refetch is not announced.
+  // b17 (b16 review L16-2): only a failure newer than the last one announced is said. failedAt is a max over the panels
+  // failing now, so it fell back to the other panel's older failure when a retried panel succeeded, and that success
+  // was answered "Something went wrong".
   const failedAt = Math.max(tlFailed ? timeline.errorUpdatedAt : 0, docFailed ? documents.errorUpdatedAt : 0);
+  const announcedAt = useRef(0);
   useEffect(() => {
-    if (failedAt > 0) announce(COPY.generic);
+    if (failedAt <= announcedAt.current) return;
+    announcedAt.current = failedAt;
+    announce(COPY.generic);
   }, [failedAt, announce]);
+  // nothing fails any more (a Try again worked): the sentence is no longer true, and the live region drops it
+  const anyFailed = tlFailed || docFailed;
+  useEffect(() => {
+    if (!anyFailed && announcedAt.current > 0) forget(COPY.generic);
+  }, [anyFailed, forget]);
+
+  // b17 (b16 review FA-2): a Try again that succeeds replaces its placeholder, the focused button with it, by the
+  // section's data; focus then moves to that section's heading (tabIndex -1), which a screen reader reads, instead of
+  // falling to <body> in silence. Only after a Try again, and only when focus was lost: a client who moved on keeps it.
+  const retried = useRef<Record<GrantTab, boolean>>({ timeline: false, documents: false });
+  const tlLoaded = timeline.data !== undefined;
+  const docLoaded = documents.data !== undefined;
+  useLayoutEffect(() => {
+    for (const [panel, loaded] of [
+      ['timeline', tlLoaded],
+      ['documents', docLoaded],
+    ] as const) {
+      if (!loaded || !retried.current[panel]) continue;
+      retried.current[panel] = false;
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (lost) document.getElementById(PANEL_HEADING_ID[panel])?.focus();
+    }
+  }, [tlLoaded, docLoaded]);
 
   if (isGone) return null;
 
@@ -106,13 +135,22 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
   };
 
   // b16: each section has its own placeholder, and its Try again reads only that part again
-  const placeholder = (read: UseQueryResult<unknown, PortalError>, failedHere: boolean) => {
+  const placeholder = (panel: GrantTab, read: UseQueryResult<unknown, PortalError>, failedHere: boolean) => {
     if (!failedHere) return <p className="text-[15px] text-ink-muted">{COPY.loading}</p>;
     const retrying = read.isFetching;
     return (
       <div className="flex flex-col items-start gap-2">
         <p className="text-[16px] text-ink">{COPY.generic}</p>
-        <button type="button" onClick={() => (retrying ? undefined : void read.refetch())} aria-disabled={retrying || undefined} className={`${secondaryButton} ${retrying ? 'opacity-60' : ''}`}>
+        <button
+          type="button"
+          onClick={() => {
+            if (retrying) return;
+            retried.current[panel] = true;
+            void read.refetch();
+          }}
+          aria-disabled={retrying || undefined}
+          className={`${secondaryButton} ${retrying ? 'opacity-60' : ''}`}
+        >
           {COPY.tryAgain}
         </button>
       </div>
@@ -140,7 +178,7 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
         tab={tab}
         onTab={onTab}
         headingRef={h}
-        placeholders={{ timeline: placeholder(timeline, tlFailed), documents: placeholder(documents, docFailed) }}
+        placeholders={{ timeline: placeholder('timeline', timeline, tlFailed), documents: placeholder('documents', documents, docFailed) }}
         documentsProps={{ onDownload: (d) => void download(d), busyId: busy, error: fileError }}
       />
     </Page>

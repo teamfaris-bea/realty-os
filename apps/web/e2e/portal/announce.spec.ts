@@ -4,6 +4,8 @@
 // and set apart, so these run where only a browser shows them:
 //   FA-1  a failed Try again (a Grant panel, and HomeError) announces the same sentence again: the region is read
 //         after two failures and holds it twice; the first /me's error screen keeps its focused Try again meanwhile
+//   FA-2  a Try again that succeeds moves focus to that panel's heading, and announces nothing
+//   L16-2 (desktop) a successful Try again while the other panel still fails announces no failure
 // Where the real stack cannot fail on cue, the browser answers with module 45's own error body (a 500 INTERNAL_ERROR).
 import { type BrowserContext, type Page, type Route, expect, test } from 'playwright/test';
 import { newClientContext, openLinkAndSignIn, requestLink } from './common.js';
@@ -16,6 +18,7 @@ const GENERIC = 'Something went wrong. Try again in a moment.';
 const apiError = (status: number, code: string) => ({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, requestId: '01900000-0000-7000-8000-0000000000ef' } }) });
 const failed = (r: Route) => r.fulfill(apiError(500, 'INTERNAL_ERROR')).catch(() => undefined); // an aborted read (StrictMode's first) is gone
 const timelineOf = (u: URL) => u.pathname === '/api/portal/timeline';
+const documentsOf = (u: URL) => u.pathname === '/api/portal/documents';
 const meOf = (u: URL) => u.pathname === '/api/portal/me';
 
 let stack: PortalStack;
@@ -37,8 +40,10 @@ const LIVE_LOG = () => {
   }).observe(document, { childList: true, characterData: true, subtree: true });
 };
 const liveLog = () => p.evaluate(() => (window as unknown as { __live: string[] }).__live.slice());
+const resetLive = () => p.evaluate(() => void ((window as unknown as { __live: string[] }).__live = []));
 const times = async (sentence: string) => (await liveLog()).filter((t) => t === sentence).length;
 /** a keyboard press on the control, so it is focused first on both projects (a tap on WebKit would not focus it) */
+const isPhone = () => (p.viewportSize()?.width ?? 1440) < 768;
 const press = async (name: string | RegExp, within = p.locator('main')) => {
   const b = within.getByRole('button', { name, exact: typeof name === 'string' });
   await b.focus();
@@ -115,3 +120,41 @@ test('FA-1: HomeError (a first /me that fails) announces its sentence again afte
   await expect(again).toBeFocused();
 });
 
+test('FA-2, L16-2: a Try again that succeeds moves focus to the panel heading and announces nothing', async () => {
+  await p.route(timelineOf, failed);
+  await home();
+  const tl = section('Timeline');
+  await expect(tl.getByText(GENERIC)).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => times(GENERIC)).toBe(1);
+  await p.unroute(timelineOf, failed);
+  await resetLive();
+  await press('Try again', tl);
+  await expect(p.getByText('Inspection', { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(p.getByRole('heading', { level: 2, name: 'Timeline', exact: true })).toBeFocused();
+  await p.waitForTimeout(500); // anything announced late
+  expect(await liveLog()).not.toContain(GENERIC);
+  await expect(p.getByText(GENERIC)).toHaveCount(0);
+});
+
+test('FA-6, L16-2: desktop, both reads fail (documents first); the timeline Try again succeeds: no failure is announced', async () => {
+  test.skip(isPhone(), 'both panels are on screen on desktop only');
+  await p.route(documentsOf, failed);
+  const slow = async (r: Route) => {
+    await new Promise((ok) => setTimeout(ok, 400)); // the timeline fails after the documents
+    await failed(r);
+  };
+  await p.route(timelineOf, slow);
+  await home();
+  await expect(section('Timeline').getByText(GENERIC)).toBeVisible({ timeout: 20_000 });
+  await expect(section('Documents').getByText(GENERIC)).toBeVisible();
+  await p.waitForTimeout(300);
+  await p.unroute(timelineOf, slow);
+  await resetLive();
+  await press('Try again', section('Timeline'));
+  await expect(p.getByText('Inspection', { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(p.getByRole('heading', { level: 2, name: 'Timeline', exact: true })).toBeFocused();
+  await p.waitForTimeout(500);
+  // b16: failedAt fell back to the documents' older failure, and the success was answered "Something went wrong"
+  expect(await liveLog()).not.toContain(GENERIC);
+  await expect(section('Documents').getByText(GENERIC)).toBeVisible();
+});

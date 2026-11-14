@@ -170,11 +170,13 @@ function Loading() {
  * again is marked busy while the retry runs (aria-disabled, so it keeps focus; a tap then asks nothing more).
  */
 export function HomeError({ sentence, onRetry, signOut, retrying = false, failedAt = 0 }: { sentence: string; onRetry(): void; signOut: ReactNode | null; retrying?: boolean; failedAt?: number }) {
-  const { announce } = usePortal();
+  const { announce, forget } = usePortal();
   const h = useFocusHeading();
   useEffect(() => {
     announce(sentence);
   }, [announce, sentence, failedAt]);
+  // b17: once this screen goes (Try again worked), its sentence is no longer true, and the live region drops it
+  useEffect(() => () => forget(sentence), [forget, sentence]);
   return (
     <Page>
       <H1 headingRef={h}>{VIEW_WORDS.portalTitle}</H1>

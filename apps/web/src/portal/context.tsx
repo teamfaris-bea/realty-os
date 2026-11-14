@@ -7,6 +7,12 @@ export interface PortalCtx {
   api: PortalApi;
   team: string | null;
   announce(msg: string): void;
+  /**
+   * b17: the live region drops `msg` if it holds it, or is about to (nothing is said: a removal is not read). For a
+   * failure sentence that is no longer true once the screen recovered, so a screen reader reading the page later does
+   * not meet it.
+   */
+  forget(msg: string): void;
   save?: SaveDeps;
 }
 

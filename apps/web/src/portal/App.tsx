@@ -46,17 +46,28 @@ export function PortalApp({ link, api: given, queryClient, save }: PortalAppProp
   // `n` keys the region's text: each announcement is a new text node, even if a clear and a set were ever batched
   const [live, setLive] = useState<{ n: number; text: string }>({ n: 0, text: '' });
   const seq = useRef(0);
+  const waiting = useRef<string | null>(null);
   const announce = useCallback((msg: string) => {
     // the same sentence twice is still announced: the region is emptied, then given the sentence a task later (FA-1);
     // a newer announcement replaces one still waiting, so only the last is said
     seq.current += 1;
     const n = seq.current;
+    waiting.current = msg;
     setLive({ n, text: '' });
     window.setTimeout(() => {
-      if (seq.current === n) setLive({ n, text: msg });
+      if (seq.current !== n) return;
+      waiting.current = null;
+      setLive({ n, text: msg });
     }, ANNOUNCE_GAP_MS);
   }, []);
-  const ctx = useMemo(() => ({ api, team: link.team, announce, ...(save ? { save } : {}) }), [api, link.team, announce, save]);
+  const forget = useCallback((msg: string) => {
+    if (waiting.current === msg) {
+      seq.current += 1; // the waiting set never lands
+      waiting.current = null;
+    }
+    setLive((cur) => (cur.text === msg ? { n: cur.n, text: '' } : cur));
+  }, []);
+  const ctx = useMemo(() => ({ api, team: link.team, announce, forget, ...(save ? { save } : {}) }), [api, link.team, announce, forget, save]);
   return (
     <PortalContext.Provider value={ctx}>
       <QueryClientProvider client={qc}>

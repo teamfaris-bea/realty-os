@@ -63,11 +63,18 @@ export function NextSteps({ steps }: { steps: readonly ItemView[] }) {
   );
 }
 
+/**
+ * The ids of the timeline's and the documents' section headings. b17 (b16 review FA-2): each heading takes focus
+ * (tabIndex -1) when its section's data replaces the focused Try again, which would otherwise drop focus to <body>.
+ */
+export const PANEL_HEADING_ID = { timeline: 'portal-timeline', documents: 'portal-documents' } as const;
+const panelHeading = `${sectionHeading} outline-none`;
+
 /** Dated items in the API's order: no done mark, no grouping (R-PORTALWEB-5; Q-PORTALWEB-5). */
-export function Timeline({ items, headingId = 'portal-timeline' }: { items: readonly ItemView[]; headingId?: string }) {
+export function Timeline({ items, headingId = PANEL_HEADING_ID.timeline }: { items: readonly ItemView[]; headingId?: string }) {
   return (
     <section aria-labelledby={headingId} className={card}>
-      <h2 id={headingId} className={sectionHeading}>
+      <h2 id={headingId} tabIndex={-1} className={panelHeading}>
         {VIEW_WORDS.timeline}
       </h2>
       {items.length === 0 ? (
@@ -98,10 +105,10 @@ export interface DocumentsProps {
   error?: string | null;
 }
 
-export function Documents({ documents, mode, headingId = 'portal-documents', onDownload, busyId = null, error = null }: DocumentsProps) {
+export function Documents({ documents, mode, headingId = PANEL_HEADING_ID.documents, onDownload, busyId = null, error = null }: DocumentsProps) {
   return (
     <section aria-labelledby={headingId} className={card}>
-      <h2 id={headingId} className={sectionHeading}>
+      <h2 id={headingId} tabIndex={-1} className={panelHeading}>
         {VIEW_WORDS.documents}
       </h2>
       {error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-[15px] text-ink">{error}</p> : null}
@@ -213,7 +220,7 @@ export interface GrantBodyProps {
 
 /** A section with no data yet: its heading, then the screen's placeholder (loading, or a failure and Try again). */
 function PanelPlaceholder({ panel, children }: { panel: GrantTab; children: ReactNode }) {
-  const id = panel === 'timeline' ? 'portal-timeline' : 'portal-documents';
+  const id = PANEL_HEADING_ID[panel];
   return (
     <section aria-labelledby={id} className={card}>
       <h2 id={id} className={sectionHeading}>

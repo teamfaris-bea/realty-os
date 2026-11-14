@@ -1,6 +1,6 @@
 // module 46: the client's view, the only part of src/portal staff code may import (R-PORTALWEB-1, R-PORTALWEB-10).
 // Pure components, parsers, dates, contact guards and words: no window, document, fetch, location or history.
-export { ContactCard, Documents, GrantBody, GrantHeader, NextSteps, PreviewBanner, Timeline, Txt, type DocumentsProps, type GrantBodyProps, type GrantLayout, type GrantTab, type ViewMode } from './components.js';
+export { ContactCard, Documents, GrantBody, GrantHeader, NextSteps, PANEL_HEADING_ID, PreviewBanner, Timeline, Txt, type DocumentsProps, type GrantBodyProps, type GrantLayout, type GrantTab, type ViewMode } from './components.js';
 export { mailtoHref, smsHref } from './contact.js';
 export { formatLocalDate, formatShared } from './dates.js';
 export {
