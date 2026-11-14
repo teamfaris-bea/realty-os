@@ -52,10 +52,12 @@ export function DownloadLink({ d }: { d: DocumentView }) {
   );
 }
 
-function Share({ d }: { d: DocumentView }) {
+/** The Share answer the section shows: the API's sentence, unless it is the one the section already shows (a Mark answers with the new portal.text). */
+const shareNotice = (d: DocumentView, said: string | null): string | null => (said && said !== d.portal.text ? said : null);
+
+function Share({ d, text, setText }: { d: DocumentView; text: string | null; setText(t: string | null): void }) {
   const qc = useQueryClient();
   const share = useAction<{ shared: boolean }, ShareResponse>('POST');
-  const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const run = async () => {
     setError(null);
@@ -75,8 +77,7 @@ function Share({ d }: { d: DocumentView }) {
       <Button variant="secondary" className="self-start" pending={share.pending} onClick={() => void run()}>
         {d.portal.shared ? 'Stop marking for the client portal' : 'Mark for the client portal'}
       </Button>
-      {/* the API's answer, unless it is the sentence the section already shows (a Mark answers with the new portal.text) */}
-      {text && text !== d.portal.text ? <Notice tone="info">{text}</Notice> : null}
+      {shareNotice(d, text) ? <Notice tone="info">{shareNotice(d, text)}</Notice> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
     </div>
   );
@@ -158,6 +159,10 @@ export default function DocumentPage() {
   const api = useApi();
   const me = useMe();
   const navigate = useNavigate();
+  // the last Share answer, for this document only (another version opened here starts with none)
+  const [said, setSaid] = useState<{ id: string; text: string } | null>(null);
+  const shareText = said?.id === documentId ? said.text : null;
+  const setShareText = (text: string | null) => setSaid(text === null ? null : { id: documentId, text });
   const q = useQuery<DetailResponse, ApiError>({ queryKey: docKeys.detail(documentId), queryFn: ({ signal }) => api.get<DetailResponse>(`/documents/${documentId}`, { signal }), retry: false });
   usePageTitle(q.data?.document.displayName ?? null);
   if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
@@ -209,9 +214,14 @@ export default function DocumentPage() {
       {d.scope.kind !== 'contact' ? (
         <Section title="Client portal">
           {/* b15 (b14 low e): the API's sentence starts "Marked for the client portal.", so the page's own line shows only
-              when the API gives none (never three times with the Share notice) */}
-          {d.portal.text ? <p className="text-[15px] text-ink">{d.portal.text}</p> : <p className="text-[15px] text-ink">{d.portal.shared ? 'Marked for the client portal.' : 'Not marked for the client portal.'}</p>}
-          {d.canShare && d.scan === 'clean' ? <Share d={d} /> : null}
+              when the API gives none (never three times with the Share notice); b15 review UI-5: nor while a Share notice
+              says the new state (after Stop marking: "No longer marked…", or what stops when the portal is on) */}
+          {d.portal.text ? (
+            <p className="text-[15px] text-ink">{d.portal.text}</p>
+          ) : shareNotice(d, shareText) ? null : (
+            <p className="text-[15px] text-ink">{d.portal.shared ? 'Marked for the client portal.' : 'Not marked for the client portal.'}</p>
+          )}
+          {d.canShare && d.scan === 'clean' ? <Share d={d} text={shareText} setText={setShareText} /> : null}
         </Section>
       ) : null}
 

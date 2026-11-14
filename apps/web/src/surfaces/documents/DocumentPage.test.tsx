@@ -86,6 +86,23 @@ describe('the document page', () => {
     expect(times(m)).toBe(1);
   });
 
+  it('b15 review UI-5: after Stop marking the section says the new state once: the API\'s sentence, never also the page\'s "Not marked…" line (cleared and uncleared)', async () => {
+    for (const [cleared, said] of [[false, COPY.unsharedNotCleared], [true, COPY.unshared]] as const) {
+      const shared = doc({ canShare: true, portal: { shared: true, portalCleared: cleared, text: cleared ? COPY.sharedCleared : COPY.sharedNotCleared } });
+      const unshared = doc({ canShare: true, portal: { shared: false, portalCleared: cleared, text: null } });
+      const fake = new StaffFake().on(`GET /documents/${DOC}`, { status: 200, body: detail(shared) }).on(`POST /documents/${DOC}/share`, { status: 200, body: { ...detail(unshared), text: said } });
+      const r = open(fake);
+      const m = await main();
+      await userEvent.setup().click(await within(m).findByRole('button', { name: 'Stop marking for the client portal' }));
+      await within(m).findByRole('button', { name: 'Mark for the client portal' });
+      const section = within(m).getByRole('heading', { name: 'Client portal' }).closest('section') as HTMLElement;
+      expect(await within(section).findByText(said)).toBeInTheDocument();
+      expect(section.textContent, String(cleared)).not.toContain('Not marked for the client portal.');
+      expect(section.textContent!.split(said).length - 1).toBe(1);
+      r.view.unmount();
+    }
+  });
+
   it('R-STAFF-10: no Share for canShare false, a file not clean, or a contact document', async () => {
     for (const d of [doc({ canShare: false }), doc({ canShare: true, scan: 'checking', scanText: COPY.checking }), doc({ canShare: true, scope: { kind: 'contact', id: CONTACT } })]) {
       const fake = new StaffFake().on(`GET /documents/${DOC}`, { status: 200, body: detail(d) });
