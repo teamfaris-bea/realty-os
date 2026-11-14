@@ -312,12 +312,19 @@ export async function emailIdentityFacts(tx: Tx, id: string): Promise<{ id: stri
   return { id: e.id, fromAddress: e.from_address, displayName: e.display_name, status: e.status, domain: e.domain_id === null ? null : { verifiedAt: e.verified_at } };
 }
 
-/** The sender's own active identity, else the team identity (user_id NULL). */
+/**
+ * The sender's own active identity, else the team identity (user_id NULL). With `userId` null (the assistant, the
+ * system, the AI ISA) only a team identity can be chosen, never anyone's personal address. b18 item e (OQ-1114-12):
+ * among the candidates of the same kind, one on a verified sending domain comes first, so an older team identity on a
+ * domain that never verified no longer stands in front of the verified one (gate check 3 refuses a marketing email from
+ * an unverified domain, EMAIL_DOMAIN_UNVERIFIED, so before this every AI ISA email was refused in that case).
+ */
 export async function chooseEmailIdentity(tx: Tx, userId: string | null): Promise<string | null> {
   const r = await sql<{ id: string }>`
-    SELECT id FROM email_identities WHERE tenant_id = app.tenant_id() AND status = 'active'
-       AND (user_id = ${userId} OR user_id IS NULL)
-     ORDER BY (user_id IS NULL), created_at, id LIMIT 1`.execute(tx);
+    SELECT i.id FROM email_identities i LEFT JOIN sending_domains d ON d.tenant_id = i.tenant_id AND d.id = i.domain_id
+     WHERE i.tenant_id = app.tenant_id() AND i.status = 'active'
+       AND (i.user_id = ${userId} OR i.user_id IS NULL)
+     ORDER BY (i.user_id IS NULL), (d.verified_at IS NULL), i.created_at, i.id LIMIT 1`.execute(tx);
   return r.rows[0]?.id ?? null;
 }
 
