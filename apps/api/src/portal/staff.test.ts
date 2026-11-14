@@ -242,7 +242,9 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     expect(notes()).toBe(1);
   });
 
-  it('E692 (b14 F7): when the first note was blocked, a repeat invite never claims a note was sent; it says none reached them and offers Resend', async () => {
+  // b16 (b15 review L3 part b): the repeat invite keeps the first note's stored block decision, as noticeFromNote does
+  // for a blocked note (not sent, with the reason), instead of dropping it for "No note has reached …"
+  it('E692 (b14 F7, b16): when the first note was blocked, a repeat invite never claims a note was sent; it says it was not sent, with the stored decision', async () => {
     const c = await client(agent(), { firstName: 'Bree' });
     const d = await deal(agent(), c.id);
     const point = (await h.su.query<{ id: string }>(`SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'email'`, [c.id])).rows[0]!.id;
@@ -250,10 +252,14 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     const first = await invite(agent(), d, c.id);
     expect(first.body.notice.sent).toBe(false);
     expect(first.body.notice.decision?.reasons).toContain('CONSENT_REVOKED');
+    const notes = async () => (await h.su.query(`SELECT 1 FROM messages WHERE contact_id = $1 AND direction = 'outbound'`, [c.id])).rowCount;
+    const before = await notes();
     const again = await invite(agent(), d, c.id);
     expect(again.body.notice.sent).toBe(false);
     expect(again.body.notice.text).not.toMatch(/already invited; no second note/);
-    expect(again.body.notice.text).toBe('No note has reached Bree yet. To try again, tap Send the invite again.');
+    expect(again.body.notice).toEqual({ sent: false, text: 'The note to Bree was not sent; the reason is below. The invite stands.', channel: 'email', decision: first.body.notice.decision });
+    expect(again.body.notice.decision?.reasons).toContain('CONSENT_REVOKED');
+    expect(await notes()).toBe(before); // nothing new was composed
   });
 
   it('R-PORTAL-13: the notice is the inviter\'s own message (a human touch), carries no token, and its decision is returned when blocked', async () => {

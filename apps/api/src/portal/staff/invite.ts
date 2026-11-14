@@ -21,6 +21,7 @@ import type { FastifyRequest } from 'fastify';
 import { sql } from 'kysely';
 import { audit } from '../../audit.js';
 import { composeHumanMessage } from '../../comms/compose.js';
+import { storedDecisionView } from '../../comms/gateInput.js';
 import { refuseMergedAway } from '../../comms/merged.js';
 import { detailVisibleContact } from '../../comms/repos/contacts.js';
 import { asSystem, depsFromPlatform } from '../../comms/runtime.js';
@@ -176,19 +177,29 @@ export function noticeFromNote(first: string, channel: 'sms' | 'email', status: 
 /**
  * What became of the invite notes of a grant (b14 audit F7), read as the system (statuses only, any inviter's): a repeat
  * invite says a note was sent only when one was; a note still on its way is said to be; a grant none of whose notes
- * arrived gets its note now when this inviter's key is still unused, else is told so and offered Resend.
+ * arrived gets its note now when this inviter's key is still unused, else is answered from this inviter's note
+ * (noticeFromNote: blocked with its stored decision ⇒ not sent, with the reason; otherwise none reached them, Resend).
  */
-async function priorNotices(tx: Tx, grantId: string, inviterId: string, contactId: string): Promise<{ sent: boolean; inFlight: boolean; mineUsed: boolean }> {
+async function priorNotices(
+  tx: Tx,
+  grantId: string,
+  inviterId: string,
+  contactId: string,
+): Promise<{ sent: boolean; inFlight: boolean; mine: { status: string; channel: 'sms' | 'email'; decision: NoticeDecision } | null }> {
   // b14: anchored by the invitee (every invite note goes to them; messages has contact indexes), so the key pattern only
   // filters that person's outbound messages, never a scan of the tenant's, and a key on someone else's message never counts
-  const r = await sql<{ status: string; mine: boolean }>`
-    SELECT status, idempotency_key = ${`h:${inviterId}:portal_invite:${grantId}`} AS mine FROM public.messages
+  const r = await sql<{ status: string; channel: string; gate_decision_id: string | null; mine: boolean }>`
+    SELECT status, channel, gate_decision_id, idempotency_key = ${`h:${inviterId}:portal_invite:${grantId}`} AS mine FROM public.messages
      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND direction = 'outbound'
        AND idempotency_key ~ ${`^h:[0-9a-f-]{36}:portal_invite:${grantId}(:|$)`}`.execute(tx);
+  const m = r.rows.find((x) => x.mine) ?? null;
+  // b16 (b15 review L3 part b): this inviter's own note, with its stored block decision, so a repeat invite answers as
+  // noticeFromNote does (a blocked note: not sent, with the reason) instead of dropping the decision
+  const d = m?.status === 'blocked' ? await storedDecisionView(tx, m.gate_decision_id) : null;
   return {
-    sent: r.rows.some((m) => m.status === 'sent' || m.status === 'delivered'),
-    inFlight: r.rows.some((m) => ['queued', 'scheduled', 'dispatching', 'dispatch_unknown'].includes(m.status)),
-    mineUsed: r.rows.some((m) => m.mine),
+    sent: r.rows.some((x) => x.status === 'sent' || x.status === 'delivered'),
+    inFlight: r.rows.some((x) => ['queued', 'scheduled', 'dispatching', 'dispatch_unknown'].includes(x.status)),
+    mine: m ? { status: m.status, channel: m.channel === 'email' ? 'email' : 'sms', decision: d ? { outcome: d.outcome, reasons: d.reasons, explanation: d.explanation } : null } : null,
   };
 }
 
@@ -204,7 +215,7 @@ export async function invite(req: FastifyRequest, scope: Scope, input: InviteInp
     const prior = await asSystem(deps, req.actor!.tenantId, 'worker', (tx) => priorNotices(tx, r.grantId, req.actor!.userId, input.contactId));
     if (prior.sent) notice = { sent: false, text: inviteNoNotice(r.first), channel: null, decision: null };
     else if (prior.inFlight) notice = { sent: false, text: inviteNoteInFlight(r.first), channel: null, decision: null };
-    else if (prior.mineUsed) notice = { sent: false, text: inviteNoteNotReached(r.first), channel: null, decision: null };
+    else if (prior.mine) notice = noticeFromNote(r.first, prior.mine.channel, prior.mine.status, prior.mine.decision);
     // else: no note of this inviter for the grant yet, so its key is unused: the note goes now (below)
   }
   if (notice === null) {
