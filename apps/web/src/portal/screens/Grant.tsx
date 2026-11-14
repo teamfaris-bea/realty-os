@@ -41,10 +41,11 @@ const gone = (e: unknown) => e instanceof PortalError && e.code === 'NOT_FOUND';
  * query with no data back to 'pending' and clears its error when it refetches, so `isError` alone turned the failure
  * placeholder into "Loading" and unmounted the focused Try again; a query that has failed (errorUpdateCount) and still
  * has no data keeps the sentence and Try again (aria-disabled) until an answer comes.
+ * b16 (b15 review new problem 2): only a read with no data shows the failure; a background refetch that fails while its
+ * data is on screen leaves the data, and says nothing (no sentence, no Try again, no announcement).
  */
 function failing(q: UseQueryResult<unknown, PortalError>): boolean {
-  if (gone(q.error)) return false;
-  return q.isError || (q.data === undefined && q.errorUpdateCount > 0);
+  return q.data === undefined && q.errorUpdateCount > 0 && !gone(q.error);
 }
 
 export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps) {
@@ -66,13 +67,16 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     onGone(grant.id);
   }, [isGone, qc, grant.id, onGone]);
 
-  const failed = failing(timeline) || failing(documents);
+  const tlFailed = failing(timeline);
+  const docFailed = failing(documents);
+  const failed = tlFailed || docFailed;
   // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
-  // which reads the failed parts again (busy while they run; aria-disabled keeps focus)
-  const failedAt = Math.max(timeline.errorUpdatedAt, documents.errorUpdatedAt);
+  // which reads the failed parts again (busy while they run; aria-disabled keeps focus). Only a panel that shows the
+  // failure counts (b16): a loaded panel's failed background refetch is not announced.
+  const failedAt = Math.max(tlFailed ? timeline.errorUpdatedAt : 0, docFailed ? documents.errorUpdatedAt : 0);
   useEffect(() => {
-    if (failed) announce(COPY.generic);
-  }, [failed, failedAt, announce]);
+    if (failedAt > 0) announce(COPY.generic);
+  }, [failedAt, announce]);
 
   if (isGone) return null;
 
@@ -105,8 +109,8 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
   const retrying = timeline.isFetching || documents.isFetching;
   const retry = () => {
     if (retrying) return;
-    if (timeline.isError) void timeline.refetch();
-    if (documents.isError) void documents.refetch();
+    if (tlFailed) void timeline.refetch();
+    if (docFailed) void documents.refetch();
   };
   const placeholder = failed ? (
     <div className="flex flex-col items-start gap-2">

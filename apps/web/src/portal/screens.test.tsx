@@ -608,6 +608,36 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(r.keys().filter((k) => k === 'GET /portal/timeline')).toHaveLength(2);
   });
 
+  // b16 (b15 review new problem 2): a background refetch that fails while the data is still on screen shows no error
+  // and no Try again, so nothing is announced either
+  it('b16: a background refetch of a loaded timeline that fails announces nothing (the data stays, no placeholder)', async () => {
+    let down = false;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/timeline': (x) => {
+          if (down) throw new TypeError('Failed to fetch');
+          return { status: 200, body: F.timeline(x.query.grantId) };
+        },
+      },
+    });
+    await screen.findByText('Inspection');
+    const seen = liveLog();
+    down = true;
+    await act(async () => {
+      await r.queryClient.invalidateQueries({ queryKey: ['portal', 'timeline'] });
+    });
+    await waitFor(() => expect(r.queryClient.getQueryState(['portal', 'timeline', F.GRANT_ID])?.status).toBe('error'));
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    expect(screen.getByText('Inspection')).toBeInTheDocument();
+    expect(screen.queryByText(COPY.generic, IGN)).toBeNull();
+    expect(screen.queryByRole('button', { name: COPY.tryAgain })).toBeNull();
+    expect(seen.filter((t) => t === COPY.generic)).toEqual([]);
+    expect(live()).not.toHaveTextContent(COPY.generic);
+  });
+
   it('R-PORTALWEB-6: no screen shows a code', async () => {
     renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => portalApiError('VALIDATION_FAILED') } });
     await screen.findByText('Inspection');
