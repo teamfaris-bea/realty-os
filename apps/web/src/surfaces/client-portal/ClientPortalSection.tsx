@@ -3,15 +3,17 @@
 // without portal.view (an ISA, support) is 404 and the section is hidden. It shows 45's words for the clearance,
 // the link channels, each account and grant, a "What {name} sees" link per live grant, Invite (one tap, a fresh
 // idempotency key per tap) with 45's dispatch-gated notice, blocked included, never a send-anyway, and Stop sharing
-// (a confirm dialog; final). It always says what cannot be shared from the app yet.
+// (a confirm dialog; final). It always says what cannot be shared from the app yet. Invite, Resend and Stop sharing are
+// shown only to a viewer 45 lets manage (b15 audit F1: mayManagePortal mirrors portal.manage); a TC or a member agent
+// who does not own the deal sees the section read-only, with who can.
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Dialog, GateBadge, Notice } from '../../design/index.js';
-import { type ApiError, messageFor, newCommandId, useApi } from '../../shell/index.js';
+import { type ApiError, messageFor, newCommandId, useApi, useSession } from '../../shell/index.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import type { GrantStaff, InviteResponse, Notice as InviteNotice, PortalState } from './types.js';
-import { PORTAL_STAFF_MESSAGES, STAFF_WORDS } from './words.js';
+import { PORTAL_STAFF_MESSAGES, STAFF_WORDS, mayManagePortal } from './words.js';
 
 export const portalKey = (kind: 'deal' | 'listing', id: string) => ['client-portal', kind, id] as const;
 
@@ -19,6 +21,10 @@ export interface ClientPortalSectionProps {
   dealId?: string;
   listingId?: string;
   primaryContact: { id: string; name: string } | null;
+  /** the deal's (or listing's) owner, as DocumentsSection takes it: the agent who owns it may manage the portal */
+  ownerUserId?: string | null;
+  /** the deal's members: they may view the section, never manage it (portal.manage has no deal scope) */
+  memberUserIds?: readonly string[];
 }
 
 function NoticeView({ notice }: { notice: InviteNotice }) {
@@ -30,10 +36,13 @@ function NoticeView({ notice }: { notice: InviteNotice }) {
   );
 }
 
-export function ClientPortalSection({ dealId, listingId, primaryContact }: ClientPortalSectionProps) {
+export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUserId = null, memberUserIds = [] }: ClientPortalSectionProps) {
   const kind = dealId ? 'deal' : 'listing';
   const id = (dealId ?? listingId)!;
   const api = useApi();
+  const { session } = useSession();
+  const me = session?.user.id ?? null;
+  const canManage = mayManagePortal(session?.tenant?.role, { own: me !== null && ownerUserId === me, member: me !== null && memberUserIds.includes(me) });
   const heading = useId();
   const key = portalKey(kind, id);
   const q = useQuery<PortalState, ApiError>({ queryKey: key, queryFn: ({ signal }) => api.get<PortalState>(`/${kind}s/${id}/portal`, { signal }), retry: false });
@@ -100,16 +109,18 @@ export function ClientPortalSection({ dealId, listingId, primaryContact }: Clien
                       <Link to={`/client-portal/${g.id}`} state={{ name }} className="inline-flex min-h-tap items-center text-[15px] font-semibold text-accent underline underline-offset-4">
                         {STAFF_WORDS.sees(name)}
                       </Link>
-                      <Button variant="quiet" onClick={() => setStopping(g)}>
-                        {STAFF_WORDS.stop(name)}
-                      </Button>
+                      {canManage ? (
+                        <Button variant="quiet" onClick={() => setStopping(g)}>
+                          {STAFF_WORDS.stop(name)}
+                        </Button>
+                      ) : null}
                     </div>
                   ) : null}
                 </li>
               );
             })}
           </ul>
-          {primaryContact ? (
+          {canManage && primaryContact ? (
             <div className="flex flex-wrap gap-2">
               {primaryLive ? (
                 <Button variant="secondary" pending={invite.pending} onClick={() => void doInvite(true)}>
@@ -125,10 +136,11 @@ export function ClientPortalSection({ dealId, listingId, primaryContact }: Clien
           {notice ? <NoticeView notice={notice} /> : null}
           {invite.error ? <Notice tone="error">{messageFor(invite.error, PORTAL_STAFF_MESSAGES)}</Notice> : null}
           {revokeMsg ? <Notice tone="info">{revokeMsg}</Notice> : null}
+          {!canManage ? <p className="text-[14px] text-ink-muted">{STAFF_WORDS.readOnly(kind)}</p> : null}
           <p className="text-[14px] text-ink-muted">{STAFF_WORDS.notShareable}</p>
         </>
       ) : null}
-      {stopping ? (
+      {canManage && stopping ? (
         <Dialog
           title={STAFF_WORDS.stop(nameFor(stopping))}
           description={STAFF_WORDS.revokeBody(nameFor(stopping).replace(/^the client$/, 'The client'))}

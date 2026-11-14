@@ -1232,7 +1232,7 @@ D2: Google Ads only (`ads_google`); Meta ads are out of scope and `ads_meta` is 
 - **R-PORTALWEB-7** Downloads. A stream token only on a tap; only same-origin `/api/portal/files/<token>` is fetched; a file is saved only from a 200 of the announced type and exact size; a failure saves nothing, never navigates, and refreshes the list. [web + e2e]
 - **R-PORTALWEB-8** Contact card. `sms:` and `mailto:` only from a validated E.164 number or a single address; names verbatim; otherwise "Reply to any text or email from your agent." [web]
 - **R-PORTALWEB-9** Client API boundary. Only `/api/portal/*`, same-origin credentials, the portal CSRF token on unsafe methods; the cache and tokens are cleared on a session 401, on sign-out and on each new sign-in; staff code never calls the client API. [web test + e2e]
-- **R-PORTALWEB-10** Staff preview. Built in the staff bundle from staff routes, rendering the client's view components with inert controls; it says whether the client can see the page now and why not; invite and revoke show the API's answer, a blocked decision included, with no send-anyway; the section says what cannot be shared from the app yet. [web + e2e]
+- **R-PORTALWEB-10** Staff preview. Built in the staff bundle from staff routes, rendering the client's view components with inert controls; it says whether the client can see the page now and why not; invite and revoke show the API's answer, a blocked decision included, with no send-anyway; Invite, Resend and Stop sharing show only to a viewer with `portal.manage` (Owner, Admin, Team Lead, the agent who owns the deal), and a TC or a member agent sees the section read-only, with who can (b15 audit F1); the section says what cannot be shared from the app yet. [web + e2e]
 - **R-PORTALWEB-11** Reach. axe clean (WCAG 2.1 AA) in both themes at 390×844 and 1440×900; 44 px targets; reflow at 320 px and 200 %; client jobs ≤ 2 taps; portal JS ≤ 100 kB and CSS ≤ 15 kB gzip. [e2e + build]
 
 ### Texting reactions (D5b)
@@ -1908,7 +1908,7 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E715 | Contact values missing, malformed or carrying parameters | No link; the fallback sentence | R-PORTALWEB-8 |
 | E716 | `CSRF_INVALID` after a sign-in in another tab | `/me` refetched, one retry; then the generic sentence | R-PORTALWEB-9 |
 | E717 | A staff user opens `/portal.html` in the same browser; a client opens `/` or `/portal` | Each app sees only its own session; the portal calls only `/api/portal/*`; `/portal` is the staff app | R-PORTALWEB-1, R-PORTALWEB-2, R-PORTALWEB-9 |
-| E718 | Preview while the client can't see it; an ISA or another agent | A banner with 45's reason, inert controls; for an ISA or another agent, no section and not-found | R-PORTALWEB-10 |
+| E718 | Preview while the client can't see it; an ISA or another agent; a TC or a member agent who does not own the deal | A banner with 45's reason, inert controls; for an ISA or another agent, no section and not-found; for a TC or a member agent, the section read-only (no Invite, Resend or Stop sharing, which 45 refuses them) and who can | R-PORTALWEB-10 |
 | E719 | No `?team=` and none remembered, or an invalid slug | No form; "Open your invitation link…"; never guesses | R-PORTALWEB-4 |
 
 ---

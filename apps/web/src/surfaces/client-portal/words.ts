@@ -3,6 +3,8 @@
 // They are passed to messageFor here, never put in the surface's errorMessages (CONTACT_MERGED already has two
 // sentences in the staff app, and shell/pages.ts refuses a conflicting one).
 
+import type { Role } from '@realty/core/foundation';
+
 /** 45's error sentences the section meets (webContract.json errors.*.sentence), verbatim. */
 export const PORTAL_STAFF_MESSAGES: Readonly<Record<string, string>> = {
   PORTAL_NOT_A_PARTY: 'This person is not a buyer, seller or co-party on this deal or listing. Add them first.',
@@ -11,6 +13,18 @@ export const PORTAL_STAFF_MESSAGES: Readonly<Record<string, string>> = {
   PORTAL_ACCOUNT_DISABLED: 'This account is already disabled. Invite the client again to give access back.',
   CONTACT_MERGED: 'This contact was merged into another record. Open that record instead.',
 };
+
+/**
+ * b15 audit F1: whether to show Invite, Resend and Stop sharing, mirroring core authz `portal.manage` (Owner, Admin, a
+ * Team Lead's T, the agent who owns the deal or listing) from the session role and the scope's owner. A TC on the deal
+ * and a member agent who is not the owner have `portal.view` only: 45 refuses them manage (404), so they see the section
+ * read-only. A Team Lead's team is not known here, but `portal.view` and `portal.manage` are both T for a Team Lead, so a
+ * Team Lead who can open the section at all (its GET answered) may manage it. Membership never grants manage.
+ */
+export function mayManagePortal(role: Role | null | undefined, f: { own: boolean; member: boolean }): boolean {
+  if (role === 'owner' || role === 'admin' || role === 'team_lead') return true;
+  return role === 'agent' && f.own;
+}
 
 export const STAFF_WORDS = {
   heading: 'Client portal',
@@ -29,4 +43,5 @@ export const STAFF_WORDS = {
   previewTitle: 'What the client sees',
   loading: 'Loading',
   notSent: 'Not sent',
+  readOnly: (kind: 'deal' | 'listing') => `Only the agent who owns this ${kind}, their Team Lead, an Owner or an Admin can invite the client or stop sharing.`,
 } as const;

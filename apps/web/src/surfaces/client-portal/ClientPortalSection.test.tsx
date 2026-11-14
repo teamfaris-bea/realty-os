@@ -7,15 +7,19 @@ import { describe, expect, it } from 'vitest';
 import { contractSentence } from '../../portal/test/portalContract.js';
 import type { SurfaceModule } from '../../shell/index.js';
 import { FakeFetch } from '../../shell/testing/fakeApi.js';
-import { app } from '../documents/fixtures.js';
+import { ME, OTHER, app } from '../documents/fixtures.js';
 import { ClientPortalSection } from './ClientPortalSection.js';
 import * as F from './testing/fixtures.js';
 import { surface } from './index.js';
-import { PORTAL_STAFF_MESSAGES, STAFF_WORDS } from './words.js';
+import { PORTAL_STAFF_MESSAGES, STAFF_WORDS, mayManagePortal } from './words.js';
 
 const JANE = { id: F.JANE, name: 'Jane Doe' };
-const host: SurfaceModule = { pages: [{ path: '/t/deal', title: 'Deal', roles: 'all', component: () => <ClientPortalSection dealId={F.DEAL} primaryContact={JANE} /> }] };
-const render = (fake: FakeFetch, path = '/t/deal', role: Role = 'agent') => app(fake, path, role, surface, host);
+// the deal as DealsPages passes it: its owner and its members (DocumentsSection's facts). ME is the signed-in user.
+const dealHost = (ownerUserId: string | null, memberUserIds: readonly string[] = []): SurfaceModule => ({
+  pages: [{ path: '/t/deal', title: 'Deal', roles: 'all', component: () => <ClientPortalSection dealId={F.DEAL} primaryContact={JANE} ownerUserId={ownerUserId} memberUserIds={memberUserIds} /> }],
+});
+const host = dealHost(ME);
+const render = (fake: FakeFetch, path = '/t/deal', role: Role = 'agent', h: SurfaceModule = host) => app(fake, path, role, surface, h);
 const section = async () => (await screen.findByRole('heading', { name: STAFF_WORDS.heading })).closest('section') as HTMLElement;
 const STATE = `GET /deals/${F.DEAL}/portal`;
 const INVITE = `POST /deals/${F.DEAL}/portal/invite`;
@@ -113,6 +117,68 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
     expect(within(s).getByText(/Sign-in is impossible/)).toBeInTheDocument();
     expect(within(s).queryByRole('link', { name: /sees/ })).toBeNull();
     expect(within(s).getByRole('button', { name: 'Invite Jane Doe' })).toBeInTheDocument();
+  });
+
+  // b15 audit F1: portal.manage (core authz) is Owner, Admin, a Team Lead (T) and the agent who owns the deal; portal.view
+  // adds a TC on the deal and a member agent. 45 refuses manage to those two (404), so they get no Invite, Resend or Stop
+  // sharing, and the section says who can, read-only.
+  describe('E718 (b15 audit F1): Invite, Resend and Stop sharing only for a viewer with portal.manage', () => {
+    const live = () => new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ accounts: [F.account()], grants: [F.grantStaff()] })));
+    const none = () => new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state()));
+    const controls = (s: HTMLElement) => within(s).queryAllByRole('button', { name: /^(Invite|Send the invite again|Stop sharing)/ });
+
+    it('a TC on the deal (a member) sees the grant and "What Jane Doe sees", read-only: no Invite, Resend or Stop sharing', async () => {
+      const fake = live();
+      render(fake, '/t/deal', 'tc', dealHost(OTHER, [ME]));
+      const s = await section();
+      expect(await within(s).findByRole('link', { name: 'What Jane Doe sees' })).toBeInTheDocument();
+      expect(controls(s)).toEqual([]);
+      expect(within(s).getByText(STAFF_WORDS.readOnly('deal'))).toBeInTheDocument();
+      expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    });
+
+    it('a member agent who does not own the deal: no Invite (nobody invited yet), read-only words', async () => {
+      const fake = none();
+      render(fake, '/t/deal', 'agent', dealHost(OTHER, [ME]));
+      const s = await section();
+      expect(await within(s).findByText(STAFF_WORDS.noOne)).toBeInTheDocument();
+      expect(controls(s)).toEqual([]);
+      expect(within(s).getByText(STAFF_WORDS.readOnly('deal'))).toBeInTheDocument();
+    });
+
+    it('a member agent who does not own the deal: no Resend or Stop sharing on a live grant', async () => {
+      const fake = live();
+      render(fake, '/t/deal', 'agent', dealHost(OTHER, [ME]));
+      const s = await section();
+      expect(await within(s).findByRole('link', { name: 'What Jane Doe sees' })).toBeInTheDocument();
+      expect(controls(s)).toEqual([]);
+    });
+
+    it('the agent who owns the deal gets Resend and Stop sharing, and no read-only line', async () => {
+      const fake = live();
+      render(fake, '/t/deal', 'agent', dealHost(ME));
+      const s = await section();
+      expect(await within(s).findByRole('button', { name: STAFF_WORDS.resend })).toBeInTheDocument();
+      expect(within(s).getByRole('button', { name: 'Stop sharing with Jane Doe' })).toBeInTheDocument();
+      expect(within(s).queryByText(STAFF_WORDS.readOnly('deal'))).toBeNull();
+    });
+
+    it('an Owner, an Admin and a Team Lead who can open the section get Invite, without owning the deal', async () => {
+      for (const role of ['owner', 'admin', 'team_lead'] as const) {
+        const fake = none();
+        const v = render(fake, '/t/deal', role, dealHost(OTHER));
+        const s = await section();
+        expect(await within(s).findByRole('button', { name: 'Invite Jane Doe' }), role).toBeInTheDocument();
+        v.view.unmount();
+      }
+    });
+
+    it('mayManagePortal mirrors portal.manage', () => {
+      const f = (own: boolean, member: boolean) => ({ own, member });
+      expect((['owner', 'admin', 'team_lead'] as const).map((r) => mayManagePortal(r, f(false, false)))).toEqual([true, true, true]);
+      expect([mayManagePortal('agent', f(true, false)), mayManagePortal('agent', f(false, true)), mayManagePortal('agent', f(false, false))]).toEqual([true, false, false]);
+      expect([mayManagePortal('tc', f(false, true)), mayManagePortal('tc', f(true, true)), mayManagePortal('isa', f(true, true)), mayManagePortal(null, f(true, true))]).toEqual([false, false, false, false]);
+    });
   });
 
   it('a listing form reads the listing route (the follow-up mounts it)', async () => {
