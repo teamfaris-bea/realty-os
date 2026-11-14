@@ -14,6 +14,7 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { DealDetailView, DealStage, DealView, FinancialsView } from '../feed/lib/types.js';
 import { MilestoneTimeline } from './MilestoneTimeline.js';
 import { DocumentsSection } from '../documents/DocumentsSection.js';
+import { ClientPortalSection } from '../client-portal/index.js'; // module 46
 
 /** The stage after `s` on the happy path, or null at the end (pure; unit-tested). */
 export function nextStage(s: DealStage): DealStage | null {
@@ -152,6 +153,8 @@ export function DealPage() {
       {/* module 39: the milestone timeline replaces Phase 1's "Contract dates" (Done is kept there) */}
       <MilestoneTimeline dealId={d.id} />
       <DocumentsSection kind="deal" id={d.id} ownerUserId={d.ownerUserId} memberUserIds={d.members.map((m) => m.userId)} />
+      {/* module 46: the client portal (invite, what the client sees, stop sharing) */}
+      <ClientPortalSection dealId={d.id} primaryContact={d.primaryContact} />
 
       <Section title="Where this deal came from">
         <p className="text-[15px] text-ink">

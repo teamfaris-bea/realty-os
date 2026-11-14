@@ -135,7 +135,7 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
       }
     }
     expect(problems).toEqual([]);
-    expect(previewImports).toBeGreaterThanOrEqual(0); // > 0 once the staff preview exists (deliverable 7)
+    expect(previewImports).toBeGreaterThan(0);
   });
 
   it('E697, R-PORTALWEB-9: no staff file names a client portal path (staff code never calls the client API)', () => {
