@@ -304,6 +304,7 @@ describe('realty/isolated-bundle (PHASE2_3_PLAN §5.3, module 37: the chat widge
 });
 
 describe('realty/isolated-bundle, b15 audit P46-SEC-1: no test helper and no unreadable import in the shipped bundle', () => {
+  /** @param {string} p a path under apps/web/src/portal */
   const at = (p) => new URL(`../../../apps/web/src/portal/${p}`, import.meta.url).pathname;
   const opts = [{ dir: 'portal', allow: ['react'] }];
   tester.run('isolated-bundle', rules['isolated-bundle'], {
