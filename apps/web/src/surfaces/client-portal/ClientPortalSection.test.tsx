@@ -4,7 +4,7 @@ import type { Role } from '@realty/core/foundation';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { contractSentence } from '../../portal/test/portalContract.js';
+import { contractSentence, copyEntry } from '../../portal/test/portalContract.js';
 import type { SurfaceModule } from '../../shell/index.js';
 import { FakeFetch } from '../../shell/testing/fakeApi.js';
 import { ME, OTHER, app } from '../documents/fixtures.js';
@@ -179,6 +179,17 @@ describe('ClientPortalSection (R-PORTALWEB-10)', () => {
       expect([mayManagePortal('agent', f(true, false)), mayManagePortal('agent', f(false, true)), mayManagePortal('agent', f(false, false))]).toEqual([true, false, false]);
       expect([mayManagePortal('tc', f(false, true)), mayManagePortal('tc', f(true, true)), mayManagePortal('isa', f(true, true)), mayManagePortal(null, f(true, true))]).toEqual([false, false, false, false]);
     });
+  });
+
+  it("b15 (b14 low f): a soft-deleted client: 45's words that the record is deleted, no preview link, and no Invite (45 refuses it until the record is restored)", async () => {
+    const deleted = "This person's record is deleted, so the client sees nothing until it is restored.";
+    expect(deleted).toBe(copyEntry('NOT_VISIBLE', 'CONTACT_DELETED'));
+    const fake = new FakeFetch().on(STATE, F.ok('GET /deals/:id/portal', F.state({ accounts: [F.account({ status: 'active', statusText: 'Signed in on 2026-11-11.' })], grants: [F.grantStaff({ state: 'contact_deleted', stateText: deleted })] })));
+    render(fake, '/t/deal', 'owner');
+    const s = await section();
+    expect(await within(s).findByText(/This person's record is deleted, so the client sees nothing until it is restored\./)).toBeInTheDocument();
+    expect(within(s).queryByRole('link', { name: /sees/ })).toBeNull();
+    expect(within(s).queryAllByRole('button', { name: /^(Invite|Send the invite again|Stop sharing)/ })).toEqual([]);
   });
 
   it('a listing form reads the listing route (the follow-up mounts it)', async () => {

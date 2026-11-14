@@ -74,7 +74,7 @@ export const AccountStaff = z.strictObject({
 export const GrantStaff = z.strictObject({
   id: Uuid,
   accountId: Uuid,
-  state: z.enum(['live', 'revoked', 'lapsed', 'not_a_party', 'account_disabled']),
+  state: z.enum(['live', 'revoked', 'lapsed', 'not_a_party', 'account_disabled', 'contact_deleted']),
   stateText: z.string(),
   grantedAt: iso,
   expiresAt: iso.nullable(),

@@ -49,6 +49,8 @@ export const NOT_VISIBLE = {
   REVOKED: 'This access was revoked, so the client no longer sees it.',
   LAPSED: 'This access has ended (it expires after the deal closed), so the client no longer sees it.',
   NOT_A_PARTY: 'The client is no longer a party to this deal or listing, so they see nothing here.',
+  /** b15 (b14 low f): a soft-deleted client (0091 makes portal_party_ok false for them; they are still a party) */
+  CONTACT_DELETED: "This person's record is deleted, so the client sees nothing until it is restored.",
   DISABLED: 'The client portal account is disabled.',
 } as const;
 export type NotVisibleReason = keyof typeof NOT_VISIBLE;

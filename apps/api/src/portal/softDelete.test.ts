@@ -9,6 +9,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { systemActor } from '../worker/systemActor.js';
+import { NOT_VISIBLE } from './shared/copy.js';
 import { PortalClient, askLink, call, client, deal, invite, json, lastToken, portalWorld, setPortalCleared, signIn, slugOf, type PortalWorld } from './testing.js';
 
 let h: ApiHarness;
@@ -91,5 +92,24 @@ describe('B14-OWN-1: a soft-deleted client (Q-PORTAL-20, conservative default)',
     expect(await meGrants(pc)).toEqual({ status: 200, grants: [grantId] });
     const again = await signIn(h, slug, c.email, new PortalClient(h, ip()));
     expect(await meGrants(again)).toEqual({ status: 200, grants: [grantId] });
+  });
+
+  it('b15 (b14 low f): the Owner\'s deal section and preview say the client\'s record is deleted (never "no longer a party"), and live again once it is restored', async () => {
+    const agent = w.agents[0]!;
+    const c = await client(agent, { firstName: 'Kit' });
+    const dealId = await deal(agent, c.id);
+    const inv = await invite(agent, dealId, c.id);
+    expect(inv.status).toBeLessThan(300);
+    const grantId = inv.body.grant.id;
+    const state = async () => (await call<{ grants: { id: string; state: string; stateText: string }[] }>(w.owner, 'GET', `/deals/${dealId}/portal`)).body.grants.find((g) => g.id === grantId)!;
+    const why = async () => (await call<{ visibleNow: boolean; why: string[] }>(w.owner, 'GET', `/portal-grants/${grantId}/preview`)).body.why;
+    expect((await state()).state).toBe('live');
+    expect((await call(w.owner, 'POST', `/leads/${c.id}/delete`, { commandId: randomUUID() })).status).toBeLessThan(300);
+    expect(await state()).toMatchObject({ state: 'contact_deleted', stateText: NOT_VISIBLE.CONTACT_DELETED });
+    expect(NOT_VISIBLE.CONTACT_DELETED).toBe("This person's record is deleted, so the client sees nothing until it is restored.");
+    expect(await why()).toContain(NOT_VISIBLE.CONTACT_DELETED);
+    expect(await why()).not.toContain(NOT_VISIBLE.NOT_A_PARTY);
+    expect((await call(w.owner, 'POST', `/leads/${c.id}/reopen`, { commandId: randomUUID() })).status).toBeLessThan(300);
+    expect(await state()).toMatchObject({ state: 'live', stateText: 'Live.' });
   });
 });

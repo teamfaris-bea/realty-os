@@ -44,7 +44,7 @@ export async function accountViews(tx: Tx, ids: readonly string[]): Promise<Acco
 export interface GrantStaffView {
   id: string;
   accountId: string;
-  state: 'live' | 'revoked' | 'lapsed' | 'not_a_party' | 'account_disabled';
+  state: 'live' | 'revoked' | 'lapsed' | 'not_a_party' | 'account_disabled' | 'contact_deleted';
   stateText: string;
   grantedAt: string;
   expiresAt: string | null;
@@ -64,13 +64,16 @@ interface GrantRow {
   lapsed: boolean;
   party: boolean;
   account_status: string;
+  /** the account's contact is soft-deleted (seen by a tenant-wide reader: contacts_select hides deleted rows from others) */
+  contact_deleted: boolean;
 }
 
 async function grantRows(tx: Tx, where: ReturnType<typeof sql>): Promise<GrantRow[]> {
   const r = await sql<GrantRow>`
     SELECT g.id, g.portal_account_id, g.display, g.granted_at, g.expires_at, g.revoked_at, u.display_name AS revoked_by,
            (g.expires_at IS NOT NULL AND g.expires_at <= now()) AS lapsed,
-           app.portal_party_ok(g.tenant_id, g.portal_account_id, g.deal_id, g.listing_id) AS party, a.status AS account_status
+           app.portal_party_ok(g.tenant_id, g.portal_account_id, g.deal_id, g.listing_id) AS party, a.status AS account_status,
+           EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = a.tenant_id AND c.id = a.contact_id AND c.deleted_at IS NOT NULL) AS contact_deleted
       FROM portal_grants g JOIN portal_accounts a ON a.tenant_id = g.tenant_id AND a.id = g.portal_account_id
       LEFT JOIN users u ON u.id = g.revoked_by_user_id
      WHERE g.tenant_id = app.tenant_id() AND ${where} ORDER BY g.granted_at, g.id`.execute(tx);
@@ -81,6 +84,9 @@ function stateOf(g: GrantRow): { state: GrantStaffView['state']; reason: NotVisi
   if (g.revoked_at) return { state: 'revoked', reason: 'REVOKED' };
   if (g.lapsed) return { state: 'lapsed', reason: 'LAPSED' };
   if (g.account_status === 'disabled') return { state: 'account_disabled', reason: 'DISABLED' };
+  // b15 (b14 low f): before the party check: 0091's portal_party_ok is false for a soft-deleted client, who is still a
+  // party; saying "no longer a party" would be false
+  if (g.contact_deleted) return { state: 'contact_deleted', reason: 'CONTACT_DELETED' };
   if (!g.party) return { state: 'not_a_party', reason: 'NOT_A_PARTY' };
   return { state: 'live', reason: null };
 }

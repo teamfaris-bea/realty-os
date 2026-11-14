@@ -625,7 +625,8 @@
                   "revoked",
                   "lapsed",
                   "not_a_party",
-                  "account_disabled"
+                  "account_disabled",
+                  "contact_deleted"
                 ]
               },
               "stateText": {
@@ -1006,7 +1007,8 @@
                   "revoked",
                   "lapsed",
                   "not_a_party",
-                  "account_disabled"
+                  "account_disabled",
+                  "contact_deleted"
                 ]
               },
               "stateText": {
@@ -1394,7 +1396,8 @@
                     "revoked",
                     "lapsed",
                     "not_a_party",
-                    "account_disabled"
+                    "account_disabled",
+                    "contact_deleted"
                   ]
                 },
                 "stateText": {
@@ -1789,7 +1792,8 @@
                     "revoked",
                     "lapsed",
                     "not_a_party",
-                    "account_disabled"
+                    "account_disabled",
+                    "contact_deleted"
                   ]
                 },
                 "stateText": {

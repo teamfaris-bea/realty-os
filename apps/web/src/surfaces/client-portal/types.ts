@@ -23,7 +23,7 @@ export interface AccountStaff {
 export interface GrantStaff {
   id: string;
   accountId: string;
-  state: 'live' | 'revoked' | 'lapsed' | 'not_a_party' | 'account_disabled';
+  state: 'live' | 'revoked' | 'lapsed' | 'not_a_party' | 'account_disabled' | 'contact_deleted';
   stateText: string;
   grantedAt: string;
   expiresAt: string | null;

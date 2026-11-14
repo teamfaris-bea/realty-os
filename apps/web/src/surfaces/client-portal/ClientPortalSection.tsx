@@ -58,7 +58,11 @@ export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUs
     const acc = s?.accounts.find((a) => a.id === g.accountId);
     return acc && primaryContact && acc.contactId === primaryContact.id ? primaryContact.name : STAFF_WORDS.theClient;
   };
-  const primaryLive = s && primaryContact ? s.grants.find((g) => g.state === 'live' && s.accounts.some((a) => a.id === g.accountId && a.contactId === primaryContact.id)) : undefined;
+  const isPrimary = (g: GrantStaff) => !!s && !!primaryContact && s.accounts.some((a) => a.id === g.accountId && a.contactId === primaryContact.id);
+  const primaryLive = s ? s.grants.find((g) => g.state === 'live' && isPrimary(g)) : undefined;
+  // b15 (b14 low f): a soft-deleted client is refused an invite (45: not found) until the record is restored; the
+  // grant's line says so in 45's words, so no Invite or Resend is offered
+  const primaryDeleted = s ? s.grants.some((g) => g.state === 'contact_deleted' && isPrimary(g)) : false;
 
   const doInvite = async (resend: boolean) => {
     if (!primaryContact) return;
@@ -120,7 +124,7 @@ export function ClientPortalSection({ dealId, listingId, primaryContact, ownerUs
               );
             })}
           </ul>
-          {canManage && primaryContact ? (
+          {canManage && primaryContact && !primaryDeleted ? (
             <div className="flex flex-wrap gap-2">
               {primaryLive ? (
                 <Button variant="secondary" pending={invite.pending} onClick={() => void doInvite(true)}>
