@@ -47,7 +47,8 @@ export const NOT_VISIBLE = {
   PORTAL_OFF: 'The client portal is not turned on for this team yet, so the client sees nothing.',
   NOT_SIGNED_IN: 'The client has not signed in yet.',
   REVOKED: 'This access was revoked, so the client no longer sees it.',
-  LAPSED: 'This access has ended (it expires after the deal closed), so the client no longer sees it.',
+  /** b15 review L2: true for every end the sync stores (a deal closed 90 days ago, a lost deal, a listing off the market) */
+  LAPSED: 'This access has ended, so the client no longer sees it.',
   NOT_A_PARTY: 'The client is no longer a party to this deal or listing, so they see nothing here.',
   /** b15 (b14 low f): a soft-deleted client (0091 makes portal_party_ok false for them; they are still a party) */
   CONTACT_DELETED: "This person's record is deleted, so the client sees nothing until it is restored.",

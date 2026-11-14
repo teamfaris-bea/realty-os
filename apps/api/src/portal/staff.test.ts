@@ -88,6 +88,22 @@ describe('R-PORTAL-13 invite (E690-E693)', () => {
     expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM portal_grants WHERE deal_id = $1`, [d2])).rows[0]!.n).toBe(1);
   });
 
+  it('b15 review L2: a grant that ended because its deal was lost reads lapsed in words that are true for any end (no "the deal closed")', async () => {
+    const c = await client(agent(), { firstName: 'Lena' });
+    const d = await deal(agent(), c.id);
+    expect((await invite(agent(), d, c.id)).status).toBe(200);
+    const dv = await call<{ deal: { rowVersion: number } }>(agent(), 'GET', `/deals/${d}`);
+    expect((await call(agent(), 'POST', `/deals/${d}/stage`, { rowVersion: dv.body.deal.rowVersion, stage: 'lost', lostReason: 'went elsewhere' })).status).toBe(200);
+    await sync();
+    await new Promise((r) => setTimeout(r, 1100)); // the sync stores expires_at = granted_at + 1 s at the earliest
+    const view = await call<{ grants: { id: string; state: string; stateText: string }[] }>(agent(), 'GET', `/deals/${d}/portal`);
+    expect(view.body.grants.map((g) => g.state)).toEqual(['lapsed']);
+    expect(view.body.grants[0]!.stateText).toBe('This access has ended, so the client no longer sees it.');
+    const preview = await call<{ visibleNow: boolean; why: string[] }>(agent(), 'GET', `/portal-grants/${view.body.grants[0]!.id}/preview`);
+    expect(preview.body.why.join(' ')).not.toMatch(/closed/);
+    expect(preview.body.why).toContain('This access has ended, so the client no longer sees it.');
+  });
+
   it('E691: no active email or phone is 409 PORTAL_LOGIN_POINT_MISSING; a login point later removed makes the staff view say sign-in is impossible', async () => {
     const c = await client(agent(), { firstName: 'Nopo' });
     const d = await deal(agent(), c.id);
