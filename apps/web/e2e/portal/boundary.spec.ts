@@ -141,7 +141,10 @@ test('E703 (b15 audit P46-SEC-2): a link opened in a tab already on the portal i
   await jane.evaluate((t) => {
     location.hash = `token=${t}`;
   }, token);
-  await expect(jane.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
+  // b16: the landing's own h1, exactly (a substring "Sign in" also matched the h1 already on screen, "Sign in to your
+  // client portal", so this wait passed before the fragment was read), and the fragment gone from the address
+  await expect(jane.getByRole('heading', { level: 1, name: 'Sign in', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => jane.url(), { timeout: 20_000 }).not.toContain('#');
   expect(loads).toBe(0);
   expect(jane.url()).not.toContain('#');
   const now = await jane.evaluate(() => ({ href: location.href, state: JSON.stringify(history.state), entries: history.length }));
