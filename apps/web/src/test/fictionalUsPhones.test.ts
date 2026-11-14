@@ -13,6 +13,9 @@
 // - a separated NANP number with or without a leading 1: (415) 555-0100, 415-555-0100, 415.555.0100, 1-415-555-0100;
 // - a quoted bare 10-digit number, or 11 digits starting with 1: '4155550100', "14155550100" (a quoted UK drama
 //   number written as its digits after +44 also passes);
+// - b17 round 2 (M1): any other bare run of ten digits, or 1 and ten, whose digits stop where a number's do: after a
+//   comma, a quote, a space, a newline escape (\n), "tel:", as a JSON number ("phone": 4155550100) and so on, but not
+//   inside hex or an id (c4155550100d, 4155550100_zpid) or a decimal (10428.14155550100, 4155550100.5);
 // - a generator: "+1" and up to nine digits, or a written area code and part of a number ("(415) 55", "415-555-"),
 //   followed by a template hole or a concatenation. It passes only when its digits already reach 555-01
 //   ("+1843555013" then a hole) or, for "+1" and fewer than eight digits, when its line spells 55501 after the hole
@@ -49,6 +52,10 @@ export interface Found {
 const PLUS1 = /(?<![\w+])\+1[\s.-]?(?:\((\d{3})\)|(\d{3}))[\s.-]?(\d{3})[\s.-]?(\d{4})(?!\d)/g;
 const NANP = /(?<![\w+$.-])(?:1[\s.-]?)?(?:\(([2-9]\d{2})\)\s?|([2-9]\d{2})[\s.-])(\d{3})[\s.-](\d{4})(?![\w-])/g;
 const QUOTED = /(['"`])1?([2-9]\d{9})\1/g;
+// b17 round 2 (M1): ten digits (or 1 and ten) that stop where a number stops: not after or before a letter, a digit or
+// an underscore (hex, ids such as 123_zpid), not after a decimal point and not before a fraction. A newline, tab or
+// return escape (\n, \t, \r) before the digits counts as a separator.
+const BARE = /(?:(?<=\\[nrt])|(?<![\w.]))1?([2-9]\d{9})(?!\w|\.\d)/g;
 const HOLE = String.raw`(?=\$\{|['"\x60]\s*(?:\+|\|\|))`;
 const GENERATOR = new RegExp(String.raw`(?<![\w+])\+1(\d{0,9})` + HOLE, 'g');
 const WRITTEN_GENERATORS = [new RegExp(String.raw`\(([2-9]\d{2})\)[\s.-]?([\d\s.-]{0,8})` + HOLE, 'g'), new RegExp(String.raw`(?<![\w+$.:/-])([2-9]\d{2})-(\d[\d-]{0,7})` + HOLE, 'g')];
@@ -88,6 +95,7 @@ export function usNumbers(text: string): Found[] {
       add(m, ten, isFictionalUs(ten));
     }
     for (const m of l.matchAll(QUOTED)) add(m, m[2]!, isFictionalUs(m[2]!) || (m[0].length === 12 && UK_DRAMA.test(m[2]!)));
+    for (const m of l.matchAll(BARE)) add(m, m[1]!, isFictionalUs(m[1]!) || (m[0].length === 10 && UK_DRAMA.test(m[1]!)));
   });
   return out;
 }
@@ -113,9 +121,54 @@ export const ALLOWED: Record<string, Record<string, string>> = {
   'packages/db/test/erase_trigger_order_0089.test.ts': {
     '4294967295': 'not a phone number: 2^32 - 1, an out-of-range value the test passes as an id',
   },
+  // b17 round 2 (M1): ids the bare-digit read finds
+  'apps/api/src/auth/hardening.test.ts': {
+    '2130706433': 'not a phone number: 127.0.0.1 written as one decimal integer, a push endpoint host the test proves is refused',
+  },
+  'apps/api/src/imports/fub.test.ts': {
+    '2130706433': 'not a phone number: 127.0.0.1 written as one decimal integer, a media URL host the import refuses',
+  },
+  'apps/api/src/imports/fub.ts': {
+    '2130706433': 'not a phone number: the comment names 127.0.0.1 written as one decimal integer (an IP literal the URL check refuses)',
+  },
+  'apps/api/src/imports/fub.large.test.ts': {
+    '4294967296': "not a phone number: 2^32, the divisor of the test's seeded random number generator",
+  },
+  'apps/web/src/portal/test/hostile.ts': {
+    '4294967296': "not a phone number: 2^32, the divisor of the test's seeded random number generator",
+  },
+  'apps/api/src/leadEmail/parse/fixtures.ts': {
+    '2081234567': 'not a phone number: the Zillow property id (zpid) of the lead-email fixture parse.test.ts reads',
+  },
+  'apps/api/src/load/generate.ts': {
+    '2147483647': "not a phone number: 2^31 - 1, the mask that keeps the load generator's SQL hash positive",
+  },
+  'apps/api/src/transactions/adversarial.test.ts': {
+    '4417123456': 'not a phone number: the account number of a forged wire-instruction label the test proves never reaches a message',
+  },
+  'apps/api/src/transactions/updates.test.ts': {
+    '4417123456': 'not a phone number: the account number of a payment-details label the test proves sends nothing (R-GATE-7)',
+  },
+  'apps/web/src/widget/styles.ts': {
+    '2147483646': "not a phone number: the chat widget's launcher z-index, 2^31 - 2 (one under the panel)",
+    '2147483647': "not a phone number: the chat widget's panel z-index, 2^31 - 1 (the largest a browser keeps)",
+  },
+  'packages/db/test/riOrderFixture.ts': {
+    '4294967295': 'not a phone number: the comment names the largest Postgres oid, 2^32 - 1',
+  },
 };
 
+/** The numbers in a file (`rel` from the repository root) that are neither fictional nor allowed there, as `rel:line: text`. */
+export function outsideRange(rel: string, text: string): string[] {
+  const allowed = rel === SELF ? Object.assign({}, ...Object.values(ALLOWED)) as Record<string, string> : (ALLOWED[rel] ?? {});
+  return usNumbers(text)
+    .filter((n) => !n.ok && !Object.hasOwn(allowed, n.digits))
+    .map((n) => `${rel}:${n.line}: ${n.text}`);
+}
+
 const sample = (...parts: string[]) => parts.join('');
+/** 415 055-01kk: an exchange starting with 0, so no line has it. Built at run time, so this file never spells one. */
+const noLine = (kk: string) => sample('415', '055', '01', kk);
 
 describe('b17 (B17R-2): US phone numbers in apps, packages and docs are fictional (555-0100 to 555-0199)', () => {
   it('the check knows the range and the formats', () => {
@@ -144,16 +197,28 @@ describe('b17 (B17R-2): US phone numbers in apps, packages and docs are fictiona
     ]);
   });
 
+  it('b17 round 2 (M1): a bare 10- or 11-digit run is read wherever its digits stop: after a comma, a quote, a newline escape or tel:, and as a JSON number', () => {
+    const text = [
+      `csv: 'name,phone\\nJo,${noLine('01')}\\n${sample('1', noLine('02'))},x'`,
+      `json: {"phone": ${noLine('03')}, "list": [${sample('415', '555', '0104')}], "s": "${noLine('05')} ext 2"}`,
+      `link: <a href="tel:${noLine('06')}">`,
+      // digits that run on into letters, a decimal or more digits are not a number: hex, a fraction, an id suffix
+      `not numbers: c${noLine('07')}d, 10428.${sample('1', noLine('08'))}, ${noLine('09')}_zpid, ${noLine('10')}.5, ${noLine('11')}0`,
+    ].join('\n');
+    expect(usNumbers(text).map((f) => [f.line, f.digits, f.ok])).toEqual([
+      [1, noLine('01'), false], [1, noLine('02'), false],
+      [2, noLine('03'), false], [2, '4155550104', true], [2, noLine('05'), false],
+      [3, noLine('06'), false],
+    ]);
+    // planted in a file the scan reads, it fails the scan; a fictional one passes
+    const planted = 'packages/core/src/planted.json';
+    expect(outsideRange(planted, `{\n  "phone": ${noLine('12')},\n  "ok": 4155550112\n}`)).toEqual([`${planted}:2: ${noLine('12')}`]);
+  });
+
   it('every +1 or NANP number under apps, packages and docs is in 555-0100..0199 or allowed with a reason', () => {
     const files = ['apps', 'packages', 'docs'].flatMap((d) => filesUnder(join(repo, d)));
     expect(files.length).toBeGreaterThan(2000);
-    const outside = files.flatMap((f) => {
-      const rel = relative(repo, f).split('\\').join('/');
-      const allowed = rel === SELF ? Object.assign({}, ...Object.values(ALLOWED)) as Record<string, string> : (ALLOWED[rel] ?? {});
-      return usNumbers(readFileSync(f, 'utf8'))
-        .filter((n) => !n.ok && !(n.digits in allowed))
-        .map((n) => `${rel}:${n.line}: ${n.text}`);
-    });
+    const outside = files.flatMap((f) => outsideRange(relative(repo, f).split('\\').join('/'), readFileSync(f, 'utf8')));
     expect(outside).toEqual([]);
   });
 
