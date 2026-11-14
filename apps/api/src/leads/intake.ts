@@ -456,6 +456,15 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     // decided on the row read above under this contact's lock, a live record (merges were followed): a refusal is a bug
     if (!r.outcome.ok) throw new AppError('INTERNAL_ERROR');
   }
+  // b18 review B18S-1: a source marked "No AI care for leads from this source" sent someone already in the CRM. This
+  // inquiry row is what app.person_no_ai_care_source (0096) now reads, so start, Continue and resume are refused; care
+  // already running for them gets a turn now, whose chain (link 11) pauses it with the note, as turning the setting on
+  // does (leads/sources.ts), rather than at the next sweep (dispatch TX1 refuses any AI message meanwhile).
+  if (source.no_ai_care) {
+    for (const a of await repo.liveAiCareOf(tx, contactId)) {
+      await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
+    }
+  }
   return { contactId, outcome, inquiryId };
 }
 

@@ -9,6 +9,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { inviteViaApi } from '../admin/testing.js';
+import { postIntake } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type IsaWorld, assignmentOf, call, freshReauth, isaLead, isaWorld, runIsa, startCare } from './testing.js';
 
@@ -17,6 +18,8 @@ let w: IsaWorld;
 let admin: TestClient;
 let source: string;
 let other: string;
+let referral: { id: string; token: string };
+let later: { id: string; token: string };
 
 const actorOf = (c: TestClient, role: UserActor['role']): UserActor => ({ kind: 'user', userId: c.userId!, tenantId: w.tenantId, role, sessionId: 'b18-test' }) as UserActor;
 
@@ -26,6 +29,13 @@ beforeAll(async () => {
   admin = await inviteViaApi(h, w.owner, 'admin');
   source = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Referral source (test)', kind: 'portal' })).body.source.id;
   other = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Open house sign-in (test)', kind: 'portal' })).body.source.id;
+  // B18S-1: two more made-up sources whose inquiries reach people already in the CRM (through the signed intake webhook)
+  const made = async (name: string) => {
+    const r = await call<{ source: { id: string }; ingestToken: string }>(w.owner, 'POST', '/lead-sources', { name, kind: 'portal' });
+    return { id: r.body.source.id, token: r.body.ingestToken };
+  };
+  referral = await made('Partner referral (test)');
+  later = await made('Second referral (test)');
 });
 afterAll(async () => {
   await h?.close();
@@ -124,5 +134,120 @@ describe('b18 item f: "No AI care for leads from this source" (Owner-only, R-ISA
     // a Continue (a new linked assignment) is refused the same way
     expect((await call(w.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/continue`, {})).status).toBeGreaterThanOrEqual(400);
     await setNoAiCare(w.owner, false);
+  });
+});
+
+// B18S-1 (b18 review): the setting covers every lead the source sends, not only the person it first created. An inquiry
+// from a marked source that the intake attaches to someone already in the CRM never changes original_lead_source_id
+// (fixed once set, 0071), so 0094 alone let AI care start, continue and resume for them, and link 11 said "allows".
+describe('B18S-1: "No AI care for leads from this source" covers an inquiry attached to an existing person', () => {
+  /** the marked source sends `phone` again: the signed intake webhook, matched to the existing person by the phone */
+  const sends = async (src: { token: string }, phone: string) => {
+    const r = await postIntake(h, src.token, { inquiryType: 'buy', fullName: 'Jane Doe', phones: [phone], message: 'Referred by our partner (test).' });
+    expect([200, 201], r.body).toContain(r.statusCode);
+    return JSON.parse(r.body) as { contactId: string; outcome: string };
+  };
+  const original = async (contactId: string) => (await h.su.query<{ s: string | null }>('SELECT original_lead_source_id AS s FROM contacts WHERE id = $1', [contactId])).rows[0]!.s;
+  const definerSays = (c: TestClient, role: UserActor['role'], contactId: string) =>
+    withTenantTx(actorOf(c, role), async (tx) => (await sql<{ no: boolean }>`SELECT app.person_no_ai_care_source(app.tenant_id(), ${contactId}::uuid) AS no`.execute(tx)).rows[0]!.no, { db: h.database });
+
+  beforeAll(async () => {
+    expect((await setNoAiCare(w.owner, true, referral.id)).status).toBe(200);
+  });
+
+  it('B18S-1 E723: an inquiry from the marked source attached to a person from another source refuses the start, the panel says why, and the definer answers yes; a merged-in record\'s inquiry counts too', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    await fromSource(l.id, other);
+    const r = await sends(referral, l.phone);
+    expect(r.contactId).toBe(l.id);
+    expect(['attached', 'reinquiry']).toContain(r.outcome);
+    expect(await original(l.id)).toBe(other); // the record's own attribution is unchanged (0071)
+    expect(await definerSays(agent, 'agent', l.id)).toBe(true);
+    const p = await panel(agent, l.id);
+    expect(p.body.canStart).toBe(false);
+    expect(p.body.startRefusal).toMatchObject({ code: 'AI_ISA_SOURCE_NO_AI_CARE' });
+    const s = await startCare(agent, l.id);
+    expect([s.status, s.code]).toEqual([409, 'AI_ISA_SOURCE_NO_AI_CARE']);
+    expect(await assignmentOf(h, l.id)).toBeNull();
+    // a record merged into the person that the marked source sent again counts for the person
+    const survivor = await isaLead(h, agent);
+    await fromSource(survivor.id, other);
+    const dup = await isaLead(h, agent);
+    await fromSource(dup.id, other);
+    expect((await sends(referral, dup.phone)).contactId).toBe(dup.id);
+    await h.su.query(`SET session_replication_role = replica; UPDATE contacts SET merged_into_contact_id = '${survivor.id}' WHERE id = '${dup.id}'; SET session_replication_role = origin`);
+    expect(await definerSays(agent, 'agent', survivor.id)).toBe(true);
+    expect((await startCare(agent, survivor.id)).code).toBe('AI_ISA_SOURCE_NO_AI_CARE');
+    // a person no marked source sent still starts, and the definer says no
+    const ok = await isaLead(h, agent);
+    await fromSource(ok.id, other);
+    expect(await definerSays(agent, 'agent', ok.id)).toBe(false);
+    expect((await startCare(agent, ok.id)).status).toBe(200);
+  });
+
+  it('B18S-1 E723: care running when the marked source sends the person again (a recent touch: no new period) pauses source_no_ai_care at once, says so, and cannot be resumed; the database refuses the resume too', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    await fromSource(l.id, other);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const before = await h.su.query<{ s: string }>('SELECT ownership_period_seq AS s FROM contacts WHERE id = $1', [l.id]);
+    expect((await sends(referral, l.phone)).contactId).toBe(l.id);
+    expect((await h.su.query<{ s: string }>('SELECT ownership_period_seq AS s FROM contacts WHERE id = $1', [l.id])).rows[0]!.s).toBe(before.rows[0]!.s);
+    await runIsa(h, w.tenantId);
+    const a = (await assignmentOf(h, l.id))!;
+    expect(a).toMatchObject({ ended_at: null, pause_reason: 'source_no_ai_care' });
+    const p = await panel(agent, l.id);
+    expect(p.body.canResume).toBe(false);
+    expect(p.body.chain.find((x) => x.link === 11)).toMatchObject({ effect: 'pause', code: 'AI_ISA_SOURCE_NO_AI_CARE' });
+    const resume = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/resume`, {});
+    expect([resume.status, resume.code]).toEqual([409, 'AI_ISA_SOURCE_NO_AI_CARE']);
+    await expect(withTenantTx(actorOf(agent, 'agent'), (tx) => sql`UPDATE ai_isa_assignments SET paused_at = NULL, paused_by_kind = NULL, paused_by_user_id = NULL, pause_reason = NULL, epoch = epoch + 1
+      WHERE tenant_id = app.tenant_id() AND id = ${a.id}::uuid`.execute(tx), { db: h.database })).rejects.toThrow(/AI_ISA_SOURCE_NO_AI_CARE/);
+  });
+
+  it('B18S-1 E723: a re-inquiry from the marked source that pauses care REINQUIRY cannot be continued: Continue is refused AI_ISA_SOURCE_NO_AI_CARE and nothing ends', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    await fromSource(l.id, other);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const a0 = (await assignmentOf(h, l.id))!;
+    // the last touch is old, so the source's inquiry starts a same-owner new period (REINQUIRY_SLA, R-OWN-20)
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE contacts SET owned_at = owned_at - interval '8 days', last_human_touch_at = last_human_touch_at - interval '8 days' WHERE id = $1`, [l.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    expect(await sends(referral, l.phone)).toMatchObject({ contactId: l.id, outcome: 'reinquiry' });
+    await h.su.query(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at) VALUES ($1, 'realtime', 'ai_isa.turn', $2::jsonb, now())`,
+      [w.tenantId, JSON.stringify({ assignmentId: a0.id, trigger: 'sweep', epoch: a0.epoch })]);
+    await runIsa(h, w.tenantId);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: a0.id, pause_reason: 'reinquiry', ended_at: null });
+    // the panel offers no start while care is paused (startRefusal is for a person with no live care): link 11 says why
+    const p = await panel(agent, l.id);
+    expect(p.body.chain.find((x) => x.link === 11)).toMatchObject({ effect: 'pause', code: 'AI_ISA_SOURCE_NO_AI_CARE' });
+    const c = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
+    expect([c.status, c.code]).toEqual([409, 'AI_ISA_SOURCE_NO_AI_CARE']);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: a0.id, pause_reason: 'reinquiry', ended_at: null });
+    expect((await h.su.query('SELECT 1 FROM ai_isa_assignments WHERE contact_id = $1', [l.id])).rows).toHaveLength(1);
+  });
+
+  it('B18S-1 E723: turning the setting on pauses running care of a person whose only link to the source is an attached inquiry', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    await fromSource(l.id, other);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    expect((await sends(later, l.phone)).contactId).toBe(l.id); // the setting is still off for it: care goes on
+    await runIsa(h, w.tenantId);
+    expect((await assignmentOf(h, l.id))!.paused_at).toBeNull();
+    const on = await setNoAiCare(w.owner, true, later.id);
+    expect(on.body.pausing).toBeGreaterThanOrEqual(1);
+    await runIsa(h, w.tenantId);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ ended_at: null, pause_reason: 'source_no_ai_care' });
+    await setNoAiCare(w.owner, false, later.id);
   });
 });

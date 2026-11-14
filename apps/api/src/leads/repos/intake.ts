@@ -11,12 +11,26 @@ export interface LeadSourceRow {
   kind: string;
   consent_disclosure_id: string | null;
   active: boolean;
+  /** b18 item f: the Owner's "No AI care for leads from this source" (0094) */
+  no_ai_care: boolean;
 }
 
 export async function leadSource(tx: Tx, id: string): Promise<LeadSourceRow | null> {
   const r = await sql<LeadSourceRow>`
-    SELECT id, name, kind, consent_disclosure_id, active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
+    SELECT id, name, kind, consent_disclosure_id, active, no_ai_care FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
   return r.rows[0] ?? null;
+}
+
+/**
+ * b18 review B18S-1: the person's live, unpaused AI care (any record of the person; at most one, 0080's live index),
+ * which an inquiry from a source marked "No AI care for leads from this source" must pause now. Ids and epochs only.
+ */
+export async function liveAiCareOf(tx: Tx, contactId: string): Promise<{ id: string; epoch: number }[]> {
+  const r = await sql<{ id: string; epoch: number }>`
+    SELECT a.id, a.epoch FROM ai_isa_assignments a
+     WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
+       AND a.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid)) ORDER BY a.id`.execute(tx);
+  return r.rows;
 }
 
 export interface PriorInquiryRow {
