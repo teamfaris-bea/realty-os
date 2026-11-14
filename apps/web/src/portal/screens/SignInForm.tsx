@@ -3,7 +3,7 @@
 // verbatim, in the visible notice and the live region; the page never says a link was sent. The form has no action:
 // a submit is handled in script, and the portal CSP's form-action 'none' stops a no-JS submit from putting the
 // address in a URL.
-import { type FormEvent, useId, useState } from 'react';
+import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { PortalError } from '../api.js';
 import { API_SENTENCES, COPY, sentenceFor } from '../copy.js';
 import { usePortal } from '../context.js';
@@ -21,7 +21,12 @@ export function NoTeam() {
   );
 }
 
-export function SignInForm({ onUnavailable }: { onUnavailable(): void }) {
+/**
+ * `onAccepted`: a link was asked for (the 202), so the screen's lead (a used or incomplete link's sentence) is stale.
+ * b15 review UI-3: focus moves to the answer when it replaces the form (the focused submit button is gone), and back to
+ * the field after "Use a different email or number".
+ */
+export function SignInForm({ onUnavailable, onAccepted }: { onUnavailable(): void; onAccepted?(): void }) {
   const { api, team, announce } = usePortal();
   const [channel, setChannel] = useState<Channel>('email');
   const [address, setAddress] = useState('');
@@ -29,6 +34,14 @@ export function SignInForm({ onUnavailable }: { onUnavailable(): void }) {
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
   const [accepted, setAccepted] = useState(false);
   const ids = { email: useId(), sms: useId(), field: useId(), notice: useId() };
+  const answerRef = useRef<HTMLParagraphElement>(null);
+  const fieldRef = useRef<HTMLInputElement>(null);
+  const moved = useRef(false);
+  useEffect(() => {
+    if (!moved.current) return;
+    if (accepted) answerRef.current?.focus();
+    else fieldRef.current?.focus();
+  }, [accepted]);
   if (!team) return <NoTeam />;
 
   const say = (text: string, tone: 'ok' | 'error') => {
@@ -49,9 +62,11 @@ export function SignInForm({ onUnavailable }: { onUnavailable(): void }) {
     setPending(true);
     try {
       await api.request('POST', '/api/portal/login', parseLoginAccepted, { team, address: a });
+      moved.current = true;
       setAccepted(true);
       setAddress('');
       say(API_SENTENCES.SIGNIN_ACCEPTED, 'ok');
+      onAccepted?.();
     } catch (err) {
       const code = err instanceof PortalError ? err.code : 'BAD_RESPONSE';
       const ch = err instanceof PortalError ? err.details?.channel : undefined;
@@ -66,7 +81,9 @@ export function SignInForm({ onUnavailable }: { onUnavailable(): void }) {
   if (accepted) {
     return (
       <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4">
-        <p className="text-[16px] text-ink">{notice?.text ?? API_SENTENCES.SIGNIN_ACCEPTED}</p>
+        <p ref={answerRef} tabIndex={-1} className="text-[16px] text-ink outline-none">
+          {notice?.text ?? API_SENTENCES.SIGNIN_ACCEPTED}
+        </p>
         <button
           type="button"
           className={`${secondaryButton} self-start`}
@@ -113,6 +130,7 @@ export function SignInForm({ onUnavailable }: { onUnavailable(): void }) {
         </label>
         <input
           id={ids.field}
+          ref={fieldRef}
           key={channel}
           type={channel === 'email' ? 'email' : 'tel'}
           inputMode={channel === 'email' ? 'email' : 'tel'}

@@ -192,6 +192,33 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     }
   });
 
+  // b15 review UI-3: once a link is asked for, the screen's lead (a used link's "…ask for a new one", an incomplete
+  // link's sentence) is stale and goes; focus moves to the answer (the focused submit button is gone), and back to the
+  // field after "Use a different email or number"
+  it('b15 review UI-3: a used link, then a link asked for: the lead goes, focus moves to 45\'s answer, and back to the field on "Use a different…"', async () => {
+    withToken();
+    renderPortal({ link: { link: 'token' }, routes: { ...signedOutRoutes, 'POST /portal/session': () => portalApiError('PORTAL_LINK_INVALID'), 'POST /portal/login': () => ({ status: 202, body: F.accepted() }) } });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText(API_SENTENCES.PORTAL_LINK_INVALID, IGN)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(COPY.emailLabel), 'jane@example.test');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    const answer = await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN);
+    expect(screen.queryByText(API_SENTENCES.PORTAL_LINK_INVALID, IGN)).toBeNull();
+    expect(screen.getByRole('main').textContent!.split('It works once, for 15 minutes').length - 1).toBe(1);
+    await waitFor(() => expect(answer).toHaveFocus());
+    await userEvent.click(screen.getByRole('button', { name: COPY.useDifferent }));
+    await waitFor(() => expect(screen.getByLabelText(COPY.emailLabel)).toHaveFocus());
+  });
+
+  it('b15 review UI-3: an incomplete link, then a link asked for: the incomplete sentence goes', async () => {
+    renderPortal({ link: { link: 'incomplete' }, routes: { 'POST /portal/login': () => ({ status: 202, body: F.accepted() }) } });
+    expect(screen.getByText(COPY.incomplete)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(COPY.emailLabel), 'jane@example.test');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    expect(await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN)).toBeInTheDocument();
+    expect(screen.queryByText(COPY.incomplete)).toBeNull();
+  });
+
   it('E719: no team: "Open your invitation link", no form, nothing guessed', async () => {
     const r = renderPortal({ link: { team: null }, routes: signedOutRoutes });
     expect(await screen.findByRole('heading', { level: 1, name: COPY.noTeamTitle })).toBeInTheDocument();
