@@ -569,6 +569,45 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
     expect(r.keys().filter((k) => k === 'GET /portal/timeline').length).toBe(2);
   });
 
+  // b16 (b15 review new problem 1): a read with no data that fails keeps its sentence and Try again on screen while
+  // Try again runs (TanStack puts a query with no data back to 'pending' and clears its error, which unmounted the
+  // button and dropped focus to <body>); the button is aria-disabled while busy, keeps focus, and a failed retry is
+  // announced again with focus still on it
+  it('b16: Grant\'s Try again stays (aria-disabled, focused) while the failed read runs again, and keeps focus when the retry fails', async () => {
+    let mode: 'down' | 'gated' = 'down';
+    let release!: () => void;
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/timeline': async () => {
+          if (mode === 'gated') await new Promise<void>((res) => (release = res));
+          throw new TypeError('Failed to fetch');
+        },
+      },
+    });
+    expect(await screen.findByText(COPY.generic, IGN)).toBeInTheDocument();
+    const again = screen.getByRole('button', { name: COPY.tryAgain });
+    mode = 'gated';
+    const seen = liveLog();
+    await userEvent.click(again);
+    await waitFor(() => expect(r.keys().filter((k) => k === 'GET /portal/timeline')).toHaveLength(2));
+    // during the retry: the same button, busy, focused; the sentence stays; no "Loading" in its place
+    expect(again).toBeInTheDocument();
+    expect(again).toHaveAttribute('aria-disabled', 'true');
+    expect(again).toHaveFocus();
+    expect(screen.getByText(COPY.generic, IGN)).toBeInTheDocument();
+    await userEvent.click(again); // a tap while busy asks nothing more
+    await act(async () => {
+      release();
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    await waitFor(() => expect(again).not.toHaveAttribute('aria-disabled'));
+    expect(again).toBeInTheDocument();
+    expect(again).toHaveFocus();
+    await waitFor(() => expect(seen.filter((t) => t === COPY.generic).length).toBeGreaterThanOrEqual(1));
+    expect(r.keys().filter((k) => k === 'GET /portal/timeline')).toHaveLength(2);
+  });
+
   it('R-PORTALWEB-6: no screen shows a code', async () => {
     renderPortal({ routes: { ...signedIn, 'GET /portal/documents': () => portalApiError('VALIDATION_FAILED') } });
     await screen.findByText('Inspection');

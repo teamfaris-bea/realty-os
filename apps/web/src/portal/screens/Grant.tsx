@@ -1,7 +1,7 @@
 // module 46 (R-PORTALWEB-5, R-PORTALWEB-7; E125, E712, E713): one grant. Phone (< 768 px): header, next steps, a
 // compact contact card, then the "Timeline | Documents" tabs. Desktop: two columns, documents in view with no tap. A
 // 404 means it is no longer shared: the sentence, and /me is refetched (no stale item stays on screen).
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { type UseQueryResult, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
 import { PortalError } from '../api.js';
 import { COPY } from '../copy.js';
@@ -36,6 +36,17 @@ export interface GrantProps {
 
 const gone = (e: unknown) => e instanceof PortalError && e.code === 'NOT_FOUND';
 
+/**
+ * A read that failed, and still does while Try again runs it again. b16 (b15 review new problem 1): TanStack puts a
+ * query with no data back to 'pending' and clears its error when it refetches, so `isError` alone turned the failure
+ * placeholder into "Loading" and unmounted the focused Try again; a query that has failed (errorUpdateCount) and still
+ * has no data keeps the sentence and Try again (aria-disabled) until an answer comes.
+ */
+function failing(q: UseQueryResult<unknown, PortalError>): boolean {
+  if (gone(q.error)) return false;
+  return q.isError || (q.data === undefined && q.errorUpdateCount > 0);
+}
+
 export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps) {
   const { api, announce, save } = usePortal();
   const qc = useQueryClient();
@@ -55,7 +66,7 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     onGone(grant.id);
   }, [isGone, qc, grant.id, onGone]);
 
-  const failed = (timeline.isError && !gone(timeline.error)) || (documents.isError && !gone(documents.error));
+  const failed = failing(timeline) || failing(documents);
   // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
   // which reads the failed parts again (busy while they run; aria-disabled keeps focus)
   const failedAt = Math.max(timeline.errorUpdatedAt, documents.errorUpdatedAt);
