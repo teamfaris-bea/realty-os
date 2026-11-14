@@ -85,6 +85,15 @@ export function intoTestCode(file: string, spec: string): boolean {
   return /(^|\/)(test|testing)(\/|$)/.test(to) || /\.test\.[cm]?[jt]sx?$/.test(to);
 }
 
+/** b15 audit P46-TEST-1: whether a view/** file's import stays inside view/ once resolved ('./../link.js' does not), or is react. */
+export function viewImportOk(file: string, spec: string): boolean {
+  if (spec === 'react') return true;
+  if (!spec.startsWith('.')) return false;
+  const to = resolve(dirname(file), spec);
+  const view = join(PORTAL, 'view');
+  return to === view || to.startsWith(view + '/');
+}
+
 /** b15 audit P46-SEC-1: a dynamic import whose module is not a plain string (a computed specifier no scan can read). */
 export const computedImport = (src: string): boolean => /\bimport\s*\((?!\s*(?:'[^'\n]*'|"[^"\n]*"|`[^`$]*`)\s*[,)])/.test(src);
 
@@ -115,6 +124,10 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     expect(['./test/fixtures.js', './testing/x.js', './link.test.js', './view/../test/render.js'].map((s) => intoTestCode(api, s))).toEqual([true, true, true, true]);
     expect([intoTestCode(home, '../test/fixtures.js'), intoTestCode(home, './test'), intoTestCode(api, './testids.js'), intoTestCode(api, './contest/x.js'), intoTestCode(api, './view/index.js'), intoTestCode(api, 'react')]).toEqual([true, true, false, false, false, false]);
     expect(['import(name)', 'import(`./${n}.js`)', "import('./a' + b)", 'import (x)'].map(computedImport)).toEqual([true, true, true, true]);
+    // b15 audit P46-TEST-1: a view import is resolved, so './../x' (which leaves view/) is caught
+    const parse = join(PORTAL, 'view', 'parse.ts');
+    expect(['./../link.js', '../api.js', './x/../../copy.js', 'react-dom', '@tanstack/react-query'].map((s) => viewImportOk(parse, s))).toEqual([false, false, false, false, false]);
+    expect(['react', './words.js', './x/../dates.js', '.'].map((s) => viewImportOk(parse, s))).toEqual([true, true, true, true]);
     expect(["import('./a.js')", 'import("./a.js")', 'import(`./a.js`)', "import('./a.js', { with: {} })", "import { a } from './a.js'", 'imported(x)'].map(computedImport)).toEqual([false, false, false, false, false, false]);
   });
 
@@ -144,7 +157,7 @@ describe('the portal boundary in the source (R-PORTALWEB-1)', () => {
     for (const f of VIEW_FILES) {
       const src = code(f);
       const bare = src.replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g, "''");
-      for (const s of importsOf(src)) if (!(s === 'react' || s.startsWith('./'))) problems.push(`${rel(f)} imports ${s}`);
+      for (const s of importsOf(src)) if (!viewImportOk(f, s)) problems.push(`${rel(f)} imports ${s}`);
       for (const g of ['window', 'document', 'fetch', 'location', 'history', 'localStorage', 'globalThis']) if (new RegExp(`(?<![.\\w])${g}\\b`).test(bare)) problems.push(`${rel(f)} touches ${g}`);
     }
     expect(problems).toEqual([]);
