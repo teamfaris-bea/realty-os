@@ -332,7 +332,7 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
 
   it('R-ISA-28 E503: a recipient other than the bound point refuses ISA_UNBOUND_RECIPIENT; purpose informational ISA_PURPOSE_MISMATCH', async () => {
     const l = await leadUnderCare(x);
-    const second = '+15550139999';
+    const second = '+15555550125';
     await withTenantTx(x.agent.actor, (tx) => sql`INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
       VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'phone', ${second}, decode(${hmacHex(second)}, 'hex'))`.execute(tx), { db: h.app });
     await inbound(x, l);
@@ -517,7 +517,7 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
     const b = await leadUnderCare(x);
     for (let i = 0; i < 3; i += 1) {
       await suFixture(h.su, `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body, status,
-          initiator, purpose, action_category, dispatched_at, occurred_at) VALUES ($1, gen_random_uuid(), $2, $3, 'sms', 'outbound', $4, '+15555559200', $5, 'Alert', 'sent',
+          initiator, purpose, action_category, dispatched_at, occurred_at) VALUES ($1, gen_random_uuid(), $2, $3, 'sms', 'outbound', $4, '+15555550143', $5, 'Alert', 'sent',
           'system', 'informational', 'search_alert', now() - interval '1 hour', now())`, [w.tenantId, b.conversationId, b.contactId, x.numberId, b.phone]);
     }
     await inbound(x, b);
@@ -554,7 +554,7 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
     const l = await leadUnderCare(x);
     expect(await errOf(q(x.agent.actor, sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
       body, status, initiator, initiated_by_user_id, purpose, action_category, dispatched_at, occurred_at) VALUES (app.tenant_id(), ${uuid()}, ${l.conversationId}, ${l.contactId},
-      'sms', 'outbound', ${x.numberId}, '+15555559200', ${l.phone}, 'Hi', 'dispatching', 'human', ${x.agent.id}, 'marketing', 'ai_isa_message', now(), now())`))).toBe('ISA_NOT_AUTHORIZED');
+      'sms', 'outbound', ${x.numberId}, '+15555550143', ${l.phone}, 'Hi', 'dispatching', 'human', ${x.agent.id}, 'marketing', 'ai_isa_message', now(), now())`))).toBe('ISA_NOT_AUTHORIZED');
     expect(await errOf(q(w.system('assistant'), sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload)
       VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'message_draft', 'ai_isa_message', 'requires_approval', 'proposed', ${x.agent.id}, 'x', '{}'::jsonb)`))).toMatch(/ai_isa/);
   });
@@ -564,7 +564,7 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
     for (const category of ['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']) {
       expect(await errOf(q(w.system('worker'), sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
         body, status, initiator, purpose, action_category, dispatched_at, occurred_at) VALUES (app.tenant_id(), ${uuid()}, ${l.conversationId}, ${l.contactId},
-        'sms', 'outbound', ${x.numberId}, '+15555559200', ${l.phone}, 'Hi', 'dispatching', 'system', 'marketing', ${category}, now(), now())`)), category).toBe('ISA_NOT_AUTHORIZED');
+        'sms', 'outbound', ${x.numberId}, '+15555550143', ${l.phone}, 'Hi', 'dispatching', 'system', 'marketing', ${category}, now(), now())`)), category).toBe('ISA_NOT_AUTHORIZED');
     }
   });
 
@@ -587,7 +587,7 @@ describe('the dispatch guard ai_isa_mandate branch: every code reachable (R-ISA-
           auto ? 'proposed' : 'approved', x.agent.id, auto ? null : x.agent.id, auto ? null : new Date().toISOString()]);
       return errOf(q(w.system('assistant'), sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address,
           to_address, body, status, initiator, purpose, action_category, assistant_action_id, dispatched_at, occurred_at)
-        VALUES (app.tenant_id(), ${uuid()}, ${l.conversationId}, ${l.contactId}, 'sms', 'outbound', ${x.numberId}, '+15555559200', ${l.phone}, 'Hi',
+        VALUES (app.tenant_id(), ${uuid()}, ${l.conversationId}, ${l.contactId}, 'sms', 'outbound', ${x.numberId}, '+15555550143', ${l.phone}, 'Hi',
           'dispatching', 'assistant', 'marketing', ${category}, ${action}, now(), now())`));
     };
     for (const autonomy of ['within_playbook', 'requires_approval'] as const) {

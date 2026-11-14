@@ -39,7 +39,7 @@ async function seedMergePair(w: World, owner: Member) {
     INSERT INTO conversations (tenant_id, id, contact_id, automation_paused_at, automation_pause_reason, automation_paused_by_message_id, inbound_seq)
       VALUES ($1, $8, $6, now() - interval '1 hour', 'client_reply', $9, 1);
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, occurred_at)
-      VALUES ($1, $9, $8, $6, 'sms', 'inbound', '+15555550111', '+15555559999', 'Is it still available?', 'received', 'client', now() - interval '1 hour');
+      VALUES ($1, $9, $8, $6, 'sms', 'inbound', '+15555550111', '+15555550146', 'Is it still available?', 'received', 'client', now() - interval '1 hour');
     INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, bound_ownership_seq)
       VALUES ($1, $10, $6, 'handback', 'novel_message', 'requires_approval', 'proposed', $3, 'Jane replied', '{}', 1),
              ($1, $11, $6, 'message_draft', 'novel_message', 'requires_approval', 'proposed', $3, 'Draft reply', '{}', 1);

@@ -8,6 +8,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { type Harness, type World, createHarness, createWorld, suRows, uuid } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest();
 
@@ -85,7 +86,7 @@ describe('lead intake RLS smoke (R-GADS-1 R-LSRC-3 R-LSRC-7 R-TRK-1)', () => {
   it('R-TRK-1: phone_numbers refuses a lead source on a non-tracking number', async () => {
     const insert = (purpose: string) => withTenantTx(w.owner.actor, (tx) => sql`
       INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at, lead_source_id)
-      VALUES (${w.tenantId}, ${uuid()}, ${'+1555' + String(Math.floor(Math.random() * 1e7)).padStart(7, '0')}, 'fake', ${uuid()}, 'local', ${purpose}, true, true, now(), ${w.leadSourceId})`.execute(tx), { db: h.app });
+      VALUES (${w.tenantId}, ${uuid()}, ${nextFictionalPhone()}, 'fake', ${uuid()}, 'local', ${purpose}, true, true, now(), ${w.leadSourceId})`.execute(tx), { db: h.app });
     await expect(insert('team_main')).rejects.toThrow(/phone_numbers_lead_source_tracking/);
     await expect(insert('tracking')).resolves.toBeDefined();
   });

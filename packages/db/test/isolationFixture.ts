@@ -9,6 +9,7 @@
 // override list for CHECKs no generic value satisfies. A table the generator cannot fill fails the
 // test loudly, so a new table can never silently escape the isolation check.
 import type pg from 'pg';
+import { FREE_FICTIONAL_E164_SQL } from './fictionalPhone.js';
 
 interface Col {
   column_name: string;
@@ -63,7 +64,7 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   contacts: { ownership_state: "'unassigned'", ownership_seq: '1', display_name: "'Fixture'" },
   contact_points: { kind: "'email'", address: "'fixture-' || gen_random_uuid() || '@example.test'" },
   contact_attributes: { key: "'fixture_key'" },
-  phone_numbers: { e164: "'+1555' || lpad((floor(random() * 9999999))::text, 7, '0')", released_at: 'NULL', quarantine_until: 'NULL', assigned_user_id: 'NULL', purpose: "'team_main'" },
+  phone_numbers: { e164: FREE_FICTIONAL_E164_SQL, released_at: 'NULL', quarantine_until: 'NULL', assigned_user_id: 'NULL', purpose: "'team_main'" },
   stored_objects: { storage_key: "'tenants/' || $T || '/fixture/' || gen_random_uuid()", dek_wrapped: "'\\x01'::bytea", sha256: "digest('x', 'sha256')" },
   consent_events: { consent_level: "'express'", source: "'web_form'", event_type: "'grant'", channel: "'sms'", address_kind: "'phone'", purpose: "'informational'", actor_kind: "'system'", imported: 'false' },
   consent_disclosures: { channel_scope: "'{sms}'", purpose_scope: "'{informational}'" },

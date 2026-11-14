@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
 import { withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, drainFollowups, type Harness, type Member, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
@@ -19,7 +20,7 @@ let numberId: string;
 let seq = 0;
 
 const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
-const nextPhone = () => `+1555013${String(1000 + ++seq).slice(-4)}`;
+const nextPhone = nextFictionalPhone;
 
 beforeAll(async () => {
   h = await createHarness(6);
@@ -28,7 +29,7 @@ beforeAll(async () => {
   numberId = uuid();
   await suFixture(h.su, `
     INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
-      VALUES ($1, $2, '+15555559200', 'fake', 'PN-merge', 'local', 'team_main', true, true, now());`, [w.tenantId, numberId]);
+      VALUES ($1, $2, '+15555550143', 'fake', 'PN-merge', 'local', 'team_main', true, true, now());`, [w.tenantId, numberId]);
 }, 120_000);
 afterAll(async () => {
   await h?.close();
@@ -65,7 +66,7 @@ async function textTo(contactId: string, to: string): Promise<void> {
   const conv = await conversation(contactId);
   await as(agent.actor, (tx) => sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id,
       from_address, to_address, body, status, initiator, initiated_by_user_id, purpose, action_category, dispatched_at, occurred_at)
-    VALUES (app.tenant_id(), ${uuid()}, ${conv}, ${contactId}, 'sms', 'outbound', ${numberId}, '+15555559200', ${to}, 'Hi', 'dispatching',
+    VALUES (app.tenant_id(), ${uuid()}, ${conv}, ${contactId}, 'sms', 'outbound', ${numberId}, '+15555550143', ${to}, 'Hi', 'dispatching',
       'human', ${agent.id}, 'informational', 'none', now(), now())`.execute(tx));
 }
 

@@ -13,16 +13,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
 import { withTenantTx } from '../src/tenantTx.js';
 import { createHarness, createWorld, type Harness, type Member, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
 let agent: Member;
 let numberId: string;
 let seq = 0;
-const NUMBER = '+15555559200';
+const NUMBER = '+15555550143';
 
 const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
-const nextPhone = () => `+1555013${String(1000 + ++seq).slice(-4)}`;
+const nextPhone = nextFictionalPhone;
 
 beforeAll(async () => {
   h = await createHarness(4);

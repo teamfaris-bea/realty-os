@@ -152,7 +152,7 @@ SELECT FROM auth.accept_invite(digest('p23-invite-ad', 'sha256'), :admA, 'Adam A
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 INSERT INTO team_members (tenant_id, team_id, user_id, is_lead) VALUES (:tA, :teamA, :tlA, true), (:tA, :teamA, :agA1, false);
 INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
-VALUES (:tA, :num, '+15555559100', 'fake', 'PN1', 'local', 'team_main', true, true, now());
+VALUES (:tA, :num, '+15555550141', 'fake', 'PN1', 'local', 'team_main', true, true, now());
 INSERT INTO email_identities (tenant_id, id, from_address, display_name) VALUES (:tA, :eid, 'team@a-realty.test', 'Team A');
 INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES (:tA, :srcA, 'Facebook Page', 'social_dm');
 
@@ -166,7 +166,7 @@ SELECT pg_temp.self_create(:tA, :c4, :agA2, 'Carol S. (duplicate)', 'a0000000-00
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
 INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, is_primary)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000f201', :c2, 'email', 'carol@example.test', digest('carol@example.test', 'sha256'), true),
-       (:tA, 'a0000000-0000-7000-8000-00000000f202', :c2, 'phone', '+15555550202', digest('+15555550202', 'sha256'), true);
+       (:tA, 'a0000000-0000-7000-8000-00000000f202', :c2, 'phone', '+15555550133', digest('+15555550133', 'sha256'), true);
 INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tA, :cvA2, :c2), (:tA, :cvA4, :c4);
 INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, listing_agent_user_id, list_price_cents)
 VALUES (:tA, :lC, 'team', 'active', '40 Elm St', 'Town', 'SC', '29401', :agA2, 52000000);
@@ -535,30 +535,30 @@ SELECT pg_temp.ok(pg_temp.n(format($q$SELECT count(*) FROM contacts c WHERE EXIS
 -- =============================================================================
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label) VALUES
-  (:tA, 'a0000000-0000-7000-8000-0000000ae001', :c6, 'phone', '+15555550601', digest('+15555550601', 'sha256'), 'mobile'),
-  (:tA, 'a0000000-0000-7000-8000-0000000ae002', :c6, 'phone', '+15555550602', digest('+15555550602', 'sha256'), 'work'),
-  (:tA, 'a0000000-0000-7000-8000-0000000ae003', :c5, 'phone', '+15555550501', digest('+15555550501', 'sha256'), 'mobile'),
-  (:tA, 'a0000000-0000-7000-8000-0000000ae004', :c5, 'phone', '+15555550502', digest('+15555550502', 'sha256'), 'work');
+  (:tA, 'a0000000-0000-7000-8000-0000000ae001', :c6, 'phone', '+15555550136', digest('+15555550136', 'sha256'), 'mobile'),
+  (:tA, 'a0000000-0000-7000-8000-0000000ae002', :c6, 'phone', '+15555550137', digest('+15555550137', 'sha256'), 'work'),
+  (:tA, 'a0000000-0000-7000-8000-0000000ae003', :c5, 'phone', '+15555550134', digest('+15555550134', 'sha256'), 'mobile'),
+  (:tA, 'a0000000-0000-7000-8000-0000000ae004', :c5, 'phone', '+15555550135', digest('+15555550135', 'sha256'), 'work');
 INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tA, 'a0000000-0000-7000-8000-00000000cc05', :c5);
-SELECT pg_temp.expect_error(format($q$UPDATE contact_points SET address = '+15555550699', address_hmac = digest('+15555550699', 'sha256')
+SELECT pg_temp.expect_error(format($q$UPDATE contact_points SET address = '+15555550139', address_hmac = digest('+15555550139', 'sha256')
   WHERE id = %L$q$, 'a0000000-0000-7000-8000-0000000ae001'),
   'R-PAR-11: a phone number is never edited in place (remove and add)', '%CONTACT_POINT_IMMUTABLE%');
 -- Finn's mobile and Eve's mobile text STOP
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
        source, occurred_at, actor_kind, contact_id, evidence_message_id)
-VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae101', 'phone', digest('+15555550601', 'sha256'), '…0601', 'sms', 'all',
+VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae101', 'phone', digest('+15555550136', 'sha256'), '…0136', 'sms', 'all',
         'revoke', 'none', 'inbound_keyword', now(), 'system', :c6, gen_random_uuid()),
-       (:tA, 'a0000000-0000-7000-8000-0000000ae102', 'phone', digest('+15555550501', 'sha256'), '…0501', 'sms', 'all',
+       (:tA, 'a0000000-0000-7000-8000-0000000ae102', 'phone', digest('+15555550134', 'sha256'), '…0134', 'sms', 'all',
         'revoke', 'none', 'inbound_keyword', now(), 'system', :c5, gen_random_uuid());
 INSERT INTO consent_state (tenant_id, channel, purpose, address_hmac, status, consent_level, basis_event_id, ledger_event_count)
-VALUES (:tA, 'sms', 'informational', digest('+15555550601', 'sha256'), 'revoked', 'none', 'a0000000-0000-7000-8000-0000000ae101', 1),
-       (:tA, 'sms', 'informational', digest('+15555550501', 'sha256'), 'revoked', 'none', 'a0000000-0000-7000-8000-0000000ae102', 1);
+VALUES (:tA, 'sms', 'informational', digest('+15555550136', 'sha256'), 'revoked', 'none', 'a0000000-0000-7000-8000-0000000ae101', 1),
+       (:tA, 'sms', 'informational', digest('+15555550134', 'sha256'), 'revoked', 'none', 'a0000000-0000-7000-8000-0000000ae102', 1);
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'replaced' WHERE id = 'a0000000-0000-7000-8000-0000000ae001';
 SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id,
   from_address, to_address, body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
-  %L, %L, 'sms', 'outbound', %L, '+15555559100', '+15555550602', 'Hi Finn', 'dispatching', 'human', %L, 'informational', now(), now())$q$,
+  %L, %L, 'sms', 'outbound', %L, '+15555550141', '+15555550137', 'Hi Finn', 'dispatching', 'human', %L, 'informational', now(), now())$q$,
   :tA, :cvA6, :c6, :num, :agA1),
   'R-PAR-12: removing the phone that texted STOP does not make Finn''s other phone textable', '%RECIPIENT_OPTED_OUT%');
 UPDATE contact_points SET status = 'wrong_number' WHERE id = 'a0000000-0000-7000-8000-0000000ae003';
@@ -569,7 +569,7 @@ SELECT pg_temp.expect_error(format($q$UPDATE contact_points SET status = 'remove
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
        source, occurred_at, actor_kind, contact_id, evidence_call_id)
-VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae104', 'phone', digest('+15555550501', 'sha256'), '…0501', 'voice', 'all',
+VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae104', 'phone', digest('+15555550134', 'sha256'), '…0134', 'voice', 'all',
         'revoke', 'none', 'wrong_number', now(), 'system', :c5, gen_random_uuid());
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'wrong_number' WHERE id = 'a0000000-0000-7000-8000-0000000ae003';
@@ -578,26 +578,26 @@ SELECT pg_temp.expect_error(format($q$UPDATE contact_points SET status = 'active
   'R-PAR-12 S1: a confirmed wrong number is not restored (no restore-then-re-remove)', '%REMOVED_REASON_IMMUTABLE%');
 INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body,
        status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at)
-VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000cc05', :c5, 'sms', 'outbound', :num, '+15555559100', '+15555550502',
+VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000cc05', :c5, 'sms', 'outbound', :num, '+15555550141', '+15555550135',
         'Hi Eve', 'dispatching', 'human', :agA1, 'informational', now(), now());
 SELECT pg_temp.ok(true, 'R-PAR-12: a phone removed as a confirmed wrong number no longer blocks Eve''s real phone');
 SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id,
   from_address, to_address, body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
-  %L, %L, 'sms', 'outbound', %L, '+15555559100', '+15555550501', 'Hi again', 'dispatching', 'human', %L, 'informational', now(), now())$q$,
+  %L, %L, 'sms', 'outbound', %L, '+15555550141', '+15555550134', 'Hi again', 'dispatching', 'human', %L, 'informational', now(), now())$q$,
   :tA, 'a0000000-0000-7000-8000-00000000cc05', :c5, :num, :agA1),
   'the removed wrong number itself stays blocked (its own STOP)', '%RECIPIENT_%');
 -- Finn also asked not to be called from his old mobile: the call guard reads removed phones too
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
        source, occurred_at, actor_kind, contact_id, evidence_call_id)
-VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae103', 'phone', digest('+15555550601', 'sha256'), '…0601', 'voice', 'all',
+VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae103', 'phone', digest('+15555550136', 'sha256'), '…0136', 'voice', 'all',
         'revoke', 'none', 'agent_revoke', now(), 'system', :c6, gen_random_uuid());
 INSERT INTO consent_state (tenant_id, channel, purpose, address_hmac, status, consent_level, basis_event_id, ledger_event_count)
-VALUES (:tA, 'voice', 'informational', digest('+15555550601', 'sha256'), 'revoked', 'none', 'a0000000-0000-7000-8000-0000000ae103', 1);
+VALUES (:tA, 'voice', 'informational', digest('+15555550136', 'sha256'), 'revoked', 'none', 'a0000000-0000-7000-8000-0000000ae103', 1);
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.expect_error(format($q$INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id,
   client_address, initiator, handled_by, status, started_at, recording_mode, recording_decision) VALUES (%L, gen_random_uuid(), %L, %L,
-  'outbound', %L, %L, '+15555550602', 'human', 'human', 'initiated', now(), 'off', '{}')$q$, :tA, :cvA6, :c6, :num, :agA1),
+  'outbound', %L, %L, '+15555550137', 'human', 'human', 'initiated', now(), 'off', '{}')$q$, :tA, :cvA6, :c6, :num, :agA1),
   'R-PAR-12: removing the phone that said "do not call" does not make Finn''s other phone callable', '%RECIPIENT_OPTED_OUT%');
 
 -- =============================================================================
@@ -760,7 +760,7 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conve
 -- batch text: off by default, only the Owner turns it on, small actions only
 INSERT INTO bulk_actions (tenant_id, id, kind, created_by_user_id, created_by_role, source, idempotency_key)
 VALUES (:tA, :bkT, 'text', :agA1, 'agent', 'selection', 'bulk-text-0001');
-INSERT INTO bulk_action_items (tenant_id, bulk_action_id, contact_id, address_hmac) VALUES (:tA, :bkT, :c5, digest('+15555550502', 'sha256'));
+INSERT INTO bulk_action_items (tenant_id, bulk_action_id, contact_id, address_hmac) VALUES (:tA, :bkT, :c5, digest('+15555550135', 'sha256'));
 SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 1,
   body_snapshot = 'Open house Sat 1-3. Reply STOP to opt out.' WHERE id = %L$q$, :bkT),
   'R-PAR-40: batch text is off by default', '%BATCH_TEXT_DISABLED%');
@@ -781,7 +781,7 @@ UPDATE tenant_settings SET batch_text_enabled = false;
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id,
   from_address, to_address, body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at, bulk_action_id)
-  VALUES (%L, gen_random_uuid(), %L, %L, 'sms', 'outbound', %L, '+15555559100', '+15555550502', 'Open house Sat', 'dispatching',
+  VALUES (%L, gen_random_uuid(), %L, %L, 'sms', 'outbound', %L, '+15555550141', '+15555550135', 'Open house Sat', 'dispatching',
   'human', %L, 'marketing', now(), now(), %L)$q$, :tA, 'a0000000-0000-7000-8000-00000000cc05', :c5, :num, :agA1, :bkT),
   'R-PAR-40: switching batch text off stops a running batch at the next message', '%BATCH_TEXT_DISABLED%');
 

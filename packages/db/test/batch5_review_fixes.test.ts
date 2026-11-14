@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, type Harness, type Member, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
@@ -38,9 +39,8 @@ afterAll(async () => {
 
 const as = <T>(actor: Actor, fn: Parameters<typeof withTenantTx<T>>[1]) => withTenantTx(actor, fn, { db: h.app });
 const exists = async (id: string) => (await suRows(h.su, 'SELECT 1 FROM contacts WHERE id = $1', [id])).length === 1;
-let seq = 0;
 const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
-const phone = () => `+1555018${String(1000 + ++seq).slice(-4)}`;
+const phone = nextFictionalPhone;
 
 async function point(by: Actor, contactId: string, address: string, kind: 'phone' | 'email' = 'phone'): Promise<string> {
   const id = uuid();

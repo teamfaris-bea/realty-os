@@ -10,6 +10,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenantTx } from '../src/tenantTx.js';
 import { BUY, cmd, createHarness, createWorld, drainFollowups, type Harness, intakeLead, pendingFollowups, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { fictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
@@ -47,7 +48,7 @@ interface Loser {
 /** The loser's person data: a phone, a tag, a note, a chat session, a deal role, an open task and a do-not-contact. */
 async function seedLoser(id: ContactId): Promise<Loser> {
   const n = ++seq;
-  const phone = `+1555010${String(1000 + n).slice(-4)}`;
+  const phone = fictionalPhone(n);
   const tagId = uuid();
   const note = `Wants a yard ${n}`;
   const dealId = uuid();

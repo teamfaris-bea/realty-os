@@ -6,6 +6,7 @@ import type { Actor } from '@realty/core/foundation';
 import { sql } from 'kysely';
 import { withTenantTx } from '../src/tenantTx.js';
 import { type Harness, type Member, type World, selfCreated, suFixture, suRows, uuid } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 export const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
 export const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -88,7 +89,7 @@ export interface IsaWorld {
 }
 
 let seq = 0;
-export const nextPhone = () => `+1555013${String(1000 + ++seq).slice(-4)}`;
+export const nextPhone = nextFictionalPhone;
 
 export const ATTESTATION = (versionSha: string) =>
   `I opt in to the team's AI assistant policy version ${versionSha}. I'm responsible for leads I put in AI care.`;
@@ -173,7 +174,7 @@ export async function inbound(x: IsaWorld, l: Lead, o: { channel?: 'sms' | 'emai
     await sql`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status,
                 initiator, email_dkim_aligned, occurred_at, created_at)
               VALUES (app.tenant_id(), ${id}, ${l.conversationId}, ${l.contactId}, ${channel}, 'inbound', ${from},
-                ${channel === 'sms' ? '+15555559200' : 'team@isa.test'}, 'Hello there', 'received', 'client',
+                ${channel === 'sms' ? '+15555550143' : 'team@isa.test'}, 'Hello there', 'received', 'client',
                 ${channel === 'email' ? (o.dkim === undefined ? true : o.dkim) : null},
                 now() - make_interval(mins => ${o.ageMinutes ?? 0}), now() - make_interval(mins => ${o.ageMinutes ?? 0}))`.execute(tx);
     await sql`UPDATE conversations SET inbound_seq = inbound_seq + 1, last_inbound_at = now() WHERE tenant_id = app.tenant_id() AND id = ${l.conversationId}`.execute(tx);
@@ -231,7 +232,7 @@ export async function queueAi(x: IsaWorld, l: Lead, o: SendOpts = {}): Promise<Q
                 to_address, subject, body, status, scheduled_for, initiator, purpose, action_category, assistant_action_id, pinned_inbound_seq, occurred_at)
               VALUES (app.tenant_id(), ${messageId}, ${l.conversationId}, ${l.contactId}, ${channel}, 'outbound',
                 ${channel === 'sms' ? x.numberId : null}, ${channel === 'email' ? x.emailIdentityId : null},
-                ${channel === 'sms' ? '+15555559200' : 'team@isa.test'}, ${to}, ${channel === 'email' ? 'Hello' : null}, ${body},
+                ${channel === 'sms' ? '+15555550143' : 'team@isa.test'}, ${to}, ${channel === 'email' ? 'Hello' : null}, ${body},
                 ${o.status ?? 'queued'}, ${o.status === 'scheduled' ? sql`now() + interval '1 hour'` : null}, 'assistant', ${o.purpose ?? 'marketing'},
                 ${o.category ?? 'ai_isa_message'}, ${actionId}, ${pinned}, now())`.execute(tx);
     await sql`UPDATE ai_isa_turns SET assistant_action_id = ${actionId}, message_id = ${messageId}, channel = ${channel},

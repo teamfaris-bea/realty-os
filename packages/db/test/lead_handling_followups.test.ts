@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, type Harness, type Member, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
@@ -110,7 +111,7 @@ describe('lead-handling follow-ups: erasure and purge take the person with every
 describe('lead-handling follow-ups: a person-level do-not-contact outlives the person (D1, §2b)', () => {
   let seq = 0;
   const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
-  const phone = () => `+1555017${String(1000 + ++seq).slice(-4)}`;
+  const phone = nextFictionalPhone;
   const email = () => `dnc-${++seq}-${randomUUID().slice(0, 6)}@example.test`;
   type Kind = 'phone' | 'email';
 

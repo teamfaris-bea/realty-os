@@ -19,7 +19,7 @@ let conv: string;
 let otherConv: string;
 let mergedContactId: string; // a record of the same person, merged into contactId (its texts not yet moved)
 let mergedConv: string;
-const TEAM = '+15555559300';
+const TEAM = '+15555550144';
 const PHONE = '+15555550101';
 
 const as = <T>(actor: Actor, fn: Parameters<typeof withTenantTx<T>>[1]) => withTenantTx(actor, fn, { db: h.app, retries: 0 });
@@ -112,7 +112,7 @@ beforeAll(async () => {
     INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
       VALUES ($1, $2, '${TEAM}', 'fake', 'PN-react-1', 'local', 'team_main', true, true, now());
     INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
-      VALUES ($1, $3, '+15555559301', 'fake', 'PN-react-2', 'local', 'team_main', true, true, now());`, [w.tenantId, numberId, otherNumberId]);
+      VALUES ($1, $3, '+15555550145', 'fake', 'PN-react-2', 'local', 'team_main', true, true, now());`, [w.tenantId, numberId, otherNumberId]);
   contactId = await selfCreated(h.app, w, w.agents[0]!, 'Sam Reactor');
   otherContactId = await selfCreated(h.app, w, w.agents[1]!, 'Pat Other');
   conv = uuid();

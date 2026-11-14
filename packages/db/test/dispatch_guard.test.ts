@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
 import { withTenantTx } from '../src/tenantTx.js';
 import { createHarness, createWorld, type Harness, type Member, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
@@ -25,7 +26,7 @@ let emailIdentityId: string;
 let seq = 0;
 
 const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
-const nextPhone = () => `+1555012${String(1000 + ++seq).slice(-4)}`;
+const nextPhone = nextFictionalPhone;
 
 beforeAll(async () => {
   h = await createHarness(6);
@@ -35,7 +36,7 @@ beforeAll(async () => {
   emailIdentityId = uuid();
   await suFixture(h.su, `
     INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
-      VALUES ($1, $2, '+15555559100', 'fake', 'PN-guard', 'local', 'team_main', true, true, now());
+      VALUES ($1, $2, '+15555550141', 'fake', 'PN-guard', 'local', 'team_main', true, true, now());
     INSERT INTO email_identities (tenant_id, id, from_address, display_name, status)
       VALUES ($1, $3, 'team@guard.test', 'Team', 'active');`, [w.tenantId, numberId, emailIdentityId]);
 });
@@ -95,7 +96,7 @@ function insertMessage(actor: Actor, s: Send): Promise<string> {
                 dispatched_at, occurred_at)
               VALUES (app.tenant_id(), ${id}, ${s.conversationId}, ${s.contactId}, ${channel}, 'outbound',
                 ${channel === 'sms' ? numberId : null}, ${channel === 'email' ? emailIdentityId : null},
-                ${channel === 'sms' ? '+15555559100' : 'team@guard.test'}, ${s.to}, ${channel === 'email' ? 'Hello' : null}, 'Hi there',
+                ${channel === 'sms' ? '+15555550141' : 'team@guard.test'}, ${s.to}, ${channel === 'email' ? 'Hello' : null}, 'Hi there',
                 ${status}, ${initiator}, ${initiator === 'human' ? agent.id : null}, ${s.purpose ?? 'informational'}, ${s.category ?? 'none'},
                 ${s.assistantActionId ?? null}, ${status === 'queued' || status === 'scheduled' ? null : sql`now()`}, now())`.execute(tx);
     return id;
@@ -142,7 +143,7 @@ describe('0013: a normal send needs no gate decision', () => {
       withTenantTx(agent.actor, (tx) => sql`
         INSERT INTO gate_decisions (tenant_id, id, address_hmac, channel, purpose, initiator, action_category, phase, outcome, reason_codes,
           explanation, actor_user_id, policy_version_id, core_rules_version, inputs, inputs_sha256, evaluated_at)
-        VALUES (app.tenant_id(), ${uuid()}, decode(${hmacHex('+15555550000')}, 'hex'), 'sms', 'informational', 'human', 'none', ${phase}, ${outcome},
+        VALUES (app.tenant_id(), ${uuid()}, decode(${hmacHex('+15555550132')}, 'hex'), 'sms', 'informational', 'human', 'none', ${phase}, ${outcome},
           ${outcome === 'allow' ? sql`'{}'::text[]` : sql`'{CONSENT_REVOKED}'::text[]`}, 'x', ${agent.id},
           (SELECT active_policy_id FROM tenant_settings WHERE tenant_id = app.tenant_id()), 'core-compliance/2.0.0', '{}'::jsonb, repeat('ab', 32), now())`.execute(tx), { db: h.app });
     await expect(insert('deny', 'send')).resolves.toBeTruthy();
@@ -256,7 +257,7 @@ describe('0013: opt-out block at dispatch, even for forged inserts (R-CONSENT-7,
     await withTenantTx(w.system('provider'), (tx) => sql`
       INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator,
         opt_out_keyword, occurred_at)
-      VALUES (app.tenant_id(), ${uuid()}, ${c.conversationId}, ${c.contactId}, 'sms', 'inbound', ${phone}, '+15555559100', 'STOP', 'received',
+      VALUES (app.tenant_id(), ${uuid()}, ${c.conversationId}, ${c.contactId}, 'sms', 'inbound', ${phone}, '+15555550141', 'STOP', 'received',
         'client', 'STOP', now())`.execute(tx), { db: h.app });
     await expect(insertMessage(w.system(), reply)).resolves.toBeTruthy();
     await expect(insertMessage(w.system(), { ...reply, purpose: 'marketing' })).rejects.toThrow(/RECIPIENT_OPTED_OUT/);
@@ -424,7 +425,7 @@ describe('0018: the shared opt-out case table (R-CHAN-5, F17)', () => {
         dispatched_at, occurred_at)
       VALUES (app.tenant_id(), ${uuid()}, ${s.conversationId}, ${s.contactId}, ${c.channel}, 'outbound', ${phoneLike ? numberId : null},
         ${c.channel === 'email' ? emailIdentityId : null}, ${isPlatform(c.channel) ? conn[c.channel] : null},
-        ${FROM[c.channel] ?? '+15555559100'}, ${s.to}, ${c.channel === 'email' ? 'Hello' : null}, 'Hi there', 'dispatching', ${c.initiator},
+        ${FROM[c.channel] ?? '+15555550141'}, ${s.to}, ${c.channel === 'email' ? 'Hello' : null}, 'Hi there', 'dispatching', ${c.initiator},
         ${c.initiator === 'human' ? agent.id : null}, ${c.purpose}, ${c.actionCategory}, now(), now())`.execute(tx), { db: h.app });
   }
 
@@ -476,7 +477,7 @@ describe('0018: the shared opt-out case table (R-CHAN-5, F17)', () => {
         await withTenantTx(w.system('provider'), (tx) => sql`
           INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator,
             opt_out_keyword, occurred_at)
-          VALUES (app.tenant_id(), ${uuid()}, ${s.conversationId}, ${s.contactId}, ${c.channel}, 'inbound', ${to}, ${FROM[c.channel] ?? '+15555559100'},
+          VALUES (app.tenant_id(), ${uuid()}, ${s.conversationId}, ${s.contactId}, ${c.channel}, 'inbound', ${to}, ${FROM[c.channel] ?? '+15555550141'},
             'STOP', 'received', 'client', 'STOP', now())`.execute(tx), { db: h.app });
       }
       const result = send(c, { ...s, to });

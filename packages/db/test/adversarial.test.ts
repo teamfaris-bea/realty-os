@@ -58,7 +58,7 @@ async function seedPair(owner: Member) {
     INSERT INTO conversations (tenant_id, id, contact_id, automation_paused_at, automation_pause_reason, automation_paused_by_message_id, inbound_seq)
       VALUES ($1, $7, $8, now() - interval '1 hour', 'client_reply', $9, 3);
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, occurred_at)
-      VALUES ($1, $9, $7, $8, 'sms', 'inbound', '+15555550111', '+15555559999', 'Still available?', 'received', 'client', now() - interval '1 hour');
+      VALUES ($1, $9, $7, $8, 'sms', 'inbound', '+15555550111', '+15555550146', 'Still available?', 'received', 'client', now() - interval '1 hour');
     INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, enrolled_by_user_id, state)
       VALUES ($1, $10, $2, $4, $6, 'user', $3, 'active');
     INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, enrolled_by_user_id, state,

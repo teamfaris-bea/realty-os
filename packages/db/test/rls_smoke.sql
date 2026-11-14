@@ -156,13 +156,13 @@ SELECT pg_temp.ok((SELECT count(*) FROM contacts) = 0, 'non-staff principal (fut
 -- Global uniqueness of live phone numbers across tenants.
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
-VALUES (:tA, 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000', 'fake', 'PN1', 'local', 'team_main', true, true, now());
+VALUES (:tA, 'a0000000-0000-7000-8000-00000000a0a1', '+15555550140', 'fake', 'PN1', 'local', 'team_main', true, true, now());
 SELECT pg_temp.ctx(:tB, :ownB, 'user');
 SELECT pg_temp.expect_error($q$INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose,
-  sms_capable, voice_capable, acquired_at) VALUES ('b0000000-0000-7000-8000-000000000001', gen_random_uuid(), '+15555559000',
+  sms_capable, voice_capable, acquired_at) VALUES ('b0000000-0000-7000-8000-000000000001', gen_random_uuid(), '+15555550140',
   'fake', 'PN2', 'local', 'team_main', true, true, now())$q$,
   'a live number cannot belong to two tenants', '%phone_numbers_live_e164%');
-SELECT pg_temp.ok((SELECT tenant_id FROM app.resolve_inbound_number('+15555559000')) = :tA,
+SELECT pg_temp.ok((SELECT tenant_id FROM app.resolve_inbound_number('+15555550140')) = :tA,
                   'inbound number resolves to exactly one tenant (pre-tenant definer)');
 
 -- Composite FK: even a superuser cannot create a cross-tenant reference.
@@ -364,13 +364,13 @@ SELECT pg_temp.expect_error(format(
 SELECT pg_temp.expect_error(format(
   $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
      body, status, initiator, initiated_by_user_id, purpose, occurred_at) VALUES (%L, gen_random_uuid(),
-     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
+     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555550140',
      '+15555550101', 'Hi Alice', 'dispatching', 'human', %L, 'informational', now())$q$, :tA, :c1, :agA2),
   'dispatching requires dispatched_at (the stuck-dispatch sweeper keys on it)', '%check constraint%');
 SELECT pg_temp.expect_error(format(
   $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
      body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
-     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
+     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555550140',
      '+15555550199', 'Hi stranger', 'dispatching', 'human', %L, 'informational', now(), now())$q$, :tA, :c1, :agA2),
   'a send to an address that is not one of the contact''s points cannot dispatch (its opt-out could not be checked)',
   '%RECIPIENT_NOT_A_CONTACT_POINT%');
@@ -378,7 +378,7 @@ SELECT pg_temp.expect_error(format(
 INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
        body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ee01', 'a0000000-0000-7000-8000-00000000cc01', :c1, 'sms', 'outbound',
-        'a0000000-0000-7000-8000-00000000a0a1', '+15555559000', '+15555550101', 'Hi Alice, it''s Ben.', 'dispatching', 'human',
+        'a0000000-0000-7000-8000-00000000a0a1', '+15555550140', '+15555550101', 'Hi Alice, it''s Ben.', 'dispatching', 'human',
         :agA2, 'informational', now() - interval '30 minutes', now());
 SELECT pg_temp.ok(true, 'a human send to a contact who has not opted out dispatches with no gate decision row');
 SELECT pg_temp.ok(EXISTS (SELECT 1 FROM app.due_work(now(), 100) WHERE work_kind = 'dispatch_stale'
@@ -437,7 +437,7 @@ SELECT pg_temp.ctx(:tA, :agA2, 'user');
 SELECT pg_temp.expect_error(format(
   $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
      body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
-     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
+     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555550140',
      '+15555550101', 'Still there?', 'sent', 'human', %L, 'informational', now(), now())$q$, :tA, :c1, :agA2),
   'a send to an opted-out address cannot be dispatched, whoever writes it (no override)', '%RECIPIENT_OPTED_OUT%');
 SELECT pg_temp.ctx(:tA, NULL, 'system');

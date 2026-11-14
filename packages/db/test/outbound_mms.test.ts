@@ -7,6 +7,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { type Harness, type Member, type World, PH, createHarness, createWorld, selfCreated, suFixture, suRows, uuid } from './world.js';
+import { nextFictionalPhone } from './fictionalPhone.js';
 
 let h: Harness;
 let w: World;
@@ -17,8 +18,8 @@ let numberId: string;
 let support: SupportActor;
 let seq = 0;
 
-const NUMBER = '+15555559200';
-const nextPhone = () => `+1555013${String(1000 + ++seq).slice(-4)}`;
+const NUMBER = '+15555550143';
+const nextPhone = nextFictionalPhone;
 const as = <T>(actor: Actor, fn: Parameters<typeof withTenantTx<T>>[1]) => withTenantTx(actor, fn, { db: h.app });
 
 beforeAll(async () => {

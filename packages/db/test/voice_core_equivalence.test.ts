@@ -108,7 +108,7 @@ const VALUES: readonly unknown[] = [
   OWNER_ID,
   OWNER_ID.toUpperCase(),
   OTHER_MEMBER_ID,
-  '+15550100199',
+  '+15555550117',
   ...APPOINTMENT_KINDS,
   'showing',
   ...MESSAGE_TOPICS,

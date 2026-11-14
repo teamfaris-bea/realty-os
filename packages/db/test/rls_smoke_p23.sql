@@ -152,7 +152,7 @@ SELECT FROM auth.accept_invite(digest('p23-invite-ad', 'sha256'), :admA, 'Adam A
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 INSERT INTO team_members (tenant_id, team_id, user_id, is_lead) VALUES (:tA, :teamA, :tlA, true), (:tA, :teamA, :agA1, false);
 INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, sms_capable, voice_capable, acquired_at)
-VALUES (:tA, :num, '+15555559100', 'fake', 'PN1', 'local', 'team_main', true, true, now());
+VALUES (:tA, :num, '+15555550141', 'fake', 'PN1', 'local', 'team_main', true, true, now());
 INSERT INTO email_identities (tenant_id, id, from_address, display_name) VALUES (:tA, :eid, 'team@a-realty.test', 'Team A');
 INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES (:tA, :srcA, 'Facebook Page', 'social_dm');
 
@@ -166,7 +166,7 @@ SELECT pg_temp.self_create(:tA, :c4, :agA2, 'Carol S. (duplicate)', 'a0000000-00
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
 INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, is_primary)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000f201', :c2, 'email', 'carol@example.test', digest('carol@example.test', 'sha256'), true),
-       (:tA, 'a0000000-0000-7000-8000-00000000f202', :c2, 'phone', '+15555550202', digest('+15555550202', 'sha256'), true);
+       (:tA, 'a0000000-0000-7000-8000-00000000f202', :c2, 'phone', '+15555550133', digest('+15555550133', 'sha256'), true);
 INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tA, :cvA2, :c2), (:tA, :cvA4, :c4);
 INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, listing_agent_user_id, list_price_cents)
 VALUES (:tA, :lC, 'team', 'active', '40 Elm St', 'Town', 'SC', '29401', :agA2, 52000000);
@@ -348,7 +348,7 @@ INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_h
        source, occurred_at, actor_kind, actor_user_id, contact_id)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ce02', 'email', digest('carol@example.test', 'sha256'), 'c…@example.test', 'email', 'all',
         'revoke', 'none', 'agent_revoke', now(), 'user', :agA2, :c2),
-       (:tA, 'a0000000-0000-7000-8000-00000000ce03', 'phone', digest('+15555550202', 'sha256'), '•••-0202', 'sms', 'informational',
+       (:tA, 'a0000000-0000-7000-8000-00000000ce03', 'phone', digest('+15555550133', 'sha256'), '•••-0133', 'sms', 'informational',
         'grant', 'express', 'agent_entry', now(), 'user', :agA2, :c2);
 SELECT pg_temp.expect_error(format($q$UPDATE contacts SET do_not_contact_at = now(), do_not_contact_event_id = %L WHERE id = %L$q$,
   'a0000000-0000-7000-8000-00000000ce03', :c2),
@@ -357,12 +357,12 @@ UPDATE contacts SET do_not_contact_at = now(), do_not_contact_event_id = 'a00000
 SELECT pg_temp.ok((SELECT do_not_contact_at IS NOT NULL FROM contacts WHERE id = :c2), 'agent records a person-level do-not-contact');
 SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id,
   from_address, to_address, body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
-  %L, %L, 'sms', 'outbound', %L, '+15555559100', '+15555550202', 'Quick question', 'dispatching',
+  %L, %L, 'sms', 'outbound', %L, '+15555550141', '+15555550133', 'Quick question', 'dispatching',
   'human', %L, 'informational', now(), now())$q$, :tA, :cvA2, :c2, :num, :agA2),
   'R-CHAN-2: a person-level do-not-contact blocks a text to a phone with no revoke of its own', '%PERSON_DO_NOT_CONTACT%');
 SELECT pg_temp.expect_error(format($q$INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id,
   client_address, initiator, handled_by, status, started_at, recording_mode, recording_decision) VALUES (%L, gen_random_uuid(), %L, %L,
-  'outbound', %L, %L, '+15555550202', 'human', 'human', 'initiated', now(), 'off', '{}')$q$,
+  'outbound', %L, %L, '+15555550133', 'human', 'human', 'initiated', now(), 'off', '{}')$q$,
   :tA, :cvA2, :c2, :num, :agA2),
   'R-CHAN-2: a person-level do-not-contact blocks a call', '%PERSON_DO_NOT_CONTACT%');
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
@@ -996,10 +996,10 @@ VALUES (:tA, gen_random_uuid(), :c6, 'a0000000-0000-7000-8000-00000000a6a1', tru
 INSERT INTO contact_predictions (tenant_id, contact_id, model_version, band, reasons, inputs_sha256, computed_on)
 VALUES (:tA, :c6, 'predict/1.0', 'none', '[]', :SHA, current_date);
 INSERT INTO webchat_sessions (tenant_id, id, connection_id, token_hash, origin, started_at, last_seen_at, contact_id, claimed_kind, claimed_address)
-VALUES (:tA, gen_random_uuid(), :wcA, digest('chat-session-finn', 'sha256'), 'https://a-realty.test', now(), now(), :c6, 'phone', '+15555550666');
+VALUES (:tA, gen_random_uuid(), :wcA, digest('chat-session-finn', 'sha256'), 'https://a-realty.test', now(), now(), :c6, 'phone', '+15555550138');
 INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client_address, initiator, handled_by, status, started_at,
        recording_mode, recording_decision, agent_user_id)
-VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca06', :cvA6, :c6, 'inbound', '+15555550666', 'client', 'human', 'completed', now(), 'off', '{}', :agA1);
+VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca06', :cvA6, :c6, 'inbound', '+15555550138', 'client', 'human', 'completed', now(), 'off', '{}', :agA1);
 INSERT INTO recordings (tenant_id, id, call_id, contact_id, agent_user_id, source, consent_basis, retain_until)
 VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000ca06', :c6, :agA1, 'provider', 'one_party_policy', now() + interval '730 days');
 INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count)
