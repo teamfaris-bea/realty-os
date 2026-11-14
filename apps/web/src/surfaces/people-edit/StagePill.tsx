@@ -23,6 +23,8 @@ const SKIP_WORDS: Record<string, string> = {
   protected_audience: 'they were picked by a protected tag, and a plan never starts for such a list',
   // R-ISA-2 (b12 review B12X-4): the person is in the assistant's ISA care, which never runs beside a plan
   ai_isa_active: "they're in the assistant's ISA care, and no plan starts while it lasts",
+  // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact
+  source_no_automated_contact: 'their lead source is marked "No automated contact for leads from this source"',
 };
 
 /** The sentence after "Stage: Active." on the toast; '' when no plan is set for that stage. */

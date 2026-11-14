@@ -12,8 +12,8 @@ import type { OnOffResponse, SourceOverview, SourceView } from './types.js';
 import { OFF_SENTENCE, stoppingPaths } from './words.js';
 
 export const OFF_CONFIRM_LABEL = 'Turn off and stop receiving leads';
-/** b18 item f: the setting's name, as the API writes it (leads/sources.ts NO_AI_CARE_LABEL) */
-export const NO_AI_CARE_LABEL = 'No AI care for leads from this source';
+/** b18 item f, renamed by b18 review B18S-5: the setting's name, as the API writes it (leads/automatedContact.ts) */
+export const NO_AUTOMATED_CONTACT_LABEL = 'No automated contact for leads from this source';
 
 export function Manage({ source }: { source: SourceOverview }) {
   const [status, announce] = useAnnounce(8000);
@@ -92,31 +92,34 @@ function Consent({ source, onDone }: { source: SourceOverview; onDone(t: string)
 }
 
 /**
- * b18 item f (owner product boundary, 2026-11-14): the Owner-only "No AI care for leads from this source". The API's
- * sentence says what it does; only an Owner gets the button (the API and the database refuse anyone else), and turning
- * it off asks for the password again (the shell's re-auth).
+ * b18 item f (owner product boundary, 2026-11-14), renamed by b18 review B18S-5: the Owner-only "No automated contact
+ * for leads from this source" (no instant reply, plan, bulk send, invite, AI care or AI-answered call for its leads;
+ * one-to-one calls, texts and emails stay allowed). The API's sentence says what it does; only an Owner gets the button
+ * (the API and the database refuse anyone else), and turning it off asks for the password again (the shell's re-auth).
  */
 function AiCare({ source, onDone }: { source: SourceOverview; onDone(t: string): void }) {
   const { session } = useSession();
   const owner = session?.tenant?.role === 'owner';
-  const a = useAction<{ noAiCare: boolean }, { source: { noAiCare: boolean }; pausing: number }>('PUT', { invalidate: SOURCE_KEYS });
+  const a = useAction<{ noAiCare: boolean }, { source: { noAiCare: boolean }; pausing: number; stopping?: number }>('PUT', { invalidate: SOURCE_KEYS });
   if (source.noAiCareSentence === undefined) return null;
   const on = source.noAiCare === true;
   const turn = async (next: boolean) => {
     const r = await a.run(`/lead-sources/${source.id}/ai-care`, { noAiCare: next });
     if (!r.ok) return;
-    if (!r.data.source.noAiCare) onDone(`${NO_AI_CARE_LABEL} is off.`);
-    else if (r.data.pausing > 0) onDone(`${NO_AI_CARE_LABEL} is on. AI care already running for ${r.data.pausing} of its lead${r.data.pausing === 1 ? '' : 's'} will pause.`);
-    else onDone(`${NO_AI_CARE_LABEL} is on.`);
+    if (!r.data.source.noAiCare) return onDone(`${NO_AUTOMATED_CONTACT_LABEL} is off.`);
+    const leads = (n: number) => `${n} of its lead${n === 1 ? '' : 's'}`;
+    const care = r.data.pausing > 0 ? ` AI care already running for ${leads(r.data.pausing)} will pause.` : '';
+    const plans = (r.data.stopping ?? 0) > 0 ? ` Plans running for ${leads(r.data.stopping!)} will stop.` : '';
+    onDone(`${NO_AUTOMATED_CONTACT_LABEL} is on.${care}${plans}`);
   };
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-[15px] font-medium text-ink">{NO_AI_CARE_LABEL}</p>
+      <p className="text-[15px] font-medium text-ink">{NO_AUTOMATED_CONTACT_LABEL}</p>
       <p className="text-[15px] text-ink-muted">{source.noAiCareSentence}</p>
       {owner ? (
         <div>
           <Button variant="secondary" pending={a.pending} onClick={() => void turn(!on)}>
-            {on ? 'Allow AI care for leads from this source' : `Turn on: ${NO_AI_CARE_LABEL.toLowerCase()}`}
+            {on ? 'Allow automated contact for leads from this source' : `Turn on: ${NO_AUTOMATED_CONTACT_LABEL.toLowerCase()}`}
           </Button>
         </div>
       ) : null}

@@ -20,7 +20,7 @@ export interface SourceOverview {
   /** partner-feed leads skipped because the source was off, last 30 days (R-LSRC-2) */
   skippedWhileOffLast30Days: number;
   hasConsentText: boolean;
-  /** b18 item f: "No AI care for leads from this source" (an Owner setting) and the API's sentence for it */
+  /** b18 item f / B18S-5: "No automated contact for leads from this source" (an Owner setting; the field keeps its b18 name) and the API's sentence for it */
   noAiCare?: boolean;
   noAiCareSentence?: string;
   paths: {

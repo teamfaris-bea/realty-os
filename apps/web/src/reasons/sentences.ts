@@ -142,6 +142,8 @@ const BLOCKED: Record<string, string> = {
   PORTAL_LINK_DAILY_CAP_REACHED: "today's limit on sign-in link texts for this team is reached",
   // R-TWL-1 (b9 review ownership-data/F4): the kill switch, refused before the send (the gate's own sentence)
   TELEPHONY_LIVE_OFF: 'live texting and calling are off on this deployment',
+  // b18 review B18S-5 (owner boundary 2026-11-14): the Owner's lead-source setting; an automated or bulk message never goes
+  SOURCE_NO_AUTOMATED_CONTACT: 'their lead source is marked "No automated contact for leads from this source" (an Owner setting); call, text or email them one to one',
   // a dispatch guard's own refusal with no gate code for the same fact
   RECIPIENT_NOT_A_CONTACT_POINT: "the number or address isn't on their record, so their opt-outs couldn't be checked",
 };

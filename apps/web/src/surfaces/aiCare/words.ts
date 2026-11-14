@@ -84,7 +84,7 @@ export const PAUSE_WORDS: Record<IsaPauseReason, string> = {
   check_this: 'Something needs a person to check.',
   taking_over: 'Someone on the team is taking over.',
   ending: 'Someone on the team is ending it.',
-  source_no_ai_care: 'Their lead source is marked "No AI care for leads from this source" (an Owner setting).',
+  source_no_ai_care: 'Their lead source is marked "No automated contact for leads from this source" (an Owner setting).',
 };
 
 /** The always-human topics (R-ISA-23): their sentences never say the AI may come back to them. */
@@ -539,7 +539,7 @@ export const ISA_ERROR_MESSAGES: Record<string, string> = {
   AI_ISA_CALENDAR_REQUIRED: 'Connect your calendar first to let it book appointments.',
   AI_ISA_FIRST_TOUCH_PENDING: "Text or call them yourself first. AI messages don't count as your first contact.",
   AI_ISA_PERSON_DECLINED: 'This person declined or stopped AI care.',
-  AI_ISA_SOURCE_NO_AI_CARE: "No AI care for leads from this source: the Owner turned this on for this person's lead source, so the AI assistant does not care for them.",
+  AI_ISA_SOURCE_NO_AI_CARE: "No automated contact for leads from this source: the Owner turned this on for this person's lead source, so the AI assistant does not care for them (nothing automatic goes to them; call, text or email them one to one).",
   AI_ISA_HANDBACK_STALE: 'They wrote again or a reply was already queued. Open the thread instead.',
   AI_ISA_UNDO_EXPIRED: 'Too late to undo.',
   AI_ISA_NOT_LIVE: 'AI care is not on for this person any more.',
