@@ -40,10 +40,11 @@ const ROUTES = String.raw`
   },
   /** { rounds=4 } drains the AI ISA jobs on the bound handlers */
   async '/isa-run'(b) { await runIsa(h, world('i').tenantId, b.rounds ?? 4); return { ok: true }; },
-  /** the deadline sweep, as the system */
+  /** the deadline sweep, as the system (b12 recheck R13: it closes a met handoff's card and audits as that actor, as the
+   *  ai_isa.sla job passes its own, isa/handlers.ts); returns { met, escalated, closed, failed } for the spec to assert */
   async '/isa-sla'() {
     const sa = systemActor(world('i').tenantId, 'timer');
-    const r = await withTenantTx(sa, (tx, now) => slaSweepInTx(tx, h.app.platform.ids, now), { db: h.database });
+    const r = await withTenantTx(sa, (tx, now) => slaSweepInTx(tx, h.app.platform.ids, now, sa), { db: h.database });
     return r;
   },
   /** clears the counsel pack (the counsel-review command's effect) */

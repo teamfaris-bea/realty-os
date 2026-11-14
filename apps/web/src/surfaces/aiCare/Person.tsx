@@ -110,6 +110,9 @@ function HandoffLink({ handoffId, viewer, ownerUserId, currentOwner, tookOver }:
   const h = useHandoff(handoffId);
   if (!h.data) return null;
   const who = handoffHolder({ recipientUserId: h.data.recipientUserId, viewerUserId: viewer.userId, ownerUserId, ownerFirst: viewer.ownerFirst, currentOwner, tookOver: tookOver || h.data.reason === 'taken_over' });
+  // b12 recheck R13 (b13 e2e a7): a handoff the system closed (its deadline met, say) has its card resolved and gone from
+  // the feed, so it is never pointed to there; the panel's Handoff section says why it is done
+  if (who === 'you' && h.data.closedReason !== null) return <span className="text-ink-muted">You got the handoff.</span>;
   if (who === 'you')
     return (
       <Link to="/" className="font-medium text-accent underline">

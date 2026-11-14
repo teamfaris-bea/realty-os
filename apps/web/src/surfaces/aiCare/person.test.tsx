@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { err } from '../../shell/testing/fakeApi.js';
 import type { PanelResponse } from './api.js';
 import { FakeFetch, IDS, ISA_IDS, contactReads, fullContact, handoffView, isaApp, isaError, iso, meView, optIn, panel, row } from './testing.js';
+import { localTime } from './time.js';
 import { UNDO_MS, windowFromPanel, windowFromResponse } from './undoStore.js';
 
 const CONTROL = { assignmentId: ISA_IDS.assignment, state: 'paused', epoch: 1, inFlight: [], canceled: 0, undoUntil: null, sentence: 'Paused: nobody is following up automatically.' };
@@ -64,6 +65,27 @@ describe('the AI care panel and strip (module 76)', () => {
     isaApp(person(ended({ closedReason: 'care_continued' }), { live: false }), `/contacts/${IDS.jane}`, 'agent');
     expect(await screen.findByText('Closed: AI care was continued.')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/Respond by|Overdue/);
+  });
+
+  it('R-ISA-30 E521 (b12 recheck R13; b13 e2e a7): once a touch met the deadline the system closed the card, so the panel says Done with the time and the strip never sends the recipient to the feed', async () => {
+    const metAt = iso(-120_000);
+    const ended = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'escalated', slaClass: 'critical', slaDueAt: iso(600_000), slaMetAt: metAt, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: 'deadline_met' } });
+    const fake = person(ended, { live: false }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView({ slaMetAt: metAt, closedReason: 'deadline_met', acknowledgedAt: iso(-300_000), acknowledgedByUserId: IDS.me }) });
+    isaApp(fake, `/contacts/${IDS.jane}`, 'agent');
+    const strip = await screen.findByTestId('ai-strip');
+    expect(await within(strip).findByText('You got the handoff.')).toBeInTheDocument();
+    expect(strip.textContent).not.toMatch(/in your feed/);
+    expect(within(strip).queryByRole('link', { name: /handoff/ })).toBeNull();
+    const care = screen.getByRole('region', { name: 'AI care' });
+    expect(within(care).getByText(`Done: Jane was reached at ${localTime(metAt)}.`)).toBeInTheDocument();
+    expect(care.textContent).not.toMatch(/Respond by|Overdue/);
+  });
+
+  it('R-ISA-30 E521: while the handoff is open its recipient is sent to the card in the feed', async () => {
+    const open = panel({ state: 'ended', handoff: { id: ISA_IDS.handoff, reason: 'escalated', slaClass: 'critical', slaDueAt: iso(600_000), slaMetAt: null, overdue: false, confirmationStatus: 'none', confirmationNotSent: null, closedReason: null } });
+    isaApp(person(open, { live: false }).on(`GET /ai-isa/handoffs/${ISA_IDS.handoff}`, { status: 200, body: handoffView() }), `/contacts/${IDS.jane}`, 'agent');
+    const strip = await screen.findByTestId('ai-strip');
+    expect(await within(strip).findByRole('link', { name: 'The handoff is in your feed.' })).toHaveAttribute('href', '/');
   });
 
   it('R-ISA-14 E533 R-ISA-30 (b13 review B13S-3 / F4-ui): the panel never asks for a hand confirmation D1 blocks, nor after a person reached them first', async () => {
