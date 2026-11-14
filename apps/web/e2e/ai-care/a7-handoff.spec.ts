@@ -1,8 +1,10 @@
 // a7-handoff (J1 part; E521; R-ISA-14, R-ISA-30, R-ISA-7): start from the person page (2 taps) → the AI's message is
 // labelled the AI assistant's with a verb its status supports → the person replies "AGENT" → the handoff card (why,
 // what is unanswered, the deadline with its countdown) → Got it leaves the deadline running → the owner's own text plus
-// the deadline sweep → "Done". The handback path ("Let the AI assistant continue") is covered by the component tests:
-// this world has no first-response playbook to make a handback. Phone 390×844 and desktop 1440×900. Fakes only.
+// the deadline sweep → "Done" on the person page, with the time, and the closed card gone from the feed (b12 recheck R13:
+// a met deadline closes the card and executes its action). The handback path ("Let the AI assistant continue") is
+// covered by the component tests: this world has no first-response playbook to make a handback. Phone 390×844 and
+// desktop 1440×900. Fakes only.
 import { expect, test } from 'playwright/test';
 import { shot } from '../journeys/helpers.js';
 import type { JourneyStack } from '../journeys/stack.js';
@@ -76,8 +78,38 @@ test('J1 E521: start (2 taps) → the AI message is labelled → AGENT → the h
   await press(page, page.getByRole('button', { name: 'Send', exact: true }).last());
   await runIsa(stack);
   await expect.poll(async () => (await stack.sql<{ t: string | null }>(`SELECT last_human_touch_at AS t FROM contacts WHERE id = $1`, [lead.id]))[0]!.t, { timeout: 20_000 }).not.toBeNull();
-  await stack.fixture('/isa-sla');
+  // the sweep says what it did: one deadline met, nothing failed (a row whose work throws is rolled back and only counted)
+  expect(await stack.fixture('/isa-sla')).toEqual({ met: 1, escalated: 0, closed: 0, failed: 0 });
+  // b12 recheck R13, R19 (AI_ISA.md §4.7): the touch is recorded as meeting it, the handoff is closed `deadline_met`,
+  // its action executed and its feed card resolved by the system (done, resolved_by NULL), in the sweep's transaction
+  const h2 = await stack.sql<{ met: string | null; touched: string; reason: string | null; action: string; feed: { state: string; by: string | null }[] }>(
+    `SELECT h.sla_met_at AS met, c.last_human_touch_at AS touched, h.closed_reason AS reason, x.status AS action,
+            (SELECT coalesce(json_agg(json_build_object('state', f.state, 'by', f.resolved_by)), '[]') FROM priority_feed_items f WHERE f.assistant_action_id = h.assistant_action_id) AS feed
+       FROM ai_isa_handoffs h JOIN contacts c ON c.id = h.contact_id JOIN assistant_actions x ON x.id = h.assistant_action_id WHERE h.contact_id = $1`,
+    [lead.id],
+  );
+  expect(h2[0]!.met).not.toBeNull();
+  expect(new Date(h2[0]!.met!).getTime()).toBe(new Date(h2[0]!.touched).getTime());
+  expect(h2[0]!.reason).toBe('deadline_met');
+  expect(h2[0]!.action).toBe('executed');
+  expect(h2[0]!.feed.length).toBeGreaterThan(0);
+  expect(h2[0]!.feed).toEqual(h2[0]!.feed.map(() => ({ state: 'done', by: null })));
+  // what the owner sees: the person page says it was done, with the time of the text, and no deadline is left
+  await page.goto(`${stack.webUrl}/contacts/${lead.id}`);
+  const care = page.getByRole('region', { name: 'AI care' });
+  const at = await page.evaluate((iso) => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(iso)), h2[0]!.met!);
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await expect(care).toContainText(new RegExp(`Done: Jane was reached at (?:\\w{3}, \\w{3} \\d{1,2}, )?${esc(at)}\\.`));
+  await expect(care).not.toContainText(/Respond by|Overdue/);
+  // the strip names who got it and, the card being closed, never sends them to the feed for it
+  await expect(page.getByTestId('ai-strip')).toContainText('You got the handoff.');
+  await expect(page.getByTestId('ai-strip')).not.toContainText('in your feed');
+  await expectNoCode(page);
+  await shot(page, info, 'ai-care', 'handoff-done');
+  expect(await axe(page)).toEqual([]);
+  // and the feed: the closed card has left it (the feed has loaded: its "Updated" time is shown)
   await page.goto(`${stack.webUrl}/`);
-  await expect(card).toContainText(/Done: Jane was reached at /);
+  await expect(page.getByRole('main').getByText(/^Updated /)).toBeVisible();
+  await expect(card).toHaveCount(0);
   expect(await axe(page)).toEqual([]);
 });

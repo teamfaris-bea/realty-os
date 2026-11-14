@@ -133,7 +133,16 @@ test('R-CMA-9 D1: with platform:cma reviewed in this test database only, emailin
 
     const email = page.getByRole('button', { name: 'Email to Sam' });
     await expect(email).toBeEnabled({ timeout: 20_000 });
-    await expect(page.getByText(`To: Sam Seller · ${seed.sellerEmail}`)).toBeVisible();
+    // the recipient and the address are on screen before the tap (audit cma-v2a F7): in the share panel, and on a phone
+    // also in the sticky bar beside the Email button (ShareRecipient); desktop has no bar and says it once
+    const to = `To: Sam Seller · ${seed.sellerEmail}`;
+    await expect(page.getByRole('region', { name: 'Share with the client' }).getByText(to, { exact: true })).toBeVisible();
+    const bar = page.locator('main [data-sticky]');
+    if (isPhone(page)) {
+      await expect(bar.getByText(to, { exact: true })).toBeVisible();
+      await expect(bar.getByRole('button', { name: 'Email to Sam' })).toBeVisible();
+    } else await expect(bar).toHaveCount(0);
+    await expect(page.getByText(to, { exact: true })).toHaveCount(isPhone(page) ? 2 : 1);
     await expect(page.getByText('This CMA can’t be shown to a client yet:')).toHaveCount(0);
     expect((await email.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     expect(await stack.fixture<{ count: number }>('/sent', { to: seed.sellerEmail })).toEqual({ count: 0 });
