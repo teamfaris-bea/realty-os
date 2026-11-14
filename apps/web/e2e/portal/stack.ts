@@ -7,6 +7,7 @@
 //   /portal/link    {to, after}    drains comms.dispatch, waits up to 10 s for the post-reply delivery, and returns
 //                                  the newest #token= link sent to `to` after `after` messages, and the notice bodies
 //   /portal/publish {grantId, documentId | kind + sourceId}  the agent's POST /portal-items (test only), then the jobs
+//   /portal/document {dealId, grantId, name}  another clean, shared PDF of the deal, published to the grant (test only)
 //   /portal/isa     {world}        an ISA member of the world (client "<world>.isa")
 // Nothing is sent to a real person: every email and text lands in the fakes.
 import { type JourneyStack, startJourneyStack } from '../journeys/stack.js';
@@ -30,6 +31,8 @@ export interface PortalStack extends JourneyStack {
   link(to: string, after?: number): Promise<{ link: string | null; count: number; notices: string[] }>;
   publishDocument(grantId: string, documentId: string): Promise<void>;
   publishItem(grantId: string, kind: 'next_step' | 'document', sourceId: string): Promise<void>;
+  /** another shared PDF of the deal, published to the grant (b15 audit F12: a long unbroken title) */
+  publishNewDocument(dealId: string, grantId: string, name: string): Promise<{ id: string }>;
   emailCount(to: string): Promise<number>;
 }
 
@@ -73,6 +76,14 @@ const ROUTES = String.raw`
     await worker().drain(100);
     return { ok: true };
   },
+  async '/portal/document'(b) {
+    const w = world(b.world);
+    const doc = await sharedDocument(h, w, w.agents[0], b.dealId, b.name);
+    const r = await portalPublish(w.agents[0], 'document', doc.id, [b.grantId]);
+    if (r.status !== 200 || r.body.results[0].result !== 'published') throw new Error('publish: ' + JSON.stringify(r.body));
+    await worker().drain(100);
+    return { id: doc.id };
+  },
   async '/portal/isa'(b) {
     const w = world(b.world);
     const isa = await h.invite(w.owner, 'isa');
@@ -93,6 +104,7 @@ export async function startPortalStack(): Promise<PortalStack> {
     link: (to, after = 0) => s.fixture('/portal/link', { to, after }),
     publishDocument: async (grantId, documentId) => void (await s.fixture('/portal/publish', { grantId, documentId })),
     publishItem: async (grantId, kind, sourceId) => void (await s.fixture('/portal/publish', { grantId, kind, sourceId })),
+    publishNewDocument: (dealId, grantId, name) => s.fixture<{ id: string }>('/portal/document', { dealId, grantId, name }),
     emailCount: async (to) => (await s.fixture<{ count: number }>('/portal/count', { to })).count,
   };
 }

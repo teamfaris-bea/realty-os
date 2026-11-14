@@ -1899,7 +1899,7 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E706 | A text-message request while SMS cannot really send | The per-channel sentence (nothing sent); Email still offered | R-PORTALWEB-4 |
 | E707 | The request gets 429, 413 or 422 | Its own sentence; the address stays in the field | R-PORTALWEB-4 |
 | E708 | A response with extra fields (notes, score, value, AI draft), or with missing or malformed ones | Extras never rendered; missing or bad gives BAD_RESPONSE | R-PORTALWEB-5 |
-| E709 | Item text with HTML, URLs, bidi controls or a very long word | Plain text, no links, direction isolated, wraps at 320 px | R-PORTALWEB-5 |
+| E709 | Item text with HTML, URLs, bidi controls or a very long word | Plain text, no links, direction isolated, wraps at 320 px (measured in a browser by the portal a11y e2e, b15 audit F12) | R-PORTALWEB-5 |
 | E710 | `occursOn` 2026-12-18 in Honolulu, Los Angeles or Tokyo | "Dec 18, 2026" everywhere | R-PORTALWEB-5 |
 | E711 | Zero grants (never invited, revoked, lapsed, not a party) | One "nothing is shared" sentence; revoked looks like never granted | R-PORTALWEB-6, R-PORTAL-6 |
 | E712 | Grant revoked between `/me` and the timeline or documents | "No longer shared"; `/me` refetched; no stale items | R-PORTALWEB-6, E125 |

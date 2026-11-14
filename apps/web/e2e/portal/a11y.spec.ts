@@ -35,6 +35,7 @@ test.beforeAll(async () => {
   expect(inv.status, JSON.stringify(inv.body)).toBe(200);
   grantId = inv.body.grant.id;
   await stack.publishDocument(grantId, pw.documentId);
+  await stack.publishNewDocument(pw.dealId, grantId, LONG_TITLE);
   await stack.jobs();
 });
 test.afterAll(async () => {
@@ -46,6 +47,8 @@ const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
 /** module 45's error body (webContract.json errors), as the API sends it */
 const apiError = (status: number, code: string, details?: Record<string, unknown>) => ({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, requestId: '01900000-0000-7000-8000-0000000000ee', ...(details ? { details } : {}) } }) });
 const SECOND_GRANT = '01900000-0000-7000-8000-00000000f5a2';
+/** b15 audit F12 (E709): a 118-character document title with no space or hyphen: one long word */
+const LONG_TITLE = `Inspection${'W'.repeat(104)}.pdf`;
 /** /me as the API answered it, with its grants changed */
 const meWith = (page: Page, grants: (real: Record<string, unknown>[]) => Record<string, unknown>[]) =>
   page.route('**/api/portal/me', async (r) => {
@@ -124,6 +127,31 @@ test('R-PORTALWEB-11: every portal screen and state passes axe in both themes an
     await tap(p, p.getByRole('tab', { name: 'Documents' }));
     await expect(p.getByText('Purchase contract.pdf', { exact: true })).toBeVisible();
     found.push(...(await check(p, 'home documents')));
+  }
+
+  // E709 (b15 audit F12): a very long word wraps at 320 px, measured in the browser (not taken from a class): the
+  // word's box stays inside the viewport, it takes more than one line, nothing scrolls sideways and no text is clipped
+  {
+    const size = p.viewportSize()!;
+    await p.setViewportSize({ width: 320, height: size.height });
+    // at 320 px every project has the phone layout: the documents are behind their tab
+    const docsTab = p.getByRole('tab', { name: 'Documents' });
+    await expect(docsTab).toBeVisible();
+    if ((await docsTab.getAttribute('aria-selected')) !== 'true') await tap(p, docsTab);
+    const word = p.getByText(LONG_TITLE, { exact: true });
+    await expect(word).toBeVisible();
+    const m = await word.evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      const root = document.documentElement;
+      return { left: r.left, right: r.right, height: r.height, font: parseFloat(getComputedStyle(e).fontSize), vw: root.clientWidth, sideways: root.scrollWidth > root.clientWidth };
+    });
+    expect(m.vw).toBe(320);
+    expect(m.left).toBeGreaterThanOrEqual(0);
+    expect(m.right).toBeLessThanOrEqual(m.vw);
+    expect(m.height).toBeGreaterThan(2 * m.font);
+    expect(m.sideways).toBe(false);
+    found.push(...(await clippedText(p)).map((v) => `320 long word: ${v}`));
+    await p.setViewportSize(size);
   }
 
   // several grants: a one-tap list (a second grant beside the real one; it is never opened)

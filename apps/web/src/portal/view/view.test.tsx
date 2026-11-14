@@ -16,7 +16,8 @@ function body(items: unknown[]) {
 }
 
 describe('view components (R-PORTALWEB-5)', () => {
-  it('E709: HTML is text, URLs are not links, every server string is direction-isolated, and a 5,000-character word wraps', () => {
+  // jsdom does no layout: here the wrap is only the class; e2e/portal/a11y.spec.ts measures it at 320 px (b15 audit F12)
+  it('E709: HTML is text, URLs are not links, every server string is direction-isolated, and a 5,000-character word carries the wrap class', () => {
     // the parsers cap a body at 45's 4,000 characters; the component still wraps a longer word if one ever came
     const tl = body([{ ...F.timeline().items[0], title: HOSTILE_TITLE, body: URL_BODY }, { ...F.timeline().items[1], title: BIDI }]);
     tl.items[1] = { ...tl.items[1]!, body: LONG };
