@@ -16,6 +16,8 @@
 // - b17 round 2 (M1): any other bare run of ten digits, or 1 and ten, whose digits stop where a number's do: after a
 //   comma, a quote, a space, a newline escape (\n), "tel:", as a JSON number ("phone": 4155550100) and so on, but not
 //   inside hex or an id (c4155550100d, 4155550100_zpid) or a decimal (10428.14155550100, 4155550100.5);
+// - b17 round 2 (M1): a tel: link without a plus, with any, some or none of its separators (tel:4155550100,
+//   tel:415555-0100, tel:(415)5550100, TEL:1-415-5550100); %20 and %2B anywhere read as a space and a plus;
 // - a generator: "+1" and up to nine digits, or a written area code and part of a number ("(415) 55", "415-555-"),
 //   followed by a template hole or a concatenation. It passes only when its digits already reach 555-01
 //   ("+1843555013" then a hole) or, for "+1" and fewer than eight digits, when its line spells 55501 after the hole
@@ -56,6 +58,8 @@ const QUOTED = /(['"`])1?([2-9]\d{9})\1/g;
 // an underscore (hex, ids such as 123_zpid), not after a decimal point and not before a fraction. A newline, tab or
 // return escape (\n, \t, \r) before the digits counts as a separator.
 const BARE = /(?:(?<=\\[nrt])|(?<![\w.]))1?([2-9]\d{9})(?!\w|\.\d)/g;
+// b17 round 2 (M1): a tel: link without a plus, its separators each optional (tel:415555-0100, tel:(415)5550100)
+const TEL = /(?<!\w)tel:(?:1[\s.-]?)?(?:\(([2-9]\d{2})\)|([2-9]\d{2}))[\s.-]?(\d{3})[\s.-]?(\d{4})(?!\w)/gi;
 const HOLE = String.raw`(?=\$\{|['"\x60]\s*(?:\+|\|\|))`;
 const GENERATOR = new RegExp(String.raw`(?<![\w+])\+1(\d{0,9})` + HOLE, 'g');
 const WRITTEN_GENERATORS = [new RegExp(String.raw`\(([2-9]\d{2})\)[\s.-]?([\d\s.-]{0,8})` + HOLE, 'g'), new RegExp(String.raw`(?<![\w+$.:/-])([2-9]\d{2})-(\d[\d-]{0,7})` + HOLE, 'g')];
@@ -66,8 +70,9 @@ export function usNumbers(text: string): Found[] {
   const out: Found[] = [];
   text.split('\n').forEach((raw, i) => {
     // an HTML no-break space separates digits as a space does; invisible format characters (bidi marks, zero-width
-    // joiners), written as themselves or as \u escapes, do not separate them at all
-    const l = raw.replace(/&nbsp;|\u00a0/g, ' ').replace(/\\u(?:200[b-f]|202[a-e]|206[0-9])|[\u200b-\u200f\u202a-\u202e\u2060-\u2069]/gi, '');
+    // joiners), written as themselves or as \u escapes, do not separate them at all; a URL-encoded space or plus
+    // (%20, %2B, as in tel:%2B1 and ten digits) is one
+    const l = raw.replace(/&nbsp;|\u00a0|%20/g, ' ').replace(/%2B/gi, '+').replace(/\\u(?:200[b-f]|202[a-e]|206[0-9])|[\u200b-\u200f\u202a-\u202e\u2060-\u2069]/gi, '');
     const line = i + 1;
     const taken: [number, number][] = [];
     const add = (m: RegExpMatchArray, digits: string, ok: boolean) => {
@@ -85,6 +90,10 @@ export function usNumbers(text: string): Found[] {
         const d = `${m[1]}${m[2]!.replace(/\D/g, '')}`;
         add(m, d, REACHES_FICTION.test(d));
       }
+    }
+    for (const m of l.matchAll(TEL)) {
+      const ten = `${m[1] ?? m[2]}${m[3]}${m[4]}`;
+      add(m, ten, isFictionalUs(ten));
     }
     for (const m of l.matchAll(PLUS1)) {
       const ten = `${m[1] ?? m[2]}${m[3]}${m[4]}`;
@@ -213,6 +222,20 @@ describe('b17 (B17R-2): US phone numbers in apps, packages and docs are fictiona
     // planted in a file the scan reads, it fails the scan; a fictional one passes
     const planted = 'packages/core/src/planted.json';
     expect(outsideRange(planted, `{\n  "phone": ${noLine('12')},\n  "ok": 4155550112\n}`)).toEqual([`${planted}:2: ${noLine('12')}`]);
+  });
+
+  it('b17 round 2 (M1): a tel: link without a plus is read with or without separators, and %20 or %2B in it is a space or a plus', () => {
+    const line = (kk: string) => sample('055', '01', kk); // the exchange and line of noLine(kk)
+    const text = [
+      `<a href="tel:${sample('415055')}-${sample('0113')}"> tel:(${sample('415')})${line('14')} TEL:415 ${line('15')} tel:1-415-${line('16')}`,
+      `tel:415%20${sample('055')}%20${sample('0117')} tel:%2B${sample('1', noLine('18'))} tel:415555-0119 tel:%2B1%20(415)%20555-0120`,
+    ].join('\n');
+    expect(usNumbers(text).map((f) => [f.line, f.digits, f.ok])).toEqual([
+      [1, noLine('13'), false], [1, noLine('14'), false], [1, noLine('15'), false], [1, noLine('16'), false],
+      [2, noLine('17'), false], [2, '4155550119', true], [2, noLine('18'), false], [2, '4155550120', true],
+    ]);
+    const planted = 'apps/web/src/planted.html';
+    expect(outsideRange(planted, `<p><a href="tel:(${sample('415')})${line('21')}">Call</a></p>`)).toEqual([`${planted}:1: tel:(${sample('415')})${line('21')}`]);
   });
 
   it('every +1 or NANP number under apps, packages and docs is in 555-0100..0199 or allowed with a reason', () => {
