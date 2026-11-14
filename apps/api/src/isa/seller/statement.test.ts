@@ -303,7 +303,7 @@ describe('D9 D12 R-ISA-18 R-ISA-25 (batch 16): the recent-sales emails stay dark
     expect(packs).toEqual([{ key: 'platform:ai_isa_seller_data', reviewed: null }, { key: 'platform:cma', reviewed: null }]);
   });
 
-  it('R-ISA-25 E517 R-ISA-18: a comps email queued with the packs cleared never reaches the provider: not with the packs uncleared at send (ISA_SELLER_DATA_NOT_CLEARED in dispatch TX1), and not with AI_ISA_LIVE_SENDS false on a real email adapter', () =>
+  it('R-ISA-25 E517 R-ISA-18: a comps email queued with the packs cleared never reaches the provider: not with the packs uncleared at send (ISA_SELLER_DATA_NOT_CLEARED in dispatch TX1), and not with AI_ISA_LIVE_SENDS false on a real email adapter, where it passes every other check and the live-sends hold alone refuses it (AI_ISA_LIVE_OFF; B16S-4)', () =>
     initiatedDayNow(h, w.tenantId, openZone(), async () => {
       const cfg = h.app.platform.config as { providers: { telephony: string; email: string }; aiIsaLiveSends: boolean };
       expect(cfg.aiIsaLiveSends).toBe(false);
@@ -344,9 +344,10 @@ describe('D9 D12 R-ISA-18 R-ISA-25 (batch 16): the recent-sales emails stay dark
       expect(providerCalls(a)).toEqual([]);
 
       // AI_ISA_LIVE_SENDS false with a non-fake email adapter (R-ISA-25), the packs cleared at send: no provider call.
-      // The live-sends hold is the last check of an allowed AI message (dispatch.ts); every check before it must pass
-      // first, and today check 4's unsubscribe text (UNSUBSCRIBE_MISSING) already refuses an AI marketing email, so
-      // either refusal holds it (batch 16 owner question). What this proves is that it never reaches the provider.
+      // The live-sends hold is the last check of an otherwise allowed AI message (dispatch.ts). Until batch 16 check 4
+      // refused every AI email first (UNSUBSCRIBE_MISSING), so this case could not tell whether the hold worked (B16S-4);
+      // now the email carries the unsubscribe line and the postal address, passes every other check, and is held by
+      // AI_ISA_LIVE_OFF alone (the same email on the fake adapter goes out: unsubscribe.test.ts).
       const b = await queued();
       const saved = cfg.providers.email;
       cfg.providers.email = 'smtp';
@@ -357,9 +358,8 @@ describe('D9 D12 R-ISA-18 R-ISA-25 (batch 16): the recent-sales emails stay dark
         cfg.providers.email = saved;
       }
       const ob = await outcome(b);
+      expect(ob.reasons).toEqual(['AI_ISA_LIVE_OFF']);
       expect(ob.status).toBe('blocked');
-      expect(ob.reasons).not.toContain('ISA_SELLER_DATA_NOT_CLEARED');
-      expect(ob.reasons.filter((r) => r === 'AI_ISA_LIVE_OFF' || r === 'UNSUBSCRIBE_MISSING')).not.toEqual([]);
       expect(providerCalls(b)).toEqual([]);
       expect(fake.sent.filter((x) => String(x.text).includes(TEST_STATEMENT))).toEqual([]);
     }));
