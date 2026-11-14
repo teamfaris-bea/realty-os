@@ -234,7 +234,7 @@ export async function sellerRerenderInTx(tx: Tx, actor: SystemActor, a: Assignme
   const kind = orig.some((f) => f.fact_kind === 'sold_comp_set') ? 'comps' : orig.length > 0 ? 'competition' : null;
   if (kind === null || a.endedAt !== null || !seller(a)) return { kind, codes: ['DATA_UNAVAILABLE'], dropped: [], facts: null, delivered: false };
   const c = await contextFor(tx, a, now);
-  const plan: SellerChannels = { channels: c.channels, compose: (core, ch) => composeMessage({ body: core, who: c.who, firstInThread: true, optOutHint: true, channel: ch }) };
+  const plan: SellerChannels = { channels: c.channels, compose: (core, ch) => composeMessage({ body: core, who: c.who, firstInThread: true, optOutHint: true, channel: ch, postalAddress: c.postalAddress }) };
   let facts: SellerFacts;
   let dropped: string[] = [];
   if (kind === 'comps') facts = await renderSellerFactsInTx(tx, actor, a, now, { messageKind: 'facts', handles: ['comps'] }, plan);

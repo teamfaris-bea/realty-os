@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { aiIdentityMissing, hasNumber, isaGuard, type IsaGuardCode } from './guard.js';
+import { EMAIL_UNSUBSCRIBE_LINE } from '../compliance/index.js';
 import { composeMessage, disclosureLine, signOffLine } from './lines.js';
 import { IDENTITY, WHO } from './testing/fixtures.js';
 import { runs } from './testing/runs.js';
@@ -85,11 +86,12 @@ describe('R-ISA-7 E506 property: numerals, number words and "a" amounts never pa
 
 describe('R-ISA-7 AI_IDENTITY_MISSING: the platform disclosure and sign-off say "AI assistant"', () => {
   it('composeMessage adds them; the check passes', () => {
-    const first = composeMessage({ body: 'What area are you looking in?', who: WHO, firstInThread: true, optOutHint: true, channel: 'sms' });
+    const first = composeMessage({ body: 'What area are you looking in?', who: WHO, firstInThread: true, optOutHint: true, channel: 'sms', postalAddress: null });
     expect(first).toBe("Hi, this is Avery's AI assistant at Example Realty LLC.\nWhat area are you looking in?\n— Avery's AI assistant, Example Realty LLC\nReply STOP to opt out.");
     expect(aiIdentityMissing(first, WHO, true)).toBe(false);
-    const later = composeMessage({ body: 'Thanks!', who: WHO, firstInThread: false, optOutHint: false, channel: 'email' });
-    expect(later).toBe("Thanks!\n\n— Avery's AI assistant, Example Realty LLC");
+    // batch 16: an email also ends with the postal address (none here) and the unsubscribe line (lines.test.ts)
+    const later = composeMessage({ body: 'Thanks!', who: WHO, firstInThread: false, optOutHint: false, channel: 'email', postalAddress: null });
+    expect(later).toBe(`Thanks!\n\n— Avery's AI assistant, Example Realty LLC\n\n${EMAIL_UNSUBSCRIBE_LINE}`);
     expect(aiIdentityMissing(later, WHO, false)).toBe(false);
   });
   it('a message without the sign-off, or a first message without the disclosure, is refused', () => {

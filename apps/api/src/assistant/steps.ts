@@ -20,7 +20,7 @@ import {
   renderStep,
   signOffFor,
 } from '@realty/core/assistant';
-import type { ActionCategory } from '@realty/core/compliance';
+import { type ActionCategory, EMAIL_UNSUBSCRIBE_LINE } from '@realty/core/compliance';
 import type { IanaZone, Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -35,13 +35,6 @@ import type { AssistantDeps, StepOutcome } from './types.js';
 /** How long after queuing a step the enrollment is looked at again (to advance once the message went out). */
 export const CHECK_BACK_MS = 2 * 60_000;
 
-/**
- * Marketing email needs an unsubscribe mechanism in the body (gate: UNSUBSCRIBE_MISSING); dispatch adds
- * the one-click List-Unsubscribe headers. A link to our own unsubscribe page cannot be in the body of an
- * AUTONOMOUS email, because the send-time content guard treats every link host as unknown (comms passes
- * no allowed hosts). VERIFY WITH COUNSEL: CAN-SPAM "clear and conspicuous" opt-out wording.
- */
-export const EMAIL_UNSUBSCRIBE_LINE = 'To unsubscribe from these emails, use the unsubscribe option your email app shows for this message.';
 
 export async function firstInThread(tx: Tx, contactId: string): Promise<boolean> {
   const r = await sql<{ x: boolean }>`

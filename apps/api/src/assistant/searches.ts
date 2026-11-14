@@ -19,6 +19,7 @@
 // - R-MLS-7: an MLS listing without a size (Spark: no field is confirmed as finished living area) never meets a size
 //   criterion, so while the MLS listings a search could match lack sizes the assistant's size criteria are held for the
 //   agent's check (prefilled, unchecked) and the view says why (`sizeNote`), never silently matching team listings only.
+import { EMAIL_UNSUBSCRIBE_LINE } from '@realty/core/compliance';
 import { type Claim, CRITERION_KEYS, type CriterionKey, type ListingFacts, SIZE_CRITERION_KEYS, type SearchCriteria, SEARCH_ALERT, SearchCriteriaSchema, applySearchReview, formatPriceCents, hasCriteria, holdSizeCriteria, matchListing, proposeSearch, signOffFor, sizeCriterionNote } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
@@ -31,7 +32,7 @@ import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
 import * as A from './repos/actions.js';
 import { type ContactCore, contactCore, identityFacts } from './repos/context.js';
-import { EMAIL_UNSUBSCRIBE_LINE, firstInThread } from './steps.js';
+import { firstInThread } from './steps.js';
 import type { AssistantDeps } from './types.js';
 
 export const ALERT_DIGEST_MAX = 3;

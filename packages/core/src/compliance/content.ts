@@ -93,6 +93,17 @@ export function detectPaymentInstructions(text: string): boolean {
 const SMS_OPT_OUT_HINT = /\b(?:reply|text|send)\s+["'“]?stop\b|\bstop\s+to\s+(?:opt\s*-?\s*out|unsubscribe|end|cancel|quit)\b/iu;
 const EMAIL_UNSUBSCRIBE = /\bunsubscribe\b/iu;
 
+/**
+ * The unsubscribe line of an automated marketing email: the gate's check 4 refuses a marketing email whose body has no
+ * unsubscribe (UNSUBSCRIBE_MISSING), and dispatch adds the one-click List-Unsubscribe headers. Nurture (apps/api
+ * assistant/steps.ts, assistant/searches.ts, nurture/execute.ts) and the AI ISA (core isa/lines.ts composeMessage) add
+ * this same line, so it lives here, where both may import it (R-GMAIL-14 keeps isa/** from importing assistant/**). A
+ * link to our own unsubscribe page cannot be in the body of an AUTONOMOUS email, because the send-time content guard
+ * treats every link host as unknown (comms passes no allowed hosts). VERIFY WITH COUNSEL: CAN-SPAM "clear and
+ * conspicuous" opt-out wording.
+ */
+export const EMAIL_UNSUBSCRIBE_LINE = 'To unsubscribe from these emails, use the unsubscribe option your email app shows for this message.';
+
 export function containsOptOutHint(text: string, channel: Channel): boolean {
   if (channel === 'sms') return SMS_OPT_OUT_HINT.test(text);
   if (channel === 'email') return EMAIL_UNSUBSCRIBE.test(text);

@@ -2,6 +2,7 @@
 // writes any of them. The disclosure and sign-off are platform constants of `platform:ai_isa` (not team text) and
 // always say "AI assistant" (R-ISA-7). Holding lines never name a time (Q-ISA-13). Every line is VERIFY WITH COUNSEL
 // (C-ISA-5, C-ISA-12); the safety and fraud lines especially.
+import { EMAIL_UNSUBSCRIBE_LINE } from '../compliance/index.js';
 import { AREA_QUESTION_CLIENT_REPLY } from '../fairhousing/index.js';
 
 /** Who the lines speak for. Every value is the server's (tenant settings and the owner's first name). */
@@ -100,13 +101,23 @@ export function fromDisplayName(who: LineIdentity): string {
 /**
  * The full body of one AI message: the disclosure when it is the first AI message of the thread, the body, the
  * sign-off, and the opt-out hint when required. The ISA guard's AI_IDENTITY_MISSING checks the result.
+ *
+ * Batch 16 (R-GATE-12, R-CONSENT-18): every AI ISA message is stored as marketing, so an email also ends with the
+ * brokerage's postal address (the tenant's, when one is recorded) and the unsubscribe line nurture adds
+ * (EMAIL_UNSUBSCRIBE_LINE), which the gate's check 4 looks for; until then every AI ISA email was refused there
+ * (UNSUBSCRIBE_MISSING). The sign-off carries the brokerage name. Texts are unchanged. VERIFY WITH COUNSEL (C-ISA-5).
  */
-export function composeMessage(i: { body: string; who: LineIdentity; firstInThread: boolean; optOutHint: boolean; channel: 'sms' | 'email' }): string {
+export function composeMessage(i: { body: string; who: LineIdentity; firstInThread: boolean; optOutHint: boolean; channel: 'sms' | 'email'; postalAddress: string | null }): string {
   const sep = i.channel === 'email' ? '\n\n' : '\n';
   const parts: string[] = [];
   if (i.firstInThread) parts.push(disclosureLine(i.who));
   parts.push(i.body.trim());
   parts.push(signOffLine(i.who));
   if (i.optOutHint) parts.push(ISA_OPT_OUT_HINT);
+  if (i.channel === 'email') {
+    const postal = (i.postalAddress ?? '').trim();
+    if (postal !== '') parts.push(postal);
+    parts.push(EMAIL_UNSUBSCRIBE_LINE);
+  }
   return parts.join(sep);
 }

@@ -38,6 +38,8 @@ export interface IsaContext {
   content: AiIsaContent;
   versionSha: string;
   who: LineIdentity;
+  /** the brokerage's postal address (tenant settings), carried by every AI email (composeMessage; R-GATE-12) */
+  postalAddress: string | null;
   zones: IanaZone[];
   zoneSource: 'explicit' | 'union';
   facts: IsaFacts;
@@ -48,9 +50,9 @@ export interface IsaContext {
 export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promise<IsaContext> {
   const v = await sql<{ steps: unknown; sha: string }>`SELECT steps, content_sha256 AS sha FROM playbook_versions WHERE tenant_id = app.tenant_id() AND id = ${a.playbookVersionId}`.execute(tx);
   const content = parseAiIsaContent(v.rows[0]?.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
-  const id = await sql<{ first: string | null; team: string | null; brokerage: string; tz: string; ctz: string | null; csrc: string | null }>`
-    SELECT split_part(COALESCE(u.display_name, ''), ' ', 1) AS first, s.team_name AS team, s.brokerage_legal_name AS brokerage, s.default_timezone AS tz,
-           c.timezone AS ctz, c.timezone_source AS csrc
+  const id = await sql<{ first: string | null; team: string | null; brokerage: string; postal: string | null; tz: string; ctz: string | null; csrc: string | null }>`
+    SELECT split_part(COALESCE(u.display_name, ''), ' ', 1) AS first, s.team_name AS team, s.brokerage_legal_name AS brokerage, s.brokerage_postal_address AS postal,
+           s.default_timezone AS tz, c.timezone AS ctz, c.timezone_source AS csrc
       FROM tenant_settings s JOIN contacts c ON c.tenant_id = s.tenant_id AND c.id = ${a.contactId}
       LEFT JOIN users u ON u.id = ${a.ownerUserId}
      WHERE s.tenant_id = app.tenant_id()`.execute(tx);
@@ -77,7 +79,7 @@ export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promis
     who, content, windowOpenNow, teamTexts: team.rows.map((t) => t.body), recentInboundCount: recent.rows[0]!.n, zone: (rz.zones[0] ?? r.tz) as IanaZone,
     mlsListedElsewhere: false, subjectConfirmed: false,
   };
-  return { a, content, versionSha: v.rows[0]?.sha ?? '', who, zones: rz.zones, zoneSource: rz.source, facts, channels };
+  return { a, content, versionSha: v.rows[0]?.sha ?? '', who, postalAddress: r.postal, zones: rz.zones, zoneSource: rz.source, facts, channels };
 }
 
 /** One turn row (the system appends; trigger_key unique per assignment). Returns the id (an existing row is reused). */
@@ -316,7 +318,7 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
   // ISA-3 H2: a seller facts message is server-built and re-checked here (TX-B); comps need the bound email, no fallback;
   // only ctx.channels (bound and allowed by the policy) and an SMS fit judged on the longest composed body (audit F5)
   const sf = await renderSellerFactsInTx(tx, env.actor, ctx.a, now, q, {
-    channels: ctx.channels, compose: (core, ch) => composeMessage({ body: core, who: ctx.who, firstInThread: true, optOutHint: true, channel: ch }),
+    channels: ctx.channels, compose: (core, ch) => composeMessage({ body: core, who: ctx.who, firstInThread: true, optOutHint: true, channel: ch, postalAddress: ctx.postalAddress }),
   });
   if (sf !== null && !sf.ok) return null;
   const channel = sf !== null ? sf.channel : ctx.channels.includes(q.channel) ? q.channel : ctx.channels[0];
@@ -332,7 +334,7 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
     const prior0 = await sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${ctx.a.contactId} AND initiator = 'assistant'
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') AND status IN ('sent','delivered','dispatching')`.execute(tx);
     const p = await planFactsMessageInTx(tx, ctx, { bundle: env.bundle, handles: q.handles, preferred: channel, now,
-      compose: (core, ch) => composeMessage({ body: core, who: ctx.who, firstInThread: prior0.rows[0]!.n === 0, optOutHint: true, channel: ch }) });
+      compose: (core, ch) => composeMessage({ body: core, who: ctx.who, firstInThread: prior0.rows[0]!.n === 0, optOutHint: true, channel: ch, postalAddress: ctx.postalAddress }) });
     if (!p.ok) {
       if (env.turnId) await sql`UPDATE ai_isa_turns SET decision = decision || ${JSON.stringify({ facts: p.code.replace(/[^A-Za-z0-9_:.@-]/g, '_').slice(0, 64) })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${env.turnId}`.execute(tx);
       return null;
@@ -355,7 +357,7 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
     AND status IN ('sent','delivered','dispatching')`.execute(tx);
   const first = prior.rows[0]!.n === 0;
   const silent7d = prior.rows[0]!.last !== null && now - prior.rows[0]!.last.getTime() > 7 * 86_400_000;
-  const body = factsPlan ? factsPlan.body : composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, optOutHint: first || (q.initiated && silent7d), channel });
+  const body = factsPlan ? factsPlan.body : composeMessage({ body: bodyCore, who: ctx.who, firstInThread: first, optOutHint: first || (q.initiated && silent7d), channel, postalAddress: ctx.postalAddress });
   const initiated = q.initiated || q.messageKind === 'facts';
   const notBefore = aiIsaSendWindow({ at: now, zones: ctx.zones, startSec: ctx.content.window.startSec, endSec: ctx.content.window.endSec, initiated,
     initiatedDays: ctx.content.initiatedDays, noInitiatedOnHolidays: ctx.content.noInitiatedOnHolidays });

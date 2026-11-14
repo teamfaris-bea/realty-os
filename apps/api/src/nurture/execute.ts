@@ -38,7 +38,7 @@ import {
   triggerStepAsPlaybookStep,
   triggerStepFor,
 } from '@realty/core/assistant';
-import type { ActionCategory } from '@realty/core/compliance';
+import { type ActionCategory, EMAIL_UNSUBSCRIBE_LINE } from '@realty/core/compliance';
 import { type AssistantClaimId, type ContactId, type IanaZone, type Instant, ianaZone } from '@realty/core/foundation';
 import { type AvmDecision, type AvmEstimate, DEFAULT_AVM_JUMP_BPS, DEFAULT_AVM_MAX_AGE_DAYS, type FactState, type Firing, type SkipReason, alertItemLine, avmSendable, homeValueText, planBatch, planTriggerRun } from '@realty/core/nurture';
 import { type DealSide, updateRoles } from '@realty/core/transactions';
@@ -46,7 +46,7 @@ import { type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
 import * as A from '../assistant/repos/actions.js';
 import { contactCore, identityFacts } from '../assistant/repos/context.js';
-import { EMAIL_UNSUBSCRIBE_LINE, firstInThread } from '../assistant/steps.js';
+import { firstInThread } from '../assistant/steps.js';
 import { queueOutboundInTx } from '../comms/index.js';
 import { resolvedPolicy } from '../comms/gateInput.js';
 import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsEligibility } from '../mls/eligibility.js';
