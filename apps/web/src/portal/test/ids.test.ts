@@ -31,7 +31,8 @@ describe('b15 audit F10: the E-id remap of module 46', () => {
     expect(doubled).toEqual([]);
   });
 
-  it("the step-0 table maps the brief's module 45 references to 45's ids as built (E645→E685, E649→E689, E653→E693, E659→E699)", () => {
+  // (the brief's ids stay out of the title: rule-coverage reads E-ids in test names, and the brief's are not DATA_MODEL's)
+  it("the step-0 table maps the brief's module 45 references to 45's ids as built (E685, E689, E693, E699)", () => {
     const row = doc('PHASE2_3_PLAN.md').split('\n').find((l) => l.startsWith('| Edge-case ids |'))!;
     for (const m of ['E645→E685', 'E649→E689', 'E653→E693', 'E659→E699']) expect(row, m).toContain(m);
     expect(row).not.toMatch(/45's E700/);
