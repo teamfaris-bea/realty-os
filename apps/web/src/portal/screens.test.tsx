@@ -17,6 +17,13 @@ const live = () => screen.getByTestId('portal-live');
 /** On screen, outside the live region (which repeats a sentence for screen readers). */
 const IGN = { ignore: '[data-testid="portal-live"], script, style' };
 const h1 = () => screen.getByRole('heading', { level: 1 });
+/** Every text the live region holds from now on. */
+const liveLog = () => {
+  const seen: string[] = [];
+  const mo = new MutationObserver(() => seen.push(live().textContent ?? ''));
+  mo.observe(live(), { childList: true, characterData: true, subtree: true });
+  return seen;
+};
 const withToken = () => readLink({ pathname: '/portal.html', search: '', hash: `#token=${F.TOKEN}` }, { state: null, replaceState: () => undefined }, null);
 
 describe('LinkLanding (R-PORTALWEB-3)', () => {
@@ -106,8 +113,8 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: COPY.signInTitle })).toHaveFocus();
     await userEvent.type(screen.getByLabelText(COPY.emailLabel), 'jane@example.test');
     await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
-    expect(await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN)).toBeInTheDocument();
-    await waitFor(() => expect(live()).toHaveTextContent(API_SENTENCES.SIGNIN_ACCEPTED));
+    const answer = await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN);
+    await waitFor(() => expect(answer).toHaveFocus()); // b16: focus carries the answer (the live region does not repeat it)
     expect(r.seen.find((x) => x.key === 'POST /portal/login')!.body).toEqual({ team: 'harbor', address: 'jane@example.test' });
     expect(document.body.textContent).not.toMatch(/link (was|has been) sent|we sent you/i);
     await userEvent.click(screen.getByRole('button', { name: COPY.useDifferent }));
@@ -217,6 +224,23 @@ describe('SignIn (R-PORTALWEB-4)', () => {
     await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
     expect(await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN)).toBeInTheDocument();
     expect(screen.queryByText(COPY.incomplete)).toBeNull();
+  });
+
+  // b16 (b15 review new problem 4): the 202 sentence is spoken once. Focus moves to the answer (the submit button is
+  // gone), which reads it; the live region does not say it as well
+  it('b16: after a link is asked for, the 202 sentence reaches the client once: the answer takes focus, the live region stays silent', async () => {
+    renderPortal({ routes: { ...signedOutRoutes, 'POST /portal/login': () => ({ status: 202, body: F.accepted() }) } });
+    await screen.findByRole('heading', { level: 1, name: COPY.signInTitle });
+    const seen = liveLog();
+    await userEvent.type(screen.getByLabelText(COPY.emailLabel), 'jane@example.test');
+    await userEvent.click(screen.getByRole('button', { name: COPY.sendLink }));
+    const answer = await screen.findByText(API_SENTENCES.SIGNIN_ACCEPTED, IGN);
+    await waitFor(() => expect(answer).toHaveFocus());
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    expect(seen.filter((t) => t.includes('we sent a sign-in link'))).toEqual([]);
+    expect(live()).not.toHaveTextContent(API_SENTENCES.SIGNIN_ACCEPTED);
   });
 
   it('E719: no team: "Open your invitation link", no form, nothing guessed', async () => {
@@ -525,12 +549,6 @@ describe('Home and Grant (R-PORTALWEB-5, R-PORTALWEB-6)', () => {
   // b15 review UI-2: Try again says what happened. The sentence reaches the live region when the error screen opens and
   // after each failed retry (the same sentence again too), and Try again is marked busy while the retry runs (it keeps
   // focus: aria-disabled, not disabled).
-  const liveLog = () => {
-    const seen: string[] = [];
-    const mo = new MutationObserver(() => seen.push(live().textContent ?? ''));
-    mo.observe(live(), { childList: true, characterData: true, subtree: true });
-    return seen;
-  };
 
   it('b15 review UI-2: a /me refetch that keeps failing after /me answered: the sentence is announced, Try again is busy while it runs, and a failed retry is announced again', async () => {
     let mode: 'up' | 'down' | 'gated' = 'up';

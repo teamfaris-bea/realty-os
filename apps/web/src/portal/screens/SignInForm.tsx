@@ -1,8 +1,8 @@
 // module 46 (R-PORTALWEB-4; E704, E706, E707, E719): the sign-in request. The team comes only from ?team= or the
 // remembered slug, never guessed; without one there is no form, only how to get in. Every answer is 45's sentence,
-// verbatim, in the visible notice and the live region; the page never says a link was sent. The form has no action:
-// a submit is handled in script, and the portal CSP's form-action 'none' stops a no-JS submit from putting the
-// address in a URL.
+// verbatim, in the visible notice and the live region (the 202's answer takes focus instead: one channel, b16); the
+// page never says a link was sent. The form has no action: a submit is handled in script, and the portal CSP's
+// form-action 'none' stops a no-JS submit from putting the address in a URL.
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { PortalError } from '../api.js';
 import { API_SENTENCES, COPY, sentenceFor } from '../copy.js';
@@ -65,7 +65,9 @@ export function SignInForm({ onUnavailable, onAccepted }: { onUnavailable(): voi
       moved.current = true;
       setAccepted(true);
       setAddress('');
-      say(API_SENTENCES.SIGNIN_ACCEPTED, 'ok');
+      // b16 (b15 review new problem 4): one channel. Focus moves to the answer (it replaces the form), and a screen
+      // reader reads it there; announcing it as well spoke the sentence twice
+      setNotice({ text: API_SENTENCES.SIGNIN_ACCEPTED, tone: 'ok' });
       onAccepted?.();
     } catch (err) {
       const code = err instanceof PortalError ? err.code : 'BAD_RESPONSE';
