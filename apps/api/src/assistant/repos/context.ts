@@ -133,7 +133,8 @@ export async function contactBundle(tx: Tx, c: ContactCore, o: { calls?: readonl
   const inq = await latestInquiry(tx, c.id);
   // D5b (R-REACT-7): a linked reaction carries its reaction (never read as the client's words) and its target, which
   // joins the bundle when it is older than the loaded messages (it is on the same contact). Module 45 (b14 audit F1,
-  // flagged edit): a portal sign-in link never joins the bundle, as a message or as a reaction's target
+  // flagged edit): a portal sign-in link never joins the bundle, as a message or as a reaction's target. b18 review item
+  // 5c: a quoted sign-in token in any loaded body (an older record stored before 0093) is hidden below (hideForDisplay)
   type MsgRow = { id: string; contact_id: string; direction: 'inbound' | 'outbound'; channel: string; occurred_at: Date; body: string; initiator: string; rx_action: ReactionAction | null; rx_reaction: ReactionName | null; rx_emoji: string | null; rx_target: string | null };
   const loaded = await sql<MsgRow>`
     SELECT m.*, mr.action AS rx_action, mr.reaction AS rx_reaction, mr.emoji AS rx_emoji, mr.target_message_id AS rx_target FROM (
@@ -184,7 +185,9 @@ export async function contactBundle(tx: Tx, c: ContactCore, o: { calls?: readonl
       direction: m.direction,
       channel: m.channel === 'email' ? 'email' : 'sms',
       at: instantFromDate(m.occurred_at),
-      body: m.body,
+      // b18 review item 5c (R-PORTAL-20): a message stored before 0093 (or an outbound text that quoted one) may still
+      // hold a sign-in token; it is hidden here, for every loaded body and every reaction target, and never rewritten
+      body: hideForDisplay(m.body).text ?? '',
       author: author(m),
       ...(m.rx_action && m.rx_reaction && m.rx_target ? { reaction: { phrase: reactionPhrase({ action: m.rx_action, reaction: m.rx_reaction, emoji: m.rx_emoji }), targetId: m.rx_target } } : {}),
     })),

@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { renderStep, signOffFor } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { latestInquiry } from '../assistant/repos/context.js';
+import { contactBundle, contactCore, latestInquiry } from '../assistant/repos/context.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { chatSource, createWidget, openChat } from '../channels/testing.js';
 import { postIntake } from '../leads/testing.js';
@@ -15,7 +15,7 @@ import { SIGNIN_TOKEN_HIDDEN, SIGNIN_TOKEN_PLACEHOLDER } from '../portal/shared/
 import { systemActor } from '../worker/systemActor.js';
 import { queueOutboundInTx } from './compose.js';
 import { readTextParts } from './mmsTextJob.js';
-import { type CommsWorld, call, commsWorld, emailWebhook, inboundSms, ownedContact, playbookFixture, telephonyWebhook } from './testing.js';
+import { type CommsWorld, call, commsWorld, emailWebhook, inboundSms, ownedContact, playbookFixture, sendText, telephonyWebhook } from './testing.js';
 
 const BASIC = { username: 'vendor-hook', password: 'basic-password-0123456789' };
 let h: ApiHarness;
@@ -246,6 +246,38 @@ describe('R-PORTAL-20 a quoted portal sign-in token is never stored (Q-PORTAL-16
     await inboundSms(h, c2.phone, w.mainNumber, 'See you Saturday');
     expect((await timeline(c2.id)).find((i) => i.preview === 'See you Saturday')!.redaction).toBeNull();
     expect((await inbound(c2.id))[0]!.content_redacted).toBeNull();
+  });
+
+  it('R-PORTAL-20 (b18 review item 5c): the assistant prompt never carries a token from a message stored before 0093: the loaded message bodies and an older reaction target are hidden, and the stored records are not rewritten', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const [t1, t2] = [newToken(), newToken()];
+    const sent = await sendText(agent, c.id, 'Here is the page you asked about');
+    expect(sent.body.result).toBe('sent');
+    const target = sent.body.message!.id;
+    await inboundSms(h, c.phone, w.mainNumber, 'Liked “Here is the page you asked about”');
+    await inboundSms(h, c.phone, w.mainNumber, 'hello');
+    const [reaction, hello] = await inbound(c.id);
+    // fixture only: records as batch 17 stored them (before 0093 no inbound body was redacted, and an outbound one never is)
+    const oldTarget = `Here is the page you asked about ${portalLinkUrl(origin, t1)}`;
+    const oldHello = `hello, the link: ${portalLinkUrl(origin, t2)}`;
+    await h.su.query('UPDATE messages SET body = $2 WHERE id = $1', [target, oldTarget]);
+    await h.su.query('UPDATE messages SET body = $2 WHERE id = $1', [hello!.id, oldHello]);
+    const linked = await h.su.query('SELECT 1 FROM message_reactions WHERE message_id = $1 AND target_message_id = $2', [reaction!.id, target]);
+    if (linked.rows.length === 0) {
+      // fixture only (when ingestion did not link it): the link inbound ingestion writes (its guard admits only the system)
+      await h.su.query(`SET session_replication_role = replica; INSERT INTO message_reactions (tenant_id, id, message_id, target_message_id, action, reaction, whole_text_reading)
+        VALUES ('${w.tenantId}', '${randomUUID()}', '${reaction!.id}', '${target}', 'add', 'like', 'none'); SET session_replication_role = origin`);
+    }
+    // two messages loaded (the reaction and the hello): the reaction's older target joins the bundle by its own query
+    const b = await withTenantTx(systemActor(w.tenantId, 'assistant'), async (tx) => contactBundle(tx, (await contactCore(tx, c.id))!, { messageLimit: 2 }), { db: h.database });
+    expect(b.messages.map((m) => m.id)).toEqual(expect.arrayContaining([target, reaction!.id, hello!.id]));
+    const text = JSON.stringify(b.messages);
+    expect(text).not.toContain(t1);
+    expect(text).not.toContain(t2);
+    expect(b.messages.find((m) => m.id === target)!.body).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect(b.messages.find((m) => m.id === hello!.id)!.body).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect((await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [target])).rows[0]!.body).toBe(oldTarget);
   });
 
   it('R-PORTAL-20: the label is fixed once written (0093): it can be neither cleared nor put on a record stored as received', async () => {
