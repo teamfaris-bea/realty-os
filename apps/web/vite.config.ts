@@ -33,6 +33,13 @@ const cspMeta: Plugin = {
 // nginx (Vite's HTML fallback would otherwise rewrite /portal to /portal.html). Dev keeps no CSP (SECURITY.md).
 export const portalPreview: Plugin = {
   name: 'realty-portal-preview',
+  // the dev server too: /portal is the staff app (Vite's HTML fallback would serve portal.html for it)
+  configureServer(server) {
+    server.middlewares.use((req, _res, next) => {
+      if ((req.url ?? '/').split('?')[0] === '/portal') req.url = '/index.html';
+      next();
+    });
+  },
   configurePreviewServer(server) {
     const outDir = resolve(server.config.root, server.config.build.outDir);
     server.middlewares.use((req, res, next) => {
