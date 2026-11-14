@@ -1,6 +1,6 @@
 // module 46 (R-PORTALWEB-3; E700, E685, E701, E704): the page a sign-in link opens. Nothing is posted on load, focus,
 // visibility, pageshow or reload: only the Sign in button's activation posts POST /api/portal/session {token}, once
-// (disabled while pending). Success: the cache is cleared, the token dropped, and home opens. 401: 45's link sentence,
+// (aria-disabled while pending). Success: the cache is cleared, the token dropped, and home opens. 401: 45's link sentence,
 // then GET /me decides (home if signed in, else the form or the no-team state). 503: not available. 429 and a network
 // error: the sentence, and the tap may be tried again.
 import { useRef, useState } from 'react';
@@ -63,7 +63,8 @@ export function LinkLanding({ onSignedIn, onLinkRefused, onUnavailable }: LinkLa
       <H1 headingRef={h}>{COPY.landingTitle}</H1>
       <p className="text-[16px] text-ink">{COPY.landingBody}</p>
       {notice ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-[15px] text-ink">{notice}</p> : null}
-      <button type="button" onClick={() => void tap()} disabled={pending} className={`${primaryButton} self-start`}>
+      {/* b17 (L16-5): aria-disabled while pending, never `disabled` (it would drop focus); tap() posts once (once.current) */}
+      <button type="button" onClick={() => void tap()} aria-disabled={pending || undefined} className={`${primaryButton} self-start ${pending ? 'opacity-60' : ''}`}>
         {pending ? COPY.signingIn : COPY.signInButton}
       </button>
     </Page>

@@ -8,6 +8,8 @@
 //   L16-2 (desktop) a successful Try again while the other panel still fails announces no failure
 //   FA-3  reopening a grant whose read failed shows Loading (no failure sentence, nothing announced) until the fresh
 //         read settles
+//   FA-4  the sign-in submit, Download and the link's Sign in keep focus while busy and after a failure (a `disabled`
+//         button loses it: the browser's focus fix-up)
 // Where the real stack cannot fail on cue, the browser answers with module 45's own error body (a 500 INTERNAL_ERROR).
 import { type BrowserContext, type Page, type Route, expect, test } from 'playwright/test';
 import { newClientContext, openLinkAndSignIn, requestLink } from './common.js';
@@ -17,6 +19,8 @@ test.describe.configure({ mode: 'serial' });
 
 const GENERIC = 'Something went wrong. Try again in a moment.';
 const SECOND_GRANT = '01900000-0000-7000-8000-00000000f5a3';
+const RATE_LIMITED = 'Too many tries. Wait a few minutes and try again.';
+const FILE_UNAVAILABLE = "This file isn't available now.";
 /** module 45's error body (webContract.json errors), as the API sends it */
 const apiError = (status: number, code: string) => ({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, requestId: '01900000-0000-7000-8000-0000000000ef' } }) });
 const failed = (r: Route) => r.fulfill(apiError(500, 'INTERNAL_ERROR')).catch(() => undefined); // an aborted read (StrictMode's first) is gone
@@ -194,4 +198,54 @@ test('FA-3: reopening a grant whose read failed shows Loading, not the failure, 
   release();
   await expect(p.getByText('Inspection', { exact: true })).toBeVisible({ timeout: 20_000 });
   expect(await liveLog()).not.toContain(GENERIC);
+});
+
+test('FA-4, L16-5: Download keeps focus while busy, after a failed download and after one that worked', async () => {
+  await home();
+  if (isPhone()) await p.getByRole('tab', { name: 'Documents' }).tap();
+  let release!: () => void;
+  const held = new Promise<void>((ok) => (release = ok));
+  await p.route(
+    '**/api/portal/documents/*/stream-token',
+    async (r) => {
+      await held;
+      await r.fulfill(apiError(404, 'NOT_FOUND'));
+    },
+    { times: 1 },
+  );
+  const dl = await press(`Download ${pw.documentName}`);
+  await expect(dl).toHaveText('Getting the file');
+  await expect(dl).toBeFocused(); // b16: `disabled` while busy, and Chromium's focus fix-up moved focus to <body>
+  await expect(dl).toHaveAttribute('aria-disabled', 'true');
+  await expect(dl).not.toHaveAttribute('disabled');
+  release();
+  await expect(p.locator('main').getByText(FILE_UNAVAILABLE, { exact: false })).toBeVisible({ timeout: 20_000 });
+  await expect(dl).toBeFocused();
+  await expect(dl).not.toHaveAttribute('aria-disabled', 'true');
+  const saved = p.waitForEvent('download');
+  await p.keyboard.press('Enter');
+  await saved;
+  await expect(dl).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(dl).toBeFocused();
+});
+
+test('FA-4, L16-5: the sign-in submit and the link\'s Sign in keep focus after a 429', async () => {
+  // signed out first (a real 204), then the form's request is answered 429 once
+  await home();
+  await press('Sign out');
+  await expect(p.getByRole('heading', { level: 1, name: "You're signed out" })).toBeVisible({ timeout: 20_000 });
+  await p.route('**/api/portal/login', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
+  await p.getByLabel('Email address').fill(pw.jane.email);
+  const send = await press('Send me a sign-in link');
+  await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
+  await expect(send).toBeFocused();
+  await expect(send).not.toHaveAttribute('aria-disabled', 'true');
+  // the link's page: its Sign in tap answered 429 (the link itself is never consumed: the route answers)
+  await p.route('**/api/portal/session', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
+  await p.goto(link);
+  await expect(p.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
+  const signIn = await press('Sign in');
+  await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
+  await expect(signIn).toBeFocused();
+  await expect(signIn).not.toHaveAttribute('aria-disabled', 'true');
 });

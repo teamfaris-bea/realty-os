@@ -122,12 +122,14 @@ export function Documents({ documents, mode, headingId = PANEL_HEADING_ID.docume
               {d.body ? <Txt className="text-[15px] text-ink-muted">{d.body}</Txt> : null}
               <ItemDates item={d} />
               {mode === 'client' ? (
+                // b17 (b16 review FA-4, L16-5): busy is aria-disabled, never `disabled`: a disabled focused button loses
+                // focus (the browsers' focus fix-up), after a download that failed and one that worked alike
                 <button
                   type="button"
-                  onClick={() => onDownload?.(d)}
-                  disabled={busyId !== null}
+                  onClick={() => (busyId === null ? onDownload?.(d) : undefined)}
+                  aria-disabled={busyId !== null || undefined}
                   aria-label={downloadLabel(d.title)}
-                  className="inline-flex min-h-tap min-w-tap items-center self-start rounded-xl bg-accent px-4 text-[16px] font-semibold text-accent-ink disabled:opacity-60"
+                  className={`inline-flex min-h-tap min-w-tap items-center self-start rounded-xl bg-accent px-4 text-[16px] font-semibold text-accent-ink ${busyId !== null ? 'opacity-60' : ''}`}
                 >
                   {busyId === d.itemId ? VIEW_WORDS.downloading : 'Download'}
                 </button>

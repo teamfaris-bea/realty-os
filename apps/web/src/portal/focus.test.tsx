@@ -7,11 +7,12 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { focusManager } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { COPY } from './copy.js';
-import { resetLinkForTests } from './link.js';
+import { API_SENTENCES, COPY } from './copy.js';
+import type { SaveDeps } from './download.js';
+import { readLink, resetLinkForTests } from './link.js';
 import * as F from './test/fixtures.js';
 import { portalApiError } from './test/portalContract.js';
-import { renderPortal, signedIn } from './test/render.js';
+import { renderPortal, signedIn, signedOutRoutes } from './test/render.js';
 import { VIEW_WORDS } from './view/index.js';
 
 // the open grant and tab are URL state (Home): each test starts with none
@@ -244,6 +245,101 @@ describe('b17 FA-3: reopening a grant whose read failed', () => {
     await waitFor(() => expect(said(seen, COPY.generic)).toBe(1));
     await pause(200);
     expect(said(seen, COPY.generic)).toBe(1);
+  });
+});
+
+describe('b17 FA-4, L16-5: busy buttons are aria-disabled, never disabled (a disabled button drops focus in a browser)', () => {
+  it('FA-4: the sign-in submit keeps focus while it runs and after a 429; a tap while busy posts nothing more', async () => {
+    const g = gate();
+    const r = renderPortal({
+      routes: {
+        ...signedOutRoutes,
+        'POST /portal/login': async () => {
+          await g.held;
+          return portalApiError('RATE_LIMITED');
+        },
+      },
+    });
+    await userEvent.type(await screen.findByLabelText(COPY.emailLabel), 'jane@example.test');
+    const send = screen.getByRole('button', { name: COPY.sendLink });
+    await userEvent.click(send);
+    await waitFor(() => expect(count(r, 'POST /portal/login')).toBe(1));
+    const busy = screen.getByRole('button', { name: COPY.sending });
+    expect(busy).toBe(send);
+    expect(send).toHaveAttribute('aria-disabled', 'true');
+    expect(send).not.toHaveAttribute('disabled');
+    expect(send).toHaveFocus();
+    await userEvent.click(send); // a tap while busy posts nothing more
+    await act(async () => g.release());
+    expect(await screen.findByText(API_SENTENCES.RATE_LIMITED, IGN)).toBeInTheDocument();
+    expect(send).not.toHaveAttribute('aria-disabled');
+    expect(send).not.toHaveAttribute('disabled');
+    expect(send).toHaveFocus();
+    expect(count(r, 'POST /portal/login')).toBe(1);
+  });
+
+  it("FA-4: the link's Sign in keeps focus while it runs and after a 429", async () => {
+    readLink({ pathname: '/portal.html', search: '', hash: `#token=${F.TOKEN}` }, { state: null, replaceState: () => undefined }, null);
+    const g = gate();
+    const r = renderPortal({
+      link: { link: 'token' },
+      routes: {
+        'POST /portal/session': async () => {
+          await g.held;
+          return portalApiError('RATE_LIMITED');
+        },
+      },
+    });
+    const signIn = screen.getByRole('button', { name: COPY.signInButton });
+    await userEvent.click(signIn);
+    await waitFor(() => expect(count(r, 'POST /portal/session')).toBe(1));
+    expect(signIn).toHaveAttribute('aria-disabled', 'true');
+    expect(signIn).not.toHaveAttribute('disabled');
+    expect(signIn).toHaveFocus();
+    await userEvent.click(signIn);
+    await act(async () => g.release());
+    expect(await screen.findByText(API_SENTENCES.RATE_LIMITED, IGN)).toBeInTheDocument();
+    expect(signIn).not.toHaveAttribute('aria-disabled');
+    expect(signIn).not.toHaveAttribute('disabled');
+    expect(signIn).toHaveFocus();
+    expect(count(r, 'POST /portal/session')).toBe(1);
+  });
+
+  it('FA-4: Download keeps focus while it runs, after a failed download and after one that worked', async () => {
+    let fail = true;
+    const g = gate();
+    const saved: string[] = [];
+    const save: SaveDeps = { createObjectURL: () => 'blob:portal-1', revokeObjectURL: () => undefined, clickDownload: (_h, name) => saved.push(name), later: (fn) => fn() };
+    const r = renderPortal({
+      wide: true,
+      save,
+      routes: {
+        ...signedIn,
+        'POST /portal/documents/:itemId/stream-token': async () => {
+          await g.held;
+          return fail ? portalApiError('NOT_FOUND') : { status: 200, body: F.streamToken() };
+        },
+        'GET /portal/files/:token': () => ({ status: 200, raw: new Response(F.PDF, { headers: { 'content-type': 'application/pdf', 'content-length': '8' } }) }),
+      },
+    });
+    const dl = await screen.findByRole('button', { name: 'Download Purchase contract.pdf' });
+    await userEvent.click(dl);
+    await waitFor(() => expect(count(r, 'POST /portal/documents/:itemId/stream-token')).toBe(1));
+    expect(dl).toHaveAttribute('aria-disabled', 'true');
+    expect(dl).not.toHaveAttribute('disabled');
+    expect(dl).toHaveFocus();
+    await userEvent.click(dl); // a tap while busy asks for nothing more
+    await act(async () => g.release());
+    expect(await screen.findByText(VIEW_WORDS.fileUnavailable, IGN)).toBeInTheDocument();
+    expect(dl).not.toHaveAttribute('aria-disabled');
+    expect(dl).toHaveFocus();
+    expect(count(r, 'POST /portal/documents/:itemId/stream-token')).toBe(1);
+    fail = false;
+    await userEvent.click(dl);
+    await waitFor(() => expect(saved).toEqual(['Purchase contract.pdf']));
+    await waitFor(() => expect(dl).not.toHaveAttribute('aria-disabled'));
+    expect(dl).not.toHaveAttribute('disabled');
+    expect(dl).toHaveFocus();
   });
 });
 

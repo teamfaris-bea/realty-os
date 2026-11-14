@@ -150,7 +150,10 @@ export function SignInForm({ onUnavailable, onAccepted }: { onUnavailable(): voi
           {notice.text}
         </p>
       ) : null}
-      <button type="submit" disabled={pending} className={`${primaryButton} self-start`}>
+      {/* b17 (b16 review FA-4, L16-5): busy is aria-disabled, never `disabled`: a disabled focused button loses focus
+          (the browsers' focus fix-up), and after a 429, a channel that is off or a network error the form stays with
+          nothing to put it back; submit() returns early while pending */}
+      <button type="submit" aria-disabled={pending || undefined} className={`${primaryButton} self-start ${pending ? 'opacity-60' : ''}`}>
         {pending ? COPY.sending : COPY.sendLink}
       </button>
     </form>
