@@ -14,10 +14,19 @@ import { portalApiError } from './test/portalContract.js';
 import { renderPortal, signedIn } from './test/render.js';
 import { VIEW_WORDS } from './view/index.js';
 
-beforeEach(() => resetLinkForTests());
-afterEach(() => resetLinkForTests());
+// the open grant and tab are URL state (Home): each test starts with none
+const resetUrl = () => window.history.replaceState(null, '', window.location.pathname);
+beforeEach(() => {
+  resetLinkForTests();
+  resetUrl();
+});
+afterEach(() => {
+  resetLinkForTests();
+  resetUrl();
+});
 
 const live = () => screen.getByTestId('portal-live');
+const IGN = { ignore: '[data-testid="portal-live"], script, style' };
 /** Every text the live region holds from now on (one entry per batch of mutations, as a screen reader is told). */
 const liveLog = () => {
   const seen: string[] = [];
@@ -178,6 +187,63 @@ describe('b17 FA-2, L16-2: a Try again that succeeds', () => {
     expect(seen).toEqual([]);
     expect(within(docs()).getByText(COPY.generic)).toBeInTheDocument();
     await waitFor(() => expect(panelHeading(VIEW_WORDS.timeline)).toHaveFocus());
+  });
+});
+
+describe('b17 FA-3: reopening a grant whose read failed', () => {
+  it('FA-3: shows Loading, not the failure, and announces nothing until the fresh read settles', async () => {
+    let mode: 'down' | 'gated' = 'down';
+    const g = gate();
+    const r = renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => ({ status: 200, body: F.me([F.grant(), F.grant({ id: F.GRANT_2, title: 'Your home sale', scope: 'sale' })]) }),
+        'GET /portal/timeline': async (x) => {
+          if (mode === 'down') throw new TypeError('Failed to fetch');
+          await g.held;
+          return { status: 200, body: F.timeline(x.query.grantId) };
+        },
+      },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Your home purchase' }));
+    await waitFor(() => expect(within(tl()).getByText(COPY.generic)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: VIEW_WORDS.portalTitle }));
+    await screen.findByRole('navigation', { name: COPY.chooseHome });
+    mode = 'gated';
+    const seen = liveLog();
+    await userEvent.click(screen.getByRole('button', { name: 'Your home purchase' }));
+    await screen.findByRole('heading', { level: 1, name: 'Your home purchase' });
+    await waitFor(() => expect(count(r, 'GET /portal/timeline')).toBe(2));
+    // the fresh read is running: Loading, no sentence, no Try again, nothing said
+    expect(within(tl()).getByText(COPY.loading)).toBeInTheDocument();
+    expect(screen.queryByText(COPY.generic, IGN)).toBeNull();
+    expect(screen.queryByRole('button', { name: COPY.tryAgain })).toBeNull();
+    await pause(200);
+    expect(said(seen, COPY.generic)).toBe(0);
+    await act(async () => g.release());
+    expect(await screen.findByText('Inspection')).toBeInTheDocument();
+    await pause(200);
+    expect(said(seen, COPY.generic)).toBe(0);
+  });
+
+  it('FA-3: a fresh read that fails again on the reopened grant shows the failure and announces it once', async () => {
+    renderPortal({
+      routes: {
+        ...signedIn,
+        'GET /portal/me': () => ({ status: 200, body: F.me([F.grant(), F.grant({ id: F.GRANT_2, title: 'Your home sale', scope: 'sale' })]) }),
+        'GET /portal/timeline': offline,
+      },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Your home purchase' }));
+    await waitFor(() => expect(within(tl()).getByText(COPY.generic)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: VIEW_WORDS.portalTitle }));
+    await screen.findByRole('navigation', { name: COPY.chooseHome });
+    const seen = liveLog();
+    await userEvent.click(screen.getByRole('button', { name: 'Your home purchase' }));
+    await waitFor(() => expect(within(tl()).getByText(COPY.generic)).toBeInTheDocument());
+    await waitFor(() => expect(said(seen, COPY.generic)).toBe(1));
+    await pause(200);
+    expect(said(seen, COPY.generic)).toBe(1);
   });
 });
 

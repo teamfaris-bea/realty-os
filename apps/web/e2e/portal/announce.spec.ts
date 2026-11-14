@@ -6,6 +6,8 @@
 //         after two failures and holds it twice; the first /me's error screen keeps its focused Try again meanwhile
 //   FA-2  a Try again that succeeds moves focus to that panel's heading, and announces nothing
 //   L16-2 (desktop) a successful Try again while the other panel still fails announces no failure
+//   FA-3  reopening a grant whose read failed shows Loading (no failure sentence, nothing announced) until the fresh
+//         read settles
 // Where the real stack cannot fail on cue, the browser answers with module 45's own error body (a 500 INTERNAL_ERROR).
 import { type BrowserContext, type Page, type Route, expect, test } from 'playwright/test';
 import { newClientContext, openLinkAndSignIn, requestLink } from './common.js';
@@ -14,6 +16,7 @@ import { type PortalStack, type PortalWorld, portalUrl, startPortalStack } from 
 test.describe.configure({ mode: 'serial' });
 
 const GENERIC = 'Something went wrong. Try again in a moment.';
+const SECOND_GRANT = '01900000-0000-7000-8000-00000000f5a3';
 /** module 45's error body (webContract.json errors), as the API sends it */
 const apiError = (status: number, code: string) => ({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, requestId: '01900000-0000-7000-8000-0000000000ef' } }) });
 const failed = (r: Route) => r.fulfill(apiError(500, 'INTERNAL_ERROR')).catch(() => undefined); // an aborted read (StrictMode's first) is gone
@@ -157,4 +160,38 @@ test('FA-6, L16-2: desktop, both reads fail (documents first); the timeline Try 
   // b16: failedAt fell back to the documents' older failure, and the success was answered "Something went wrong"
   expect(await liveLog()).not.toContain(GENERIC);
   await expect(section('Documents').getByText(GENERIC)).toBeVisible();
+});
+
+test('FA-3: reopening a grant whose read failed shows Loading, not the failure, until the fresh read settles', async () => {
+  // two grants, so the list lets the client go back and open the same grant again (the second is never opened)
+  await p.route(meOf, async (r) => {
+    const res = await r.fetch();
+    const me = (await res.json()) as { grants: Record<string, unknown>[] };
+    await r.fulfill({ response: res, json: { ...me, grants: [...me.grants, { ...me.grants[0], id: SECOND_GRANT, title: 'Your home sale', scope: 'sale' }] } });
+  });
+  await p.route(timelineOf, failed);
+  await p.goto(portalUrl(stack, pw.slug));
+  await press('Your home purchase', p.getByRole('navigation', { name: 'Choose what to open' }));
+  await expect(section('Timeline').getByText(GENERIC)).toBeVisible({ timeout: 20_000 });
+  await press('Your client portal');
+  await expect(p.getByRole('navigation', { name: 'Choose what to open' })).toBeVisible();
+  // the timeline now works, but answers only when released
+  await p.unroute(timelineOf, failed);
+  let release!: () => void;
+  const held = new Promise<void>((ok) => (release = ok));
+  await p.route(timelineOf, async (r) => {
+    await held;
+    await r.continue().catch(() => undefined);
+  });
+  await resetLive();
+  await press('Your home purchase', p.getByRole('navigation', { name: 'Choose what to open' }));
+  await expect(p.getByRole('heading', { level: 1, name: 'Your home purchase' })).toBeVisible();
+  await expect(section('Timeline').getByText('Loading', { exact: true })).toBeVisible();
+  await p.waitForTimeout(400);
+  await expect(p.getByText(GENERIC)).toHaveCount(0);
+  await expect(p.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  expect(await liveLog()).not.toContain(GENERIC);
+  release();
+  await expect(p.getByText('Inspection', { exact: true })).toBeVisible({ timeout: 20_000 });
+  expect(await liveLog()).not.toContain(GENERIC);
 });

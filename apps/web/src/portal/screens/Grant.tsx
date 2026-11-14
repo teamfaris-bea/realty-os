@@ -43,9 +43,12 @@ const gone = (e: unknown) => e instanceof PortalError && e.code === 'NOT_FOUND';
  * has no data keeps the sentence and Try again (aria-disabled) until an answer comes.
  * b16 (b15 review new problem 2): only a read with no data shows the failure; a background refetch that fails while its
  * data is on screen leaves the data, and says nothing (no sentence, no Try again, no announcement).
+ * b17 (b16 review FA-3): only a failure this screen saw counts (`before`: the query's errorUpdateCount when the grant
+ * opened). errorUpdateCount lives on the cached query, so a grant reopened after its read failed showed and announced
+ * "Something went wrong" while the fresh read (a query with no data is read again on mount) was still running.
  */
-function failing(q: UseQueryResult<unknown, PortalError>): boolean {
-  return q.data === undefined && q.errorUpdateCount > 0 && !gone(q.error);
+function failing(q: UseQueryResult<unknown, PortalError>, before: number): boolean {
+  return q.data === undefined && q.errorUpdateCount > before && !gone(q.error);
 }
 
 export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps) {
@@ -67,8 +70,10 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
     onGone(grant.id);
   }, [isGone, qc, grant.id, onGone]);
 
-  const tlFailed = failing(timeline);
-  const docFailed = failing(documents);
+  // failures from before this grant opened (its cached queries') are not this screen's (FA-3)
+  const before = useRef({ timeline: timeline.errorUpdateCount, documents: documents.errorUpdateCount });
+  const tlFailed = failing(timeline, before.current.timeline);
+  const docFailed = failing(documents, before.current.documents);
   // b15 review UI-2: a read that failed says so in the live region (again after each failed retry) and offers Try again,
   // which reads the failed parts again (busy while they run; aria-disabled keeps focus). Only a panel that shows the
   // failure counts (b16): a loaded panel's failed background refetch is not announced.
@@ -87,6 +92,13 @@ export function Grant({ grant, tab, onTab, onBack, onGone, signOut }: GrantProps
   useEffect(() => {
     if (!anyFailed && announcedAt.current > 0) forget(COPY.generic);
   }, [anyFailed, forget]);
+  // nor once the client leaves the grant (back to the list): its failure is not what is on screen
+  useEffect(
+    () => () => {
+      if (announcedAt.current > 0) forget(COPY.generic);
+    },
+    [forget],
+  );
 
   // b17 (b16 review FA-2): a Try again that succeeds replaces its placeholder, the focused button with it, by the
   // section's data; focus then moves to that section's heading (tabIndex -1), which a screen reader reads, instead of
