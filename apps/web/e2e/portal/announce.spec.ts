@@ -232,27 +232,6 @@ test('FA-4, L16-5: Download keeps focus while busy, after a failed download and 
   await expect(dl).toBeFocused();
 });
 
-test('FA-4, L16-5: the sign-in submit and the link\'s Sign in keep focus after a 429', async () => {
-  // signed out first (a real 204), then the form's request is answered 429 once
-  await home();
-  await press('Sign out');
-  await expect(p.getByRole('heading', { level: 1, name: "You're signed out" })).toBeVisible({ timeout: 20_000 });
-  await p.route('**/api/portal/login', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
-  await p.getByLabel('Email address').fill(pw.jane.email);
-  const send = await press('Send me a sign-in link');
-  await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
-  await expect(send).toBeFocused();
-  await expect(send).not.toHaveAttribute('aria-disabled', 'true');
-  // the link's page: its Sign in tap answered 429 (the link itself is never consumed: the route answers)
-  await p.route('**/api/portal/session', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
-  await p.goto(link);
-  await expect(p.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
-  const signIn = await press('Sign in');
-  await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
-  await expect(signIn).toBeFocused();
-  await expect(signIn).not.toHaveAttribute('aria-disabled', 'true');
-});
-
 test('FA-5, L16-3: phone, a failure behind the hidden Documents tab is announced only when its tab shows it', async () => {
   test.skip(!isPhone(), 'the tabs are the phone layout');
   const reads = count(documentsOf);
@@ -294,4 +273,26 @@ test('FA-6: phone, the documents fail behind Timeline, then the timeline fails: 
   await p.getByRole('tab', { name: 'Documents' }).tap();
   await p.waitForTimeout(300);
   expect(await times(GENERIC)).toBe(2);
+});
+
+// last: it signs the client out (the tests above share her signed-in page)
+test('FA-4, L16-5: the sign-in submit and the link\'s Sign in keep focus after a 429', async () => {
+  // signed out first (a real 204), then the form's request is answered 429 once
+  await home();
+  await press('Sign out');
+  await expect(p.getByRole('heading', { level: 1, name: "You're signed out" })).toBeVisible({ timeout: 20_000 });
+  await p.route('**/api/portal/login', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
+  await p.getByLabel('Email address').fill(pw.jane.email);
+  const send = await press('Send me a sign-in link');
+  await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
+  await expect(send).toBeFocused();
+  await expect(send).not.toHaveAttribute('aria-disabled', 'true');
+  // the link's page: its Sign in tap answered 429 (the link itself is never consumed: the route answers)
+  await p.route('**/api/portal/session', (r) => r.fulfill(apiError(429, 'RATE_LIMITED')), { times: 1 });
+  await p.goto(link);
+  await expect(p.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
+  const signIn = await press('Sign in');
+  await expect(p.locator('main').getByText(RATE_LIMITED)).toBeVisible({ timeout: 20_000 });
+  await expect(signIn).toBeFocused();
+  await expect(signIn).not.toHaveAttribute('aria-disabled', 'true');
 });
