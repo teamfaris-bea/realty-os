@@ -5,9 +5,11 @@
 // layout at 390 px), a download and sign out, with focus never hidden.
 // b15 audit F5: the sweep covers every screen and state of the brief's steps 4-5: sign-in, its error, link requested,
 // incomplete, no team, link landing, home (timeline, phone documents), several grants, nothing shared, no longer shared,
-// a failed download, signed out, a used link, 429, text messages off, and not available. Where the real stack cannot
-// reach a state without changing the world later tests use (a revoke is final; SMS is a config), the browser answers
-// with module 45's own error body, or /me with its grants changed, or (a revoke) both: the screen is the client's own.
+// a failed download, signed out, a used link, 429, text messages off, and not available. b17 (b16 review FA-8): and the
+// failure states batch 16 reshaped: a failed read (each section's sentence and Try again), a failed retry, the first
+// /me's error screen, and a failed Sign out. Where the real stack cannot reach a state without changing the world later
+// tests use (a revoke is final; SMS is a config), the browser answers with module 45's own error body, or /me with its
+// grants changed, or (a revoke) both: the screen is the client's own.
 import { AxeBuilder } from '@axe-core/playwright';
 import { type Locator, type Page, type Route, expect, test } from 'playwright/test';
 // the sweep's tags (e2e/a11y/a11y.spec.ts AXE_TAGS; a spec file cannot import another spec)
@@ -224,6 +226,53 @@ test('R-PORTALWEB-11: every portal screen and state passes axe in both themes an
   await tap(p, p.getByRole('button', { name: `Download ${pw.documentName}` }));
   await expect(p.locator('main').getByText("This file isn't available now.", { exact: false })).toBeVisible({ timeout: 20_000 });
   found.push(...(await check(p, 'download failed')));
+
+  // b17 (b16 review FA-8): the failure states batch 16 reshaped, each answered with module 45's own 500 body. Both reads
+  // fail: each section's own sentence and Try again (desktop: both sections; phone: each tab); a Try again that fails
+  // again; a first /me that fails (the error screen); and a Sign out that fails (its sentence by the button).
+  const GENERIC = 'Something went wrong. Try again in a moment.';
+  const failedRead = (r: Route) => r.fulfill(apiError(500, 'INTERNAL_ERROR')).catch(() => undefined); // StrictMode's aborted first read
+  let timelineReads = 0;
+  p.on('request', (r) => {
+    if (timelineOf(new URL(r.url()))) timelineReads += 1;
+  });
+  await p.route(timelineOf, failedRead);
+  await p.route(documentsOf, failedRead);
+  await p.reload();
+  await h1('Your home purchase');
+  // the failed download above left the phone on the Documents tab (URL state): the timeline first
+  if (isPhone(p)) await tap(p, p.getByRole('tab', { name: 'Timeline' }));
+  const timelineSection = p.locator('main section').filter({ has: p.getByRole('heading', { level: 2, name: 'Timeline', exact: true }) });
+  await expect(timelineSection.getByText(GENERIC)).toBeVisible({ timeout: 20_000 });
+  found.push(...(await check(p, isPhone(p) ? 'timeline failed' : 'timeline and documents failed')));
+  if (isPhone(p)) {
+    await tap(p, p.getByRole('tab', { name: 'Documents' }));
+    await expect(p.locator('main').getByText(GENERIC)).toBeVisible();
+    found.push(...(await check(p, 'documents failed')));
+    await tap(p, p.getByRole('tab', { name: 'Timeline' }));
+  }
+  const again = timelineSection.getByRole('button', { name: 'Try again' });
+  const readsBefore = timelineReads;
+  await press(p, again);
+  await expect.poll(() => timelineReads, { message: 'Try again read the timeline again' }).toBeGreaterThan(readsBefore);
+  await expect(again).not.toHaveAttribute('aria-disabled', 'true', { timeout: 20_000 });
+  await expect(timelineSection.getByText(GENERIC)).toBeVisible();
+  found.push(...(await check(p, 'retry failed')));
+  await p.unroute(timelineOf, failedRead);
+  await p.unroute(documentsOf, failedRead);
+  await p.route('**/api/portal/me', failedRead);
+  await p.reload();
+  await h1('Your client portal');
+  await expect(p.locator('main').getByText(GENERIC)).toBeVisible();
+  found.push(...(await check(p, 'home error')));
+  await p.unroute('**/api/portal/me', failedRead);
+  await p.reload();
+  await h1('Your home purchase');
+  await p.route('**/api/portal/logout', failedRead, { times: 1 });
+  await tap(p, p.getByRole('button', { name: 'Sign out' }));
+  await expect(p.locator('main').getByText(GENERIC)).toBeVisible({ timeout: 20_000 });
+  await h1('Your home purchase');
+  found.push(...(await check(p, 'sign out failed')));
 
   await tap(p, p.getByRole('button', { name: 'Sign out' }));
   await h1("You're signed out");
