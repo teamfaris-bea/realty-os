@@ -173,7 +173,8 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   const unanswered = await sql<{ id: string }>`SELECT m.id FROM messages m JOIN conversations c ON c.tenant_id = m.tenant_id AND c.id = m.conversation_id
     WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${target.contactId} AND m.direction = 'inbound' AND m.created_at >= ${new Date(a.startedAt)}
       AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.tenant_id = m.tenant_id AND o.conversation_id = m.conversation_id AND o.direction = 'outbound'
-                        AND o.status IN ('sent','delivered') AND o.created_at > m.created_at)
+                        AND o.status IN ('sent','delivered') AND o.created_at > m.created_at
+                        AND o.action_category <> 'portal_login_link') -- a sign-in link is not an answer (b14 review R2)
     ORDER BY m.created_at`.execute(tx);
   // ISA-2b item 12: the AI-origin saved search (the end action paused an active one before this handoff)
   const ss = (await sql<{ id: string; status: string }>`SELECT id, status FROM saved_searches WHERE tenant_id = app.tenant_id() AND origin = 'ai_isa'

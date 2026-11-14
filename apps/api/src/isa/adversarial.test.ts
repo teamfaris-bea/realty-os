@@ -10,6 +10,7 @@ import { inboundSms } from '../comms/testing.js';
 import type { AiProvider } from '../providers/types.js';
 import { HOSTILE_EMAIL, HOSTILE_HOST, HOSTILE_PHONE } from '../providers/fake/hostileAi.js';
 import { HOSTILE_ISA_ATTACKS, HostileIsaAi } from '../providers/fake/hostileIsaAi.js';
+import { askLink, deal, invite, setPortalCleared, slugOf } from '../portal/testing.js';
 import { aiMessages, assignmentOf, call, feedItems, handbacksOf, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, runIsa, startCare } from './testing.js';
 
 let h: ApiHarness;
@@ -149,6 +150,68 @@ describe('the backstop, holds and deadlines (R-ISA-29, R-ISA-25, R-ISA-30)', () 
     await runIsa(h, w.tenantId, 2);
     expect((await feedItems(h, l.id)).some((f) => f.item_type === 'unanswered_inbound' && f.dedupe_key === `inbound:${l.id}`)).toBe(true);
     expect((await handbacksOf(h, l.id)).some((b) => b.dedupe_key.startsWith('handback:ai_isa:'))).toBe(true);
+  });
+
+  // b14 review B14-PORTAL-R2 (a): a client's portal sign-in link (a system message they asked for) is not an answer,
+  // so it never silences the backstop. Part (b), the automated cap (TX1 and the DB send check count it), is open.
+  async function pastClientUnderCare() {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    const d = await deal(agent, l.id);
+    const inv = await invite(agent, d, l.id); // the portal is dark: no notice, no takeover
+    expect(inv.status, JSON.stringify(inv.body)).toBe(200);
+    // a past client: the deal closed (the grant lives 90 days after closing), so AI care may start
+    await h.su.query('SET session_replication_role = replica');
+    try {
+      await h.su.query(`UPDATE deals SET stage = 'closed', closed_at = now() WHERE id = $1`, [d]);
+    } finally {
+      await h.su.query('SET session_replication_role = origin');
+    }
+    const sc = await startCare(agent, l.id);
+    expect(sc.status, JSON.stringify(sc.body)).toBe(200);
+    await runIsa(h, w.tenantId);
+    return l;
+  }
+  async function signInLinks(email: string, n: number) {
+    await setPortalCleared(h, true);
+    try {
+      for (let i = 0; i < n; i++) expect((await askLink(h, await slugOf(h, w.tenantId), email, `203.0.113.${60 + i}`)).statusCode).toBe(202);
+    } finally {
+      await setPortalCleared(h, false);
+    }
+  }
+
+  it('R-ISA-29 (b14 review R2): a sign-in link sent after their message is not an answer: the pause still writes the pinned card and the handback', async () => {
+    const l = await pastClientUnderCare();
+    await inboundSms(h, l.phone, w.mainNumber, 'are you there? I need to talk to someone');
+    await signInLinks(l.email, 1);
+    expect((await h.su.query<{ status: string }>(`SELECT status FROM messages WHERE contact_id = $1 AND action_category = 'portal_login_link'`, [l.id])).rows.map((m) => m.status)).toEqual(['sent']);
+    expect((await call(w.owner, 'POST', `/contacts/${l.id}/ai-isa/pause`, {})).status).toBe(200);
+    await runIsa(h, w.tenantId, 2);
+    expect((await feedItems(h, l.id)).filter((f) => f.item_type === 'unanswered_inbound')).toHaveLength(1);
+    expect((await handbacksOf(h, l.id)).filter((b) => b.dedupe_key.startsWith('handback:ai_isa:'))).toHaveLength(1);
+  });
+
+  it('R-ISA-30 (b14 review R2): a sign-in link sent after their message leaves it in the handoff package\'s unanswered list', async () => {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const { depsFromPlatform } = await import('../comms/runtime.js');
+    const l = await pastClientUnderCare();
+    // runIsa ages each new inbound by 3 minutes (its debounce); start care earlier so their message stays inside it
+    await h.su.query('SET session_replication_role = replica');
+    try {
+      await h.su.query(`UPDATE ai_isa_assignments SET started_at = started_at - interval '10 minutes' WHERE contact_id = $1`, [l.id]);
+    } finally {
+      await h.su.query('SET session_replication_role = origin');
+    }
+    await inboundSms(h, l.phone, w.mainNumber, 'are you there? please call me');
+    const inbound = (await h.su.query<{ id: string }>(`SELECT id FROM messages WHERE contact_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, [l.id])).rows[0]!.id;
+    await signInLinks(l.email, 1);
+    const r = await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: w.agents[1]!.userId as never, reason: 'MANUAL_REASSIGN' } as never, crypto.randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids });
+    expect(r.ok).toBe(true);
+    await runIsa(h, w.tenantId, 2);
+    const ho = await handoffOf(h, l.id);
+    expect(ho).toHaveLength(1);
+    expect(ho[0]!.package['unansweredInbound']).toContain(inbound);
   });
 
   it('R-ISA-25 E517: AI_ISA_LIVE_SENDS off with non-fake adapters is a hold: no pause, no AI message sent; it continues when the hold clears', async () => {
