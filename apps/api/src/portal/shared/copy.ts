@@ -60,6 +60,8 @@ export const CHANNEL_WORDS = {
 
 export const ITEM_STILL_LISTED_UNSHARED = 'Still listed but the file is no longer shared, so the client cannot open it.';
 export const RETRACTED_BY_SYNC = 'Removed automatically: the date moved, was waived or went back to proposed, or the file stopped being shared.';
+/** b14 review R3: a showing, feedback or seller update the sync removed because the client is no longer seller-side. */
+export const RETRACTED_NOT_SELLER_SIDE = 'Removed automatically: the client is no longer a seller or co-seller on this deal, so the listing\'s showings, feedback and seller updates are not theirs to see.';
 
 /** One sentence per stable code the portal API answers (module 46 and 55 show these). */
 export const CODE_SENTENCES = {

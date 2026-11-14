@@ -1,10 +1,12 @@
 // Module 45 portal.sync (R-PORTAL-15; E410, E696, E698; findings F10, F13). Runs the job's transaction as the worker
 // does: one withTenantTx as the system of the tenant.
+import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { handlers } from '../worker/handlers/index.js';
 import { systemActor } from '../worker/systemActor.js';
+import { RETRACTED_NOT_SELLER_SIDE } from './shared/copy.js';
 import { PORTAL_SYNC_EVERY_MS } from './sync/jobs.js';
 import { portalSyncInTx } from './sync/sync.js';
 import { call, client, deal, invite, milestone, portalWorld, publish, setPortalCleared, sharedDocument, type PortalWorld } from './testing.js';
@@ -167,6 +169,60 @@ describe('R-PORTAL-15 portal.sync', () => {
     expect(after.agentName).not.toBe(before.agentName);
     const a = await h.su.query(`SELECT 1 FROM audit_log WHERE action = 'portal.display_updated' AND entity_id = $1`, [g]);
     expect(a.rowCount).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('R-PORTAL-19 after a role correction (b14 review R3)', () => {
+  it('R-PORTAL-19 (b14 review R3): a party corrected from seller to co_buyer loses the listing\'s feedback and seller update at the next sync; their own showing stays; the staff view says why', async () => {
+    await setPortalCleared(h, true);
+    try {
+      const l = (await call<{ listing: { id: string } }>(agent(), 'POST', '/listings', { status: 'active', addressLine1: '12 Birch Lane', city: 'Exampleville', region: 'CA', postalCode: '94000' })).body.listing.id;
+      const buyer = await client(agent(), { firstName: 'Bix' });
+      const d = await deal(agent(), buyer.id, { side: 'buy', listingId: l });
+      const spouse = await client(agent(), { firstName: 'Sam' });
+      // entered by mistake as a seller of the deal
+      expect((await call(agent(), 'POST', `/deals/${d}/contacts`, { contactId: spouse.id, role: 'seller' })).status).toBe(200);
+      const g = (await invite(agent(), d, spouse.id)).body.grant.id;
+      const sh = await call<{ showing: { id: string } }>(agent(), 'POST', `/listings/${l}/showings`, { startsAt: '2030-01-05T15:00:00Z' });
+      await call(agent(), 'POST', `/showings/${sh.body.showing.id}/feedback`, { rating: 2, comments: 'Overpriced; the sellers will drop.' });
+      const fb = (await h.su.query<{ id: string }>('SELECT id FROM showing_feedback WHERE showing_id = $1', [sh.body.showing.id])).rows[0]!.id;
+      const su = randomUUID();
+      await h.su.query(
+        `INSERT INTO assistant_actions (tenant_id, id, kind, action_category, autonomy, status, owner_user_id, decided_by_user_id, decided_at, explanation, payload, edited_payload, trigger_ref)
+         VALUES ($1, $2, 'seller_update_draft', 'seller_update', 'requires_approval', 'approved', $3, $3, now(), 'Weekly update', $4, $4, $5)`,
+        [w.tenantId, su, agent().userId, JSON.stringify({ body: 'Seller will accept 20k under list.', recommendation: 'Hold the price two more weeks.' }), JSON.stringify({ listing_id: l })],
+      );
+      // the spouse's own showing (as the buyer contact) reaches the grant directly, whatever the role
+      const own = await call<{ showing: { id: string } }>(agent(), 'POST', `/listings/${l}/showings`, { startsAt: '2030-01-06T15:00:00Z', buyerContactId: spouse.id });
+      expect(own.status, JSON.stringify(own.body)).toBe(201);
+      for (const [kind, id] of [['feedback', fb], ['seller_update', su], ['showing', own.body.showing.id]] as const) {
+        expect((await publish(agent(), kind, id, [g])).body.results[0]!.result).toBe('published');
+      }
+      await sync();
+      expect((await items(g)).filter((i) => i.retracted)).toEqual([]);
+      // the role is corrected: the spouse is a co-buyer
+      expect((await call(agent(), 'POST', `/deals/${d}/contacts`, { contactId: spouse.id, role: 'co_buyer' })).status).toBe(200);
+      expect((await sync()).retracted).toBe(2);
+      const after = await items(g);
+      expect(after.map((i) => [i.kind, i.retracted, i.retracted_by])).toEqual([
+        ['feedback', true, null],
+        ['seller_update', true, null],
+        ['showing', false, null],
+      ]);
+      const audits = await h.su.query<{ reason: string }>(`SELECT reason FROM audit_log WHERE action = 'portal.item_retracted' AND entity_id = ANY ($1::uuid[])`, [after.slice(0, 2).map((i) => i.id)]);
+      expect(audits.rows.map((a) => a.reason)).toEqual(['NOT_SELLER_SIDE', 'NOT_SELLER_SIDE']);
+      const view = await call<{ items: { id: string; retractedBy: string | null; note: string | null }[] }>(agent(), 'GET', `/deals/${d}/portal`);
+      expect(view.status).toBe(200);
+      const notes = view.body.items.filter((i) => after.slice(0, 2).some((a) => a.id === i.id)).map((i) => [i.retractedBy, i.note]);
+      expect(notes).toEqual([
+        ['Automatic', RETRACTED_NOT_SELLER_SIDE],
+        ['Automatic', RETRACTED_NOT_SELLER_SIDE],
+      ]);
+      // and once the role is seller again, a person may publish again (nothing is put back by itself)
+      expect((await sync()).retracted).toBe(0);
+    } finally {
+      await setPortalCleared(h, false);
+    }
   });
 });
 

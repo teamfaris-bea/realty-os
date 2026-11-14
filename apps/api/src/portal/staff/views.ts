@@ -4,7 +4,7 @@
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { hint } from '../../comms/dispatch.js';
-import { ITEM_STILL_LISTED_UNSHARED, NOT_VISIBLE, type NotVisibleReason, RETRACTED_BY_SYNC } from '../shared/copy.js';
+import { ITEM_STILL_LISTED_UNSHARED, NOT_VISIBLE, type NotVisibleReason, RETRACTED_BY_SYNC, RETRACTED_NOT_SELLER_SIDE } from '../shared/copy.js';
 import { type PortalItemRow, grantContent, grantView } from '../shared/view.js';
 import { isoOrNull, portalClearedInTx } from './common.js';
 
@@ -118,6 +118,8 @@ export interface ItemStaffView {
   note: string | null;
 }
 
+const SELLER_SIDE_KINDS: ReadonlySet<string> = new Set(['showing', 'feedback', 'seller_update']);
+
 export async function itemStaffViews(tx: Tx, grantIds: readonly string[]): Promise<ItemStaffView[]> {
   if (grantIds.length === 0) return [];
   const r = await sql<{ id: string; grant_id: string; kind: PortalItemRow['kind']; title: string; occurs_on: string | null; published_at: Date; published_by_kind: string; pub: string | null; retracted_at: Date | null; retracted_by_user_id: string | null; ret: string | null; unshared: boolean | null }>`
@@ -137,7 +139,8 @@ export async function itemStaffViews(tx: Tx, grantIds: readonly string[]): Promi
     publishedBy: i.published_by_kind === 'system' ? 'Automatic' : (i.pub ?? 'A team member'),
     retractedAt: isoOrNull(i.retracted_at),
     retractedBy: i.retracted_at === null ? null : i.retracted_by_user_id === null ? 'Automatic' : (i.ret ?? 'A team member'),
-    note: i.retracted_at !== null && i.retracted_by_user_id === null ? RETRACTED_BY_SYNC : i.unshared ? ITEM_STILL_LISTED_UNSHARED : null,
+    // the sync retracts a showing, feedback or seller update only when the client stopped being seller-side (b14 review R3)
+    note: i.retracted_at !== null && i.retracted_by_user_id === null ? (SELLER_SIDE_KINDS.has(i.kind) ? RETRACTED_NOT_SELLER_SIDE : RETRACTED_BY_SYNC) : i.unshared ? ITEM_STILL_LISTED_UNSHARED : null,
   }));
 }
 

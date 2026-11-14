@@ -2,7 +2,9 @@
 // PORTAL_SYNC_BATCH rows per step. Never publishes documents, showings, feedback, seller updates or next steps
 // (core/portal: the rule path publishes confirmed milestones only).
 //   1 retract (as the system: retracted_by_user_id NULL) milestones moved, waived, back to proposed or removed;
-//     documents no longer shared and clean, or whose object is gone (E410); next steps whose task is done or canceled
+//     documents no longer shared and clean, or whose object is gone (E410); next steps whose task is done or canceled;
+//     showings, feedback and seller updates that reached a deal grant through the deal's listing once its contact is
+//     no longer a seller or co-seller of the deal (R-PORTAL-19 after a role correction; b14 review R3)
 //   2 publish each confirmed milestone of each live deal grant whose (grant, deal date, due_version) has no row at all,
 //     unless a person retracted any version of it in that grant (E696)
 //   3 store expiry once (F10): closed ⇒ GREATEST(closed_at, granted_at) + 90 days; lost ⇒ GREATEST(now, granted_at +
@@ -59,10 +61,25 @@ async function retractStale(tx: Tx, actor: SystemActor, limit: number): Promise<
      WHERE i.tenant_id = app.tenant_id() AND i.retracted_at IS NULL AND i.source_type = 'task'
        AND (t.id IS NULL OR t.status IN ('done','canceled'))
      ORDER BY i.published_at LIMIT ${limit}`.execute(tx);
+  // R-PORTAL-19 (b14 review R3): 0087's items guard checks the seller side only at publish. A deal grant's showing,
+  // feedback or seller update that is not the contact's own showing (the direct path) reached it through the deal's
+  // listing, so it goes once the contact is no longer a seller or co-seller of the deal (a corrected role)
+  const sellerSide = await sql<{ id: string }>`
+    SELECT i.id FROM portal_items i
+      JOIN portal_grants g ON g.tenant_id = i.tenant_id AND g.id = i.grant_id AND g.deal_id IS NOT NULL
+      JOIN portal_accounts a ON a.tenant_id = g.tenant_id AND a.id = g.portal_account_id
+      LEFT JOIN showing_feedback f ON i.source_type = 'showing_feedback' AND f.tenant_id = i.tenant_id AND f.id = i.source_id
+      LEFT JOIN showings s ON s.tenant_id = i.tenant_id AND s.id = CASE i.source_type WHEN 'showing' THEN i.source_id WHEN 'showing_feedback' THEN f.showing_id END
+     WHERE i.tenant_id = app.tenant_id() AND i.retracted_at IS NULL AND i.source_type IN ('showing','showing_feedback','assistant_action')
+       AND (s.buyer_contact_id IS NULL OR s.buyer_contact_id <> a.contact_id)
+       AND NOT EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = g.tenant_id AND dc.deal_id = g.deal_id AND dc.contact_id = a.contact_id
+                          AND dc.role IN ('seller','co_seller'))
+     ORDER BY i.published_at LIMIT ${limit}`.execute(tx);
   return (
     (await retractAsSystem(tx, actor, milestones.rows.map((r) => r.id), 'MILESTONE_CHANGED')) +
     (await retractAsSystem(tx, actor, documents.rows.map((r) => r.id), 'DOCUMENT_NOT_SHARED')) +
-    (await retractAsSystem(tx, actor, steps.rows.map((r) => r.id), 'TASK_FINISHED'))
+    (await retractAsSystem(tx, actor, steps.rows.map((r) => r.id), 'TASK_FINISHED')) +
+    (await retractAsSystem(tx, actor, sellerSide.rows.map((r) => r.id), 'NOT_SELLER_SIDE'))
   );
 }
 
