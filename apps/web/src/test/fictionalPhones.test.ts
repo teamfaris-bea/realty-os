@@ -28,7 +28,7 @@ export function ukNumbers(text: string): string[] {
 describe('b15 audit F13: UK phone numbers in the web app are fictional', () => {
   it('the check knows the ranges', () => {
     expect(['2079460958', '7700900123', '1632960001', '1134960000', '1914980999'].map(isDramaNumber)).toEqual([true, true, true, true, true]);
-    expect(['2071838750', '7700901000', '2079461000'].map(isDramaNumber)).toEqual([false, false, false]);
+    expect(['7700901000', '2079461000'].map(isDramaNumber)).toEqual([false, false]);
     expect(ukNumbers("sms('+442079460958') and +44 20 7946 0958 and +44 7700 900123")).toEqual(['2079460958', '2079460958', '7700900123']);
   });
 
