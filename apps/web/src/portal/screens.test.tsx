@@ -48,13 +48,25 @@ describe('LinkLanding (R-PORTALWEB-3)', () => {
     await waitFor(() => expect(live()).toHaveTextContent(API_SENTENCES.PORTAL_LINK_INVALID));
   });
 
-  it('E701: a used link while signed out shows the sentence and the form; with no team, the no-team state', async () => {
+  it('E701: a used link while signed out shows the sentence and the form (with no team: the next test)', async () => {
     withToken();
     renderPortal({ link: { link: 'token' }, routes: { ...signedOutRoutes, 'POST /portal/session': () => portalApiError('PORTAL_LINK_INVALID') } });
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByRole('heading', { level: 1, name: COPY.signInTitle })).toBeInTheDocument();
     expect(screen.getByText(API_SENTENCES.PORTAL_LINK_INVALID)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: COPY.sendLink })).toBeInTheDocument();
+  });
+
+  it('E701 (b15 audit F8): a used link while signed out with no team: the sentence and the no-team state, no form', async () => {
+    withToken();
+    const r = renderPortal({ link: { link: 'token', team: null }, routes: { ...signedOutRoutes, 'POST /portal/session': () => portalApiError('PORTAL_LINK_INVALID') } });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('heading', { level: 1, name: COPY.noTeamTitle })).toBeInTheDocument();
+    expect(screen.getByText(API_SENTENCES.PORTAL_LINK_INVALID, IGN)).toBeInTheDocument();
+    expect(screen.getByText(COPY.noTeamBody)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: COPY.sendLink })).toBeNull();
+    expect(r.keys()).toEqual(['POST /portal/session', 'GET /portal/me']);
   });
 
   it('E704: uncleared at the tap: not available, nothing was sent', async () => {
