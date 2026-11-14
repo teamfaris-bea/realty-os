@@ -14,7 +14,7 @@ import type { IsaDeps } from './isa2Seam.js';
 import { buildCompsInTx } from './comps.js';
 import { smsFits } from './competition.js';
 import { sellerFactsCurrentInTx, sellerRerenderInTx } from './index.js';
-import { PRINTABLE_STATEMENTS, asSystem, confirm, nowInstant, policyChannels, queueFactsAs, secondFeed, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
+import { asSystem, confirm, nowInstant, policyChannels, queueFactsAs, secondFeed, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 
 let h: ApiHarness;
 
@@ -56,7 +56,7 @@ describe('E536 R-ISA-18 (ISA-3 audit F4): comps from two feeds', () => {
     const earlier = new Date(Date.now() - 2 * 86_400_000);
     await feedLastSyncedAt({ h, mls: w.mls }, earlier);
     expect((await confirm(w, l)).status).toBe(200);
-    const r = await withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)));
+    const r = await withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())));
     expect(r.ok, JSON.stringify(r)).toBe(true);
     const ok = r as Extract<typeof r, { ok: true }>;
     expect(new Set(ok.pendingFacts.map((f) => f.connectionId))).toEqual(new Set([w.mls, mls2]));
@@ -103,16 +103,7 @@ describe('R-ISA-17 E536 (ISA-3 audit F5): the channel of a seller facts message'
     expect((await confirm(w, l)).status).toBe(200);
     await policyChannels(h, w, ['sms']);
     expect(await queueFactsAs(h, w, l, ['C1'], 'email')).toBeNull();
-    const comps = await withSellerPacksCleared(h, async () => {
-      const { SELLER_RUNTIME } = await import('./index.js');
-      const was = SELLER_RUNTIME.deps;
-      SELLER_RUNTIME.deps = PRINTABLE_STATEMENTS;
-      try {
-        return await queueFactsAs(h, w, l, ['comps'], 'email');
-      } finally {
-        SELLER_RUNTIME.deps = was;
-      }
-    });
+    const comps = await withSellerPacksCleared(h, () => queueFactsAs(h, w, l, ['comps'], 'email'));
     expect(comps).toBeNull();
     expect(await aiMessages(l.id)).toEqual([]);
     // the same lead with email allowed again: both build (the refusal above was the policy's)

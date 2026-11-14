@@ -29,8 +29,8 @@ const START_REFUSALS: Record<string, string> = {
  * propose_saved_search (ISA-2b's buyer bundle and saved search), seller_competition (ISA-3: competing listings with
  * their asking prices, allowed before platform:cma, E534), book_appointments (ISA-2b offers and booking) and
  * seller_sold_comps, built but dark: recent sales go out only once counsel review of platform:cma and
- * platform:ai_isa_seller_data is recorded and the MLS licence allows ai_isa_comps (the STUB(V2-A) statement rules
- * refuse every statement until then). Reserved capabilities (core ISA_RESERVED_CAPABILITIES) are never listed.
+ * platform:ai_isa_seller_data is recorded and the MLS licence allows ai_isa_comps (batch 16: under V2-A's own statement
+ * rules, connected in isa/seller/cmaSeam.ts). Reserved capabilities (core ISA_RESERVED_CAPABILITIES) are never listed.
  */
 export const ISA_BUILT_CAPABILITIES = ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'] as const;
 

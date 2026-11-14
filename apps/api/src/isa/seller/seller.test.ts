@@ -1,8 +1,8 @@
 // The AI ISA seller part (ISA-3; R-ISA-18, R-ISA-19, R-ISA-20, R-ISA-26; E534-E538, E502). Real Postgres through the
 // API harness; fakes only; packs are cleared only in this test's database, in try/finally (withSellerPacksCleared).
-// Nothing is sent: TELEPHONY_LIVE_REQUESTS, AI_ISA_LIVE_SENDS and MLS_LIVE_CALLS stay false. The comps email needs
-// V2-A's statement rules, a STUB that refuses every statement; tests that build a complete email inject the double
-// PRINTABLE_STATEMENTS (SELLER_RUNTIME.deps inside try/finally).
+// Nothing is sent: TELEPHONY_LIVE_REQUESTS, AI_ISA_LIVE_SENDS and MLS_LIVE_CALLS stay false. The comps email runs V2-A's
+// real statement rules (cma/statement.ts through cmaSeam.ts, batch 16) on the fixture pack's statement; the statement
+// cases and the dark proofs are statement.test.ts.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../../auth/testHarness.js';
 import { daysAgo, feedLastSyncedAt, mlsSale, saleReso, syncSales, teamListing } from '../../cma/testing.js';
@@ -13,9 +13,9 @@ import { buildCompsInTx, serverTextBanned } from './comps.js';
 import { compsSuspendedNowInTx } from './gates.js';
 import { watchOf } from './subject.js';
 import { COUNT_SHARE_ENABLED } from './counts.js';
-import { SELLER_RUNTIME, factPlaceholdersInTx, onEscalationInTx, sellerBundleInTx, sellerFactsCurrentInTx, sellerStartRefusalInTx, COMPS_PLACEHOLDER } from './index.js';
+import { factPlaceholdersInTx, onEscalationInTx, sellerBundleInTx, sellerFactsCurrentInTx, sellerStartRefusalInTx, COMPS_PLACEHOLDER } from './index.js';
 import { type IsaDeps, contextFor, queueIsaMessageInTx } from './isa2Seam.js';
-import { PRINTABLE_STATEMENTS, type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, panel, randomUUID, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
+import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, panel, randomUUID, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 import { runSellerWatchInTx } from './watch.js';
 
 let h: ApiHarness;
@@ -30,16 +30,7 @@ afterAll(async () => {
   await h?.close();
 });
 
-const build = (l: SellerLead, via: 'assistant' | 'worker' = 'assistant') => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS), via);
-const printable = async <T>(fn: () => Promise<T>): Promise<T> => {
-  const was = SELLER_RUNTIME.deps;
-  SELLER_RUNTIME.deps = PRINTABLE_STATEMENTS;
-  try {
-    return await fn();
-  } finally {
-    SELLER_RUNTIME.deps = was;
-  }
-};
+const build = (l: SellerLead, via: 'assistant' | 'worker' = 'assistant') => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant()), via);
 const deps = (): IsaDeps => depsFromPlatform(h.app.platform) as unknown as IsaDeps;
 /** ISA-2's TX-B queue path with a facts message (the H2 hook builds the body). Returns the message id or null. */
 const queueFacts = (l: SellerLead, handles: string[], channel: 'sms' | 'email' = 'email') =>
@@ -110,7 +101,7 @@ describe('E536 R-ISA-18: the complete engine set or nothing, by email', () => {
     await confirm(w, l);
     // the email and the pipeline's own run, in one transaction (the pipeline is read-only)
     const { r, engine } = await withSellerPacksCleared(h, () => asSystem(h, w, l, async (tx, a, actor) => ({
-      r: await buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS),
+      r: await buildCompsInTx(tx, actor, a, nowInstant()),
       engine: await compsForSubjectInTx(tx, actor, nowInstant(), { kind: 'contact_address', contactAddressId: l.addressId }, { contactId: l.id, onBehalfOf: { userId: a.ownerUserId } }),
     })));
     expect([r.ok, engine.ok]).toEqual([true, true]);
@@ -139,19 +130,6 @@ describe('E536 R-ISA-18: the complete engine set or nothing, by email', () => {
     expect(ok.pendingFacts.every((f) => f.priceKind === 'sold' && f.factKind === 'sold_comp_set')).toBe(true);
   });
 
-  it('E536: the shipped V2-A seam refuses every statement (CMA_STATEMENT_NOT_RENDERABLE); a 14 pt statement is EMAIL_TYPE_SIZE', async () => {
-    const l = await sellerLead(h, w);
-    await confirm(w, l);
-    const stub = await withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())));
-    expect(stub).toEqual({ ok: false, codes: ['CMA_STATEMENT_NOT_RENDERABLE'] });
-    await h.su.query(`UPDATE integration_connections SET license_pack = jsonb_set(license_pack, '{valuation,statements,CA,min_point_size}', '14') WHERE id = $1`, [w.mls]);
-    try {
-      expect(await withSellerPacksCleared(h, () => build(l))).toEqual({ ok: false, codes: ['EMAIL_TYPE_SIZE'] });
-    } finally {
-      await h.su.query(`UPDATE integration_connections SET license_pack = jsonb_set(license_pack, '{valuation,statements,CA,min_point_size}', '10') WHERE id = $1`, [w.mls]);
-    }
-  });
-
   it('E536: a pack-lines mismatch gives no comps (PACK_LINES_MISMATCH); a "not guaranteed" disclaimer still sends', async () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
@@ -171,7 +149,7 @@ describe('E536 R-ISA-18: the complete engine set or nothing, by email', () => {
     const w2 = await sellerWorld(h);
     const l = await sellerLead(h, w2, { comps: 2 });
     await confirm(w2, l);
-    const r = await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)));
+    const r = await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())));
     expect(r.ok).toBe(false);
     expect((r as { codes: string[] }).codes.some((c) => c === 'NO_VALUE' || c === 'COMPS_TOO_FEW')).toBe(true);
     expect(JSON.stringify(r)).not.toMatch(/\d+ (sales|comps)/);
@@ -183,7 +161,7 @@ describe('E536 R-ISA-18: the complete engine set or nothing, by email', () => {
     const r = await withSellerPacksCleared(h, () => build(l));
     expect(r.ok).toBe(false);
     expect((r as { codes: string[] }).codes).toContain('NO_BOUND_EMAIL');
-    const id = await withSellerPacksCleared(h, () => printable(() => queueFacts(l, ['comps'], 'sms')));
+    const id = await withSellerPacksCleared(h, () => queueFacts(l, ['comps'], 'sms'));
     expect(id).toBeNull();
   });
 
@@ -250,7 +228,7 @@ describe('E535 R-ISA-18: freshness', () => {
     const l = await sellerLead(h, w2);
     await mlsSale({ h, tenantId: w2.tenantId, mls: w2.mls }, { status: 'active', line1: '301 Rival St', beds: 3, sqft: 1500 });
     await confirm(w2, l);
-    const comps = () => withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)));
+    const comps = () => withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())));
     // a fresh feed whose sold rows were last seen 90 days ago (the incremental feed never re-sends a closed sale): comps are built
     await h.su.query(`UPDATE listings SET last_seen_in_feed_at = now() - interval '90 days' WHERE tenant_id = $1 AND status = 'sold'`, [w2.tenantId]);
     expect((await comps()).ok).toBe(true);
@@ -413,7 +391,7 @@ describe('E502: a pricing hold suspends comps', () => {
     await confirm(w2, l);
     expect((await call(w2.agents[0]!, 'POST', `/contacts/${l.id}/cma`, {})).status).toBe(201);
     await asSystem(h, w2, l, (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
-    const suspended = async () => ((await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)))) as { codes?: string[] }).codes ?? [];
+    const suspended = async () => ((await withSellerPacksCleared(h, () => asSystem(h, w2, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())))) as { codes?: string[] }).codes ?? [];
     const drafts = async () => (await h.su.query<{ id: string; status: string; moved: boolean }>(`SELECT c.id, c.status, c.updated_at > w.comps_suspended_at AS moved FROM cma_reports c
       JOIN ai_isa_seller_watch w ON w.contact_id = c.contact_id WHERE c.contact_id = $1 ORDER BY c.created_at`, [l.id])).rows;
     // the feed syncs (hourly in production): the unchanged re-tap refreshes only the draft's MLS data date
@@ -642,7 +620,7 @@ describe('R-ISA-20 R-ISA-19: the prompt and counts', () => {
   it('R-ISA-20: a message that carried comps enters the prompt as the fixed placeholder, never its body', async () => {
     const l = await sellerLead(h, w);
     await confirm(w, l);
-    const id = await withSellerPacksCleared(h, () => printable(() => queueFacts(l, ['comps'])));
+    const id = await withSellerPacksCleared(h, () => queueFacts(l, ['comps']));
     expect(id).not.toBeNull();
     expect((await messageOf(id!)).channel).toBe('email');
     expect((await factsOf(id!)).every((f) => f.fact_kind === 'sold_comp_set' && f.price_kind === 'sold')).toBe(true);

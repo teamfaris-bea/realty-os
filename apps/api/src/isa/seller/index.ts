@@ -15,7 +15,7 @@ import { enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../../audit.js';
 import { type MlsEligibility, mlsEligibility, listingRows, storedPriceOf } from './cmaSeam.js';
-import { type CompsBuild, DEFAULT_SELLER_DEPS, type SellerDeps, buildCompsInTx } from './comps.js';
+import { type CompsBuild, buildCompsInTx } from './comps.js';
 import { MAX_COMPETITION_HANDLES, competitorLine, competitorsInTx, smsFits, sourceOf } from './competition.js';
 import { assignmentSubjectLinkInTx, sellerGatesInTx, subjectLinkInTx } from './gates.js';
 import { type CompetitorEvent, FACT_INTROS, STATUS_LABEL, composeMessage, factsMessage } from './isa1Seam.js';
@@ -30,12 +30,6 @@ import { displayRulesVersion } from './versions.js';
  */
 export const COMPS_PLACEHOLDER = '[recent sales emailed]';
 export const FACTS_PLACEHOLDER = '[listing details sent]';
-
-/**
- * The seller runtime: the V2-A statement rules (STUB until V2-A merges). Tests replace `deps` inside try/finally; no
- * production path writes it.
- */
-export const SELLER_RUNTIME: { deps: SellerDeps } = { deps: DEFAULT_SELLER_DEPS };
 
 const seller = (a: Pick<AssignmentRow, 'side'>) => a.side === 'seller' || a.side === 'both';
 
@@ -115,7 +109,7 @@ export async function sellerBundleInTx(tx: Tx, actor: SystemActor, a: Assignment
     handles = h.labels;
     handleMap = h.map;
   } else unavailable.push(`competition_unavailable: ${comp.codes[0]}`);
-  const comps = await buildCompsInTx(tx, actor, a, now, SELLER_RUNTIME.deps);
+  const comps = await buildCompsInTx(tx, actor, a, now);
   if (!comps.ok) unavailable.push(`sold_comps_unavailable: ${comps.codes[0]}`);
   return { handles, handleMap, unavailable, competitionHandles: handles.map((x) => x.handle), compsAvailable: comps.ok, mlsListedElsewhere: link.reason === 'listed_elsewhere', subjectConfirmed };
 }
@@ -162,7 +156,7 @@ export async function renderSellerFactsInTx(tx: Tx, actor: SystemActor, a: Assig
   if (q.handles.includes('comps')) {
     if (a.boundPoints.email === undefined) return { ok: false, codes: ['NO_BOUND_EMAIL'] };
     if (!allowed('email')) return { ok: false, codes: ['CHANNEL_NOT_ALLOWED'] };
-    const b: CompsBuild = await buildCompsInTx(tx, actor, a, now, SELLER_RUNTIME.deps);
+    const b: CompsBuild = await buildCompsInTx(tx, actor, a, now);
     if (!b.ok) return b;
     return { ok: true, channel: 'email', body: b.body, pendingFacts: b.pendingFacts.map((f) => ({ ...f })) };
   }
@@ -313,7 +307,7 @@ export async function sellerFactsCurrentInTx(tx: Tx, actor: Actor, messageId: st
     const a = await assignmentById(tx, seller[0]!.assignment_id);
     if (a === null) codes.add('FACT_CHANGED');
     else {
-      const b = await buildCompsInTx(tx, actor, a, now, SELLER_RUNTIME.deps);
+      const b = await buildCompsInTx(tx, actor, a, now);
       // a refusal stays its own code (terminal in the core gate); FACT_CHANGED means the facts moved under the message
       if (!b.ok) for (const c of b.codes) codes.add(c === 'SUBJECT_CHANGED' || c === 'COMPS_HIDDEN' || c === 'COMPS_TOO_FEW' || c === 'NO_VALUE' ? 'FACT_CHANGED' : c);
       else if (b.compSetHash !== seller.find((f) => f.fact_kind === 'sold_comp_set')!.comp_set_hash) codes.add('FACT_CHANGED');

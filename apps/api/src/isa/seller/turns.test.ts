@@ -9,8 +9,8 @@ import { HostileIsaAi } from '../../providers/fake/hostileIsaAi.js';
 import type { AiProvider } from '../../providers/types.js';
 import { aiMessages, grantInitiated, initiatedDayNow, openZone, runIsa } from '../testing.js';
 import { buildCompsInTx } from './comps.js';
-import { COMPS_PLACEHOLDER, SELLER_RUNTIME } from './index.js';
-import { PRINTABLE_STATEMENTS, type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, queueFactsAs, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
+import { COMPS_PLACEHOLDER } from './index.js';
+import { type SellerLead, type SellerWorld, asSystem, confirm, nowInstant, queueFactsAs, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 
 let h: ApiHarness;
 let w: SellerWorld;
@@ -37,25 +37,19 @@ async function liveSeller(): Promise<SellerLead> {
 }
 
 const watch = async (l: SellerLead) => (await h.su.query<{ comps_suspended_at: Date | null; subject_disputed_at: Date | null }>(`SELECT comps_suspended_at, subject_disputed_at FROM ai_isa_seller_watch WHERE assignment_id = $1`, [l.assignmentId])).rows[0]!;
-const build = (l: SellerLead) => withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS)));
+const build = (l: SellerLead) => withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant())));
 
-/** A comps email queued with the packs cleared and the statement double, then marked sent (the dispatch is a fake). */
+/** A comps email queued with the packs cleared (V2-A's real statement rules), then marked sent (the dispatch is a fake). */
 async function sentCompsEmail(l: SellerLead): Promise<{ id: string; body: string }> {
   // the start turn's messages two days back (the guard spaces AI messages and caps initiated ones per day)
   await h.su.query(`UPDATE messages SET created_at = created_at - interval '2 days', dispatched_at = dispatched_at - interval '2 days' WHERE contact_id = $1 AND initiator = 'assistant'`, [l.id]);
   // queued and marked sent while the packs are cleared (the messages guard refuses a sold fact's send otherwise)
   const id = await withSellerPacksCleared(h, async () => {
-    const was = SELLER_RUNTIME.deps;
-    SELLER_RUNTIME.deps = PRINTABLE_STATEMENTS;
-    try {
-      const m = await queueFactsAs(h, w, l, ['comps']);
-      expect(m).not.toBeNull();
-      await h.su.query(`UPDATE messages SET status = 'sent', dispatched_at = now() WHERE id = $1`, [m]);
-      await h.su.query(`UPDATE ai_isa_shared_facts SET status = 'sent' WHERE message_id = $1`, [m]);
-      return m;
-    } finally {
-      SELLER_RUNTIME.deps = was;
-    }
+    const m = await queueFactsAs(h, w, l, ['comps']);
+    expect(m).not.toBeNull();
+    await h.su.query(`UPDATE messages SET status = 'sent', dispatched_at = now() WHERE id = $1`, [m]);
+    await h.su.query(`UPDATE ai_isa_shared_facts SET status = 'sent' WHERE message_id = $1`, [m]);
+    return m;
   });
   await h.su.query(`DELETE FROM jobs WHERE tenant_id = $1 AND kind = 'comms.dispatch' AND status = 'pending'`, [w.tenantId]);
   return { id: id!, body: (await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [id])).rows[0]!.body };

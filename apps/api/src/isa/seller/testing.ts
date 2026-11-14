@@ -12,7 +12,6 @@ import { mlsConnection } from '../../mls/testing.js';
 import { systemActor } from '../../worker/systemActor.js';
 import { type IsaLead, type IsaWorld, call, isaLead, isaWorld, optInAgent, startCare } from '../testing.js';
 import { type IsaDeps, assignmentById, contextFor, queueIsaMessageInTx } from './isa2Seam.js';
-import type { SellerDeps } from './comps.js';
 
 export const SELLER_CAPS = ['converse', 'seller_competition', 'seller_sold_comps'];
 
@@ -39,14 +38,6 @@ export async function withSellerPacksCleared<T>(h: ApiHarness, fn: () => Promise
     await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = ANY ($1::text[])`, [keys]);
   }
 }
-
-/** A statement double for V2-A's printable/statementProminence (the shipped seam refuses every statement). */
-export const PRINTABLE_STATEMENTS: SellerDeps = {
-  statement: {
-    printable: () => true,
-    statementProminence: (min: number) => ({ ok: true, code: null, pointSize: Math.max(12, min) }),
-  },
-};
 
 export interface SellerLead extends IsaLead {
   addressId: string;

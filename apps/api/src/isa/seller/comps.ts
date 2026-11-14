@@ -9,9 +9,9 @@
 //      brokerage (its own, else the mirror's, else refused), a location only when shown, and one "why";
 //   5. only the area sentences V1-B's own builders give (each asserted to be among the engine's), never the value,
 //      tier-limit, records-left-out, weight or valuation-date sentences;
-//   6. the statements (one per comp connection for the subject's state, deduplicated, each printable at <= 12 pt; V2-A
-//      STUB refuses every statement), the attribution and disclaimer per connection, the EARLIEST sync as the as-of,
-//      the pack's client_lines verbatim;
+//   6. the statements (one per comp connection for the subject's state, through valuationStatement), the attribution
+//      and disclaimer per connection, all under V2-A's share-email statement rules (cmaSeam emailStatementRendering:
+//      never substituted, a statement at <= 12 pt), the EARLIEST sync as the as-of, the pack's client_lines verbatim;
 //   7. the guard and fair housing over the whole body, and the server-text ban over ISA and engine lines only;
 //   8. one pending sold_comp_set row per comp (written by the caller with the message id), and last_comps_check.
 // The body never names a value, range, adjusted price, weight, back-test, hidden count, forecast or direction.
@@ -26,13 +26,13 @@ import {
   type ListingRow,
   type MlsEligibility,
   type StoredResult,
+  canonicalText,
   clientRendering,
   compsForSubjectInTx,
+  emailStatementRendering,
   filterSkippedSentence,
   listingRows,
   mlsEligibility,
-  printable,
-  statementProminence,
   tierName,
   tierReachedSentence,
   tierSkippedSentence,
@@ -43,8 +43,6 @@ import type { AssignmentRow } from './isa2Seam.js';
 import { sellerGatesInTx } from './gates.js';
 import { displayRulesVersion } from './versions.js';
 
-/** The longest point size an email statement may need (V2-A refuses EMAIL_TYPE_SIZE above it). VERIFY WITH COUNSEL. */
-export const EMAIL_MAX_STATEMENT_PT = 12;
 /** A refresh re-sends the full set at most this often, and only when the hash changed (§6.3). VERIFY. */
 export const COMPS_REFRESH_DAYS = 30;
 
@@ -58,12 +56,6 @@ export function serverTextBanned(line: string): boolean {
   if (SERVER_TEXT_BAN.some((re) => re.test(line))) return true;
   return /\bappraisal\b/i.test(line.replace(APPRAISAL_NEGATION, ''));
 }
-
-/** Seller dependencies a test may replace (the V2-A statement rules until V2-A merges). */
-export interface SellerDeps {
-  statement: { printable: typeof printable; statementProminence: typeof statementProminence };
-}
-export const DEFAULT_SELLER_DEPS: SellerDeps = { statement: { printable, statementProminence } };
 
 export interface PendingFact {
   factKind: 'sold_comp_set';
@@ -138,23 +130,36 @@ interface Footer {
   asOf: Instant | null;
 }
 
-function footerOf(e: MlsEligibility, connectionIds: readonly string[], state: string | null, deps: SellerDeps): Footer {
+const noFooter = (code: string): Footer => ({ ok: false, code, statement: null, attribution: null, mlsName: '', asOf: null });
+
+/**
+ * The statement, attribution and disclaimer of every comp feed (R-MLS-2), under V2-A's share-email statement rules
+ * (cmaSeam emailStatementRendering over cma/statement.ts, batch 16): each feed's statement for the subject's state from
+ * its licence pack (valuationStatement), once per text, never substituted and never needing more than 12 pt
+ * (CMA_STATEMENT_NOT_RENDERABLE, EMAIL_TYPE_SIZE); each feed's attribution and disclaimer once, never substituted. The
+ * texts go out as V2-A judges and sends them (canonicalText).
+ */
+function footerOf(e: MlsEligibility, connectionIds: readonly string[], state: string | null): Footer {
   const conns = [...new Set(connectionIds)].sort().map((id) => e.connections.find((c) => c.id === id)).filter((c) => c !== undefined);
-  if (conns.length === 0) return { ok: false, code: 'FEED_DISCONNECTED', statement: null, attribution: null, mlsName: '', asOf: null };
-  const statements: string[] = [];
-  for (const c of conns) {
-    const st = valuationStatement(c.pack, state);
-    if (st === null) return { ok: false, code: 'NO_VALUATION_STATEMENT', statement: null, attribution: null, mlsName: '', asOf: null };
-    const p = deps.statement.statementProminence(st.minPointSize);
-    if (!deps.statement.printable(st.text, 'email') || !p.ok) return { ok: false, code: p.code ?? 'CMA_STATEMENT_NOT_RENDERABLE', statement: null, attribution: null, mlsName: '', asOf: null };
-    if (p.pointSize > EMAIL_MAX_STATEMENT_PT) return { ok: false, code: 'EMAIL_TYPE_SIZE', statement: null, attribution: null, mlsName: '', asOf: null };
-    if (!statements.includes(st.text)) statements.push(st.text);
-  }
+  if (conns.length === 0) return noFooter('FEED_DISCONNECTED');
+  const statements = conns.map((c) => valuationStatement(c.pack, state));
+  if (statements.some((st) => st === null)) return noFooter('NO_VALUATION_STATEMENT');
+  const rendered = emailStatementRendering({
+    statements: statements as NonNullable<(typeof statements)[number]>[],
+    attributions: conns.flatMap((c) => c.pack.attributionText ?? []),
+    disclaimers: conns.flatMap((c) => c.pack.disclaimerText ?? []),
+  });
+  if (!rendered.ok) return noFooter(rendered.code);
   const foot: string[] = [];
-  for (const c of conns) for (const t of [c.pack.attributionText, c.pack.disclaimerText]) if (t !== null && t.trim() !== '' && !foot.includes(t)) foot.push(t);
+  for (const c of conns) {
+    for (const t of [c.pack.attributionText, c.pack.disclaimerText]) {
+      const x = t === null ? '' : canonicalText(t).trim();
+      if (x !== '' && !foot.includes(x)) foot.push(x);
+    }
+  }
   const times = conns.map((c) => c.lastSyncedAt);
-  if (times.some((t) => t === null)) return { ok: false, code: 'FEED_STALE', statement: null, attribution: null, mlsName: '', asOf: null };
-  return { ok: true, code: null, statement: statements.join('\n\n'), attribution: foot.join('\n\n'), mlsName: [...new Set(conns.map((c) => c.displayName))].join(' and '), asOf: Math.min(...(times as Instant[])) as Instant };
+  if (times.some((t) => t === null)) return noFooter('FEED_STALE');
+  return { ok: true, code: null, statement: rendered.statements.map((s) => s.text).join('\n\n'), attribution: foot.join('\n\n'), mlsName: [...new Set(conns.map((c) => c.displayName))].join(' and '), asOf: Math.min(...(times as Instant[])) as Instant };
 }
 
 async function clientLinesMatch(tx: Tx): Promise<boolean> {
@@ -175,7 +180,7 @@ async function recordCheck(tx: Tx, assignmentId: string, codes: string[], hash: 
  * sellerFactsCurrentInTx). Writes only last_comps_check (as the system). The caller writes the pending facts with the
  * message id.
  */
-export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant, deps: SellerDeps = DEFAULT_SELLER_DEPS): Promise<CompsBuild> {
+export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRow, now: Instant): Promise<CompsBuild> {
   const g = await sellerGatesInTx(tx, actor, a, now, 'comps');
   const done = async (codes: string[], hash: string | null = null): Promise<CompsBuild> => {
     await recordCheck(tx, a.id, codes, hash, now);
@@ -217,7 +222,7 @@ export async function buildCompsInTx(tx: Tx, actor: SystemActor, a: AssignmentRo
   const sentences = areaSentences(r, p.resolved.facts.yearBuilt.value);
   if (sentences === null) return done(['COMPS_CEILING']);
   const result: IsaCompResult = { methodVersion: r.methodVersion, comps: views, areaLookbackMonths: r.area.lookbackMonths, sizeFilterApplied: true, bedsFilterApplied: bedsFiltered, sentences };
-  const foot = footerOf(e, facts.map((f) => f.connectionId), p.resolved.state, deps);
+  const foot = footerOf(e, facts.map((f) => f.connectionId), p.resolved.state);
   if (!foot.ok) return done([foot.code!]);
   if (!(await clientLinesMatch(tx))) return done(['PACK_LINES_MISMATCH']);
   // dedupe and refresh: an unchanged set already sent is skipped; a changed one after 30 days is "Updated"

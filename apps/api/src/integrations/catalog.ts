@@ -180,13 +180,12 @@ export const PACK_ALSO_LICENCE: Readonly<Record<string, string>> = {
 
 /**
  * b15 (b14 low g): what else holds a pack's capability back in this version, said without "not built" (the capability
- * is built and held). The assistant's recent-sales emails need V2-A's statement rules, which isa/seller/cmaSeam.ts
- * stubs (STUB(V2-A): every statement refused), so no recent-sales email goes out whatever the packs say. Remove the line
- * when cma/statement.ts is connected there (integrations.test.ts pins both together).
+ * is built and held). Empty since batch 16: platform:ai_isa_seller_data's line said the recent-sales emails waited for
+ * the statement rules to be connected (isa/seller/cmaSeam.ts refused every statement), and cmaSeam.ts now applies V2-A's
+ * cma/statement.ts as V2-A's share email does, so that line names only counsel's reviews and the MLS licence
+ * (integrations.test.ts pins the line and the connected rules together).
  */
-export const PACK_ALSO_HELD: Readonly<Record<string, string>> = {
-  'platform:ai_isa_seller_data': 'The emails also wait for the statement rules to be connected, so none is sent in this version.',
-};
+export const PACK_ALSO_HELD: Readonly<Record<string, string>> = {};
 
 /**
  * A capability that also waits on platform clearance packs (one, or several that must all be cleared). A pack in

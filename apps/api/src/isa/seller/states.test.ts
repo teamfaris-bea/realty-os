@@ -10,7 +10,7 @@ import { HOME, cmaPack, daysAgo, localSales, saleReso, syncSales, teamListing } 
 import { type ListingRow, type StoredResult, clientReadiness, notLivingAreaSize, readinessConnections } from './cmaSeam.js';
 import { adaptComp, buildCompsInTx } from './comps.js';
 import { call } from '../testing.js';
-import { PRINTABLE_STATEMENTS, type SellerLead, type SellerWorld, asSystem, confirm, nextHomeLine, nowInstant, panel, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
+import { type SellerLead, type SellerWorld, asSystem, confirm, nextHomeLine, nowInstant, panel, sellerLead, sellerWorld, withSellerPacksCleared } from './testing.js';
 
 let h: ApiHarness;
 
@@ -22,7 +22,7 @@ afterAll(async () => {
 });
 
 const codesOf = (w: SellerWorld, l: SellerLead) =>
-  withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant(), PRINTABLE_STATEMENTS))).then((r) => (r.ok ? [] : r.codes));
+  withSellerPacksCleared(h, () => asSystem(h, w, l, (tx, a, actor) => buildCompsInTx(tx, actor, a, nowInstant()))).then((r) => (r.ok ? [] : r.codes));
 const fw = (w: SellerWorld) => ({ h, tenantId: w.tenantId, mls: w.mls });
 /** The owner's confirm with the record id and a hash it never saw: the route's own refusal of the current state answers. */
 const confirmAnyway = (w: SellerWorld, l: SellerLead) => call(w.agents[0]!, 'POST', `/contacts/${l.id}/ai-isa/confirm-subject`, { contactAddressId: l.addressId, recordListingId: l.recordId, factsSha256: '0'.repeat(64) });
