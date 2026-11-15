@@ -41,8 +41,9 @@ describe('E724 (b18 review F2): what a human touch closes or decides is worded a
     for (const l of lines) expect(`${l.label} ${l.text} ${l.detail ?? ''}`).not.toMatch(CLAIMS_CONTACT);
   });
 
-  it('E724 R-ISA-30 (b18 review F2): the panel\'s and the feed card\'s "Done" line for a deadline a touch met says someone on the team called, texted or emailed them, an attempt, never that they were reached; neither surface\'s source claims a connection', () => {
-    expect(handoffDoneWords('Jane', '3:05 PM')).toBe('Done: someone on the team called, texted or emailed Jane at 3:05 PM (an attempt, answered or not).');
+  it('E724 R-ISA-30 (b18 review F2): the panel\'s and the feed card\'s "Done" line for a deadline a touch met says someone on the team called, texted or emailed them or replied in the website chat (b18 round 3 item 7), an attempt, never that they were reached; neither surface\'s source claims a connection', () => {
+    // b18 round 3 item 7: a reply in the website chat meets the deadline too (owner decision D8), so the line names it
+    expect(handoffDoneWords('Jane', '3:05 PM')).toBe('Done: someone on the team called, texted or emailed Jane or replied in the website chat at 3:05 PM (an attempt, answered or not).');
     expect(handoffDoneWords('Jane', '3:05 PM')).not.toMatch(CLAIMS_CONTACT);
     for (const f of ['Person.tsx', 'Feed.tsx']) expect(readFileSync(resolve(here, f), 'utf8'), f).not.toMatch(CLAIMS_CONTACT);
   });

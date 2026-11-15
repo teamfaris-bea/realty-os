@@ -472,8 +472,9 @@ export const CLOSED_REASON_WORDS: Record<HandoffClosedReason, string> = {
 export const closedReasonWords = (r: string) => (CLOSED_REASON_WORDS as Record<string, string>)[r] ?? OTHER_CHECK;
 /** The panel's and the feed card's line for a handoff whose deadline a person's touch met (slaMetAt): b18 review F2
  *  remainder (E724), a touch is an attempt (R-OWN-14: a dialed call, answered or not, or a text or email the gate let
- *  through), never "was reached". */
-export const handoffDoneWords = (first: string, at: string) => `Done: someone on the team called, texted or emailed ${first} at ${at} (an attempt, answered or not).`;
+ *  through), never "was reached". b18 round 3 item 7: a reply in the website chat is a touch too (owner decision D8,
+ *  2026-11-12) and meets the deadline, so the line names it, as the close reason deadline_met does. */
+export const handoffDoneWords = (first: string, at: string) => `Done: someone on the team called, texted or emailed ${first} or replied in the website chat at ${at} (an attempt, answered or not).`;
 
 export type MessageVerb = 'sent' | 'scheduled' | 'queued' | 'not_sent';
 /** The verb a message's own status supports (R-ISA-7): never "sent" unless it was. */

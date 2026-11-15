@@ -80,7 +80,7 @@ describe('the AI care panel and strip (module 76)', () => {
     expect(within(strip).queryByRole('link', { name: /handoff/ })).toBeNull();
     const care = screen.getByRole('region', { name: 'AI care' });
     // b18 review F2 (E724): the deadline a touch met is an attempt, never "was reached"
-    expect(within(care).getByText(`Done: someone on the team called, texted or emailed Jane at ${localTime(metAt)} (an attempt, answered or not).`)).toBeInTheDocument();
+    expect(within(care).getByText(`Done: someone on the team called, texted or emailed Jane or replied in the website chat at ${localTime(metAt)} (an attempt, answered or not).`)).toBeInTheDocument();
     expect(care.textContent).not.toMatch(/Respond by|Overdue/);
   });
 
