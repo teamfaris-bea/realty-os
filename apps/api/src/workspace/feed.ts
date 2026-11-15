@@ -67,6 +67,7 @@ import {
   type FeedItem,
   type FeedReason,
   type OneTapAction,
+  POND_NEW_WINDOW_MS,
   feedGroupOfItem,
   parseForeignFeedKey,
   reasonFromCode,
@@ -404,7 +405,26 @@ export async function materializeFeed(tx: Tx, actor: UserActor, deps: FeedDeps, 
     const items = await fullRefresh(tx, actor, deps, now);
     return { mode: 'full', groups: items.length };
   }
+  // A pond card can become RLS-invisible while its contact is owned outside the viewer's team.
+  // Its old occurrence then cannot be closed. If visibility returns through a different pond,
+  // the historical viewer need not be eligible for the new pond and receives no dirty mark.
+  // Revalidate only this viewer's visible stored occurrences, using the same bounded, caller-scoped
+  // helper as feed inputs. Rescoring closes stale open/snoozed rows and repairs their group counts.
+  const stalePonds = await sql<{ contact_id: string }>`
+    WITH stored AS MATERIALIZED (
+      SELECT contact_id, dedupe_key, card->'primaryAction'->>'pondId' AS pond_id FROM priority_feed_items
+       WHERE tenant_id = app.tenant_id() AND user_id = ${userId} AND item_type = 'pond_new'
+         AND state IN ('open','snoozed') AND contact_id IS NOT NULL
+    ), current AS MATERIALIZED (
+      SELECT * FROM app.my_pond_leads(${iso(now - POND_NEW_WINDOW_MS)}::timestamptz,
+        ARRAY(SELECT DISTINCT contact_id FROM stored)::uuid[])
+    )
+    SELECT DISTINCT s.contact_id FROM stored s LEFT JOIN current p ON p.contact_id = s.contact_id
+     WHERE p.contact_id IS NULL OR p.entered_by_import OR p.cooldown_until >= ${iso(now)}::timestamptz
+        OR s.dedupe_key <> 'pond_new:' || p.contact_id::text || ':' || p.entered_seq::text
+        OR s.pond_id IS DISTINCT FROM p.pond_id::text`.execute(tx);
   const groups = new Set<string>();
+  for (const r of stalePonds.rows) groups.add(`c:${r.contact_id}`);
   for (const r of dirty.rows) groups.add(r.group_key);
   for (const r of due.rows) if (r.group_key !== RECONCILE_KEY) groups.add(r.group_key);
   for (const r of woke.rows) groups.add(groupOfRow(r));
