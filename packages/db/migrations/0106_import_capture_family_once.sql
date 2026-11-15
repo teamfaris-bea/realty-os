@@ -13,4 +13,3 @@ BEGIN
 END $$;
 ALTER FUNCTION app.capture_import_sources(uuid,uuid) OWNER TO app_definer;
 REVOKE ALL ON FUNCTION app.capture_import_sources(uuid,uuid) FROM PUBLIC;
-
