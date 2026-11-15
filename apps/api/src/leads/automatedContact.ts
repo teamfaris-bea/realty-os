@@ -7,8 +7,9 @@
 // over app.person_from_lead_source, 0094, 0096 and 0099; leads/importLabels.ts) nothing automatic goes out:
 //   - the 60-second first response (assistant/firstResponse.ts, speed_to_lead_reply), by text or email;
 //   - every plan enrolment: a stage entry, a closed deal, a bulk enroll, and a person enrolling one lead by hand
-//     (counted as automated contact: OQ-B18-S5's conservative default); a running plan stops at its next step and a
-//     paused one cannot be resumed;
+//     (counted as automated contact: OQ-B18-S5's conservative default); a running plan stops the next time its step
+//     job runs, due or not (the sources routes and the intake ask for that step at once: round 3 item 4), and a paused
+//     one cannot be resumed;
 //   - module 26 trigger messages, saved-search alerts and any other assistant or system message, and bulk texts,
 //     bulk emails and open-house invites (each person is left out and counted);
 //   - AI care (start, Continue, resume: isa/, chain link 11) and AI-answered calls (voice/takeover.ts);

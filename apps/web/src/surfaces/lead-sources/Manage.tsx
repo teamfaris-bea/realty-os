@@ -9,7 +9,7 @@ import { StatusLine, TextArea } from '../admin/lib/ui.js';
 import { SOURCE_KEYS } from './hooks.js';
 import { sentenceFor } from './messages.js';
 import type { OnOffResponse, SourceOverview, SourceView } from './types.js';
-import { OFF_SENTENCE, stoppingPaths, withdrawnDraftsWords } from './words.js';
+import { OFF_SENTENCE, madeSafeWords, stoppingPaths } from './words.js';
 
 export const OFF_CONFIRM_LABEL = 'Turn off and stop receiving leads';
 /** b18 item f, renamed by b18 review B18S-5: the setting's name, as the API writes it (leads/automatedContact.ts) */
@@ -107,10 +107,7 @@ function AiCare({ source, onDone }: { source: SourceOverview; onDone(t: string):
     const r = await a.run(`/lead-sources/${source.id}/ai-care`, { noAiCare: next });
     if (!r.ok) return;
     if (!r.data.source.noAiCare) return onDone(`${NO_AUTOMATED_CONTACT_LABEL} is off.`);
-    const leads = (n: number) => `${n} of its lead${n === 1 ? '' : 's'}`;
-    const care = r.data.pausing > 0 ? ` AI care already running for ${leads(r.data.pausing)} will pause.` : '';
-    const plans = (r.data.stopping ?? 0) > 0 ? ` Plans running for ${leads(r.data.stopping!)} will stop.` : '';
-    onDone(`${NO_AUTOMATED_CONTACT_LABEL} is on.${care}${plans}${withdrawnDraftsWords(r.data.withdrawn)}`);
+    onDone(`${NO_AUTOMATED_CONTACT_LABEL} is on.${madeSafeWords(r.data)}`);
   };
   return (
     <div className="flex flex-col gap-2">

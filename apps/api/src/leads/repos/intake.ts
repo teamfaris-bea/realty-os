@@ -33,6 +33,18 @@ export async function liveAiCareOf(tx: Tx, contactId: string): Promise<{ id: str
   return r.rows;
 }
 
+/**
+ * b18 round 3 item 4: the active plan enrolments of the person (every record of the merge tree), which an inquiry from a
+ * source marked "No automated contact for leads from this source" must stop now. Ids only.
+ */
+export async function activePlansOf(tx: Tx, contactId: string): Promise<{ id: string }[]> {
+  const r = await sql<{ id: string }>`
+    SELECT e.id FROM playbook_enrollments e
+     WHERE e.tenant_id = app.tenant_id() AND e.state = 'active'
+       AND e.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${contactId}::uuid)) ORDER BY e.id`.execute(tx);
+  return r.rows;
+}
+
 export interface PriorInquiryRow {
   id: string;
   contact_id: string;

@@ -95,7 +95,7 @@ describe('E728 imported source labels on the import page and the lead sources pa
     f.on('GET /lead-sources/import-labels', () => ({ status: 200, body: { labels, canChange: true } }));
     f.on('PUT /lead-sources/import-labels', () => {
       labels = [{ ...mapped, label: 'From a file (test)', people: 1, sentence: '"From a file (test)" (1 person): mapped to Partner referrals (test), which has "No automated contact for leads from this source" on, so nothing automatic reaches them.' }];
-      return { status: 200, body: { label: labels[0], pausing: 0, stopping: 1 } };
+      return { status: 200, body: { label: labels[0], pausing: 0, stopping: 1, withdrawn: 2 } };
     });
     sourcesApp(f, '/admin/lead-sources', 'owner');
     const u = userEvent.setup();
@@ -103,7 +103,8 @@ describe('E728 imported source labels on the import page and the lead sources pa
     await within(section).findByRole('option', { name: 'Partner referrals (test) (no automated contact)' });
     await u.selectOptions(within(section).getByLabelText('Lead source for "From a file (test)"'), MARKED);
     await waitFor(() => expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(1));
-    expect(await screen.findByText(/Plans running for 1 of its leads will stop\./)).toBeInTheDocument();
+    // b18 round 3 items 3 and 4: one plan reads as one plan, and the drafts withdrawn are counted
+    expect(await screen.findByText(/ 1 plan running for its leads will stop\. 2 drafts a plan or an alert wrote for them were withdrawn\.$/)).toBeInTheDocument();
     await waitFor(() => expect(within(within(section).getByRole('list')).getByText(/mapped to Partner referrals \(test\), which has/)).toBeInTheDocument());
   });
 });

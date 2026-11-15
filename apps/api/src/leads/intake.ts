@@ -58,6 +58,7 @@ import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
 import { SIGNIN_TOKEN_REDACTION, redactSignInTokens } from '../portal/shared/redact.js';
 import { authorize } from '../rbac.js';
+import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { systemActor } from '../worker/systemActor.js';
 import { withdrawAutomatedDrafts } from './automatedContact.js';
 import { leadsTx, platformOf } from './common.js';
@@ -506,6 +507,12 @@ async function ingestInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: 
     // b18 round 3 item 3 (B18S-5, OQ-B18-S6): the drafts a plan step or a trigger wrote for them before this source
     // sent them are withdrawn here and their cards closed; a draft does not outlive the mark and send on a tap
     await withdrawAutomatedDrafts(tx, { contactId }, at);
+    // round 3 item 4: each of their running plans is asked for a step now, which stops it at once
+    // (assistant/enrollments.ts checks the source before the due check), not when its next step comes due
+    for (const e of await repo.activePlansOf(tx, contactId)) {
+      const p = { enrollmentId: e.id, dueAt: at };
+      await enqueueJob(tx, { queue: PLAYBOOK_STEP.queue, kind: PLAYBOOK_STEP.kind, priority: PLAYBOOK_STEP.priority, payload: p, dedupeKey: PLAYBOOK_STEP.dedupeKey(p), runAt: at });
+    }
   }
   return { contactId, outcome, inquiryId };
 }

@@ -59,9 +59,10 @@ export const WebhookRotatedResponse = z.object({ intakeUrl: z.string(), signingS
 /** b18 item f: PUT /lead-sources/:id/ai-care (the Owner only) */
 export const AiCareBody = z.strictObject({ noAiCare: z.boolean() });
 /**
- * `pausing`: live AI care of the source's people that this change sends to its chain now, to pause (on only);
- * `stopping`: their active plans, each asked for a step now, which stops it; `withdrawn`: the pending drafts a plan
- * step or a trigger wrote for them, withdrawn in this request (round 3 item 3)
+ * `pausing`: live AI care of THIS source's people that this change sends to its chain now, to pause (on only);
+ * `stopping`: their active plans, each asked for a step now, which stops it at once, due or not (round 3 item 4: both
+ * count this source's people only); `withdrawn`: the pending drafts a plan step or a trigger wrote for them, withdrawn
+ * in this request (round 3 item 3)
  */
 export const AiCareResponse = z.object({ source: z.object({ id: Id, name: z.string(), noAiCare: z.boolean(), noAiCareSentence: z.string() }), pausing: z.number().int(), stopping: z.number().int(), withdrawn: z.number().int() });
 

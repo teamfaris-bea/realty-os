@@ -255,4 +255,35 @@ describe('B18S-1: "No AI care for leads from this source" covers an inquiry atta
     expect(await assignmentOf(h, l.id)).toMatchObject({ ended_at: null, pause_reason: 'source_no_ai_care' });
     await setNoAiCare(w.owner, false, later.id);
   });
+
+  it('E727 (b18 round 3 item 4): turning the setting on counts only this source\'s live AI care; in a mixed set, another marked source\'s care still waiting to pause is not counted, and a person from no marked source keeps their care', async () => {
+    const made = async (name: string) => (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name, kind: 'portal' })).body.source.id;
+    const hillside = await made('Hillside Referrals (test)');
+    const router = await made('LeadRouter (test)');
+    const cared = async (src: string | null) => {
+      const l = await isaLead(h, w.agents[0]!);
+      if (src) await fromSource(l.id, src);
+      expect((await startCare(w.agents[0]!, l.id)).status).toBe(200);
+      return l;
+    };
+    const a = await cared(hillside);
+    const b = await cared(router);
+    const plain = await cared(null);
+    await runIsa(h, w.tenantId);
+    for (const l of [a, b, plain]) expect((await assignmentOf(h, l.id))!.paused_at).toBeNull();
+    try {
+      // no job runs between the two taps: the first source's care is still live when the second is turned on
+      const first = await setNoAiCare(w.owner, true, hillside);
+      expect([first.status, first.body.pausing]).toEqual([200, 1]);
+      expect((await assignmentOf(h, a.id))!.paused_at).toBeNull();
+      const second = await setNoAiCare(w.owner, true, router);
+      expect([second.status, second.body.pausing]).toEqual([200, 1]);
+      await runIsa(h, w.tenantId);
+      for (const l of [a, b]) expect(await assignmentOf(h, l.id)).toMatchObject({ pause_reason: 'source_no_ai_care', ended_at: null });
+      expect((await assignmentOf(h, plain.id))!.paused_at).toBeNull();
+    } finally {
+      await setNoAiCare(w.owner, false, hillside);
+      await setNoAiCare(w.owner, false, router);
+    }
+  });
 });

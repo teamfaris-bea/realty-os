@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { NO_AUTOMATED_CONTACT_LABEL } from './Manage.js';
 import { S1, overview, source, sourcesApp, sourcesFake } from './testing.js';
+import { madeSafeWords } from './words.js';
 
 const page = `/admin/lead-sources/${S1}`;
 const OFF = `${NO_AUTOMATED_CONTACT_LABEL}: off. Leads from this source get the team's automatic replies, plans and AI care as usual. Only the Owner changes this.`;
@@ -23,7 +24,7 @@ describe('E727 a lead source\'s "No automated contact for leads from this source
     fake.on('GET /lead-sources/overview', () => ({ status: 200, body: overview([source({ name: 'Referral source (test)', noAiCare: on, noAiCareSentence: on ? ON : OFF })]) }));
     fake.on(`PUT /lead-sources/${S1}/ai-care`, () => {
       on = true;
-      return { status: 200, body: { source: { id: S1, name: 'Referral source (test)', noAiCare: true, noAiCareSentence: ON }, pausing: 2, stopping: 1 } };
+      return { status: 200, body: { source: { id: S1, name: 'Referral source (test)', noAiCare: true, noAiCareSentence: ON }, pausing: 2, stopping: 1, withdrawn: 1 } };
     });
     sourcesApp(fake, page, 'owner');
     const u = userEvent.setup();
@@ -31,9 +32,18 @@ describe('E727 a lead source\'s "No automated contact for leads from this source
     await u.click(screen.getByRole('button', { name: `Turn on: ${NO_AUTOMATED_CONTACT_LABEL.toLowerCase()}` }));
     await waitFor(() => expect(fake.callsTo(`PUT /lead-sources/${S1}/ai-care`)).toHaveLength(1));
     expect(fake.callsTo(`PUT /lead-sources/${S1}/ai-care`)[0]!.body).toEqual({ noAiCare: true });
-    expect(await screen.findByText(`${NO_AUTOMATED_CONTACT_LABEL} is on. AI care already running for 2 of its leads will pause. Plans running for 1 of its lead will stop.`)).toBeInTheDocument();
+    // round 3 item 4: the counts are this source's own, and one plan reads as one plan (never "1 of its lead")
+    expect(await screen.findByText(`${NO_AUTOMATED_CONTACT_LABEL} is on. AI care already running for 2 of its leads will pause. 1 plan running for its leads will stop. 1 draft a plan or an alert wrote for them was withdrawn.`)).toBeInTheDocument();
     expect(await screen.findByText(ON)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Allow automated contact for leads from this source' })).toBeInTheDocument();
+  });
+
+  it('E727 (b18 round 3 item 4): the answer\'s counts read right for one and for many, and say nothing for none: AI care by lead, plans by plan, drafts by draft', () => {
+    expect(madeSafeWords({ pausing: 1, stopping: 1, withdrawn: 0 })).toBe(' AI care already running for 1 of its leads will pause. 1 plan running for its leads will stop.');
+    expect(madeSafeWords({ pausing: 3, stopping: 4, withdrawn: 2 })).toBe(' AI care already running for 3 of its leads will pause. 4 plans running for its leads will stop. 2 drafts a plan or an alert wrote for them were withdrawn.');
+    expect(madeSafeWords({ pausing: 0, stopping: 0, withdrawn: 0 })).toBe('');
+    expect(madeSafeWords({ pausing: 0 })).toBe('');
+    expect(madeSafeWords({ pausing: 0, stopping: 2 })).not.toMatch(/of its lead\b/);
   });
 
   it('E727: an Admin sees the state and who changes it, with no button', async () => {

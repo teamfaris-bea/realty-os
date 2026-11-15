@@ -101,6 +101,19 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
   await lockContact(tx, peek.contactId as ContactId);
   let e = (await P.enrollmentById(tx, enrollmentId, { lock: true }))!;
   if (e.state !== 'active') return { kind: 'noop', reason: 'NOT_ACTIVE' };
+  if (await noAutomatedContact(tx, e.contactId)) {
+    // b18 review B18S-5: the person turned out to come from a source marked "No automated contact for leads from this
+    // source" (the Owner turned it on, mapped an imported label to it, or the source sent them again): the plan stops,
+    // and its unsent steps are canceled. Round 3 item 4: checked BEFORE the due check, so the step the sources routes
+    // and the intake ask for stops the plan at once, not when its next step comes due (which may be days away).
+    const pending = (await P.stepRunsOf(tx, e.id)).filter((r) => r.status === 'scheduled');
+    const canceled = await P.cancelStepMessages(tx, pending.map((r) => r.id), 'SOURCE_NO_AUTOMATED_CONTACT');
+    for (const r of pending) if (r.messageId === null || canceled.includes(r.messageId)) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
+    // round 3 item 3: the drafts an earlier step (or a trigger) wrote for them are withdrawn with the plan, cards closed
+    await withdrawAutomatedDrafts(tx, { contactId: e.contactId }, now);
+    await P.endEnrollment(tx, e.id, 'stopped', NO_AUTOMATED_CONTACT_STOP_REASON, now);
+    return { kind: 'stopped', reason: NO_AUTOMATED_CONTACT_STOP_REASON };
+  }
   if (e.nextStepDueAt !== null && e.nextStepDueAt > now) return { kind: 'waiting', until: e.nextStepDueAt, reason: 'NOT_DUE' };
   const playbook = await P.playbookById(tx, e.playbookId);
   let version = await P.versionById(tx, e.versionId);
@@ -132,17 +145,6 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
     // (a race the merge could not see) stops here the same way, before any step is built for the loser
     await P.endEnrollment(tx, e.id, 'stopped', 'merged', now);
     return { kind: 'stopped', reason: 'merged' };
-  }
-  if (await noAutomatedContact(tx, e.contactId)) {
-    // b18 review B18S-5: the person turned out to come from a source marked "No automated contact for leads from this
-    // source" (the Owner turned it on, or the source sent them again): the plan stops, and its unsent steps are canceled
-    const pending = (await P.stepRunsOf(tx, e.id)).filter((r) => r.status === 'scheduled');
-    const canceled = await P.cancelStepMessages(tx, pending.map((r) => r.id), 'SOURCE_NO_AUTOMATED_CONTACT');
-    for (const r of pending) if (r.messageId === null || canceled.includes(r.messageId)) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
-    // round 3 item 3: the drafts an earlier step (or a trigger) wrote for them are withdrawn with the plan, cards closed
-    await withdrawAutomatedDrafts(tx, { contactId: e.contactId }, now);
-    await P.endEnrollment(tx, e.id, 'stopped', NO_AUTOMATED_CONTACT_STOP_REASON, now);
-    return { kind: 'stopped', reason: NO_AUTOMATED_CONTACT_STOP_REASON };
   }
   if (playbook.scope === 'agent' && playbook.ownerUserId !== contact.ownerUserId) {
     // an agent playbook speaks for its agent only (R-AST-8 owner_change; dispatch would refuse it anyway)

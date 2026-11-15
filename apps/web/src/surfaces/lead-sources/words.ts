@@ -278,3 +278,16 @@ export function withdrawnDraftsWords(n: number | undefined): string {
   if (n === undefined || n <= 0) return '';
   return n === 1 ? ' 1 draft a plan or an alert wrote for them was withdrawn.' : ` ${n} drafts a plan or an alert wrote for them were withdrawn.`;
 }
+
+/**
+ * b18 round 3 item 4: what turning "No automated contact for leads from this source" on (or mapping an imported label to
+ * a marked source) did for that source's own people, with honest counts: the AI care that will pause (one per lead),
+ * the plans that will stop (a count of plans: a lead can be in more than one) and the drafts withdrawn (item 3). Each
+ * sentence starts with a space; empty when there was nothing.
+ */
+export function madeSafeWords(c: { pausing?: number | undefined; stopping?: number | undefined; withdrawn?: number | undefined }): string {
+  const care = (c.pausing ?? 0) > 0 ? ` AI care already running for ${c.pausing} of its leads will pause.` : '';
+  const n = c.stopping ?? 0;
+  const plans = n === 1 ? ' 1 plan running for its leads will stop.' : n > 1 ? ` ${n} plans running for its leads will stop.` : '';
+  return `${care}${plans}${withdrawnDraftsWords(c.withdrawn)}`;
+}

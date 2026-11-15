@@ -12,7 +12,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { enrollOnDealClosed } from '../assistant/enrollments.js';
 import { sendFirstResponse } from '../assistant/firstResponse.js';
-import { approvedPlaybook, depsOf, enrollmentRow, messagesOf, runJobs, smsStep } from '../assistant/testing.js';
+import { approvedPlaybook, depsOf, enrollmentRow, messagesOf, runJobs, smsStep, stepNow } from '../assistant/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { runBulkAction } from '../bulk/run.js';
 import { confirm, draft, itemsOf, marketingReady } from '../bulk/testing.js';
@@ -156,6 +156,68 @@ describe('R-LSRC-8 B18S-5: "No automated contact for leads from this source" (ow
     await expect(withTenantTx(asUser(agent), (tx) => sql`UPDATE playbook_enrollments SET state = 'active', pause_reason = NULL, paused_at = NULL, resumed_by_user_id = app.user_id()
       WHERE tenant_id = app.tenant_id() AND id = ${p.body.enrollment.id}::uuid`.execute(tx), { db: h.database })).rejects.toThrow(/SOURCE_NO_AUTOMATED_CONTACT/);
     expect(await enrollmentRow(h, p.body.enrollment.id)).toMatchObject({ state: 'paused' });
+  });
+
+  it('B18S-5 E727 (round 3 item 4): turning the setting on stops that source\'s live plans at once, though their next step is not due until tomorrow; the answer counts only this source\'s plans; in a mixed set, another marked source\'s plan still waiting to stop is not counted, and an unmarked person\'s plan keeps running', async () => {
+    const slow = await approvedPlaybook(w.owner, {
+      kind: 'nurture',
+      scope: 'team',
+      name: 'Two check-ins (test)',
+      steps: [textStep('first'), { ...textStep('second'), delay: { anchor: 'previous_step', offsetSeconds: 86_400 } }],
+    });
+    const made = async (name: string) => (await call<{ source: { id: string }; ingestToken: string }>(w.owner, 'POST', '/lead-sources', { name, kind: 'portal' })).body;
+    const hillside = await made('Hillside Referrals (test)');
+    const router = await made('LeadRouter (test)');
+    const turnOn = async (id: string) => {
+      await freshReauth(h, w.owner);
+      return call<{ pausing: number; stopping: number }>(w.owner, 'PUT', `/lead-sources/${id}/ai-care`, { noAiCare: true });
+    };
+    const fromSource = (contactId: string, sourceId: string) => h.su.query('UPDATE contacts SET original_lead_source_id = $2 WHERE id = $1', [contactId, sourceId]);
+    // three people in the plan: its first text went, the second is due tomorrow
+    const running = async () => {
+      const c = await ownedContact(agent);
+      const e = await call<{ enrollment: { id: string } }>(agent, 'POST', `/contacts/${c.id}/enrollments`, { playbookId: slow.playbookId });
+      expect(e.status).toBe(201);
+      return { c, id: e.body.enrollment.id };
+    };
+    const a = await running();
+    const b = await running();
+    const plain = await running();
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    // past the runner's check-back on the first text: the plan now waits for the second step, a day after the first
+    for (const x of [a, b, plain]) await stepNow(h, w.tenantId, x.id);
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    for (const x of [a, b, plain]) {
+      const row = await enrollmentRow(h, x.id);
+      expect(row.state).toBe('active');
+      expect(row.next_step_due_at!.getTime()).toBeGreaterThan(Date.now() + 12 * 3_600_000);
+      expect((await automated(x.c.id)).map((m) => m.status)).toEqual(['sent']);
+    }
+    await fromSource(a.c.id, hillside.source.id);
+    await fromSource(b.c.id, router.source.id);
+    // the first source: one plan, its own. No job has run yet, so that plan is still live when the second is turned on
+    const first = await turnOn(hillside.source.id);
+    expect([first.status, first.body.stopping, first.body.pausing]).toEqual([200, 1, 0]);
+    expect((await enrollmentRow(h, a.id)).state).toBe('active');
+    const second = await turnOn(router.source.id);
+    expect([second.status, second.body.stopping, second.body.pausing]).toEqual([200, 1, 0]);
+    // at once: the steps the route asked for stop both plans, though neither's next step is due
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    for (const x of [a, b]) {
+      const row = await enrollmentRow(h, x.id);
+      expect(row).toMatchObject({ state: 'stopped', stop_reason: 'source_no_automated_contact' });
+      expect(row.next_step_due_at === null || row.next_step_due_at.getTime() > Date.now()).toBe(true);
+      expect((await automated(x.c.id)).map((m) => m.status)).toEqual(['sent']);
+    }
+    // the person from no marked source: still in the plan, still waiting for tomorrow
+    expect(await enrollmentRow(h, plain.id)).toMatchObject({ state: 'active', stop_reason: null });
+    // a marked source sending a person again stops their running plan at once too (the intake asks for the step)
+    const again = await postIntake(h, marked.token, { inquiryType: 'buy', fullName: 'Jane Doe', phones: [plain.c.phone], emails: [plain.c.email] });
+    expect([200, 201]).toContain(again.statusCode);
+    expect((JSON.parse(again.body) as { contactId: string }).contactId).toBe(plain.c.id);
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    expect(await enrollmentRow(h, plain.id)).toMatchObject({ state: 'stopped', stop_reason: 'source_no_automated_contact' });
+    expect((await automated(plain.c.id)).map((m) => m.status)).toEqual(['sent']);
   });
 
   it('B18S-5 E727 (round 3 item 2): "Resume automation" for such a person whose plan a reply paused lifts only the conversation pause; the plan stays paused and the answer says how many were not resumed and why (never a 500)', async () => {
