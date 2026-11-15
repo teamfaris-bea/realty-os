@@ -155,7 +155,9 @@ async function seedTenant(c: pg.Client, kek: Kek, spec: LoadSpec, t: TenantSpec,
     T, S, t.name, `${t.name} Realty LLC`, owner, loadUuid(S, 'policy'), loadUuid(S, 'team:default'), loadUuid(S, 'pond:default'),
     Buffer.from(wrapped.field), Buffer.from(wrapped.object), Buffer.from(wrapped.hmac), kek.ref,
   ]);
-  await c.query(`SELECT set_config('app.user_id', '', true)`);
+  // Synthetic writes still satisfy the production tenant-context guards; reset at COMMIT.
+  await c.query(`SELECT set_config('app.user_id', '', true), set_config('app.tenant_id', $1, true),
+    set_config('app.actor_kind', 'system', true), set_config('app.principal_type', 'staff', true)`, [T]);
   // ponds: generous claim limits so the claim benchmark measures the database, not the per-day cap
   await c.query(`UPDATE ponds SET claims_per_day = 50, claim_cooldown_hours = 0 WHERE tenant_id = $1`, [T]);
   // members: admin, team leads, agents, one ISA, one TC

@@ -171,9 +171,11 @@ async function apply(e: { kind: number; pick: number; size: number; user: number
       const src = await one<{ id: string }>(`SELECT k.id FROM calls k JOIN contacts c ON c.tenant_id = k.tenant_id AND c.id = k.contact_id
          WHERE k.tenant_id = $1 AND k.direction = 'inbound' AND c.owner_user_id = $2 ORDER BY md5(k.id::text || $3) LIMIT 1`, [T, u.userId, String(off)]);
       if (!src) return 'skip';
-      await su.query(`INSERT INTO calls (${cols.calls}) SELECT ${cols.calls.split(', ').map((c) => `(r).${c}`).join(', ')}
+      await asPerson(u.userId, async () => {
+        await su.query(`INSERT INTO calls (${cols.calls}) SELECT ${cols.calls.split(', ').map((c) => `(r).${c}`).join(', ')}
                         FROM (SELECT jsonb_populate_record(k, jsonb_build_object('id', gen_random_uuid(), 'started_at', $2::timestamptz,
                         'answered_at', NULL, 'status', 'no_answer', 'provider_call_ref', NULL)) AS r FROM calls k WHERE k.id = $1) x`, [src.id, iso(now - rnd(3) * HOUR)]);
+      });
       return 'missed_call';
     }
     case 3: {
@@ -400,6 +402,8 @@ describe('incremental feed equals a full recompute (lane perf-misses)', () => {
           try {
             what = await apply(e);
           } catch (err) {
+            // Missing fixture context is a setup defect, never a valid skipped event.
+            if ((err as Error).message.includes('SOURCE_TENANT_CONTEXT_REQUIRED')) throw err;
             // a guard refused this synthetic write (it would never be issued by the app): nothing changed
             what = `refused: ${(err as Error).message.slice(0, 60)}`;
           }
