@@ -188,3 +188,28 @@ describe('R-LSRC-8 B18S-5 round 3 item 3: a plan-step draft made before the mark
     expect((await messageRow(h, mb)).status).toBe('sent');
   });
 });
+
+
+describe('Owner imported source unmapping', () => {
+  it('stops the active plan and withdraws its draft immediately; a later mapping never revives it', async () => {
+    const src = await newSource('Reviewed imported source (test)');
+    const a = await planDraft(twoStep);
+    const label = 'Exact imported draft source';
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: src.source.id })).status).toBe(200);
+    await withTenantTx(systemActor(w.tenantId, 'worker'), tx => sql`UPDATE contacts
+      SET original_source_detail = ${JSON.stringify({ import_system: 'csv', import_source: label })}::jsonb
+      WHERE id = ${a.c.id}`.execute(tx), { db: h.database });
+    expect((await actionRow(a.draftId)).status).toBe('proposed');
+    const removed = await call<{ stopping: number; withdrawn: number }>(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: null });
+    expect(removed.status).toBe(200);
+    expect(removed.body).toMatchObject({ stopping: 1, withdrawn: 1 });
+    expect(await enrollmentRow(h, a.enrollmentId)).toMatchObject({ state: 'stopped', stop_reason: 'source_unclassified' });
+    expect(await actionRow(a.draftId)).toMatchObject({ status: 'invalidated', payload: { withdrawn: { reason: 'SOURCE_UNCLASSIFIED' } } });
+    expect(await cardStates(a.draftId)).toEqual(['done']);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: src.source.id })).status).toBe(200);
+    const tap = await approve(agent, a.draftId);
+    expect([tap.status, tap.code]).toEqual([409, 'SOURCE_UNCLASSIFIED']);
+    expect(await automated(a.c.id)).toEqual([]);
+  });
+});

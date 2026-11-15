@@ -775,6 +775,13 @@ export interface ContactFieldValuesTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.contact_import_sources (table) */
+export interface ContactImportSourcesTable {
+  tenant_id: string;
+  contact_id: string;
+  lead_source_id: string;
+}
+
 /** public.contact_points (table) */
 export interface ContactPointsTable {
   tenant_id: string;
@@ -3030,6 +3037,7 @@ export interface DB {
   contact_collaborators: ContactCollaboratorsTable;
   contact_duplicate_candidates: ContactDuplicateCandidatesTable;
   contact_field_values: ContactFieldValuesTable;
+  contact_import_sources: ContactImportSourcesTable;
   contact_points: ContactPointsTable;
   contact_predictions: ContactPredictionsTable;
   contact_relationships: ContactRelationshipsTable;
@@ -3209,6 +3217,7 @@ export const TABLE_NAMES = [
   'contact_collaborators',
   'contact_duplicate_candidates',
   'contact_field_values',
+  'contact_import_sources',
   'contact_points',
   'contact_predictions',
   'contact_relationships',

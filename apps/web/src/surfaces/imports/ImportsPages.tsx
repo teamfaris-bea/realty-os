@@ -192,8 +192,8 @@ function Parity({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void
   if (!q.data) return null;
   return (
     <>
-      <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />
       {(q.data.sourceLabels ?? []).length > 0 ? <SourceLabels rows={q.data.sourceLabels ?? []} source={batch.source} onChanged={() => void q.refetch()} /> : null}
+      <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />
     </>
   );
 }
@@ -207,7 +207,7 @@ export function SourceLabels({ rows, source, onChanged }: { rows: readonly Impor
   return (
     <section aria-label="Lead sources in this import">
       <Card className="flex flex-col gap-2">
-        <h3 className="text-[16px] font-semibold text-ink">Lead sources</h3>
+        <h3 className="text-[16px] font-semibold text-ink">Review Sources</h3>
         <p className="text-[15px] text-ink-muted">{`${source === 'csv' ? 'Your file' : 'Follow Up Boss'} gives each person's source as a label. Map a label to a lead source so the people it brings in count as that source's leads.`}</p>
         <ImportLabelList rows={rows} onChanged={onChanged} />
       </Card>

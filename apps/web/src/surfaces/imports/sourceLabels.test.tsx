@@ -108,3 +108,14 @@ describe('E728 imported source labels on the import page and the lead sources pa
     await waitFor(() => expect(within(within(section).getByRole('list')).getByText(/mapped to Partner referrals \(test\), which has/)).toBeInTheDocument());
   });
 });
+
+it('opens Review Sources in the import preview and never offers a mapping for missing source evidence', async () => {
+  const missing = { ...unmapped, label: '', sentence: 'Missing source: SOURCE_UNCLASSIFIED. Owner review required.', noAutomatedContact: true };
+  const f = fake(batch([stage('contacts', 'pending')]), [missing]);
+  leadAdminApp(f, `/imports/${BID}`, 'owner', { reauthenticatedAt: new Date().toISOString() });
+  const section = await screen.findByRole('region', { name: 'Lead sources in this import' });
+  expect(within(section).getByRole('heading', { name: 'Review Sources' })).toBeInTheDocument();
+  expect(within(section).getByText(missing.sentence)).toBeInTheDocument();
+  expect(within(section).queryByRole('combobox')).toBeNull();
+  expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(0);
+});

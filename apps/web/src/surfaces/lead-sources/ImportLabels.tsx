@@ -49,7 +49,7 @@ export function ImportLabelList({ rows, onChanged, empty }: { rows: readonly Imp
         {rows.map((r) => (
           <li key={r.label} className="flex flex-col gap-2">
             <p className="text-[15px] text-ink">{r.sentence}</p>
-            {owner ? (
+            {owner && r.label.trim() !== '' ? (
               <SelectField label={`Lead source for "${r.label}"`} value={r.leadSourceId ?? NOT_MAPPED} disabled={a.pending} onChange={(e) => void choose(r.label, e.target.value)}>
                 <option value={NOT_MAPPED}>Not mapped</option>
                 {sources.map((s) => (
@@ -79,7 +79,7 @@ export function ImportLabelsSection() {
     <section aria-label="Imported source labels">
       <Card className="flex flex-col gap-3">
         <h2 className="text-[18px] font-semibold text-ink">Imported source labels</h2>
-        <p className="text-[15px] text-ink-muted">People brought in from Follow Up Boss or a file carry their source as a label. A label counts as a lead source once it is mapped to one.</p>
+        <p className="text-[15px] text-ink-muted">People brought in from Follow Up Boss or a file carry their source as a label. Automated contact stays blocked until the Owner confirms an exact mapping. Missing or ambiguous labels need review. Unmapping never removes a proven source prohibition.</p>
         <ImportLabelList rows={q.data.labels} onChanged={() => void q.refetch()} />
       </Card>
     </section>
