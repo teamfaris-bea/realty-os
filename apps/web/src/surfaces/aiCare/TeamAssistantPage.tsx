@@ -15,7 +15,7 @@ import { Button, Card, Dialog, Notice, announce } from '../../design/index.js';
 import { type ApiError, useApi, useRequestReauth } from '../../shell/index.js';
 import type { Playbook } from '../admin/lib/types.js';
 import { type AdminPutBody, type AdminView, useAdmin, useIsaVisible, useMe } from './api.js';
-import { useViewer } from './Controls.js';
+import { useViewer } from './AiCareControls.js';
 import { CAPABILITY_WORDS, CAP_PAGE_MESSAGES, TEAM_PAGE_MESSAGES, isaMessage } from './words.js';
 
 /** Q2: what the Owner confirms (sent verbatim as the attestation; the server hashes it into the audit). */

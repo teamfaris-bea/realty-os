@@ -139,7 +139,7 @@ describe('the AI care panel and strip (module 76)', () => {
   });
 
   it('E516 (batch 13 isa-4 F10): Continue AI care shows for the owner only; the owner\'s tap posts an empty body and says the result', async () => {
-    const paused = panel({ state: 'paused' });
+    const paused = panel({ state: 'paused', canContinue: true, continueRefusal: null });
     paused.assignment!.pauseReason = 'reinquiry';
     const started = { assignmentId: ISA_IDS.assignment2, state: 'starting', epoch: 1, inFlight: [], canceled: 0, undoUntil: null, sentence: 'AI care continued as a new period.', stoppedEnrollment: false, supersededProposals: 0 };
     const fake = person(paused).on(`POST /contacts/${IDS.jane}/ai-isa/continue`, { status: 200, body: started });

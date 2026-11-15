@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Dialog, Notice, announce } from '../../design/index.js';
 import { type AvailabilityWindow, type Channel, type MeView, type OptInBody, type OptInResult, type ReattestResult, useIsaAction, useIsaList, useMe } from './api.js';
-import { HoldBanner, useHold } from './Controls.js';
+import { HoldBanner, useHold } from './AiCareControls.js';
 import { EMAIL_SENDER_CHECKS } from './built.js';
 import { viewerZone } from './time.js';
 import { CAPABILITY_WORDS, isaMessage } from './words.js';

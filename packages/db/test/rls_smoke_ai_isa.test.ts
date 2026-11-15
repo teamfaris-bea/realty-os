@@ -1167,7 +1167,8 @@ describe('ISA-2b: the guard\'s holiday check (R-ISA-10) and one open AI message 
     await inbound(x, l); // the person wrote just now: the guard derives the reply tier
     const planned = await queueAi(x, l, { kind: 'initiated', zones: [zone] });
     expect(await refusedDay(() => why(planned.messageId))).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait for a permitted day in /);
-    expect(await holiday(() => why(planned.messageId))).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait past a federal holiday in /);
+    // Permit today's weekday first so the holiday assertion also reaches its guard on Sundays.
+    expect(await initiatedDayNow(h, zone, () => holiday(() => why(planned.messageId)))).toMatch(/^ISA_QUIET_HOURS: initiated AI messages wait past a federal holiday in /);
     expect(await initiatedDayNow(h, zone, () => why(planned.messageId))).toBe('ok');
     // a planned reply in the same state goes on that day and that holiday (the rules are for initiated messages)
     const l2 = await leadUnderCare(x, { zone });

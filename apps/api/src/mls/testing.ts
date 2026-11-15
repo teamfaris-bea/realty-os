@@ -217,7 +217,7 @@ export async function mlsVolumeFixture(h: ApiHarness, tenantId: string, connecti
                            property_type, attributes, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, last_seen_in_feed_at)
      SELECT $1, gen_random_uuid(), 'mls', 'V' || i, CASE WHEN (i / ${ZIPS}) % 10 = 0 THEN 'pending' ELSE 'active' END, (i % 9000 + 1) || ' Volume St',
             'City' || (i % 200), 'CA', (94000 + i % ${ZIPS})::text, 30000000 + ((i / ${ZIPS}) % 1000) * 50000, 1 + (i / ${ZIPS}) % 5, 20, 1200 + i % 900,
-            'single_family', '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (i || ' seconds')::interval,
+            'single_family', '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01T00:00:00Z' + (i || ' seconds')::interval,
             'Volume Brokerage (test)', (i / ${ZIPS}) % 10 <> 3, now()
        FROM generate_series(1, ${ACTIVE}) i`,
     [tenantId, connectionId],
@@ -233,7 +233,7 @@ export async function mlsVolumeFixture(h: ApiHarness, tenantId: string, connecti
             CASE WHEN j <= 120000 THEN 'Big City' ELSE 'City' || (j % 200) END, 'CA',
             CASE WHEN j <= 40000 THEN '${HOT_ZIP}' ELSE (94000 + j % ${ZIPS})::text END,
             30000000 + (j % 1000) * 50000, 1 + j % 5, 20, 1200 + j % 900, 'single_family',
-            '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (j || ' seconds')::interval, 'Volume Brokerage (test)', true, now(),
+            '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01T00:00:00Z' + (j || ' seconds')::interval, 'Volume Brokerage (test)', true, now(),
             CASE WHEN u THEN NULL ELSE 29000000 + (j % 1000) * 50000 END,
             CASE WHEN u THEN NULL ELSE $3::date - (j % 730) END,
             CASE WHEN u THEN NULL ELSE $3::date - (j % 730) - 30 END,
