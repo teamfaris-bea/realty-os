@@ -2,6 +2,9 @@
 // from this source" pauses AI care 'reinquiry', and Continue is always refused for such a person. The panel route says
 // so (canContinue false, continueRefusal), so the panel shows the refusal's sentence and no "Continue AI care" button;
 // a person from another source still gets the button. Fakes only; a made-up source.
+// b18 round 3 item 6: the same for care paused by a policy change (policy_updated, approval_revoked). The panel offered
+// "Re-attest in My AI assistant to continue", but re-attesting does not continue care for such a person (Continue is
+// refused), so the refusal's sentence replaces the link.
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { PanelResponse } from './api.js';
@@ -21,6 +24,29 @@ function reinquiry(o: Partial<Pick<PanelResponse, 'canContinue' | 'continueRefus
   p.assignment!.pauseReason = 'reinquiry';
   return { ...p, ...o };
 }
+
+function paused(reason: 'policy_updated' | 'approval_revoked', o: Partial<Pick<PanelResponse, 'canContinue' | 'continueRefusal'>>): PanelResponse {
+  const p = panel({ state: 'paused' });
+  p.assignment!.pauseReason = reason;
+  return { ...p, ...o };
+}
+
+describe('b18 round 3 item 6: no "Re-attest … to continue" when the person\'s lead source is marked "No automated contact"', () => {
+  it.each(['policy_updated', 'approval_revoked'] as const)('E723 R-LSRC-8: care paused %s for such a person: the owner sees that the rules changed and the refusal sentence, and no "Re-attest in My AI assistant" link (re-attesting would not continue it)', async (reason) => {
+    isaApp(person(paused(reason, { canContinue: false, continueRefusal: { code: 'AI_ISA_SOURCE_NO_AI_CARE', sentence: REFUSAL } })), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
+    expect(screen.getByText('The team changed the AI rules.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Re-attest in My AI assistant' })).toBeNull();
+    expect(screen.queryByText(/to continue/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue AI care' })).toBeNull();
+  });
+
+  it.each(['policy_updated', 'approval_revoked'] as const)('E516: care paused %s with no refusal: the owner still gets the re-attest link', async (reason) => {
+    isaApp(person(paused(reason, { canContinue: true, continueRefusal: null })), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByRole('link', { name: 'Re-attest in My AI assistant' })).toBeInTheDocument();
+    expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+});
 
 describe('b18 review item 3: Continue AI care is hidden when the person\'s lead source is marked "No automated contact"', () => {
   it('E723 R-LSRC-8: the owner sees the refusal sentence and no "Continue AI care" button', async () => {

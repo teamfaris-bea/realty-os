@@ -270,7 +270,14 @@ function PausedLines({ p, viewer, contact }: { p: PanelResponse; viewer: ViewerI
   return (
     <div className="flex flex-col gap-2">
       {reason === 'reinquiry' ? <ContinueCare contact={contact} viewer={viewer} refusal={p.continueRefusal ?? null} /> : null}
-      {(reason === 'policy_updated' || reason === 'approval_revoked') && viewer.isOwner ? (
+      {/* b18 round 3 item 6: for a person whose lead source is marked "No automated contact for leads from this source"
+          re-attesting does not continue care (Continue is refused), so the panel's refusal sentence replaces the link */}
+      {(reason === 'policy_updated' || reason === 'approval_revoked') && p.continueRefusal ? (
+        <>
+          <p className="text-[15px]">The team changed the AI rules.</p>
+          <p className="text-[15px]">{p.continueRefusal.sentence}</p>
+        </>
+      ) : (reason === 'policy_updated' || reason === 'approval_revoked') && viewer.isOwner ? (
         <p className="text-[15px]">
           The team changed the AI rules.{' '}
           <Link to="/settings/ai-assistant" className="font-medium text-accent underline">
