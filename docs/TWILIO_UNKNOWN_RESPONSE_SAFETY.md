@@ -1,3 +1,5 @@
+> Follow-up: `UNRESOLVED_DELIVERY_SAFETY.md` supersedes the ten-minute failure behavior and limitation below on the local follow-up branch. The results here describe the preceding narrow patch.
+
 # Unreadable successful Twilio submit responses
 
 This narrow local fix is based directly on draft PR #2 (`7a0613fd5186f47c10cbf35e4968576eac587dbb`). It does not implement or change the separate final-admission proposal, source gates, consent/opt-out, live switches, retries, or provider configuration.

@@ -1225,7 +1225,7 @@ describe('b12 recheck R12: every AI text counts once toward the 40-message limit
     const telephony = () => (h.providers as unknown as { telephony: { failNext(f: 'timeout' | 'rejected'): void } }).telephony;
     const statusesOf = async (messageId: string) => (await h.su.query<{ s: string; st: string }>(`SELECT payload->>'status' AS s, status AS st FROM jobs WHERE kind = 'ai_isa.send_result' AND payload->>'messageId' = $1 ORDER BY id`, [messageId])).rows.map((x) => [x.s, x.st]);
     /** An AI reply whose provider submit times out (dispatch_unknown, nothing recorded at the fake), then the reconcile
-     *  window passes with the provider never finding it: 'failed' DISPATCH_UNKNOWN_UNRESOLVED, no provider ref. */
+     *  window passes with the provider never finding it: still unknown with DISPATCH_UNKNOWN_UNRESOLVED, no provider ref. */
     async function unresolved(l: { id: string; phone: string }): Promise<string> {
       const { inboundSms } = await import('../comms/testing.js');
       const { aiMessages } = await import('./testing.js');
@@ -1239,14 +1239,21 @@ describe('b12 recheck R12: every AI text counts once toward the 40-message limit
       await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE kind = 'comms.reconcile' AND status = 'pending' AND payload->>'messageId' = $1`, [m.id]);
       await runIsa(h, w.tenantId, 2);
       const after = (await h.su.query<{ status: string; reason: string | null; ref: string | null }>(`SELECT status, status_reason AS reason, provider_message_ref AS ref FROM messages WHERE id = $1`, [m.id])).rows[0]!;
-      expect(after).toEqual({ status: 'failed', reason: 'DISPATCH_UNKNOWN_UNRESOLVED', ref: null });
-      expect(await statusesOf(m.id)).toEqual([['dispatch_unknown', 'succeeded'], ['failed', 'succeeded']]);
+      expect(after).toEqual({ status: 'dispatch_unknown', reason: 'DISPATCH_UNKNOWN_UNRESOLVED', ref: null });
+      expect(await statusesOf(m.id)).toEqual([['dispatch_unknown', 'succeeded'], ['dispatch_unknown', 'succeeded']]);
       return m.id;
     }
 
-    it('R-ISA-11: the provider may have accepted it, so the unresolved text counts once (and its failure once); the unknown result alone counted nothing', async () => {
+    it('R-ISA-11: the provider may have accepted it, so the unresolved text counts once (and its conservative delivery-problem accounting once); the unknown result alone counted nothing', async () => {
       const l = await caredLead();
-      await unresolved(l);
+      const id = await unresolved(l);
+      expect(await care(l.id)).toEqual({ sent: 1, n: 1, end_reason: null, machine_sent: 1 });
+      // A repaired legacy row must enqueue a fresh unknown result, even if its old failed job was processed.
+      const { readFileSync } = await import('node:fs');
+      await h.su.query("UPDATE messages SET status='failed' WHERE id=$1", [id]);
+      await h.su.query(readFileSync(new URL('../../../../packages/db/migrations/0102_preserve_unresolved_outcomes.sql', import.meta.url), 'utf8'));
+      expect((await statusesOf(id)).at(-1)).toEqual(['dispatch_unknown', 'pending']);
+      await runIsa(h, w.tenantId);
       expect(await care(l.id)).toEqual({ sent: 1, n: 1, end_reason: null, machine_sent: 1 });
     });
 

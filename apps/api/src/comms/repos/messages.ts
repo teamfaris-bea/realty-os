@@ -286,7 +286,7 @@ export async function messageByProviderRef(tx: Tx, ref: string): Promise<Message
 
 export async function setStatus(tx: Tx, id: string, status: string, reason: string | null, code: string | null): Promise<void> {
   await sql`
-    UPDATE messages SET status = ${status}, status_reason = COALESCE(${reason}, status_reason), provider_error_code = COALESCE(${code}, provider_error_code)
+    UPDATE messages SET status = ${status}, status_reason = COALESCE(${reason}, CASE WHEN status_reason = 'DISPATCH_UNKNOWN_UNRESOLVED' AND ${status} <> 'dispatch_unknown' THEN NULL ELSE status_reason END), provider_error_code = COALESCE(${code}, provider_error_code)
      WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }
 

@@ -279,6 +279,7 @@ export async function serveProviderMedia(query: unknown, deps: CommsDeps): Promi
           FROM messages m JOIN message_media mm ON mm.tenant_id = m.tenant_id AND mm.message_id = m.id
           JOIN stored_objects o ON o.tenant_id = mm.tenant_id AND o.id = mm.object_id
          WHERE m.tenant_id = app.tenant_id() AND m.id = ${claims.messageId} AND mm.position = ${claims.position}
+           AND m.status_reason IS DISTINCT FROM 'DISPATCH_UNKNOWN_UNRESOLVED'
            AND m.direction = 'outbound' AND m.channel = 'mms' AND NOT m.imported AND m.status IN ('dispatching','dispatch_unknown','sent')
            AND o.deleted_at IS NULL AND o.dek_wrapped IS NOT NULL
            AND now() < to_timestamp(${claims.expiry})`.execute(tx);

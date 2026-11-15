@@ -1,5 +1,6 @@
 // Real dispatcher + database + Twilio adapter, with only an injected HTTP stub.
 // No fake-provider deduplication is involved in send/recovery assertions.
+import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {withTenantTx} from '@realty/db';
 import {afterAll,afterEach,beforeAll,describe,expect,it,vi} from 'vitest';
@@ -85,12 +86,31 @@ describe('malformed accepted response persists uncertainty without replay',()=>{
     } else {
       expect(await reconcileOutbound(id,w.deps,w.tenantId)).toMatchObject({kind:'retry'});
       await h.su.query("UPDATE messages SET dispatched_at=now()-interval '11 minutes' WHERE id=$1",[id]);
-      expect(await reconcileOutbound(id,w.deps,w.tenantId)).toEqual({kind:'resolved',status:'failed'});
-      expect(await messageRow(h,id)).toMatchObject({status:'failed',status_reason:'DISPATCH_UNKNOWN_UNRESOLVED'});
+      expect(await reconcileOutbound(id,w.deps,w.tenantId)).toEqual({kind:'unresolved'});
+      expect(await messageRow(h,id)).toMatchObject({status:'dispatch_unknown',status_reason:'DISPATCH_UNKNOWN_UNRESOLVED'});
       expect(transport.calls).toEqual(['POST','GET','GET']);
+      expect(await reconcileOutbound(id,w.deps,w.tenantId)).toEqual({kind:'unresolved'});
+      expect(transport.calls).toEqual(['POST','GET','GET']);
+      expect((await h.su.query("SELECT ref_id FROM app.due_work(now(),100) WHERE work_kind='dispatch_reconcile' AND ref_id=$1",[id])).rows).toEqual([]);
+      expect((await call(w.agents[0]!,'POST',`/messages/${id}/send`,{})).code).toBe('MESSAGE_NOT_SENDABLE');
+      expect((await telephonyWebhook(h,`/webhooks/telephony/status?m=${id}`,{MessageSid:transport.providerRef,MessageStatus:'delivered',From:w.mainNumber,To:c.phone})).statusCode).toBe(200);
+      expect(await messageRow(h,id)).toMatchObject({status:'delivered',status_reason:null});
     }
     expect((await dispatchOutbound(id,w.deps,{tenantId:w.tenantId})).kind).toBe('noop');
     expect(transport.send).toHaveBeenCalledTimes(1);
     expect(transport.calls.filter(method=>method==='POST')).toHaveLength(1);
   });
+});
+
+it('repairs legacy unresolved rows without changing evidenced failures',async()=>{
+  const c=await ownedContact(w.agents[0]!);
+  wire();
+  const ids:string[]=[];
+  for (let i=0;i<2;i++) ids.push((await sendText(w.agents[0]!,c.id,'Synthetic legacy outcome',{idempotencyKey:randomUUID()})).body.message!.id);
+  await h.su.query("UPDATE messages SET status='failed',status_reason='DISPATCH_UNKNOWN_UNRESOLVED',provider_error_code=NULL WHERE id=$1",[ids[0]]);
+  await h.su.query("UPDATE messages SET status='failed',status_reason='PROVIDER_REJECTED',provider_error_code='21610' WHERE id=$1",[ids[1]]);
+  await h.su.query(readFileSync(new URL('../../../../packages/db/migrations/0102_preserve_unresolved_outcomes.sql',import.meta.url),'utf8'));
+  expect(await messageRow(h,ids[0]!)).toMatchObject({status:'dispatch_unknown',status_reason:'DISPATCH_UNKNOWN_UNRESOLVED'});
+  expect(await messageRow(h,ids[1]!)).toMatchObject({status:'failed',status_reason:'PROVIDER_REJECTED'});
+  expect((await h.su.query("SELECT ref_id FROM app.due_work(now(),100) WHERE ref_id=ANY($1::uuid[])",[ids])).rows).toEqual([]);
 });

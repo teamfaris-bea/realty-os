@@ -80,7 +80,7 @@ afterAll(async () => {
 it('upgrades populated 0100 as a non-superuser: stops/withdraws both tenants, retains restrictions and exact reasons', async () => {
   const url = new URL(h.db.ownerUrl);
   url.searchParams.set('options',`-c role=${role}`);
-  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0101_b18_import_source_safety.sql']);
+  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0101_b18_import_source_safety.sql','0102_preserve_unresolved_outcomes.sql']);
   const c = new pg.Client({ connectionString:url.href });
   await c.connect();
   try { await closeCreateWindow(c, () => {}); } finally { await c.end(); }
