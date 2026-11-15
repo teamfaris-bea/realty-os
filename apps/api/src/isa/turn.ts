@@ -14,6 +14,7 @@ import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { aiRunAad } from '../assistant/runs.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
+import { hideForDisplay } from '../portal/shared/redact.js';
 import { systemActor } from '../worker/systemActor.js';
 import {
   buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
@@ -72,7 +73,9 @@ async function turnInbounds(tx: Tx, a: AssignmentRow): Promise<IsaInbound[]> {
        AND NOT EXISTS (SELECT 1 FROM message_text_parts tp WHERE tp.tenant_id = app.tenant_id() AND tp.message_id = o.id)
      ORDER BY o.seq`.execute(tx);
   return r.rows.map((m) => {
-    const own = clientOwnText(m.body, m.channel);
+    // b18 round 3 item 8 (R-PORTAL-20): a quoted portal sign-in token in a record stored before 0093 is hidden before
+    // the body reaches the turn machine (and, through it, a claim or the stored state); the record is not rewritten
+    const own = clientOwnText(hideForDisplay(m.body).text ?? '', m.channel);
     return {
       seq: Number(m.seq), messageId: m.id, channel: m.channel, at: instantFromDate(m.created_at), ownText: own.text.slice(0, 1600), ownTextReliable: own.reliable,
       classification: { kind: (m.kw ? 'stop' : 'none') as 'stop' | 'none', needsReview: false },
@@ -202,9 +205,13 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
   // R-ISA-27 E495: an inbound email's own text is reliable only when clientOwnText says so (an inline reply under a
   // quoted offer is not); SMS and team text keep their text as written. ISA-3 H8: a sent facts message (buyer or
   // seller) is its fixed placeholder (R-ISA-20, E509)
+  // b18 round 3 item 8 (R-PORTAL-20, after review item 5c for the assistant's contactBundle): every loaded body, inbound
+  // or the team's, has a quoted portal sign-in token hidden before it becomes a prompt source (a record stored before
+  // 0093 still holds one, and an outbound body is never redacted at storage); the stored record is not rewritten
   const messages = msgs.rows.reverse().map((m) => {
-    const own = m.direction === 'inbound' ? clientOwnText(m.body, m.channel) : null;
-    return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : (placeholders.get(m.id) ?? m.body), at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
+    const body = hideForDisplay(m.body).text ?? '';
+    const own = m.direction === 'inbound' ? clientOwnText(body, m.channel) : null;
+    return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : (placeholders.get(m.id) ?? body), at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
   });
   // item 8: the calendar and the offer as decideAction sees them
   const calendarLive = await calendarLiveInTx(tx, a.ownerUserId);

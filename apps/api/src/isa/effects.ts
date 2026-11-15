@@ -11,6 +11,7 @@ import { audit } from '../audit.js';
 import { queueOutboundInTx } from '../comms/compose.js';
 import { adminUserIds, contactLabel, notifyUser, upsertFeedItem } from '../comms/repos/notify.js';
 import type { CommsDeps } from '../comms/types.js';
+import { hideForDisplay } from '../portal/shared/redact.js';
 import {
   AI_ISA_PROMPT_VERSION, AI_ISA_RULES_VERSION, type AiIsaContent, aiIsaRecipientZones, aiIsaSendWindow, composeMessage, DEFAULT_AI_ISA_CONTENT, fillLine,
   type IsaAction, type IsaFacts, type IsaState, type LineIdentity, parseAiIsaContent, type QueueMessage, renderConfirmation, renderOffer, step, type StepResult,
@@ -77,7 +78,10 @@ export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promis
   const channels = (Object.keys(a.boundPoints) as ('sms' | 'email')[]).filter((c) => content.channels.includes(c));
   const windowOpenNow = aiIsaSendWindow({ at: now, zones: rz.zones, startSec: content.window.startSec, endSec: content.window.endSec, initiated: false, initiatedDays: content.initiatedDays, noInitiatedOnHolidays: false }) === now;
   const facts: IsaFacts = {
-    who, content, windowOpenNow, teamTexts: team.rows.map((t) => t.body), recentInboundCount: recent.rows[0]!.n, zone: (rz.zones[0] ?? r.tz) as IanaZone,
+    who, content, windowOpenNow,
+    // b18 round 3 item 8: compared with the client's own text and a model's quote (core isTeamText), never put in a
+    // prompt; hidden like the bodies isa/turn.ts loads, so a pasted team line still matches when both hold a token
+    teamTexts: team.rows.map((t) => hideForDisplay(t.body).text ?? ''), recentInboundCount: recent.rows[0]!.n, zone: (rz.zones[0] ?? r.tz) as IanaZone,
     mlsListedElsewhere: false, subjectConfirmed: false,
   };
   return { a, content, versionSha: v.rows[0]?.sha ?? '', who, postalAddress: r.postal, zones: rz.zones, zoneSource: rz.source, facts, channels };
