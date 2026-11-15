@@ -183,6 +183,22 @@ describe('Priority Feed', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it('R-LSRC-8 E727 (b18 round 3 item 3): a draft card a plan or an alert wrote, tapped for a person whose lead source is marked "No automated contact", says why in the server\'s sentence (never "Try again"), and Send cannot be tapped again', async () => {
+    const sentence = `This draft was written by a plan or an alert, and "No automated contact for leads from this source" is on for this person's lead source (an Owner setting), so it was withdrawn and nothing was sent. Call, text or email them one to one.`;
+    const c = card({ itemType: 'assistant_draft', assistantActionId: IDS.draft, reasons: [{ code: 'NEEDS_YOUR_TAP', label: 'Draft ready for you' }], primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'SOURCE_NO_AUTOMATED_CONTACT', { reason: 'source_no_automated_contact', sentence }));
+    const { router } = agentApp(fake);
+    const before = router.state.location.pathname;
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    expect(router.state.location.pathname).toBe(before);
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('a draft approval the send-time check blocks says why, and there is no way past it', async () => {
     const c = card({ itemType: 'assistant_draft', primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
     const blocked = decision({ outcome: 'deny', explanation: 'Opted out of texts' });

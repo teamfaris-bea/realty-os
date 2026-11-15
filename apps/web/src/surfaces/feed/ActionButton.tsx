@@ -35,7 +35,7 @@ import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
 import { useMutate } from './lib/hooks.js';
-import { dealDateStaleWords, homeValueRefusalWords } from './lib/messages.js';
+import { automatedDraftRefusalWords, dealDateStaleWords, homeValueRefusalWords } from './lib/messages.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
 import { AiCareActionNote } from '../aiCare/Compose.js'; // module 76 (flagged edit)
 
@@ -169,9 +169,17 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
   const name = card?.contact?.name ?? 'them';
   // E142: the deal date the update cites changed; no thread jump (re-reading does not clear it), the card says why
   const [dateStale, setDateStale] = useState<string | null>(null);
+  // b18 round 3 item 3 (R-LSRC-8, E727): the server withdrew the draft (a plan or an alert wrote it, and the person's lead
+  // source is marked "No automated contact"): its sentence, and Send is disabled, since a second tap would be refused too
+  const [withdrawn, setWithdrawn] = useState<string | null>(null);
   const run = async () => {
     const r = await cmd.run({});
     if (!r.ok) {
+      const gone = automatedDraftRefusalWords(r.code, r.details);
+      if (gone !== null) {
+        setWithdrawn(gone);
+        return;
+      }
       // b13 audit V2B-2 (E621, E624): a home-value note's gate or its required lines, in the server's sentence; no thread jump
       const dated = (r.code === 'DRAFT_STALE' ? dealDateStaleWords(r.details, 'feed') : null) ?? homeValueRefusalWords(r.code, r.details, 'feed')?.text ?? null;
       if (dated !== null) {
@@ -190,8 +198,8 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
     else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
   };
   return (
-    <Wrap note={action.note} error={dateStale ?? (cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null)} block={block} reach={reach} reasonId={reasonId}>
-      <Button variant={variant} icon="message" pending={cmd.pending} pendingLabel="Sending" block={block} className={className} disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void run()}>
+    <Wrap note={action.note} error={withdrawn ?? dateStale ?? (cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null)} block={block} reach={reach} reasonId={reasonId}>
+      <Button variant={variant} icon="message" pending={cmd.pending} pendingLabel="Sending" block={block} className={className} disabled={reach.blocked || withdrawn !== null} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void run()}>
         {action.label}
       </Button>
     </Wrap>

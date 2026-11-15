@@ -15,6 +15,10 @@
 // A seller update (Phase 2 assembles them) is sendable only with the agent's own edit (R-AST-17).
 // A handback is approved by sending its suggested reply (or the agent's edit); with neither it is
 // simply marked handled. Internal cards (summaries, saved-search proposals) are acknowledged.
+// b18 round 3 item 3 (R-LSRC-8, E727, OQ-B18-S6): a draft a plan step or a module 26 trigger wrote stays automated
+// even when a person taps it. For a person whose lead source is marked "No automated contact for leads from this
+// source" the tap is refused 409 SOURCE_NO_AUTOMATED_CONTACT with a sentence, the person's pending drafts of that kind
+// are withdrawn and nothing is sent; the agent's own one-to-one message still goes (comms/compose.ts).
 import { takeoverInTx } from '../isa/ingest.js';
 import { checkDraftCurrent, draftCategory, formatDue } from '@realty/core/assistant';
 import { classifyHumanPurpose } from '@realty/core/compliance';
@@ -29,6 +33,7 @@ import { dealOrAppointmentContext } from '../comms/repos/contacts.js';
 import { conversationOf, tenantFacts } from '../comms/repos/gate.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
+import { AUTOMATED_DRAFT_REFUSAL, AUTOMATED_DRAFT_WITHDRAWN_EARLIER, NO_AUTOMATED_CONTACT_STOP_REASON, isAutomatedDraft, noAutomatedContact, withdrawAutomatedDrafts, withdrawnForSource } from '../leads/automatedContact.js';
 import { senderSignature } from '../templates/repos/signature.js';
 import { isListingSellerUpdate, sendSellerUpdate } from '../sellerUpdates/service.js';
 import * as A from './repos/actions.js';
@@ -103,8 +108,13 @@ async function messageByKey(tx: Tx, key: string): Promise<{ id: string; status: 
 
 const approvalKey = (actionId: string) => `assistant-approve:${actionId}`;
 
+/** 409 SOURCE_NO_AUTOMATED_CONTACT for a draft automation wrote (b18 round 3 item 3): why, and that nothing was sent. */
+function automatedDraftRefusal(covered: boolean): AppError {
+  return new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, sentence: covered ? AUTOMATED_DRAFT_REFUSAL : AUTOMATED_DRAFT_WITHDRAWN_EARLIER });
+}
+
 /** POST /assistant/actions/:id/approve */
-export async function approveAction(actor: UserActor, actionId: string, input: ApproveInput, deps: AssistantDeps): Promise<ApproveResult> {
+export async function approveAction(actor: UserActor, actionId: string, input: ApproveInput, deps: AssistantDeps, o: { retried?: boolean } = {}): Promise<ApproveResult> {
   // Module 28's branch (PHASE2_3_PLAN §5.3): a listing-bound seller update is approved and sent by
   // sellerUpdates/service.ts: the listing agent only, the recommendation, the assembled_through watermark
   // (SELLER_UPDATE_STALE) and one informational message per reachable seller through dispatchOutbound.
@@ -116,7 +126,8 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     const r = await sendSellerUpdate(actor, actionId, { commandId: input.commandId, recommendation: input.editedPayload?.recommendation }, deps);
     return { actionId: r.actionId, status: r.status, result: r.result, messageId: r.messageId, decision: null };
   }
-  type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'home_value'; hv: HomeValueDraftBlock } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned };
+  type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'home_value'; hv: HomeValueDraftBlock } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned }
+    | { kind: 'source_withdrawn'; covered: boolean } | { kind: 'source_covered'; contactId: string };
   const out: Out = await asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
     if (!peek || peek.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
@@ -124,6 +135,12 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     if (peek.kind === 'ai_isa_handoff') refuseOwnDecisionPath(peek);
     if (peek.contactId) await lockContact(tx, peek.contactId as ContactId);
     const a = (await A.actionById(tx, actionId, { lock: true }))!;
+    // b18 round 3 item 3: a draft a plan step or a trigger wrote, for a person whose source is marked: withdrawn before
+    // (the reason, never "the lead's owner changed"), or pending now (withdrawn below, by the system, and refused)
+    if (a.contactId && isAutomatedDraft(a)) {
+      if (a.status === 'invalidated' && withdrawnForSource(a.payload)) return { kind: 'source_withdrawn', covered: await noAutomatedContact(tx, a.contactId) };
+      if (a.status === 'proposed' && (await noAutomatedContact(tx, a.contactId))) return { kind: 'source_covered', contactId: a.contactId };
+    }
     if (a.status === 'invalidated') return { kind: 'invalidated' };
     if (a.status !== 'proposed') {
       // the same tap arriving twice (double tap, network retry): report what the first one did
@@ -231,6 +248,22 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     return { kind: 'send', plan: { kind: 'send', sendActionId, messageKey: approvalKey(sendActionId), channel: draft.channel, subject: draft.subject, body: draft.body, pinnedInboundSeq: a.pinnedInboundSeq ?? 0, contactId: a.contactId } };
   });
   if (out.kind === 'done') return out.result;
+  if (out.kind === 'source_withdrawn') throw automatedDraftRefusal(out.covered);
+  if (out.kind === 'source_covered') {
+    // the system withdraws every pending draft of that kind for the person (the trigger runs they wait on are the
+    // system's to write), under the contact lock and only while the setting still covers them
+    const contactId = out.contactId;
+    const still = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => {
+      await lockContact(tx, contactId as ContactId);
+      if (!(await noAutomatedContact(tx, contactId))) return false;
+      await withdrawAutomatedDrafts(tx, { contactId }, now);
+      return true;
+    });
+    if (still) throw automatedDraftRefusal(true);
+    // the Owner turned the setting off between the two transactions: the tap is judged again, once, as any other
+    if (!o.retried) return approveAction(actor, actionId, input, deps, { retried: true });
+    throw new AppError('ACTION_NOT_PENDING', { status: 'proposed' });
+  }
   if (out.kind === 'invalidated') throw new AppError('DRAFT_INVALIDATED');
   if (out.kind === 'stale') throw new AppError('DRAFT_STALE', { inboundSeq: out.inboundSeq, pinnedInboundSeq: out.pinned });
   if (out.kind === 'date_stale') throw dateStaleError(out.st);

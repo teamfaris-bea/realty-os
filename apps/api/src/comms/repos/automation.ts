@@ -84,11 +84,13 @@ export interface ActionFacts {
   boundOwnershipSeq: number | null;
   decidedByUserId: string | null;
   playbookVersionId: string | null;
+  /** trigger_ref.kind: what made the action ('playbook_step' and 'trigger_run' are automation's own drafts, b18 round 3 item 3) */
+  triggerKind: string | null;
 }
 
 export async function actionFacts(tx: Tx, id: string): Promise<ActionFacts | null> {
-  const r = await sql<{ id: string; kind: string; autonomy: ActionFacts['autonomy']; status: string; owner_user_id: string | null; bound_ownership_seq: string | null; decided_by_user_id: string | null; playbook_version_id: string | null }>`
-    SELECT id, kind, autonomy, status, owner_user_id, bound_ownership_seq, decided_by_user_id, playbook_version_id FROM assistant_actions
+  const r = await sql<{ id: string; kind: string; autonomy: ActionFacts['autonomy']; status: string; owner_user_id: string | null; bound_ownership_seq: string | null; decided_by_user_id: string | null; playbook_version_id: string | null; trigger_kind: string | null }>`
+    SELECT id, kind, autonomy, status, owner_user_id, bound_ownership_seq, decided_by_user_id, playbook_version_id, trigger_ref->>'kind' AS trigger_kind FROM assistant_actions
      WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   const a = r.rows[0];
   if (!a) return null;
@@ -101,6 +103,7 @@ export async function actionFacts(tx: Tx, id: string): Promise<ActionFacts | nul
     boundOwnershipSeq: a.bound_ownership_seq === null ? null : Number(a.bound_ownership_seq),
     decidedByUserId: a.decided_by_user_id,
     playbookVersionId: a.playbook_version_id,
+    triggerKind: a.trigger_kind,
   };
 }
 

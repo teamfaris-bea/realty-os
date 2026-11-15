@@ -268,3 +268,13 @@ export const PAGES = {
 } as const;
 
 export const detailPath = (id: string, setup?: PathKey) => `/admin/lead-sources/${id}${setup ? `?setup=${setup}` : ''}`;
+
+/**
+ * b18 round 3 item 3: the drafts a plan step or an alert wrote for a marked source's people, withdrawn when the setting
+ * is turned on or a label is mapped to it (the API's count; apps/api/src/leads/automatedContact.ts
+ * withdrawnDraftsSentence, the same words). Empty when there were none.
+ */
+export function withdrawnDraftsWords(n: number | undefined): string {
+  if (n === undefined || n <= 0) return '';
+  return n === 1 ? ' 1 draft a plan or an alert wrote for them was withdrawn.' : ` ${n} drafts a plan or an alert wrote for them were withdrawn.`;
+}

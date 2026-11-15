@@ -19,7 +19,7 @@ import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index
 import { AgentSheetsProvider, SendOutcome, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
-import { AGENT_ERROR_MESSAGES, dealDateStaleWords, homeValueRefusalWords } from '../feed/lib/messages.js';
+import { AGENT_ERROR_MESSAGES, automatedDraftRefusalWords, dealDateStaleWords, homeValueRefusalWords } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
@@ -132,6 +132,10 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   // E142: the deal date this update cites changed; E624 (b13 audit V2B-2): a home-value note's estimate can no longer be
   // shown to clients. A re-tap does not clear either, so Send goes away and only Dismiss stays
   const [dateStale, setDateStale] = useState<string | null>(null);
+  // b18 round 3 item 3 (R-LSRC-8, E727): the server withdrew this draft (a plan or an alert wrote it, and the person's
+  // lead source is marked "No automated contact"): its sentence stays, and Send, Edit and Dismiss go away, since the
+  // server would refuse each of them now
+  const [withdrawn, setWithdrawn] = useState<string | null>(null);
   const [result, setResult] = useState<ApproveResponse | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.id}/approve`, { invalidate: [['inbox'], ['feed'], ['timeline']] });
@@ -151,6 +155,11 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const doApprove = async () => {
     const r = await approve.run(seenSeq !== null ? { reviewedInboundSeq: seenSeq } : {});
     if (!r.ok) {
+      const gone = automatedDraftRefusalWords(r.code, r.details);
+      if (gone !== null) {
+        setWithdrawn(gone);
+        return;
+      }
       const hv = homeValueRefusalWords(r.code, r.details);
       if (hv?.kind === 'not_displayable') {
         setDateStale(hv.text);
@@ -216,13 +225,14 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           ))}
         </ul>
       ) : null}
+      {withdrawn ? <Notice tone="warn">{withdrawn}</Notice> : null}
       {dateStale ? <Notice tone="warn">{dateStale}</Notice> : null}
       {stale && !dateStale ? (
         <Notice tone="warn" title={`${firstName(name)} replied since this was drafted`} action={threadHref ? <Link to={threadHref} className="font-medium text-accent underline">Read it</Link> : undefined}>
           Read the new message, then send if this still fits.
         </Notice>
       ) : null}
-      {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{homeValueRefusalWords(approve.error.code, approve.error.details)?.text ?? approve.error.message}</Notice> : null}
+      {approve.error && approve.error.code !== 'DRAFT_STALE' && !withdrawn ? <Notice tone="error">{homeValueRefusalWords(approve.error.code, approve.error.details)?.text ?? approve.error.message}</Notice> : null}
       {reject.error ? <RefusalNotice error={reject.error} /> : null}
       {result && !['acknowledged', 'sent', 'queued'].includes(sentResult(result)) ? (
         <SendOutcome result={{ result: sentResult(result), decision: result.decision, message: null }} contactName={name} />
@@ -237,7 +247,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           <Button aria-expanded={searchOpen} onClick={() => setSearchOpen((o) => !o)}>
             {searchOpen ? 'Hide search' : 'Review search'}
           </Button>
-        ) : sendable && dateStale ? null : sendable ? (
+        ) : sendable && (dateStale || withdrawn) ? null : sendable ? (
           <>
             <Button icon="message" pending={approve.pending} pendingLabel="Sending" disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void doApprove()}>
               {stale ? 'Send anyway' : 'Send'}
@@ -264,9 +274,11 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
             Got it
           </Button>
         )}
-        <Button variant="quiet" pending={reject.pending} onClick={() => void doReject()}>
-          Dismiss
-        </Button>
+        {withdrawn ? null : (
+          <Button variant="quiet" pending={reject.pending} onClick={() => void doReject()}>
+            Dismiss
+          </Button>
+        )}
       </div>
       {searchOpen && action.contactId ? (
         <div className="border-t border-line pt-3">

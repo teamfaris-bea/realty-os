@@ -20,6 +20,9 @@
 //   so, refreshes the thread, and the next Send carries the inbound seq the agent has now seen.
 // - DRAFT_INVALIDATED (R-AST-7): the draft no longer applies; nothing was sent. The text stays, and
 //   Send becomes the agent's own message.
+// - SOURCE_NO_AUTOMATED_CONTACT (R-LSRC-8, E727; b18 round 3 item 3): a draft a plan or an alert wrote, for a person whose
+//   lead source is marked "No automated contact for leads from this source". The server withdrew it and says why;
+//   nothing was sent. The text stays, and Send becomes the agent's own one-to-one message, which that setting allows.
 // - An in-house home-value note (E621, E624; b13 audit V2B-2): DRAFT_STALE HOME_VALUE_NOT_DISPLAYABLE and VALIDATION_FAILED
 //   HOME_VALUE_LINES_REQUIRED show the server's sentence; the client did not write, and the draft is never detached.
 // - Phase 2 (module 37): the box defaults to the client's last open channel (text, email or web chat) and
@@ -44,7 +47,7 @@ import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } fr
 import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
 import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
-import { dealDateStaleWords, homeValueRefusalWords } from '../feed/lib/messages.js';
+import { automatedDraftRefusalWords, dealDateStaleWords, homeValueRefusalWords } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
 import { MediaAddButton, MediaTray } from './MediaTray.js';
@@ -352,9 +355,13 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     }
     // b12 recheck R11: an AI handoff card (the feed's Review opens it here) is refused by the generic approve and stays
     // open; it is detached the same way, so the next Send is the agent's own message (a human touch, R-ISA-30)
-    if (code === 'DRAFT_INVALIDATED' || code === 'ACTION_NOT_PENDING' || code === 'AI_ISA_HANDOFF_USE_ACK') {
+    // b18 round 3 item 3: a draft a plan or an alert wrote, for a person whose lead source is marked "No automated
+    // contact": withdrawn by the server (its sentence), detached the same way; the agent's own text is a one-to-one
+    // message and goes
+    const withdrawn = automatedDraftRefusalWords(code, details);
+    if (code === 'DRAFT_INVALIDATED' || code === 'ACTION_NOT_PENDING' || code === 'AI_ISA_HANDOFF_USE_ACK' || withdrawn !== null) {
       setDraftId(null);
-      setNotice({ tone: 'warn', text: `${message} Your text is still here; Send sends it as your own message.` });
+      setNotice({ tone: 'warn', text: `${withdrawn ?? message} Your text is still here; Send sends it as your own message.` });
       return true;
     }
     return false;

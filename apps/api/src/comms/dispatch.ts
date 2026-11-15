@@ -60,7 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
-import { isSourceGuardViolation, noAutomatedContact } from '../leads/automatedContact.js';
+import { AUTOMATED_DRAFT_TRIGGER_KINDS, isSourceGuardViolation, noAutomatedContact } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
@@ -201,6 +201,8 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   let gateInitiator: Initiator = 'system';
   let actorUserId: string | null = null;
   let touch = false;
+  // b18 round 3 item 3: an approved draft a plan step or a trigger wrote (it stays automated contact, whoever tapped it)
+  let automatedDraft = false;
   if (human) {
     gateInitiator = 'human';
     actorUserId = m.initiatedByUserId;
@@ -220,6 +222,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       // An approved draft or handback reply: the approving human is the sender (ARCHITECTURE §9 path 4).
       gateInitiator = 'human';
       actorUserId = a.decidedByUserId;
+      automatedDraft = a.triggerKind !== null && AUTOMATED_DRAFT_TRIGGER_KINDS.includes(a.triggerKind);
       if (a.status !== 'approved' || a.decidedByUserId === null) extra.push('ASSISTANT_ACTION_NOT_APPROVED');
       else if (a.ownerUserId !== owner.ownerUserId || a.boundOwnershipSeq !== owner.periodSeq) extra.push('ASSISTANT_ACTION_STALE');
     } else if (a.autonomy === 'within_playbook') {
@@ -241,7 +244,9 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   // b18 review B18S-5 (owner boundary 2026-11-14): "No automated contact for leads from this source" (leads/automatedContact.ts).
   // An automated or bulk message to a person the marked source sent never goes; a person's one-to-one message does. AI ISA
   // messages are refused by their own chain (link 11). 0098's app.messages_source_guard refuses the same in the database.
-  if (!isaMsg && isAutomatedContact(m, gateInitiator) && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
+  // Round 3 item 3 (OQ-B18-S6): a draft a plan step or a module 26 trigger wrote is automated contact even after a
+  // person approved it (one approved before the mark and still queued is refused here; 0100 widens the guard to match).
+  if (!isaMsg && (isAutomatedContact(m, gateInitiator) || automatedDraft) && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
 
   const intent: OutboundIntent = {
     contactId: m.contactId,

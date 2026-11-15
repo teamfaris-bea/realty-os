@@ -421,6 +421,25 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)[0]!.body).toMatchObject({ channel: 'sms', body: 'Hi Jane, Saturday at 11 works. Want me to book it?' });
   });
 
+  it('R-LSRC-8 E727 (b18 round 3 item 3): a draft a plan or an alert wrote, for a person whose lead source is marked "No automated contact", sends nothing and says why in the server\'s sentence; the text stays and Send then sends it as the agent’s own one-to-one message', async () => {
+    const sentence = `This draft was written by a plan or an alert, and "No automated contact for leads from this source" is on for this person's lead source (an Owner setting), so it was withdrawn and nothing was sent. Call, text or email them one to one.`;
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'SOURCE_NO_AUTOMATED_CONTACT', { reason: 'source_no_automated_contact', sentence }))
+      .on(`POST /contacts/${IDS.jane}/messages`, sent());
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const u = user();
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?'));
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(`${sentence} Your text is still here; Send sends it as your own message.`)).toBeInTheDocument();
+    expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('b12 recheck R11, batch 13 isa-4: an AI handoff opened here (an old link to the feed\'s Review) is never taken as a draft: the box says so, and the first Send is the agent’s own message', async () => {
     const handoff = draftAction({ kind: 'ai_isa_handoff', category: 'internal', primaryAction: 'acknowledge', draft: null, claims: [], explanation: 'AI care handed back: owner_change' });
     const fake = threadFake()

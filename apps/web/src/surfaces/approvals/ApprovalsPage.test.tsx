@@ -133,6 +133,22 @@ describe('Approvals inbox', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it('R-LSRC-8 E727 (b18 round 3 item 3): a draft a plan or an alert wrote, tapped for a person whose lead source is marked "No automated contact", says why in the server\'s sentence (never "Try again"); Send, Edit and Dismiss go away, since the server withdrew it', async () => {
+    const sentence = `This draft was written by a plan or an alert, and "No automated contact for leads from this source" is on for this person's lead source (an Owner setting), so it was withdrawn and nothing was sent. Call, text or email them one to one.`;
+    const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'SOURCE_NO_AUTOMATED_CONTACT', { reason: 'source_no_automated_contact', sentence }));
+    const { router } = agentApp(fake, '/approvals');
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(router.state.location.pathname).toBe('/approvals');
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('b13 audit V2B-2 E624 R-CMA-7: a home-value draft whose estimate can no longer be shown says so in the server\'s sentence, never that the client replied: no Send anyway, no re-tap, Dismiss stays', async () => {
     const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'FEED_STALE', sentence: HV_SENTENCE }));
     const { router } = agentApp(fake, '/approvals');

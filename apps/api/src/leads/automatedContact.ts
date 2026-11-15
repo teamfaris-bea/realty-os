@@ -11,11 +11,17 @@
 //     paused one cannot be resumed;
 //   - module 26 trigger messages, saved-search alerts and any other assistant or system message, and bulk texts,
 //     bulk emails and open-house invites (each person is left out and counted);
-//   - AI care (start, Continue, resume: isa/, chain link 11) and AI-answered calls (voice/takeover.ts).
+//   - AI care (start, Continue, resume: isa/, chain link 11) and AI-answered calls (voice/takeover.ts);
+//   - a draft a plan step or a module 26 trigger wrote for a person to approve (round 3 item 3, OQ-B18-S6): it stays
+//     automated even when a person taps it. Pending ones are withdrawn (withdrawAutomatedDrafts) when the setting is
+//     turned on, when a label is mapped to a marked source, when a marked source sends the person again (leads/intake.ts)
+//     and when a plan, a trigger or the first response meets such a person; approving one is refused
+//     (assistant/drafts.ts) and one already approved is blocked at dispatch.
 // A person's own one-to-one call, text and email still go. The opt-out confirmation and HELP reply the person asked
 // for by texting a keyword, and a client's own portal sign-in link, are answers to the person, not outreach, and go.
 // comms/dispatch.ts TX1 refuses any automated message still queued (SOURCE_NO_AUTOMATED_CONTACT), and 0098's
 // invoker guards refuse it in the database too (enrolments, messages moved to dispatching, AI-answered calls).
+import { type Instant, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 
@@ -75,4 +81,67 @@ export function isSourceGuardViolation(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const { code, message } = err as { code?: unknown; message?: unknown };
   return code === '23514' && typeof message === 'string' && message.startsWith(`${SOURCE_NO_AUTOMATED_CONTACT}:`);
+}
+
+// ---- b18 round 3 item 3 (OQ-B18-S6): drafts automation wrote ----
+
+/**
+ * assistant_actions.trigger_ref.kind of a draft automation wrote for a person to approve: a plan step
+ * (assistant/steps.ts) or a module 26 trigger firing (nurture/execute.ts). A reply the assistant drafted to the
+ * person's own message or call, a handback reply and a seller update are not in this set: a person asked for or
+ * reviews those one to one. 0100's app.messages_source_guard lists the same two kinds.
+ */
+export const AUTOMATED_DRAFT_TRIGGER_KINDS: readonly string[] = ['playbook_step', 'trigger_run'];
+
+/** Whether an action is a draft automation wrote (it stays automated contact even when a person approves it). */
+export function isAutomatedDraft(a: { autonomy: string; triggerRef: Record<string, unknown> | null }): boolean {
+  const kind = a.triggerRef?.['kind'];
+  return a.autonomy === 'requires_approval' && typeof kind === 'string' && AUTOMATED_DRAFT_TRIGGER_KINDS.includes(kind);
+}
+
+/** Approving such a draft for a covered person: 409 SOURCE_NO_AUTOMATED_CONTACT details.sentence (assistant/drafts.ts). */
+export const AUTOMATED_DRAFT_REFUSAL = `This draft was written by a plan or an alert, and "${NO_AUTOMATED_CONTACT_LABEL}" is on for this person's lead source (an Owner setting), so it was withdrawn and nothing was sent. Call, text or email them one to one.`;
+
+/** The same tap on a draft withdrawn earlier, when the setting no longer covers the person (it stays withdrawn). */
+export const AUTOMATED_DRAFT_WITHDRAWN_EARLIER = `This draft was written by a plan or an alert and was withdrawn while "${NO_AUTOMATED_CONTACT_LABEL}" was on for this person's lead source (an Owner setting). Nothing was sent. Write to them yourself.`;
+
+/** The Owner's count of drafts withdrawn when the setting is turned on or a label is mapped (leads/sources.ts). */
+export function withdrawnDraftsSentence(drafts: number): string {
+  return `${drafts === 1 ? '1 draft a plan or an alert wrote for them was' : `${drafts} drafts a plan or an alert wrote for them were`} withdrawn.`;
+}
+
+/** Whether a draft's payload says it was withdrawn for the setting (payload.withdrawn.reason). */
+export function withdrawnForSource(payload: Record<string, unknown> | null): boolean {
+  const w = payload?.['withdrawn'];
+  return typeof w === 'object' && w !== null && (w as { reason?: unknown }).reason === SOURCE_NO_AUTOMATED_CONTACT;
+}
+
+/**
+ * Withdraws the pending drafts automation wrote for one person, or for every person a source sent: each becomes
+ * `invalidated` with payload.withdrawn { reason, at }, its feed cards close, and a module 26 trigger run that waited on
+ * it is skipped with the visible reason (never left as "drafted: it waits for the contact owner"). Returns how many
+ * were withdrawn. The caller is tenant-wide (the Owner on the sources routes, or the system: intake, the step runner,
+ * the trigger runner, the first response, the approval's follow-up); RLS and the tenant filter bound it to this tenant.
+ */
+export async function withdrawAutomatedDrafts(tx: Tx, scope: { contactId: string } | { sourceId: string }, now: Instant): Promise<number> {
+  // one person: every record of them (the merge tree, app.contact_person_ids, as app.person_no_ai_care_source reads it)
+  const who = 'contactId' in scope
+    ? sql`a.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${scope.contactId}::uuid))`
+    : sql`a.contact_id IS NOT NULL AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${scope.sourceId}::uuid)`;
+  const mark = JSON.stringify({ withdrawn: { reason: SOURCE_NO_AUTOMATED_CONTACT, at: toIso(now) } });
+  const r = await sql<{ id: string }>`
+    UPDATE assistant_actions a SET status = 'invalidated', payload = a.payload || ${mark}::jsonb
+     WHERE a.tenant_id = app.tenant_id() AND a.status = 'proposed' AND a.autonomy = 'requires_approval'
+       AND a.trigger_ref->>'kind' = ANY (${[...AUTOMATED_DRAFT_TRIGGER_KINDS]}::text[]) AND ${who}
+    RETURNING a.id`.execute(tx);
+  const ids = r.rows.map((x) => x.id);
+  if (ids.length === 0) return 0;
+  await sql`
+    UPDATE priority_feed_items SET state = 'done', resolved_at = ${toIso(now)}::timestamptz, snoozed_until = NULL, updated_at = now()
+     WHERE tenant_id = app.tenant_id() AND assistant_action_id = ANY (${ids}::uuid[]) AND state IN ('open','snoozed')`.execute(tx);
+  await sql`
+    UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+           trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', ${SOURCE_NO_AUTOMATED_CONTACT}::text, 'text', ${NO_AUTOMATED_CONTACT_SKIP_TEXT}::text))
+     WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND assistant_action_id = ANY (${ids}::uuid[]) AND status = 'converted_to_draft'`.execute(tx);
+  return ids.length;
 }

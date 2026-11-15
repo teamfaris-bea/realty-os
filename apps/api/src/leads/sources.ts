@@ -32,7 +32,7 @@ import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
-import { noAutomatedContactSentence } from './automatedContact.js';
+import { noAutomatedContactSentence, withdrawAutomatedDrafts } from './automatedContact.js';
 import { type ImportLabelRow, labelRows, tenantLabels } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
 import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
@@ -125,10 +125,11 @@ export const noAiCareSentence = noAutomatedContactSentence;
 /**
  * The people a source marked "No automated contact for leads from this source" sent, made safe now: each of their live
  * AI care is asked for a turn now, whose chain (link 11) pauses it source_no_ai_care, and each of their active plans for a
- * step now, which stops it (assistant/enrollments.ts, before any due check). Only this source's people are counted
- * (app.person_from_lead_source, 0099).
+ * step now, which stops it (assistant/enrollments.ts, before any due check). The pending drafts a plan step or a
+ * trigger wrote for them are withdrawn here, in this transaction, and their cards closed (round 3 item 3). Only this
+ * source's people are counted (app.person_from_lead_source, 0099).
  */
-export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<{ pausing: number; stopping: number }> {
+export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<{ pausing: number; stopping: number; withdrawn: number }> {
   const live = await sql<{ id: string; epoch: number }>`SELECT a.id, a.epoch FROM ai_isa_assignments a
      WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
        AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${sourceId}::uuid) ORDER BY a.id`.execute(tx);
@@ -138,11 +139,12 @@ export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Ins
   const plans = await sql<{ id: string }>`SELECT e.id FROM playbook_enrollments e
      WHERE e.tenant_id = app.tenant_id() AND e.state = 'active' AND app.person_from_lead_source(e.tenant_id, e.contact_id, ${sourceId}::uuid) ORDER BY e.id`.execute(tx);
   for (const e of plans.rows) await enqueueStep(tx, e.id, now);
-  return { pausing: live.rows.length, stopping: plans.rows.length };
+  const withdrawn = await withdrawAutomatedDrafts(tx, { sourceId }, now);
+  return { pausing: live.rows.length, stopping: plans.rows.length, withdrawn };
 }
 
 /** PUT /lead-sources/import-labels: the Owner maps a label to a source (moving it off any other), or unmaps it. */
-export async function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow; pausing: number; stopping: number }> {
+export async function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow; pausing: number; stopping: number; withdrawn: number }> {
   // the sources that hold the label now and the target, locked in one order (the ai-care route locks a source the same way)
   const held = await sql<{ id: string; no_ai_care: boolean; has: boolean }>`
     SELECT id, no_ai_care, ${label} = ANY (import_labels) AS has FROM lead_sources
@@ -161,7 +163,7 @@ export async function setImportLabel(tx: Tx, actor: UserActor, label: string, le
       reason: target ? 'LEAD_SOURCE_IMPORT_LABEL_MAPPED' : 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED',
     });
   }
-  const safe = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : { pausing: 0, stopping: 0 };
+  const safe = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : { pausing: 0, stopping: 0, withdrawn: 0 };
   const row = (await tenantLabels(tx)).find((r) => r.label === label) ?? labelRows(new Map([[label, 0]]), new Map())[0]!;
   return { label: row, ...safe };
 }
@@ -465,6 +467,7 @@ async function register(app: FastifyInstance): Promise<void> {
       const was = (await sql<{ v: boolean }>`SELECT no_ai_care AS v FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid FOR UPDATE`.execute(tx)).rows[0]!.v;
       let pausing = 0;
       let stopping = 0;
+      let withdrawn = 0;
       if (was !== req.body.noAiCare) {
         await sql`UPDATE lead_sources SET no_ai_care = ${req.body.noAiCare}, no_ai_care_changed_at = now(), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
         await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id: s.id }, changes: redactSnapshot({ noAiCare: { from: was, to: req.body.noAiCare } }, { entity: 'lead_source' }), reason: req.body.noAiCare ? 'LEAD_SOURCE_NO_AI_CARE_ON' : 'LEAD_SOURCE_NO_AI_CARE_OFF' });
@@ -481,8 +484,11 @@ async function register(app: FastifyInstance): Promise<void> {
            WHERE e.tenant_id = app.tenant_id() AND e.state = 'active' AND app.person_no_ai_care_source(e.tenant_id, e.contact_id) ORDER BY e.id`.execute(tx);
         for (const e of plans.rows) await enqueueStep(tx, e.id, now);
         stopping = plans.rows.length;
+        // round 3 item 3 (OQ-B18-S6): the pending drafts a plan step or a trigger wrote for this source's people are
+        // withdrawn now and their cards closed; a draft does not outlive the mark and send on a tap
+        withdrawn = await withdrawAutomatedDrafts(tx, { sourceId: s.id }, now);
       }
-      return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, pausing, stopping };
+      return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, pausing, stopping, withdrawn };
     }),
   );
 

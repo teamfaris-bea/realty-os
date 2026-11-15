@@ -28,7 +28,7 @@ import { AppError } from '../errors.js';
 import { reachableForVersion } from '../stageAutomation/reach.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { NO_AUTOMATED_CONTACT_STOP_REASON, noAutomatedContact } from '../leads/automatedContact.js';
+import { NO_AUTOMATED_CONTACT_STOP_REASON, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
 import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
@@ -139,6 +139,8 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
     const pending = (await P.stepRunsOf(tx, e.id)).filter((r) => r.status === 'scheduled');
     const canceled = await P.cancelStepMessages(tx, pending.map((r) => r.id), 'SOURCE_NO_AUTOMATED_CONTACT');
     for (const r of pending) if (r.messageId === null || canceled.includes(r.messageId)) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
+    // round 3 item 3: the drafts an earlier step (or a trigger) wrote for them are withdrawn with the plan, cards closed
+    await withdrawAutomatedDrafts(tx, { contactId: e.contactId }, now);
     await P.endEnrollment(tx, e.id, 'stopped', NO_AUTOMATED_CONTACT_STOP_REASON, now);
     return { kind: 'stopped', reason: NO_AUTOMATED_CONTACT_STOP_REASON };
   }

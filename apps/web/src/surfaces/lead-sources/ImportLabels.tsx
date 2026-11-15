@@ -13,6 +13,7 @@ import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { SelectField, StatusLine } from '../admin/lib/ui.js';
 import { SOURCE_KEYS, useOverview } from './hooks.js';
 import { sentenceFor } from './messages.js';
+import { withdrawnDraftsWords } from './words.js';
 
 export interface ImportLabelView {
   label: string;
@@ -33,14 +34,14 @@ export function ImportLabelList({ rows, onChanged, empty }: { rows: readonly Imp
   const owner = session?.tenant?.role === 'owner';
   const sources = useOverview(owner).data?.sources ?? [];
   const [status, announce] = useAnnounce(8000);
-  const a = useAction<{ label: string; leadSourceId: string | null }, { label: ImportLabelView; pausing: number; stopping: number }>('PUT', { invalidate: [[...IMPORT_LABELS_KEY], ...SOURCE_KEYS] });
+  const a = useAction<{ label: string; leadSourceId: string | null }, { label: ImportLabelView; pausing: number; stopping: number; withdrawn?: number }>('PUT', { invalidate: [[...IMPORT_LABELS_KEY], ...SOURCE_KEYS] });
   const choose = async (label: string, id: string) => {
     const r = await a.run('/lead-sources/import-labels', { label, leadSourceId: id === NOT_MAPPED ? null : id });
     if (!r.ok) return;
     onChanged();
     const plans = r.data.stopping > 0 ? ` Plans running for ${r.data.stopping} of its leads will stop.` : '';
     const care = r.data.pausing > 0 ? ` AI care already running for ${r.data.pausing} of its leads will pause.` : '';
-    announce(`${r.data.label.sentence}${care}${plans}`);
+    announce(`${r.data.label.sentence}${care}${plans}${withdrawnDraftsWords(r.data.withdrawn)}`);
   };
   if (rows.length === 0) return empty ? <p className="text-[15px] text-ink-muted">{empty}</p> : null;
   return (

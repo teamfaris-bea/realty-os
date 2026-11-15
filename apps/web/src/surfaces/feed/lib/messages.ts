@@ -31,6 +31,9 @@ export const AGENT_ERROR_MESSAGES: Record<string, string> = {
   DRAFT_STALE: 'They replied since this was drafted. Read the new message, then send if it still fits.',
   DRAFT_INVALIDATED: "This draft no longer applies: the lead's owner changed. Nothing was sent.",
   ACTION_NOT_PENDING: 'This was already handled.',
+  // b18 round 3 item 3 (R-LSRC-8, E727): a draft a plan or an alert wrote, tapped for a person whose lead source is marked
+  // "No automated contact for leads from this source"; the same code refuses a plan started or resumed by hand
+  SOURCE_NO_AUTOMATED_CONTACT: '"No automated contact for leads from this source" is on for this person\'s lead source (an Owner setting), so nothing automatic goes to them: a plan does not run, and a draft a plan or an alert wrote was withdrawn. Nothing was sent. Call, text or email them one to one.',
   AI_ISA_HANDOFF_USE_ACK: "This is the assistant's handoff, not a draft, so nothing was sent.",
   ASSISTANT_UNAVAILABLE: "The assistant couldn't write a draft right now. You can write the message yourself.",
   DRAFT_OWNER_ONLY: 'Only the lead’s owner can ask the assistant for a draft.',
@@ -46,6 +49,18 @@ export const AGENT_ERROR_MESSAGES: Record<string, string> = {
 
 export function useSurfaceMessages(): Record<string, string> {
   return AGENT_ERROR_MESSAGES;
+}
+
+/**
+ * b18 round 3 item 3 (R-LSRC-8, E727): the sentence for a draft approval refused SOURCE_NO_AUTOMATED_CONTACT (a draft a
+ * plan or an alert wrote, for a person whose lead source is marked "No automated contact for leads from this source"):
+ * the server's own sentence (details.sentence), which says the draft was withdrawn and nothing was sent; null for any
+ * other refusal. A re-tap never clears it: the surfaces take their Send away.
+ */
+export function automatedDraftRefusalWords(code: string | undefined, details: Record<string, unknown> | null | undefined): string | null {
+  if (code !== 'SOURCE_NO_AUTOMATED_CONTACT') return null;
+  const s = details?.['sentence'];
+  return typeof s === 'string' && s.trim() !== '' ? s : AGENT_ERROR_MESSAGES['SOURCE_NO_AUTOMATED_CONTACT']!;
 }
 
 /**

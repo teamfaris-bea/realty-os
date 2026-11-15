@@ -59,6 +59,7 @@ import { AppError } from '../errors.js';
 import { SIGNIN_TOKEN_REDACTION, redactSignInTokens } from '../portal/shared/redact.js';
 import { authorize } from '../rbac.js';
 import { systemActor } from '../worker/systemActor.js';
+import { withdrawAutomatedDrafts } from './automatedContact.js';
 import { leadsTx, platformOf } from './common.js';
 import * as contacts from './repos/contacts.js';
 import * as repo from './repos/intake.js';
@@ -502,6 +503,9 @@ async function ingestInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: 
     for (const a of await repo.liveAiCareOf(tx, contactId)) {
       await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
     }
+    // b18 round 3 item 3 (B18S-5, OQ-B18-S6): the drafts a plan step or a trigger wrote for them before this source
+    // sent them are withdrawn here and their cards closed; a draft does not outlive the mark and send on a tap
+    await withdrawAutomatedDrafts(tx, { contactId }, at);
   }
   return { contactId, outcome, inquiryId };
 }
