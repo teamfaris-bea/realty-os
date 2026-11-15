@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
@@ -62,7 +62,7 @@ beforeAll(async () => {
       await su.query("UPDATE messages SET status='failed' WHERE id=$1",[id]);
       if (ai) {
         await su.query(`INSERT INTO assistant_actions (tenant_id,id,contact_id,kind,action_category,autonomy,status,owner_user_id,explanation,payload,playbook_version_id,epoch)
-          VALUES ($1,$2,$3,'ai_isa_message','ai_isa_message','ai_isa_mandate','blocked',$4,'Synthetic legacy AI outcome','{}',$5,1)`,[w.tenantId,action,contact,w.agents[0]!.id,version]);
+          VALUES ($1,$2,$3,'ai_isa_message','ai_isa_message','ai_isa_mandate','executed',$4,'Synthetic legacy AI outcome','{}',$5,1)`,[w.tenantId,action,contact,w.agents[0]!.id,version]);
         await su.query("UPDATE messages SET initiator='assistant',action_category='ai_isa_message',assistant_action_id=$2 WHERE id=$1",[id,action]);
       }
       legacy.push({tenant:w.tenantId,id,repaired,ai});
@@ -95,6 +95,38 @@ afterAll(async () => {
     try { await admin.query(`DROP ROLE IF EXISTS ${admin.escapeIdentifier(role)}`); } finally { await admin.end(); }
   }
   if (dir) rmSync(dir,{ recursive:true,force:true });
+});
+
+it.each([true,false])('blocked action alone: linked=%s aborts only the matching tenant dependency',async linked=>{
+  const target=legacy.find(f=>f.ai)!;
+  const other=legacy.find(f=>f.ai && f.tenant!==target.tenant)!;
+  const c=await h.su.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SET LOCAL ROLE ${c.escapeIdentifier(role)}`);
+    expect((await c.query('SELECT rolsuper FROM pg_roles WHERE rolname=current_user')).rows[0].rolsuper).toBe(false);
+    const action=(await c.query('SELECT assistant_action_id AS id FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].id;
+    // No blocked turn, canceled fact or refused handoff may account for this refusal.
+    expect((await c.query(`SELECT
+      (SELECT count(*) FROM ai_isa_turns WHERE tenant_id=$1 AND message_id=$2) +
+      (SELECT count(*) FROM ai_isa_shared_facts WHERE tenant_id=$1 AND message_id=$2) +
+      (SELECT count(*) FROM ai_isa_handoffs WHERE tenant_id=$1 AND pending_message_id=$2) AS n`,[target.tenant,target.id])).rows[0].n).toBe('0');
+    if (linked) await c.query("UPDATE assistant_actions SET status='blocked' WHERE tenant_id=$1 AND id=$2",[target.tenant,action]);
+    else {
+      // Same UUID in another tenant must not match the message's composite association.
+      await c.query(`INSERT INTO assistant_actions (tenant_id,id,contact_id,kind,action_category,autonomy,status,owner_user_id,explanation,payload,playbook_version_id,epoch)
+        SELECT tenant_id,$2,contact_id,kind,action_category,autonomy,'blocked',owner_user_id,'Synthetic unrelated blocked action',payload,playbook_version_id,epoch
+          FROM assistant_actions WHERE tenant_id=$1 AND id=(SELECT assistant_action_id FROM messages WHERE tenant_id=$1 AND id=$3)`,[other.tenant,action,other.id]);
+    }
+    const migration=c.query(readFileSync(join(MIGRATIONS_DIR,'0102_preserve_unresolved_outcomes.sql'),'utf8'));
+    if (linked) await expect(migration).rejects.toThrow('UNRESOLVED_LEGACY_DEPENDENCIES_REQUIRE_REVIEW');
+    else {
+      await migration;
+      expect((await c.query('SELECT status FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].status).toBe('dispatch_unknown');
+    }
+  } finally { await c.query('ROLLBACK'); c.release(); }
+  expect((await h.su.query('SELECT status FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].status).toBe('failed');
+  expect((await h.su.query('SELECT a.status FROM assistant_actions a JOIN messages m ON m.tenant_id=a.tenant_id AND m.assistant_action_id=a.id WHERE m.tenant_id=$1 AND m.id=$2',[target.tenant,target.id])).rows[0].status).toBe('executed');
 });
 
 it('upgrades populated 0100 as a non-superuser: stops/withdraws both tenants, retains restrictions and exact reasons', async () => {

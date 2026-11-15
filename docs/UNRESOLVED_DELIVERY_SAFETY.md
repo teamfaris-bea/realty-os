@@ -60,3 +60,12 @@ Follow-up verification commands/results (same synthetic local PostgreSQL and Nod
 - Full raw-HTTP file: `vitest run --root apps/api src/comms/unknownResponse.test.ts --maxWorkers=1`: seven passed.
 - Seeded non-superuser upgrade command above: one passed, with six legacy rows across two tenants and AI result-job assertions.
 - API typecheck, changed-file ESLint and whitespace checks passed. No full browser, production migration, live provider, mixed-version or load tests were run for this follow-up.
+
+
+### Blocked assistant-action preflight correction
+
+The dependency preflight also checks `assistant_actions` through both `messages.tenant_id` and `messages.assistant_action_id`, refusing a linked action whose status is blocked. No cause is inferred and no action is restored. The earlier successful-upgrade fixture incorrectly contained blocked actions; its eligible AI controls now use executed actions, while isolated blocked-action cases explicitly test rejection.
+
+Failing-first command: `vitest run --root packages/db test/import_source_upgrade.test.ts -t 'blocked action alone' --maxWorkers=1 --testTimeout=120000`: one failed, one passed, one filtered out. The failing case contained no turn, shared fact or handoff associated with the target message; the other case inserted the same action UUID as blocked only in the other tenant and correctly did not block the target. Both execute the actual migration SQL under the supported non-superuser role, in rollback-only transactions. The release block and unverified old-worker drain remain unchanged.
+
+After the predicate change: the full seeded non-superuser upgrade file passed all three tests; `vitest run --root apps/api src/isa/review12.test.ts -t 'b12 recheck R15' --maxWorkers=1` passed four tests (47 filtered out). Changed-test ESLint and `git diff --check` passed. No new typecheck was run for this SQL/test/documentation-only follow-up.
