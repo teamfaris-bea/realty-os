@@ -35,6 +35,12 @@ describe('the AI ISA web contract (isaWeb/webContract.json)', () => {
       ['GET /ai-isa/handoffs/:id', handoffView({ package: { ...handoffView().package, appointmentDetail: null, savedSearch: null, recipientUserId: null, endedByUserId: ISA_IDS.tl, inactivityReleaseAt: null } })],
     ];
     for (const [key, body] of cases) expect(isaResponseViolations(key, body), key).toEqual([]);
+    // The API requires both continuation fields, even when continuation is unavailable.
+    for (const key of ['canContinue', 'continueRefusal']) {
+      const missing: Record<string, unknown> = { ...panel() };
+      delete missing[key];
+      expect(isaResponseViolations('GET /contacts/:id/ai-isa', missing), key).not.toEqual([]);
+    }
     // and a stray score or confidence key is something the panel can never carry
     expect(isaResponseViolations('GET /ai-isa/handoffs/:id', { ...handoffView(), confidence: 0.9 })).not.toEqual([]);
     // batch 13 isa-4 F6: the ISA-2b keys are typed in the contract, so a wrong shape is caught

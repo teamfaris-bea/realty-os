@@ -33,7 +33,8 @@ function mail(over: Partial<MailMessageView> = {}): MailMessageView {
 
 const MAIL_PATH = `GET /contacts/${IDS.jane}/mail-messages?limit=100`;
 
-function fake(items: MailMessageView[], coverage = [{ address: 'jane@example.test', since: '2026-10-12T00:00:00.000Z' }], nextBefore: string | null = null) {
+// Coverage renders a local calendar date; keep this fixture on Oct 12 in the test's timezone.
+function fake(items: MailMessageView[], coverage = [{ address: 'jane@example.test', since: new Date(2026, 9, 12, 12).toISOString() }], nextBefore: string | null = null) {
   return new FakeFetch()
     .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact() } })
     .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, {
@@ -139,7 +140,8 @@ describe('synced Gmail in the thread', () => {
     // the opener left with the entry: focus lands on the conversation, not <body>, and the removal is announced
     await waitFor(() => expect(document.activeElement).toBe(list));
     expect((await screen.findAllByText(THREAD_REMOVED)).length).toBeGreaterThan(0);
-    expect(screen.getByTestId('announcer')).toHaveTextContent(THREAD_REMOVED);
+    // Announcer clears the live region before publishing on the next animation frame.
+    await waitFor(() => expect(screen.getByTestId('announcer')).toHaveTextContent(THREAD_REMOVED));
     expect(f.callsTo('POST /me/mail-threads/thr-1/exclude')).toHaveLength(1);
   });
 

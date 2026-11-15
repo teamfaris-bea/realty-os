@@ -15,7 +15,7 @@ import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { type PanelHandoff, type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useMe, usePanel } from './api.js';
-import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './Controls.js';
+import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './AiCareControls.js';
 import { capsWords, localDate, localTime, PAUSE_EXPIRY_MS, scheduledWords, zonesWords } from './time.js';
 import {
   EFFECT_WORDS,
