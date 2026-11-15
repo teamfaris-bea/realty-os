@@ -7,6 +7,7 @@
 // only, the removed phones' STOPs included) and refuses with the stage-automation skip reason. A merged-away record is
 // refused too (F2, the skip reason person_removed), and no other path enrolls one. Real Postgres, the real server, fake
 // providers only.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { contentSha256 } from '@realty/core/assistant';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -268,7 +269,7 @@ describe('F2 R-OWN-24 R-PAR-16: a merged-away record is never enrolled, by any p
     expect((await h.su.query('SELECT state, stop_reason FROM playbook_enrollments WHERE id = $1', [id])).rows[0]).toEqual({ state: 'stopped', stop_reason: 'merged' });
     // a live enrollment on the loser after the merge anyway (a race the merge's stop cannot see, or one written before
     // this fix): a superuser fixture, since no application path writes it now
-    await h.su.query("UPDATE playbook_enrollments SET state = 'active', stop_reason = NULL, ended_at = NULL WHERE id = $1", [id]);
+    await tenantFixtureQuery(h.su, w.tenantId, "UPDATE playbook_enrollments SET state = 'active', stop_reason = NULL, ended_at = NULL WHERE id = $1", [id]);
     const phones = (await h.su.query<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [l])).rows.map((p) => p.address);
     const toLoser = () => h.providers.telephony.sms.filter((m) => phones.includes(m.to)).length;
     const sms = toLoser();

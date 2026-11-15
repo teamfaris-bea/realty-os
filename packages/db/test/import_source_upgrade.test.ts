@@ -2,11 +2,13 @@ import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
+import type { ContactId } from '@realty/core/foundation';
 import { sql } from 'kysely';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDatabase } from '../src/client.js';
 import { MIGRATIONS_DIR } from '../src/dbConfig.js';
-import { migrate } from '../src/migrate.js';
+import { listMigrations, migrate } from '../src/migrate.js';
+import { applyOwnershipCommand } from '../src/ownership/apply.js';
 import { closeCreateWindow, openCreateWindow } from '../src/rolePreflight.js';
 import { createTestDb } from '../src/testing/index.js';
 import { withTenantTx } from '../src/tenantTx.js';
@@ -18,7 +20,30 @@ const role = `realty_trial_${process.pid}_source_upgrade`;
 const legacy: {tenant:string; id:string; repaired:boolean; ai:boolean}[] = [];
 const fixtures: { world: World; contact: string; plan: string; action: string; run: string; expected: string | null }[] = [];
 
-beforeAll(async () => {
+const feedFixtures: { world: World; ids: string[]; visible: string[]; other: string[] }[] = [];
+const migrationLedger = async () => (await h.su.query('SELECT version,name,checksum FROM realty_migrations.schema_migrations ORDER BY version')).rows;
+async function assertFeedVisibility() {
+  await withTenantTx(feedFixtures[0]!.world.agents[0]!.actor,async tx => {
+    expect((await sql<{ rolsuper:boolean; rolbypassrls:boolean }>`SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`.execute(tx)).rows)
+      .toEqual([{rolsuper:false,rolbypassrls:false}]);
+    expect((await sql<{ relname:string; relforcerowsecurity:boolean }>`SELECT relname,relforcerowsecurity FROM pg_class
+      WHERE oid IN ('public.contacts'::regclass,'public.priority_feed_items'::regclass) ORDER BY relname`.execute(tx)).rows)
+      .toEqual([{relname:'contacts',relforcerowsecurity:true},{relname:'priority_feed_items',relforcerowsecurity:true}]);
+  },{db:h.app});
+  for (const f of feedFixtures) {
+    for (const [member, expected] of [[f.world.agents[0]!, f.visible], [f.world.agents[1]!, f.other], [f.world.owner, f.ids]] as const) {
+      // Deliberately no tenant predicate: FORCE RLS must isolate duplicate card/contact UUIDs.
+      const rows = await withTenantTx(member.actor, async tx => (await sql<{ tenant_id: string; id: string }>`
+        SELECT tenant_id,id FROM priority_feed_items WHERE id = ANY (${f.ids}::uuid[]) ORDER BY id`.execute(tx)).rows, { db:h.app });
+      expect(rows).toEqual([...expected].sort().map(id => ({ tenant_id:f.world.tenantId,id })));
+    }
+  }
+}
+
+beforeEach(async () => {
+  legacy.length = 0; fixtures.length = 0; feedFixtures.length = 0;
+  const sharedContact = uuid() as ContactId;
+  const sharedCardIds = Array.from({ length:10 }, () => uuid());
   dir = mkdtempSync(join(tmpdir(), 'realty-source-upgrade-'));
   for (const name of readdirSync(MIGRATIONS_DIR).filter(n => n.endsWith('.sql') && n < '0101')) copyFileSync(join(MIGRATIONS_DIR,name),join(dir,name));
   const db = await createTestDb({ migrationsDir: dir });
@@ -26,7 +51,29 @@ beforeAll(async () => {
   const su = new pg.Pool({ connectionString: db.ownerUrl });
   h = { db, app, su, async close() { await app.close(); await su.end(); await db.drop(); } };
   for (let tenant = 0; tenant < 2; tenant++) {
-    const w = await createWorld(app, { agents: 1 });
+    const w = await createWorld(app, { agents: 2 });
+    const own = await selfCreated(app,w,w.agents[0]!);
+    const other = await selfCreated(app,w,w.agents[1]!);
+    // Same UUID in both tenants, but owned by a different agent in the second tenant.
+    const created = await applyOwnershipCommand(w.agents[tenant]!.actor,sharedContact,{kind:'create',via:'self'},
+      {commandId:uuid(),newContact:{displayName:'Synthetic shared-id upgrade contact'},db:app});
+    expect(created.outcome.ok).toBe(true);
+    const visible: string[] = [], otherVisible: string[] = [];
+    let cardIndex = 0;
+    for (const state of ['open','snoozed']) {
+      for (const [viewer,contact,canSee] of [
+        [w.agents[0]!,own,true], [w.agents[0]!,other,false], [w.agents[0]!,null,true],
+        [w.agents[1]!,other,true], [w.agents[0]!,sharedContact,tenant===0],
+      ] as const) {
+        const id = sharedCardIds[cardIndex++]!;
+        await su.query(`INSERT INTO priority_feed_items
+          (tenant_id,id,user_id,item_type,band,contact_id,subject_type,subject_id,reasons,dedupe_key,state,snoozed_until)
+          VALUES ($1,$2::uuid,$3,'first_touch_due','scored',$4,'contact',$2::uuid,'["UPGRADE_VISIBILITY"]',$2::uuid::text,$5,
+            CASE WHEN $5='snoozed' THEN now()+interval '1 hour' ELSE NULL END)`, [w.tenantId,id,viewer.id,contact,state]);
+        if (canSee) (viewer.id===w.agents[0]!.id ? visible : otherVisible).push(id);
+      }
+    }
+    feedFixtures.push({world:w,ids:sharedCardIds,visible,other:otherVisible});
     const pb = uuid(), version = uuid();
     await su.query("INSERT INTO playbooks (tenant_id,id,kind,scope,name) VALUES ($1,$2,'nurture','team','Synthetic upgrade plan')", [w.tenantId,pb]);
     await su.query("INSERT INTO playbook_versions (tenant_id,id,playbook_id,version_no,steps,content_sha256,created_by_user_id) VALUES ($1,$2,$3,1,'[]',$4,$5)", [w.tenantId,version,pb,'a'.repeat(64),w.owner.id]);
@@ -79,7 +126,7 @@ beforeAll(async () => {
     for (const schema of ['public','app','realty_migrations']) await c.query(`ALTER SCHEMA ${schema} OWNER TO ${ident}`);
     for (const table of ['lead_sources','contacts','import_records','messages','calls','playbook_enrollments','assistant_actions','priority_feed_items','playbook_step_runs']) await c.query(`ALTER TABLE public.${table} OWNER TO ${ident}`);
     await c.query(`ALTER TABLE realty_migrations.schema_migrations OWNER TO ${ident}`);
-    for (const fn of ['playbook_enrollments_source_guard','messages_source_guard','calls_source_guard','lead_sources_import_labels_guard']) await c.query(`ALTER FUNCTION app.${fn}() OWNER TO ${ident}`);
+    for (const fn of ['playbook_enrollments_source_guard','messages_source_guard','calls_source_guard','lead_sources_import_labels_guard','reject_support_write']) await c.query(`ALTER FUNCTION app.${fn}() OWNER TO ${ident}`);
     await c.query(`GRANT CREATE ON DATABASE ${c.escapeIdentifier(new URL(h.db.ownerUrl).pathname.slice(1))} TO ${ident}`);
     await c.query(`SET ROLE ${ident}`);
     expect((await c.query('SELECT rolsuper,rolbypassrls,rolcanlogin FROM pg_roles WHERE rolname = current_user')).rows[0]).toEqual({ rolsuper:false,rolbypassrls:true,rolcanlogin:false });
@@ -87,7 +134,7 @@ beforeAll(async () => {
   } finally { await c.query('RESET ROLE'); c.release(); }
 }, 180_000);
 
-afterAll(async () => {
+afterEach(async () => {
   if (h) {
     const admin = new pg.Client({ connectionString: h.db.ownerUrl.replace(/\/[^/]+$/, '/postgres') });
     await admin.connect();
@@ -129,10 +176,47 @@ it.each([true,false])('blocked action alone: linked=%s aborts only the matching 
   expect((await h.su.query('SELECT a.status FROM assistant_actions a JOIN messages m ON m.tenant_id=a.tenant_id AND m.assistant_action_id=a.id WHERE m.tenant_id=$1 AND m.id=$2',[target.tenant,target.id])).rows[0].status).toBe('executed');
 });
 
-it('upgrades populated 0100 as a non-superuser: stops/withdraws both tenants, retains restrictions and exact reasons', async () => {
+it.each([false,true])('upgrades populated 0100 as a non-superuser (staged=%s): preserves both tenants, source/outcome repairs and feed visibility', async staged => {
   const url = new URL(h.db.ownerUrl);
   url.searchParams.set('options',`-c role=${role}`);
-  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0101_b18_import_source_safety.sql','0102_preserve_unresolved_outcomes.sql']);
+  const before = await migrationLedger();
+  expect(before.at(-1)?.name).toBe('0100_b18_automated_drafts_guard.sql');
+  await assertFeedVisibility();
+  let preserved = before;
+  if (staged) {
+    const prior = mkdtempSync(join(tmpdir(),'realty-pr3-upgrade-'));
+    try {
+      for (const name of readdirSync(MIGRATIONS_DIR).filter(n => n.endsWith('.sql') && n < '0103')) copyFileSync(join(MIGRATIONS_DIR,name),join(prior,name));
+      expect((await migrate(url.href,prior)).applied).toEqual(['0101_b18_import_source_safety.sql','0102_preserve_unresolved_outcomes.sql']);
+    } finally { rmSync(prior,{recursive:true,force:true}); }
+    preserved = await migrationLedger();
+    expect(preserved.at(-1)?.name).toBe('0102_preserve_unresolved_outcomes.sql');
+    await assertFeedVisibility();
+    // A completed PR #3 release closes its CREATE window before the later feed release reopens it.
+    const stageClient = new pg.Client({connectionString:url.href});
+    await stageClient.connect();
+    try { await closeCreateWindow(stageClient,() => {}); await openCreateWindow(stageClient,() => {}); }
+    finally { await stageClient.end(); }
+  }
+  const throughFeed = mkdtempSync(join(tmpdir(),'realty-feed-upgrade-'));
+  try {
+    for (const name of readdirSync(MIGRATIONS_DIR).filter(n => n.endsWith('.sql') && n < '0104')) copyFileSync(join(MIGRATIONS_DIR,name),join(throughFeed,name));
+    expect((await migrate(url.href,throughFeed)).applied).toEqual(staged
+      ? ['0103_feed_visibility_lookup.sql']
+      : ['0101_b18_import_source_safety.sql','0102_preserve_unresolved_outcomes.sql','0103_feed_visibility_lookup.sql']);
+  } finally { rmSync(throughFeed,{recursive:true,force:true}); }
+  const feedLedger = await migrationLedger();
+  expect(feedLedger.slice(0,preserved.length)).toEqual(preserved);
+  expect(feedLedger.at(-1)?.name).toBe('0103_feed_visibility_lookup.sql');
+  await assertFeedVisibility();
+  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0104_import_sources_support_guard.sql','0105_import_source_targeted_plans.sql','0106_import_capture_family_once.sql']);
+  preserved = feedLedger;
+  const after = await migrationLedger();
+  expect(after.slice(0,preserved.length)).toEqual(preserved);
+  expect(after).toEqual(listMigrations(MIGRATIONS_DIR).map(({version,name,checksum}) => ({version,name,checksum})));
+  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual([]);
+  expect(await migrationLedger()).toEqual(after);
+  await assertFeedVisibility();
   const c = new pg.Client({ connectionString:url.href });
   await c.connect();
   try { await closeCreateWindow(c, () => {}); } finally { await c.end(); }

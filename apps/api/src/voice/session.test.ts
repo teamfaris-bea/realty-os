@@ -1,6 +1,7 @@
 // Module 48 items 5 and 7: the runner's ledger, ordering, booking, recording and merge edges
 // (R-VOICE-2, R-VOICE-4, R-VOICE-7, R-VOICE-10, R-VOICE-11, R-VOICE-14, R-VOICE-15, R-VOICE-16; E116, E117, E421, E423–E425,
 // E427, E429, E430).
+import { call, freshReauth } from '../admin/testing.js';
 import { SCRIPTS, SCRIPT_EVENTS as ev, SLOT_A, SLOT_ARGS, type VoiceScript } from '@realty/core/voice/testing';
 import { withTenantTx } from '@realty/db';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -203,7 +204,12 @@ describe('E421 E425 E427: takeover and booking edges', () => {
   it('R-VOICE-6 O8: an unowned caller is offered no slots and cannot book; the handback goes to whoever the offer reaches', async () => {
     // an unassigned person, made the way the ownership engine makes one (an import's import_assign)
     const phone = randomPhone();
-    const id = await importedUnassigned(h, w.tenantId, { firstName: 'Una', lastName: 'Signed', phones: [phone] });
+    const label = 'Synthetic reviewed unowned caller';
+    const source = await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: label, kind: 'website' });
+    expect(source.status).toBe(201);
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: source.body.source.id })).status).toBe(200);
+    const id = await importedUnassigned(h, w.tenantId, { firstName: 'Una', lastName: 'Signed', phones: [phone], importSource: label });
     const before = (await h.su.query('SELECT owner_user_id, ownership_state, offered_to_user_id FROM contacts WHERE id = $1', [id])).rows[0];
     expect(before).toMatchObject({ owner_user_id: null, ownership_state: 'unassigned' });
     const c = await aiCall(h, w, SCRIPTS.booking, { contact: { id, phone } });

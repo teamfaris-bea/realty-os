@@ -1,6 +1,7 @@
 // ISA-2b items 3, 5 and 6: the inactivity-warning handoff (R-ISA-16), the handoff recipient after a take over
 // (R-ISA-15, R-ISA-30) and a send_result for every terminal status (R-ISA-3, -4, -11, -14, -21). Real Postgres via the
 // API harness; fakes only.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms } from '../comms/testing.js';
@@ -139,7 +140,7 @@ describe('R-ISA-4: a send_result for every terminal status', () => {
     await runIsa(h, w.tenantId);
     const m = (await aiMessages(h, l.id)).filter((x) => x.status === 'sent').at(-1)!;
     const f = await factFor(l.id, m.id);
-    await h.su.query(`UPDATE messages SET status = 'dispatching', dispatched_at = now() - interval '25 minutes' WHERE id = $1`, [m.id]);
+    await tenantFixtureQuery(h.su, w.tenantId, `UPDATE messages SET status = 'dispatching', dispatched_at = now() - interval '25 minutes' WHERE id = $1`, [m.id]);
     await h.su.query(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at) VALUES ($1, 'default', 'comms.dispatch_stale', $2::jsonb, now() - interval '1 second')`, [w.tenantId, JSON.stringify({ messageId: m.id })]);
     // the reaper's body, run directly (its reconcile job is left pending for the step below)
     const { dispatchStaleHandler } = await import('../worker/handlers/dispatchStale.js');

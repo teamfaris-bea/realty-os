@@ -55,10 +55,13 @@ describe('schema invariants after all migrations', () => {
   // reads) a TEMP table of the same name if the calling session made one, and a trigger on that temp table runs the
   // session's own code as whoever runs the function (inside a definer: app_definer or app_retention, BYPASSRLS).
   // Every function body must name public tables schema-qualified (transition tables and CTEs are not relations).
+  // Clean each body once, then keep the relation on the outer side: PostgreSQL can reuse each
+  // relation's two regex patterns across all functions instead of thrashing its pattern cache.
+  // OFFSET 0 preserves that lateral evaluation order; the scan and both violation controls stay intact.
   const UNQUALIFIED = `
     WITH rels AS (
       SELECT c.relname FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r','p','v','m','f','S')
-    ), fns AS (
+    ), fns AS MATERIALIZED (
       SELECT p.oid::regprocedure::text AS fn,
              -- comments and string literals removed: a table name inside a message is not a reference
              regexp_replace(regexp_replace(regexp_replace(p.prosrc, '--[^\\n]*', ' ', 'g'), '/\\*.*?\\*/', ' ', 'g'), '''([^'']|'''')*''', ' ', 'g') AS body
@@ -68,9 +71,11 @@ describe('schema invariants after all migrations', () => {
          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
     )
     SELECT f.fn || ': ' || string_agg(DISTINCT r.relname, ',' ORDER BY r.relname) AS hit
-      FROM fns f JOIN rels r
-        ON f.body ~* ('\\m(from|join|into|update|table|only|truncate|using|lock)\\s+' || r.relname || '\\M(?!\\s*\\.)')
+      FROM rels r CROSS JOIN LATERAL (
+      SELECT f.fn FROM fns f WHERE f.body ~* ('\\m(from|join|into|update|table|only|truncate|using|lock)\\s+' || r.relname || '\\M(?!\\s*\\.)')
         OR f.body ~* (',\\s*' || r.relname || '\\s+(as\\s+)?[a-z_][a-z0-9_]*\\s+(join|where|on|left|cross|inner|,)')
+      OFFSET 0
+    ) f
      GROUP BY f.fn ORDER BY 1`;
 
   it('R-TEN-5: no SQL or PL/pgSQL function names a public table without its schema (a temp table cannot shadow it)', async () => {

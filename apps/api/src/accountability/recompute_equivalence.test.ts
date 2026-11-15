@@ -10,6 +10,7 @@
 // state inside one transaction: the old one under a savepoint, its result snapshotted and rolled back,
 // then the new one; both get the same `now` and identical id generators. Equal snapshots at every step
 // (from equal starting states) prove equal end states over the whole sequence.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import type { Brand, IdGenerator, Instant, Role, TenantId, UserId } from '@realty/core/foundation';
 import { DAY_MS, HOUR_MS, MINUTE_MS } from '@realty/core/foundation';
 import { DEFAULT_EXCEPTION_SETTINGS, type ExceptionItemSpec, apptKey, deriveExceptions, milestoneKey, promiseKey, sendKey, untouchedKey } from '@realty/core/priority';
@@ -261,7 +262,7 @@ describe('tenant recompute equivalence (old per-row upsert vs new)', () => {
     const sends = (await su.query<{ id: string }>(`SELECT subject_id AS id FROM exception_items WHERE tenant_id = $1 AND item_type = 'failed_send' ORDER BY dedupe_key LIMIT 60`, [T])).rows.map((r) => r.id);
     await su.query(`UPDATE messages SET status = 'delivered', updated_at = now() WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, sends.slice(0, 15)]);
     await su.query(`UPDATE messages SET status = 'dispatch_unknown', updated_at = now() WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, sends.slice(15, 30)]);
-    await su.query(`UPDATE messages SET status = 'dispatching', dispatched_at = now(), updated_at = now() WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, sends.slice(30, 45)]);
+    await tenantFixtureQuery(su, T, `UPDATE messages SET status = 'dispatching', dispatched_at = now(), updated_at = now() WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, sends.slice(30, 45)]);
     await su.query(`UPDATE messages SET status_reason = 'mailbox full', updated_at = now() WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, sends.slice(45, 60)]);
     const tasks = (await su.query<{ id: string }>(`SELECT subject_id AS id FROM exception_items WHERE tenant_id = $1 AND item_type = 'overdue_promise' AND condition_cleared_at IS NULL ORDER BY dedupe_key LIMIT 30`, [T])).rows.map((r) => r.id);
     await su.query(`UPDATE tasks SET status = 'done', completed_at = now() WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, tasks.slice(0, 10)]);

@@ -4,6 +4,7 @@
 // app_user. The superuser pool only reads state back, moves clocks (stored instants) and inserts rows
 // that have no application path in this module (assistant actions, playbooks, enrollments: api/assistant
 // builds those later).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { contentSha256 } from '@realty/core/assistant';
 import type { LightMyRequestResponse } from 'fastify';
@@ -169,7 +170,7 @@ export async function playbookFixture(h: ApiHarness, tenantId: string, approver:
     c.release();
   }
   const enrollmentId = randomUUID();
-  await h.su.query("INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, state) VALUES ($1,$2,$3,$4,$5,'new_lead','active')", [tenantId, enrollmentId, playbookId, versionId, contactId]);
+  await tenantFixtureQuery(h.su, tenantId, "INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, state) VALUES ($1,$2,$3,$4,$5,'new_lead','active')", [tenantId, enrollmentId, playbookId, versionId, contactId]);
   const stepRunId = randomUUID();
   await h.su.query("INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for) VALUES ($1,$2,$3,$4,$5,'scheduled',now())", [tenantId, stepRunId, enrollmentId, versionId, (o.step as { stepKey: string }).stepKey]);
   const actionId = randomUUID();

@@ -12,7 +12,7 @@ import { useApi } from '../../shell/index.js';
 import { useContact } from '../contact/useContact.js';
 import type { OneTapAction } from '../feed/lib/types.js';
 import { type ControlResult, type PanelResponse, isaKeys, useIsaAction, useLiveRow } from './api.js';
-import { cap, useViewer } from './Controls.js';
+import { cap, useViewer } from './AiCareControls.js';
 import { StartSheet } from './Person.js';
 import { firstOf } from './words.js';
 

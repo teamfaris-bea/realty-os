@@ -8,7 +8,7 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { Card, EmptyState, Icon, Notice } from '../../design/index.js';
 import { type ListRow, type ListScope, type ListState, useAdmin, useIsaList } from './api.js';
-import { AiCareControls, HoldBanner, UndoToastHost, targetOfRow, useHold, useViewer } from './Controls.js';
+import { AiCareControls, HoldBanner, UndoToastHost, targetOfRow, useHold, useViewer } from './AiCareControls.js';
 import { localDate, localTime } from './time.js';
 import { SIDE_WORDS, endWords, escalationTopic, firstOf, isaMessage, pauseWords } from './words.js';
 

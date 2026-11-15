@@ -18,7 +18,7 @@ import { countdownWords, formatCountdown } from '../feed/lib/format.js';
 import { useNow } from '../feed/lib/hooks.js';
 import type { FeedCard } from '../feed/lib/types.js';
 import { type AckResult, type HandoffView, type ListRow, useHandoff, useIsaAction, useLiveRow, usePanel } from './api.js';
-import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './Controls.js';
+import { AiCareControls, HoldBanner, type HoldState, UndoToastHost, type ViewerInfo, cap, stateOfPanel, targetOfPanel, targetOfRow, useHold, useViewer } from './AiCareControls.js';
 import { localDate, localTime } from './time.js';
 import { CARE_STATE_WORDS, CONFIRMATION_NOT_SENT_SHORT, NO_RECIPIENT_WORDS, OTHER_CHECK, SLA_HAS_DEADLINE, UNBUILT_STEPS, appointmentKindWords, bookedWhen, savedSearchWords, ackWhoWords, handoffHolder, ownerWho, bookedWords, closedReasonWords, escalationTopic, handoffDoneWords, fillLine, firstOf, handoffWhy, messageVerb, nextStepWords, noDeadlineWords, noteWords } from './words.js';
 

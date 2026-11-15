@@ -112,3 +112,17 @@ it('consolidates blank review evidence before counting distinct people without c
   `.execute(tx)).rows, { db:h.app });
   expect(rows).toEqual([{label:'',people:'2'},{label:' Exact ',people:'1'}]);
 });
+
+
+it('a support actor cannot capture source associations even through the internal definer path', async () => {
+  const c = await h.su.connect();
+  try {
+    await c.query('BEGIN');
+    // The helper stays private. Simulate its definer execution to verify the table-level backstop,
+    // including an INSERT whose SELECT finds no rows; never grant this helper to app_user.
+    await c.query('SET LOCAL ROLE app_definer');
+    await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.actor_kind','support',true),set_config('app.principal_type','staff',true)", [w.tenantId]);
+    await expect(c.query('SELECT app.capture_import_sources($1,NULL)', [w.tenantId]))
+      .rejects.toMatchObject({code:'42501',message:expect.stringContaining('SUPPORT_READ_ONLY')});
+  } finally { await c.query('ROLLBACK'); c.release(); }
+});

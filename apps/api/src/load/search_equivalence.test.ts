@@ -17,6 +17,7 @@
 // The old query is run once per actor and table as ONE statement over all terms (same FROM, WHERE and ORDER
 // BY as the pre-change branch, per term): running it term by term would scan every row under RLS each time.
 // Pre-change, ties on the timestamp had no order; both sides here break ties by id DESC (the new query does).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import type { Actor, ContactId, Role, TenantId, UserId } from '@realty/core/foundation';
 import { type Database, applyOwnershipCommand, createDatabase, withTenantTx } from '@realty/db';
@@ -162,7 +163,7 @@ beforeAll(async () => {
   const owner = (await q<{ user_id: string }>(`SELECT user_id FROM memberships WHERE tenant_id = $1 AND role = 'owner'`, [T]))[0]!.user_id;
   await q(`INSERT INTO import_batches (tenant_id, id, source, status, created_by_user_id, source_snapshot_sha256) VALUES ($1,$2,'csv','committed',$3,$4)`, [T, batch, owner, 'a'.repeat(64)]);
   await q(`INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1,$2,$3,'messages',4,'pending')`, [T, stage, batch]);
-  await q(`INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1,$2,$3,'file.csv#row=2','imported',now(),$4)`, [T, rec, stage, randomUUID()]);
+  await tenantFixtureQuery(su, T, `INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1,$2,$3,'file.csv#row=2','imported',now(),$4)`, [T, rec, stage, randomUUID()]);
   for (const s of special.slice(0, 6)) {
     await q(`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, imported, import_record_id, occurred_at)
              SELECT tenant_id, $2, id, contact_id, 'sms', 'inbound', '+14155550100', '+14155550101', 'importedword from FUB', 'received', 'import', true, $3, now() - interval '3 days'
@@ -384,7 +385,7 @@ describe('search token tables after erasure, retention, a merge and an import re
     const rec = randomUUID();
     await su.query(`INSERT INTO import_batches (tenant_id, id, source, status, created_by_user_id, source_snapshot_sha256) VALUES ($1, $2, 'csv', 'committed', $3, $4)`, [T, batch, owner.userId, 'c'.repeat(64)]);
     await su.query(`INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1, $2, $3, 'messages', 4, 'reverting')`, [T, stage, batch]);
-    await su.query(`INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1, $2, $3, 'file.csv#row=9', 'imported', now(), $4)`, [T, rec, stage, randomUUID()]);
+    await tenantFixtureQuery(su, T, `INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1, $2, $3, 'file.csv#row=9', 'imported', now(), $4)`, [T, rec, stage, randomUUID()]);
     const messageIds = [randomUUID(), randomUUID()];
     const noteIds = [randomUUID(), randomUUID()];
     for (const id of messageIds) {

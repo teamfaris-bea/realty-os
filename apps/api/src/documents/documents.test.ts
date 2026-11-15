@@ -1,5 +1,6 @@
 // api/documents through the real server on real Postgres, fakes only (PHASE2_3_PLAN §5.4 #42; DATA_MODEL Part 2
 // R-DOC-1..10, E130, E400-E411, E419). Every write goes through the routes as app_user; the superuser pool reads back.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
@@ -582,7 +583,7 @@ describe('the erasure preview says what documents do to an erasure (b11 db-publi
     const shreddedRec = randomUUID();
     const tr = randomUUID();
     await h.su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3)', [w.tenantId, conv, loser.id]);
-    await h.su.query(
+    await tenantFixtureQuery(h.su, w.tenantId,
       `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, agent_user_id, client_address, initiator, status, started_at, answered_at, ended_at,
          duration_s, recording_mode, recording_announced_at, recording_decision)
        VALUES ($1,$2,$3,$4,'inbound',$5,'+14155550123','client','completed',now() - interval '1 hour',now() - interval '1 hour',now() - interval '50 minutes',600,'announced_all_parties',now() - interval '1 hour','{}')`,

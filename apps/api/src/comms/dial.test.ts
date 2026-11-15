@@ -1,5 +1,6 @@
 // Tap-to-call, recordings and transcripts (ARCHITECTURE §9 path 3; R-CONSENT-16, R-PERM-8, R-PERM-9,
 // R-DATA-1, R-TEN-9, R-GATE-9; E47).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -124,9 +125,9 @@ describe('tap-to-call (path 3)', () => {
     const conv = (await h.su.query<{ id: string }>('SELECT id FROM conversations WHERE contact_id = $1', [c.id])).rows[0]?.id ?? randomUUID();
     await h.su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [w.tenantId, conv, c.id]);
     const ins = (initiator: string, handled: string) =>
-      h.su.query("INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client_address, initiator, handled_by, status, started_at, recording_mode, recording_decision) VALUES ($1,$2,(SELECT id FROM conversations WHERE contact_id = $3),$3,'inbound',$4,$5,$6,'ringing',now(),'off','{}')", [w.tenantId, randomUUID(), c.id, c.phone, initiator, handled]);
+      tenantFixtureQuery(h.su, w.tenantId, "INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client_address, initiator, handled_by, status, started_at, recording_mode, recording_decision) VALUES ($1,$2,(SELECT id FROM conversations WHERE contact_id = $3),$3,'inbound',$4,$5,$6,'ringing',now(),'off','{}')", [w.tenantId, randomUUID(), c.id, c.phone, initiator, handled]);
     await expect(ins('assistant', 'human')).rejects.toThrow(/check/i);
-    // 0018: the voice guard runs even without a tenant context and refuses first (no approved voice playbook);
+    // With valid tenant context, the voice guard refuses first (no approved voice playbook);
     // the inbound-only CHECK refuses the same row
     await expect(ins('client', 'assistant')).rejects.toThrow(/check|VOICE_PLAYBOOK_NOT_APPROVED/i);
   });

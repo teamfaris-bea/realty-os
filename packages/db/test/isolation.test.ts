@@ -67,14 +67,15 @@ afterAll(async () => {
   await h?.close();
 });
 
-const DENIED = /row-level security|permission denied/;
+// PostgreSQL insufficient_privilege covers RLS and explicit tenant-context guards.
+const denied = (error: { code?: string }) => error.code === '42501';
 const GLOBAL_LOGS = new Set(['auth_events', 'webhook_events']);
 
-async function attempt<T>(actor: Actor, fn: (tx: Parameters<Parameters<typeof withTenantTx>[1]>[0]) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+async function attempt<T>(actor: Actor, fn: (tx: Parameters<Parameters<typeof withTenantTx>[1]>[0]) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: string; code?: string }> {
   try {
     return { ok: true, value: await withTenantTx(actor, fn, { db: h.app }) };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return { ok: false, error: (e as Error).message, code: (e as { code?: string }).code };
   }
 }
 
@@ -97,9 +98,9 @@ describe('generated tenant isolation sweep', () => {
       const failures: string[] = [];
       for (const t of tables) {
         const sel = await attempt(actor, async (tx) => Number((await sql<{ n: string }>`SELECT count(*) AS n FROM ${sql.table(t)} WHERE tenant_id = ${b.tenantId}`.execute(tx)).rows[0]!.n));
-        if (sel.ok ? sel.value !== 0 : !DENIED.test(sel.error)) failures.push(`${t} SELECT: ${JSON.stringify(sel)}`);
+        if (sel.ok ? sel.value !== 0 : !denied(sel)) failures.push(`${t} SELECT: ${JSON.stringify(sel)}`);
         const upd = await attempt(actor, async (tx) => Number((await sql`UPDATE ${sql.table(t)} SET tenant_id = tenant_id WHERE tenant_id = ${b.tenantId}`.execute(tx)).numAffectedRows ?? 0));
-        if (upd.ok ? upd.value !== 0 : !DENIED.test(upd.error)) failures.push(`${t} UPDATE: ${JSON.stringify(upd)}`);
+        if (upd.ok ? upd.value !== 0 : !denied(upd)) failures.push(`${t} UPDATE: ${JSON.stringify(upd)}`);
         const [row] = await suRows<{ j: Record<string, unknown> }>(h.su, `SELECT row_to_json(x) AS j FROM public."${t}" x WHERE tenant_id = $1 LIMIT 1`, [b.tenantId]);
         const cols = (await suRows<{ c: string }>(h.su, `SELECT column_name AS c FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1
                                                           AND is_generated = 'NEVER' AND (identity_generation IS NULL OR identity_generation <> 'ALWAYS') ORDER BY ordinal_position`, [t])).map((r) => `"${r.c}"`);
@@ -110,7 +111,7 @@ describe('generated tenant isolation sweep', () => {
         // auth_events / webhook_events are global by design (0001 §22 self-check excludes them): failed logins
         // have no tenant, and app_user may only INSERT auth events (never read them back).
         if (GLOBAL_LOGS.has(t)) continue;
-        if (ins.ok || !DENIED.test(ins.error)) failures.push(`${t} INSERT: ${JSON.stringify(ins)}`);
+        if (ins.ok || !denied(ins)) failures.push(`${t} INSERT: ${JSON.stringify(ins)}`);
       }
       expect(failures).toEqual([]);
     }, 120_000);
@@ -125,7 +126,7 @@ describe('generated tenant isolation sweep', () => {
           const r = await c.query(`SELECT count(*) AS n FROM public."${t}"`);
           if (Number(r.rows[0].n) !== 0) bad.push(t);
         } catch (e) {
-          if (!DENIED.test((e as Error).message)) bad.push(`${t}: ${(e as Error).message}`);
+          if (!denied(e as { code?: string })) bad.push(`${t}: ${(e as Error).message}`);
         }
       }
       expect(bad).toEqual([]);

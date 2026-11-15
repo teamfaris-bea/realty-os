@@ -87,6 +87,8 @@ export function panel(over: Partial<PanelResponse> & { state?: 'live' | 'paused'
     canStart: false,
     startRefusal: null,
     canResume: state === 'paused' && owner === IDS.me,
+    canContinue: false,
+    continueRefusal: null,
     chain: state === 'none' ? [] : CHAIN_OK,
     capabilities: state === 'none' ? [] : ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'].map((c) => ({ capability: c, allowed: c === 'converse', built: true, sentence: 'x' })),
     consent: state === 'none' ? [] : [{ channel: 'sms', sentence: 'Texts: OK for replies within 24 h of their text.' }],

@@ -10,7 +10,7 @@
 import { type ReactNode, createContext, useContext, useId, useMemo, useState } from 'react';
 import type { ContactFullView, TimelineItem } from '../feed/lib/types.js';
 import { type PanelResponse, type TurnRow, useHandoff, usePanel, useTurns } from './api.js';
-import { AiCareControls, HoldBanner, UndoToastHost, stateOfPanel, targetOfPanel, useHold, useViewer } from './Controls.js';
+import { AiCareControls, HoldBanner, UndoToastHost, stateOfPanel, targetOfPanel, useHold, useViewer } from './AiCareControls.js';
 import { ownerNameOf } from './Person.js';
 import { localTime } from './time.js';
 import { confirmationWords, decisionCodeWords, endWords, escalationTopic, firstOf, messageVerb, pauseWords, statusWords, triggerWords } from './words.js';

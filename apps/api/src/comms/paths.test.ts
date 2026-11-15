@@ -1,6 +1,7 @@
 // Every automated outbound path of ARCHITECTURE §9 goes through dispatchOutbound and its send-time gate:
 // each test asserts the outcome, that a blocked send writes its gate_decisions row (0013: only blocked
 // sends are logged) and that a denial never reaches the provider fake (R-GATE-10).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { renderStep, signOffFor } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
@@ -131,7 +132,7 @@ describe('playbook steps and the 60-second first response (paths 5, 6)', () => {
     const m = await messageRow(h, r.body.message!.id);
     expect(m.dispatched_at!.getTime()).toBeGreaterThanOrEqual(before - 5000);
     // the CHECK: no dispatched_at ⇒ cannot be dispatching
-    await expect(h.su.query("UPDATE messages SET status = 'dispatching', dispatched_at = NULL WHERE id = $1", [r.body.message!.id])).rejects.toThrow(/check/i);
+    await expect(tenantFixtureQuery(h.su, w.tenantId, "UPDATE messages SET status = 'dispatching', dispatched_at = NULL WHERE id = $1", [r.body.message!.id])).rejects.toThrow(/check/i);
   });
 
   it('0013: the DB dispatch guard refuses a direct dispatch to an opted-out number even bypassing dispatchOutbound (no gate decision is needed otherwise)', async () => {
