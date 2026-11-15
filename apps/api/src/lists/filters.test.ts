@@ -2,6 +2,7 @@
 // app_user under FORCE RLS (E194-E200). The SQL run of every definition below equals the plain in-memory
 // reference evaluator (core lists/testing/evaluate.ts) over the people the viewer may see in detail, for
 // every role, including NULL values, a merged-away and an erased contact, team and personal lists.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { type RefPerson, refEvaluate } from '@realty/core/parity/lists/testing';
 import { type ListPredicate, SmartListDefinitionSchema } from '@realty/core/parity/lists';
@@ -24,7 +25,7 @@ let erased: string;
 
 async function source(tenantId: string, name: string): Promise<string> {
   const id = randomUUID();
-  await h.su.query(`INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'portal')`, [tenantId, id, name]);
+  await tenantFixtureQuery(h.su, tenantId, `INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'portal')`, [tenantId, id, name]);
   return id;
 }
 

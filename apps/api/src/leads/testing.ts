@@ -267,7 +267,7 @@ export async function command<T = Record<string, unknown>>(c: TestClient, contac
  * (imports/commit.ts applyContact), without the file or FUB parsing around it. A FUB person with no owner, a CSV row,
  * and a person whose mapped member could not hold leads (owner decision B4) stay so until someone assigns them.
  */
-export async function importedUnassigned(h: ApiHarness, tenantId: string, o: { firstName: string; lastName: string; phones?: string[]; emails?: string[] }): Promise<string> {
+export async function importedUnassigned(h: ApiHarness, tenantId: string, o: { firstName: string; lastName: string; phones?: string[]; emails?: string[]; importSource?: string }): Promise<string> {
   const actor = systemActor(tenantId, 'import');
   const { ids, envelope } = h.app.platform;
   const contactId = ids.next<'ContactId'>() as ContactId;
@@ -277,7 +277,7 @@ export async function importedUnassigned(h: ApiHarness, tenantId: string, o: { f
       const r = await applyOwnershipCommandInTx(tx, actor, contactId, { kind: 'import_assign', target: 'unassigned' }, {
         commandId: derivedCommandId('test.import_contact', contactId),
         ids,
-        newContact: { displayName: `${o.firstName} ${o.lastName}`, firstName: o.firstName, lastName: o.lastName, originalSourceDetail: { import_system: 'csv' } },
+        newContact: { displayName: `${o.firstName} ${o.lastName}`, firstName: o.firstName, lastName: o.lastName, originalSourceDetail: { import_system: 'csv', ...(o.importSource === undefined ? {} : { import_source: o.importSource }) } },
       });
       if (!r.outcome.ok) throw new Error(`import_assign: ${r.outcome.code}`);
       await setOwnershipCommand(tx, null);

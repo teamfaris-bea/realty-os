@@ -2,6 +2,7 @@
 // the FakeOAuth connect; the application side runs through the real server and real Postgres as app_user. Fixtures use
 // fake-ads-* ids and no real names. Clearing platform:ads is a platform step done as superuser and ALWAYS reset
 // (withAdsCleared's finally). The fast-check arbitraries live here (core/ads/testing has no index entry).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { fixedClock, HOUR_MS, type ManualClock } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import fc from 'fast-check';
@@ -63,7 +64,7 @@ export async function adsWorld(h: ApiHarness, o: { clockMs?: number; fake?: Fake
   const agent = await h.invite(owner, 'agent');
   const teamLead = await h.invite(owner, 'team_lead');
   const sourceId = randomUUID();
-  await h.su.query("INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, 'Google Ads', 'ads')", [tenantId, sourceId]);
+  await tenantFixtureQuery(h.su, tenantId, "INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, 'Google Ads', 'ads')", [tenantId, sourceId]);
   const { listingId, pieceId } = await approvedPiece(h, tenantId, agent);
   const clock = fixedClock(o.clockMs ?? testClockStart());
   const fake = o.fake ?? new FakeAds(clock);

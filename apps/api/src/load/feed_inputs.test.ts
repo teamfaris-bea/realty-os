@@ -1,6 +1,7 @@
 // The feed's "waiting for your reply" inputs were rewritten for scale (lane scale-250k): per-contact index
 // range scans from the agent's own book instead of a tenant-wide window scan. Same rows as before: checked
 // against the original SQL for every agent on generated data, plus hand-placed boundary cases.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import type { TenantId, UserId } from '@realty/core/foundation';
 import { instant } from '@realty/core/foundation';
 import { type Database, createDatabase, withTenantTx } from '@realty/db';
@@ -68,7 +69,7 @@ beforeAll(async () => {
     placed[key] = r.rows[0]!.id;
   };
   const call = async (key: string, c: typeof x, ago: string) => {
-    const r = await su.query<{ id: string }>(
+    const r = await tenantFixtureQuery<{ id: string }>(su, T,
       `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, client_address, initiator, status, started_at, ended_at,
                           recording_mode, recording_decision)
        VALUES ($1, gen_random_uuid(), $2, $3, 'inbound', $4, $5, 'client', 'no_answer', now() - $6::interval, now() - $6::interval + interval '20 seconds',

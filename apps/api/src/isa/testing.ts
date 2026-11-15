@@ -2,6 +2,7 @@
 // DNC provider; no real model, send, call or vendor). Every application step goes through the API routes or the
 // worker; the superuser pool only clears the counsel pack, seeds the approved ai_isa policy (the policy editor is the
 // web lane's) and moves stored instants (there is no fake clock).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import type { Instant } from '@realty/core/foundation';
 import type { AiProvider } from '../providers/types.js';
@@ -318,7 +319,7 @@ export async function grantInitiated(h: ApiHarness, tenantId: string, lead: IsaL
   const disc = randomUUID();
   const src = randomUUID();
   const body = `By submitting you agree that ${ts.b} may text and email you about homes (${disc}).`;
-  await h.su.query(`INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'website')`, [tenantId, src, `Own form (test) ${src.slice(0, 8)}`]);
+  await tenantFixtureQuery(h.su, tenantId, `INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'website')`, [tenantId, src, `Own form (test) ${src.slice(0, 8)}`]);
   await h.su.query(`INSERT INTO consent_disclosures (tenant_id, id, channel_scope, purpose_scope, body, body_sha256, names_seller, source_kind, scope_stated)
     VALUES ($1, $2, ARRAY['sms','email'], ARRAY['marketing','informational'], $3, $4, $5, 'own_form', true)`, [tenantId, disc, body, createHash('sha256').update(body).digest('hex'), ts.b]);
   await h.su.query(`INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome, consent_disclosure_id)

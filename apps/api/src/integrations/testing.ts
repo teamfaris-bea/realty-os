@@ -1,5 +1,6 @@
 // Test helpers for api/integrations (imported by *.test.ts only). The provider side is driven through
 // the deterministic fake (FakeOAuth.issueCode), the application side through the real server as app_user.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
 import type { FakeGrantAccount } from '../providers/integrations/fakes.js';
@@ -7,7 +8,7 @@ import { call, freshReauth } from '../admin/testing.js';
 
 export async function leadSource(h: ApiHarness, tenantId: string, name = `Social ${randomUUID().slice(0, 8)}`): Promise<string> {
   const id = randomUUID();
-  await h.su.query("INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'social_dm')", [tenantId, id, name]);
+  await tenantFixtureQuery(h.su, tenantId, "INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'social_dm')", [tenantId, id, name]);
   return id;
 }
 

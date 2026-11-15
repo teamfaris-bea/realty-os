@@ -3,6 +3,7 @@
 // gate says for the same contact at the same moment (the compose preview for texts and email, and
 // evaluateGate for calls), so the summary can never claim a person is reachable when a send would be
 // blocked, or the reverse.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { REACHABILITY_REASONS } from '@realty/core/compliance';
 import { type TenantId } from '@realty/core/foundation';
@@ -256,7 +257,7 @@ describe('reachability summary agrees with the send-time gate', () => {
     const rec = randomUUID();
     await h.su.query("INSERT INTO import_batches (tenant_id, id, source, status, created_by_user_id, source_snapshot_sha256) VALUES ($1,$2,'csv','committed',$3,$4)", [w.tenantId, batch, w.owner.userId, 'a'.repeat(64)]);
     await h.su.query("INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1,$2,$3,'consent',6,'pending')", [w.tenantId, stage, batch]);
-    await h.su.query("INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1,$2,$3,'file.csv#row=2','imported',now(),$4)", [w.tenantId, rec, stage, id]);
+    await tenantFixtureQuery(h.su, w.tenantId, "INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1,$2,$3,'file.csv#row=2','imported',now(),$4)", [w.tenantId, rec, stage, id]);
     await h.su.query("INSERT INTO suppressions (tenant_id, id, address_kind, address_hmac, address_hint, channel, reason, imported, import_record_id) VALUES ($1,$2,'phone',decode($3,'hex'),$4,'all','import_dnc',true,$5)", [w.tenantId, randomUUID(), pt.hmac, `•••-•••-${phone.slice(-4)}`, rec]);
     const asAgent = await expectAgrees(agent, id);
     expect(asAgent.channels.sms.reasons[0]).toMatchObject({ code: 'SUPPRESSED', source: 'imported', suppressionReason: 'import_dnc' });

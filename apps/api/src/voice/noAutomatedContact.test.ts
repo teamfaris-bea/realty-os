@@ -3,6 +3,7 @@
 // The ring decides it (SOURCE_NO_AUTOMATED_CONTACT, Phase 1's voicemail, the call view's sentence), and 0098's guard
 // refuses the takeover in the database when the setting changed between the ring and the dial result. A person on
 // the team still answers or returns the call. A made-up source; fakes only.
+import { importedUnassigned, randomPhone } from '../leads/testing.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { call, freshReauth } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
@@ -30,6 +31,14 @@ afterAll(async () => {
 const markLead = (contactId: string) => h.su.query('UPDATE contacts SET original_lead_source_id = $2 WHERE id = $1', [contactId, marked]);
 
 describe('R-LSRC-8 B18S-5: the assistant never answers a call from a lead the marked source sent', () => {
+  it('an unclassified imported unowned caller stays on Phase 1 voicemail before any assistant tools run', async () => {
+    const phone = randomPhone();
+    const id = await importedUnassigned(h, w.tenantId, { firstName: 'Synthetic', lastName: 'Unreviewed', phones: [phone] });
+    const r = await aiCall(h, w, null, { contact: { id, phone } });
+    await expectPhase1Voicemail(h, r, SOURCE_NO_AUTOMATED_CONTACT);
+    expect((await h.su.query('SELECT owner_user_id FROM contacts WHERE id=$1', [id])).rows[0].owner_user_id).toBeNull();
+  });
+
   it('B18S-5 E727: refused at the ring (SOURCE_NO_AUTOMATED_CONTACT): Phase 1 voicemail, no assistant row, and the call view says why', async () => {
     const c = await ownedContact(w.agents[0]!, { consent: false });
     await markLead(c.id);

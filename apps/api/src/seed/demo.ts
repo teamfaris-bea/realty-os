@@ -595,12 +595,11 @@ async function recordedCall(su: pg.Pool, deps: ReturnType<typeof depsFromPlatfor
     await su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3)', [tenantId, conv, contactId]);
   }
   const addr = (await su.query<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' LIMIT 1", [contactId])).rows[0]?.address ?? '+16175550199';
-  await su.query(
-    `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, agent_user_id, client_address, initiator, status, started_at, answered_at, ended_at,
+  await withTenantTx(systemActor(tenantId, 'provider'), async tx => {
+    await sql`INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, agent_user_id, client_address, initiator, status, started_at, answered_at, ended_at,
        duration_s, recording_mode, recording_announced_at, recording_decision)
-     VALUES ($1,$2,$3,$4,'inbound',$5,$6,'client','completed',$7,$7,$8,75,'announced_all_parties',$7,'{}')`,
-    [tenantId, callId, conv, contactId, agentUserId, addr, started, new Date(started.getTime() + 75_000)],
-  );
+     VALUES (${tenantId},${callId},${conv},${contactId},'inbound',${agentUserId},${addr},'client','completed',${started},${started},${new Date(started.getTime() + 75_000)},75,'announced_all_parties',${started},'{}')`.execute(tx);
+  }, { db: deps.db });
   await su.query(
     `INSERT INTO recordings (tenant_id, id, call_id, contact_id, agent_user_id, source, consent_basis, status, retain_until)
      VALUES ($1,$2,$3,$4,$5,'provider','announced_all_parties','pending_copy', now() + interval '700 days')`,

@@ -4,6 +4,7 @@
 // app_user (RLS-bound). The superuser pool only reads state back, moves clocks, and inserts rows that
 // have no application path yet in Phase 1 (deals, appointments, listings: api/workspace; recorded calls
 // and transcripts: api/comms' provider webhooks), exactly as the comms and leads tests do.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import type { Instant, TenantId } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
@@ -112,7 +113,7 @@ export async function transcribedCall(h: ApiHarness, w: AssistantWorld, contactI
     convId = randomUUID();
     await h.su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3)', [w.tenantId, convId, contactId]);
   }
-  await h.su.query(
+  await tenantFixtureQuery(h.su, w.tenantId,
     `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, agent_user_id, client_address, initiator, status, started_at, answered_at, ended_at,
        duration_s, recording_mode, recording_announced_at, recording_decision)
      VALUES ($1,$2,$3,$4,'inbound',$5,'+14155550123','client','completed',$6,$6,$7,600,'announced_all_parties',$6,'{}')`,

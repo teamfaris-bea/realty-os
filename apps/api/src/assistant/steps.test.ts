@@ -1,5 +1,6 @@
 // The playbook step runner and autonomous sends (R-AST-3, R-AST-8, R-AST-9, R-AST-11, R-GATE-3,
 // R-GATE-4, R-GATE-10, R-GATE-12; E22, E26, E35). Real Postgres, the real server, fake providers.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
@@ -127,7 +128,7 @@ describe('one live enrollment (R-AST-8)', () => {
     expect(ok.status).toBe(201);
     expect(await enrollmentRow(h, first.body.enrollment.id)).toMatchObject({ state: 'stopped', stop_reason: 'replaced' });
     // the DB keeps one live enrollment per contact no matter what
-    await expect(h.su.query("INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, state) VALUES ($1,$2,$3,$4,$5,'new_lead','active')", [w.tenantId, randomUUID(), other.playbookId, other.versionId, c.id])).rejects.toThrow(/enrollment_one_live/);
+    await expect(tenantFixtureQuery(h.su, w.tenantId, "INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, state) VALUES ($1,$2,$3,$4,$5,'new_lead','active')", [w.tenantId, randomUUID(), other.playbookId, other.versionId, c.id])).rejects.toThrow(/enrollment_one_live/);
     // an agent's own playbook may not be used on another agent's contact
     const mine = await approvedPlaybook(w.agents[1]!, { templateKey: 'nurture' });
     expect((await enroll(1, (await ownedContact(w.agents[1]!)).id, { playbookId: mine.playbookId })).status).toBe(201);

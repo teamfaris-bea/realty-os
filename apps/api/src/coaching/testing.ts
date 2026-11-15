@@ -4,6 +4,7 @@
 // (RLS-bound). The superuser pool only reads state back, clears the platform:coaching pack (platform data:
 // counsel's review is recorded by the platform, never by a tenant) and writes recorded calls, which have no
 // application path outside the provider webhooks (as api/assistant's tests do).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import type { Instant, TenantId, UserActor, UserId } from '@realty/core/foundation';
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
@@ -99,7 +100,7 @@ export async function recordedCall(h: ApiHarness, w: CoachingWorld, contactId: s
       break;
     }
     case 'voicemail':
-      await h.su.query(`UPDATE calls SET handled_by = 'voicemail' WHERE id = $1`, [id]);
+      await tenantFixtureQuery(h.su, w.tenantId, `UPDATE calls SET handled_by = 'voicemail' WHERE id = $1`, [id]);
       break;
     case 'shredded':
       await h.su.query(`UPDATE recordings SET status = 'shredded', shredded_at = now() WHERE call_id = $1`, [id]);

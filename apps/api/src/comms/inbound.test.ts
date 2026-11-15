@@ -1,5 +1,6 @@
 // Inbound ingestion: opt-out keywords, opt-out language, wrong numbers and the atomic pause + handback
 // (ARCHITECTURE §10; R-CONSENT-1/4/7/8/10/11/20, R-AST-9, R-TEN-8; E17, E21–E28, E55, E60, E61).
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { renderStep, signOffFor } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
@@ -262,7 +263,7 @@ describe('pause and handback (R-AST-9)', () => {
     const c = await ownedContact(w.agents[0]!);
     const n = await nurture(c.id);
     // TX1 of the nurture message committed first (dispatching) — the millisecond window
-    await h.su.query("UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = $1", [n.messageId]);
+    await tenantFixtureQuery(h.su, w.tenantId, "UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = $1", [n.messageId]);
     await inboundSms(h, c.phone, w.mainNumber, 'STOP');
     const hb = (await h.su.query("SELECT id, payload FROM assistant_actions WHERE contact_id = $1 AND kind = 'handback'", [c.id])).rows[0]!;
     expect(hb.payload.sentAtSameMoment).toBe(true);

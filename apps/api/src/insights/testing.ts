@@ -1,6 +1,7 @@
 // Test helpers of api/insights (imported by *.test.ts only). Deals, history and financials are superuser fixtures
 // (their timing must be backdated: deal_stage_history is written by a trigger at now()); every read under test goes
 // through the real server as app_user, or withTenantTx as an explicit actor.
+import { tenantFixtureQuery } from '../auth/fixtureContext.js';
 import { randomUUID } from 'node:crypto';
 import { type Instant, type TenantId, instant, localDateOf, zone } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
@@ -32,7 +33,7 @@ export async function insightsWorld(h: ApiHarness, o: { timezone?: string } = {}
 
 export async function leadSource(h: ApiHarness, tenantId: string, name: string): Promise<string> {
   const id = randomUUID();
-  await h.su.query(`INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'other')`, [tenantId, id, name]);
+  await tenantFixtureQuery(h.su, tenantId, `INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES ($1, $2, $3, 'other')`, [tenantId, id, name]);
   return id;
 }
 
