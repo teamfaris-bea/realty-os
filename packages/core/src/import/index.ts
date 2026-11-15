@@ -135,3 +135,4 @@ export {
   typedFieldValue,
 } from './parity.js';
 export { suggestStage } from './csv.js';
+export { suggestLeadSource, type LeadSourceSuggestion, type LeadSourceSuggestionCandidate } from './sourceSuggestion.js';
