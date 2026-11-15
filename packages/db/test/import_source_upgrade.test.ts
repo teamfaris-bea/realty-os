@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
@@ -15,6 +15,7 @@ import { createWorld, selfCreated, uuid, type Harness, type World } from './worl
 let h: Harness;
 let dir: string;
 const role = `realty_trial_${process.pid}_source_upgrade`;
+const legacy: {tenant:string; id:string; repaired:boolean; ai:boolean}[] = [];
 const fixtures: { world: World; contact: string; plan: string; action: string; run: string; expected: string | null }[] = [];
 
 beforeAll(async () => {
@@ -47,6 +48,25 @@ beforeAll(async () => {
         VALUES ($1,$2,$3,'assistant_draft','scored',$4,'assistant_action',$5::uuid,$5::uuid,'["synthetic"]',$5::uuid::text)`, [w.tenantId,uuid(),w.agents[0]!.id,contact,action]);
       fixtures.push({ world:w,contact,plan,action,run,expected });
     }
+
+    // Actual pre-0102 failed submissions, including assistant accounting, in each tenant.
+    const contact = await selfCreated(app,w,w.agents[0]!);
+    const conversation=uuid(), number=uuid();
+    await su.query("INSERT INTO phone_numbers (tenant_id,id,e164,provider,provider_ref,number_type,purpose,sms_capable,voice_capable,acquired_at) VALUES ($1,$2,$3,'fake','synthetic-upgrade','local','team_main',true,true,now())",[w.tenantId,number,`+1555555010${tenant}`]);
+    await su.query('INSERT INTO conversations (tenant_id,id,contact_id) VALUES ($1,$2,$3)',[w.tenantId,conversation,contact]);
+    for (const [ai,repaired] of [[false,true],[true,true],[false,false]] as const) {
+      const id=uuid(), action=uuid();
+      // Stage historical rows without dispatching; all constraints/triggers remain enabled.
+      await su.query(`INSERT INTO messages (tenant_id,id,conversation_id,contact_id,channel,direction,phone_number_id,from_address,to_address,body,status,status_reason,initiator,purpose,dispatched_at,occurred_at)
+        VALUES ($1,$2,$3,$4,'sms','outbound',$6,'+15555550100','+15555550101','Synthetic legacy outcome','canceled',$5,'system','informational',now()-interval '11 minutes',now())`,[w.tenantId,id,conversation,contact,repaired?'DISPATCH_UNKNOWN_UNRESOLVED':'PROVIDER_REJECTED',number]);
+      await su.query("UPDATE messages SET status='failed' WHERE id=$1",[id]);
+      if (ai) {
+        await su.query(`INSERT INTO assistant_actions (tenant_id,id,contact_id,kind,action_category,autonomy,status,owner_user_id,explanation,payload,playbook_version_id,epoch)
+          VALUES ($1,$2,$3,'ai_isa_message','ai_isa_message','ai_isa_mandate','executed',$4,'Synthetic legacy AI outcome','{}',$5,1)`,[w.tenantId,action,contact,w.agents[0]!.id,version]);
+        await su.query("UPDATE messages SET initiator='assistant',action_category='ai_isa_message',assistant_action_id=$2 WHERE id=$1",[id,action]);
+      }
+      legacy.push({tenant:w.tenantId,id,repaired,ai});
+    }
     // Published 0099 permits these Owner writes without stopping existing work: genuine pre-0101 state.
     await withTenantTx(w.owner.actor, tx => sql`UPDATE lead_sources SET import_labels = ARRAY['Restricted upgrade'], no_ai_care = true WHERE id = ${w.leadSourceId}`.execute(tx), { db: app });
   }
@@ -77,13 +97,50 @@ afterAll(async () => {
   if (dir) rmSync(dir,{ recursive:true,force:true });
 });
 
+it.each([true,false])('blocked action alone: linked=%s aborts only the matching tenant dependency',async linked=>{
+  const target=legacy.find(f=>f.ai)!;
+  const other=legacy.find(f=>f.ai && f.tenant!==target.tenant)!;
+  const c=await h.su.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SET LOCAL ROLE ${c.escapeIdentifier(role)}`);
+    expect((await c.query('SELECT rolsuper FROM pg_roles WHERE rolname=current_user')).rows[0].rolsuper).toBe(false);
+    const action=(await c.query('SELECT assistant_action_id AS id FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].id;
+    // No blocked turn, canceled fact or refused handoff may account for this refusal.
+    expect((await c.query(`SELECT
+      (SELECT count(*) FROM ai_isa_turns WHERE tenant_id=$1 AND message_id=$2) +
+      (SELECT count(*) FROM ai_isa_shared_facts WHERE tenant_id=$1 AND message_id=$2) +
+      (SELECT count(*) FROM ai_isa_handoffs WHERE tenant_id=$1 AND pending_message_id=$2) AS n`,[target.tenant,target.id])).rows[0].n).toBe('0');
+    if (linked) await c.query("UPDATE assistant_actions SET status='blocked' WHERE tenant_id=$1 AND id=$2",[target.tenant,action]);
+    else {
+      // Same UUID in another tenant must not match the message's composite association.
+      await c.query(`INSERT INTO assistant_actions (tenant_id,id,contact_id,kind,action_category,autonomy,status,owner_user_id,explanation,payload,playbook_version_id,epoch)
+        SELECT tenant_id,$2,contact_id,kind,action_category,autonomy,'blocked',owner_user_id,'Synthetic unrelated blocked action',payload,playbook_version_id,epoch
+          FROM assistant_actions WHERE tenant_id=$1 AND id=(SELECT assistant_action_id FROM messages WHERE tenant_id=$1 AND id=$3)`,[other.tenant,action,other.id]);
+    }
+    const migration=c.query(readFileSync(join(MIGRATIONS_DIR,'0102_preserve_unresolved_outcomes.sql'),'utf8'));
+    if (linked) await expect(migration).rejects.toThrow('UNRESOLVED_LEGACY_DEPENDENCIES_REQUIRE_REVIEW');
+    else {
+      await migration;
+      expect((await c.query('SELECT status FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].status).toBe('dispatch_unknown');
+    }
+  } finally { await c.query('ROLLBACK'); c.release(); }
+  expect((await h.su.query('SELECT status FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].status).toBe('failed');
+  expect((await h.su.query('SELECT a.status FROM assistant_actions a JOIN messages m ON m.tenant_id=a.tenant_id AND m.assistant_action_id=a.id WHERE m.tenant_id=$1 AND m.id=$2',[target.tenant,target.id])).rows[0].status).toBe('executed');
+});
+
 it('upgrades populated 0100 as a non-superuser: stops/withdraws both tenants, retains restrictions and exact reasons', async () => {
   const url = new URL(h.db.ownerUrl);
   url.searchParams.set('options',`-c role=${role}`);
-  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0101_b18_import_source_safety.sql']);
+  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0101_b18_import_source_safety.sql','0102_preserve_unresolved_outcomes.sql']);
   const c = new pg.Client({ connectionString:url.href });
   await c.connect();
   try { await closeCreateWindow(c, () => {}); } finally { await c.end(); }
+  for (const f of legacy) {
+    expect((await h.su.query('SELECT status,status_reason FROM messages WHERE tenant_id=$1 AND id=$2',[f.tenant,f.id])).rows[0]).toEqual({status:f.repaired?'dispatch_unknown':'failed',status_reason:f.repaired?'DISPATCH_UNKNOWN_UNRESOLVED':'PROVIDER_REJECTED'});
+    const jobs=(await h.su.query("SELECT payload->>'status' AS status FROM jobs WHERE tenant_id=$1 AND kind='ai_isa.send_result' AND payload->>'messageId'=$2",[f.tenant,f.id])).rows;
+    expect(jobs).toEqual(f.ai?[{status:'dispatch_unknown'}]:[]);
+  }
   for (const f of fixtures) {
     const plan = (await h.su.query('SELECT state,stop_reason FROM playbook_enrollments WHERE id = $1',[f.plan])).rows[0];
     const action = (await h.su.query("SELECT status,payload->'withdrawn'->>'reason' AS reason FROM assistant_actions WHERE id = $1",[f.action])).rows[0];

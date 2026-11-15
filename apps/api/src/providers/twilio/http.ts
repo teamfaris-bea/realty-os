@@ -129,11 +129,13 @@ export class TwilioHttp {
         const ct = res.headers.get('content-type');
         if (opts.binary) return { json: null, bytes: new Uint8Array(await res.arrayBuffer()), contentType: ct };
         if (res.status === 204) return { json: null, bytes: null, contentType: ct };
-        const text = await res.text();
         try {
+          const text = await res.text();
           return { json: text ? (JSON.parse(text) as Record<string, unknown>) : null, bytes: null, contentType: ct };
         } catch {
-          throw new ProviderError('unavailable', 'TWILIO_BAD_RESPONSE');
+          // A successful submit may already have taken effect. An unreadable body
+          // is unknown, not a safe failure: reconcile it and never replay the POST.
+          throw new ProviderError(opts.submit ? 'timeout' : 'unavailable', 'TWILIO_BAD_RESPONSE');
         }
       }
       const err = await res.json().catch(() => null) as { code?: unknown } | null;

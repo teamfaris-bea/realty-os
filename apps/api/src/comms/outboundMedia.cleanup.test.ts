@@ -58,7 +58,7 @@ describe('R-MMS-7: the provider\'s stored copies are deleted 24 h after dispatch
 });
 
 describe('E298: a submit whose outcome stayed unknown', () => {
-  it('E298: the URLs are served while dispatch_unknown; unresolved after 10 min the message fails and its URLs answer 404; 24 h later its copy is found by number and time and deleted', async () => {
+  it('E298: the URLs are served while dispatch_unknown; unresolved after 10 min stays unknown and its URLs answer 404; 24 h later its copy is found by number and time and deleted', async () => {
     const c = await ownedContact(agent);
     tel().failNext('timeout_after_submit');
     const r = await sendPhotoText(agent, c.id, [await uploadId(agent, c.id)], 'Timed out');
@@ -74,7 +74,7 @@ describe('E298: a submit whose outcome stayed unknown', () => {
       tel().lookupMiss = false;
     }
     const m = await messageRow(h, r.body.message!.id);
-    expect(m.status).toBe('failed');
+    expect(m.status).toBe('dispatch_unknown');
     expect(m.status_reason).toBe('DISPATCH_UNKNOWN_UNRESOLVED');
     expect((await h.app.inject({ method: 'GET', url: u.pathname + u.search })).statusCode).toBe(404);
     const jobs = await cleanupJobs(r.body.message!.id);

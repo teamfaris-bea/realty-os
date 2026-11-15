@@ -238,7 +238,7 @@ describe('dispatch_unknown and reconciliation (R-GATE-8, E7)', () => {
     expect(smsTo(c.phone)).toHaveLength(1);
   });
 
-  it('R-GATE-8: a submit the provider never saw stays unknown for up to 10 minutes, then fails with a human Retry (no blind resend)', async () => {
+  it('R-GATE-8: a submit the provider never saw stays unknown for up to 10 minutes, then remains unresolved without blind resend', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     h.providers.telephony.failNext('timeout');
@@ -249,7 +249,7 @@ describe('dispatch_unknown and reconciliation (R-GATE-8, E7)', () => {
     await h.su.query("UPDATE messages SET dispatched_at = now() - interval '11 minutes' WHERE id = $1", [r.body.message!.id]);
     await runJobs(h, w.tenantId, ['comms.reconcile']);
     const m = await messageRow(h, r.body.message!.id);
-    expect(m.status).toBe('failed');
+    expect(m.status).toBe('dispatch_unknown');
     expect(m.status_reason).toBe('DISPATCH_UNKNOWN_UNRESOLVED');
     expect(smsTo(c.phone)).toHaveLength(0);
   });

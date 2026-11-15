@@ -319,6 +319,7 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     }
     case 'failed':
     case 'undelivered': {
+      if (reason === 'DISPATCH_UNKNOWN_UNRESOLVED') return { text: 'Delivery unconfirmed. Sending again could duplicate it.', tone: 'info' };
       // R-TWL-1 / R-TWL-9: said exactly as the server words them (the agent sees these sentences verbatim)
       if (reason === 'TELEPHONY_LIVE_OFF') return { text: 'Live texting and calling are off on this deployment.', tone: 'failed' };
       if (reason === 'SENDER_NOT_VERIFIED') return { text: "Not delivered: the team's number isn't verified for texting. The Owner has been told.", tone: 'failed' };
@@ -342,7 +343,7 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     case 'dispatching':
       return { text: 'Sending', tone: 'info' };
     case 'dispatch_unknown':
-      return { text: 'Checking whether it went out', tone: 'info' };
+      return { text: reason === 'DISPATCH_UNKNOWN_UNRESOLVED' ? 'Delivery unconfirmed. Sending again could duplicate it.' : 'Checking whether it went out', tone: 'info' };
     default:
       return null;
   }

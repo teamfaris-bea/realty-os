@@ -91,7 +91,7 @@ interface Tx1Context {
 }
 
 const MAX_RECONCILE_MS = 10 * MINUTE_MS;
-/** The failure reason of a dispatch_unknown message the provider lookup never resolved within MAX_RECONCILE_MS: it has
+/** The unresolved reason of a dispatch_unknown message the provider lookup never resolved within MAX_RECONCILE_MS: it has
  *  no provider ref, but the provider may have accepted it (the AI ISA counts it toward its limit, b12 recheck R15). */
 export const DISPATCH_UNKNOWN_UNRESOLVED = 'DISPATCH_UNKNOWN_UNRESOLVED';
 
@@ -625,13 +625,14 @@ export function hint(address: string): string {
 // ---- reconciliation (R-GATE-8, E7) -------------------------------------------------------------------
 
 /**
- * comms.reconcile: a dispatch_unknown message is looked up at the provider by its idempotency key.
- * Found ⇒ its real status. Not found ⇒ retried for up to 10 minutes after dispatch, then 'failed' with a
- * human Retry (a NEW message; the original is never re-sent blindly).
+ * comms.reconcile: provider lookup (Twilio uses a body/time heuristic, not an idempotency key).
+ * Found ⇒ its reported status. Unresolved after 10 minutes ⇒ still unknown, with polling ended.
+ * Never resend this attempt; a new command could duplicate a possibly accepted submission.
  */
-export async function reconcileOutbound(messageId: string, deps: CommsDeps, tenantId: string): Promise<{ kind: 'resolved'; status: string } | { kind: 'retry'; at: Instant } | { kind: 'noop' }> {
+export async function reconcileOutbound(messageId: string, deps: CommsDeps, tenantId: string): Promise<{ kind: 'resolved'; status: string } | { kind: 'retry'; at: Instant } | { kind: 'noop' } | { kind: 'unresolved' }> {
   const m = await asSystem(deps, tenantId, 'worker', (tx) => msgs.messageById(tx, messageId));
   if (!m || m.status !== 'dispatch_unknown' || m.dispatchedAt === null) return { kind: 'noop' };
+  if (m.statusReason === DISPATCH_UNKNOWN_UNRESOLVED) return { kind: 'unresolved' };
   let found: { providerRef: string; status: string } | null = null;
   try {
     if (m.channel === 'email') found = await deps.providers.email.lookupMessage(m.id);
@@ -650,6 +651,8 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
     await lockContact(tx, m.contactId as ContactId);
     const cur = await msgs.lockMessage(tx, m.id);
     if (!cur || cur.status !== 'dispatch_unknown') return { kind: 'noop' as const };
+    // A lookup already in flight may resolve uncertainty after another job exhausts the window.
+    // Only the current unknown status may be advanced; a callback's final status wins above.
     if (found && found.status !== 'unknown') {
       const status = found.status === 'delivered' ? 'delivered' : found.status === 'failed' ? 'failed' : found.status === 'undelivered' ? 'undelivered' : 'sent';
       await msgs.markSent(tx, m.id, m.channel === 'email' ? 'email' : 'telephony', found.providerRef);
@@ -659,12 +662,15 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
       if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, status);
       return { kind: 'resolved' as const, status };
     }
+    if (cur.statusReason === DISPATCH_UNKNOWN_UNRESOLVED) return { kind: 'unresolved' as const };
     const deadline = plusMs(m.dispatchedAt as Instant, MAX_RECONCILE_MS);
     if (now < deadline) return { kind: 'retry' as const, at: (Math.min(deadline, now + 2 * MINUTE_MS) as Instant) };
-    await msgs.markFailed(tx, m.id, DISPATCH_UNKNOWN_UNRESOLVED, null);
+    // An exhausted lookup window is not evidence of rejection. Persist uncertainty, but stop polling.
+    await sql`UPDATE messages SET status_reason = ${DISPATCH_UNKNOWN_UNRESOLVED}, provider_error_code = NULL
+      WHERE tenant_id = app.tenant_id() AND id = ${m.id}`.execute(tx);
     if (m.channel === 'mms' && m.phoneNumberId) await enqueueProviderCleanup(tx, { messageId: m.id, phoneNumberId: m.phoneNumberId, dispatchedAt: m.dispatchedAt! }, m.dispatchedAt!); // D5a E298
-    if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'failed');
-    return { kind: 'resolved' as const, status: 'failed' };
+    if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'dispatch_unknown');
+    return { kind: 'unresolved' as const };
   });
 }
 

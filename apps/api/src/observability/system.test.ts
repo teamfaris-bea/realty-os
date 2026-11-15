@@ -185,6 +185,8 @@ describe('plain-language explanations', () => {
     expect(reconcileState('dispatching', ago(1), now).state).toBe('sending');
     expect(reconcileState('dispatching', ago(25), now).state).toBe('awaiting_recovery');
     expect(reconcileState('dispatch_unknown', ago(3), now).state).toBe('checking_provider');
-    expect(reconcileState('dispatch_unknown', ago(12), now).state).toBe('unresolved');
+    expect(reconcileState('dispatch_unknown', ago(12), now)).toMatchObject({state:'unresolved',nextStepAt:null});
+    expect(reconcileState('dispatch_unknown', ago(12), now).sentence).toMatch(/sending again could duplicate/);
+    expect(reconcileState('dispatch_unknown', ago(12), now).sentence).not.toMatch(/marked failed|no record/);
   });
 });

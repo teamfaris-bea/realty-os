@@ -68,5 +68,5 @@ export function reconcileState(status: 'dispatching' | 'dispatch_unknown', dispa
     return { state: 'awaiting_recovery', sentence: 'The sender stopped part-way. The next sweep marks it unknown and asks the provider whether it left. It is never sent twice automatically.', nextStepAt: null };
   }
   if (age < 10 * 60_000) return { state: 'checking_provider', sentence: 'We do not know yet whether it left. We are asking the provider; it is never sent twice automatically.', nextStepAt: iso(at + 10 * 60_000) };
-  return { state: 'unresolved', sentence: 'The provider has no record of it. It will be marked failed so someone can decide to send it again by hand.', nextStepAt: null };
+  return { state: 'unresolved', sentence: 'Delivery remains unconfirmed. The automatic check window has ended. This attempt will not be resent automatically; sending again could duplicate it.', nextStepAt: null };
 }

@@ -69,7 +69,7 @@ async function locked(tx: Tx, id: string): Promise<AssignmentRow | null> {
  */
 export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, messageId: string, status: string, now: Instant): Promise<string> {
   const read = () => sql<{ status: string; reason: string | null; accepted: boolean; turn_id: string | null; assignment_id: string | null; category: string; dispatched_at: Date | null }>`
-    SELECT m.status, m.status_reason AS reason, (m.provider_message_ref IS NOT NULL OR (m.status = 'failed' AND m.status_reason = ${DISPATCH_UNKNOWN_UNRESOLVED})) AS accepted,
+    SELECT m.status, m.status_reason AS reason, (m.provider_message_ref IS NOT NULL OR (m.status_reason = ${DISPATCH_UNKNOWN_UNRESOLVED})) AS accepted,
            t.id AS turn_id, t.assignment_id, m.action_category AS category, m.dispatched_at FROM messages m
       LEFT JOIN ai_isa_turns t ON t.tenant_id = m.tenant_id AND t.message_id = m.id WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}`.execute(tx);
   const peek = (await read()).rows[0];
@@ -122,7 +122,12 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
   // (machine row 10). b12 recheck R12: the machine counts the text once, on the first of its results it sees (a failure
   // counts the text only once the provider had accepted it or may have: R15, an unresolved dispatch_unknown)
   const at = ok && r.dispatched_at !== null ? (Math.min(now, r.dispatched_at.getTime()) as Instant) : now;
-  const st = step(a.machine, { type: 'send_result', at, messageId, messageKind: kind as never, status: r.status as never, reasonCodes: reason ? [reason] : [], accepted: r.accepted }, ctx.facts);
+  // Preserve the existing conservative cap/failure-streak accounting without claiming delivery failed.
+  // Facts and the persisted turn remain unknown; repeated recovery jobs must not count twice.
+  const unresolved = r.status === 'dispatch_unknown' && reason === DISPATCH_UNKNOWN_UNRESOLVED;
+  if (unresolved && a.machine.countedSends?.includes(messageId)) return 'UNRESOLVED_COUNTED';
+  const accountingStatus = unresolved ? 'failed' : r.status;
+  const st = step(a.machine, { type: 'send_result', at, messageId, messageKind: kind as never, status: accountingStatus as never, reasonCodes: reason ? [reason] : [], accepted: r.accepted }, ctx.facts);
   await applyActionsInTx({ tx, deps, actor, ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, st);
   return ok ? 'SENT' : cls.toUpperCase();
 }

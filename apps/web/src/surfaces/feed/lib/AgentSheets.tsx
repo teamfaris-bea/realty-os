@@ -239,7 +239,8 @@ const BY_STATUS: Record<string, string> = {
  * message's status (`message.status`, or an approval's `messageStatus`), so a blocked, failed or canceled message is
  * never shown as sent (finding F1). A replay whose message is unknown stays 'noop': nobody can say it went out.
  */
-export function sentResult(r: { result: string; message?: { status: string } | null; messageStatus?: string | null }): string {
+export function sentResult(r: { result: string; message?: { status: string; statusReason?: string | null } | null; messageStatus?: string | null }): string {
+  if (r.message?.statusReason === 'DISPATCH_UNKNOWN_UNRESOLVED' && ['failed','dispatch_unknown'].includes(r.message.status)) return 'dispatch_unknown';
   if (r.result !== 'noop') return r.result;
   const status = r.messageStatus ?? r.message?.status ?? null;
   return (status !== null ? BY_STATUS[status] : undefined) ?? 'noop';
@@ -260,7 +261,7 @@ export function sendOutcomeText(r: Pick<ComposeResponse, 'result' | 'decision' |
     case 'not_due':
       return { tone: 'ok', title: until ? `Sends ${formatDateTime(until)}.` : 'Scheduled.' };
     case 'dispatch_unknown':
-      return { tone: 'warn', title: "We can't confirm it was delivered yet.", detail: "The phone service didn't answer in time. We'll check and tell you; it won't be sent twice." };
+      return { tone: 'warn', title: "We can't confirm it was delivered yet.", detail: r.message?.statusReason === 'DISPATCH_UNKNOWN_UNRESOLVED' ? 'The service may have accepted it. Automatic checks have ended; sending again could duplicate it.' : "The service may have accepted it. We'll check its status; this attempt won't be sent again automatically." };
     case 'failed':
       return { tone: 'error', title: "It didn't send.", detail: 'The phone service refused it. Nothing reached them.' };
     case 'blocked':
