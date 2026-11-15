@@ -209,7 +209,7 @@ it.each([false,true])('upgrades populated 0100 as a non-superuser (staged=%s): p
   expect(feedLedger.slice(0,preserved.length)).toEqual(preserved);
   expect(feedLedger.at(-1)?.name).toBe('0103_feed_visibility_lookup.sql');
   await assertFeedVisibility();
-  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0104_import_sources_support_guard.sql']);
+  expect((await migrate(url.href,MIGRATIONS_DIR)).applied).toEqual(['0104_import_sources_support_guard.sql','0105_import_source_targeted_plans.sql']);
   preserved = feedLedger;
   const after = await migrationLedger();
   expect(after.slice(0,preserved.length)).toEqual(preserved);
