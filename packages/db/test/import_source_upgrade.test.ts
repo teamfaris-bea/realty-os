@@ -7,6 +7,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createDatabase } from '../src/client.js';
 import { MIGRATIONS_DIR } from '../src/dbConfig.js';
 import { migrate } from '../src/migrate.js';
+import { readLegacyDeliveryReport, runLegacyDeliveryReport } from '../src/legacyDeliveryPreflight.js';
 import { closeCreateWindow, openCreateWindow } from '../src/rolePreflight.js';
 import { createTestDb } from '../src/testing/index.js';
 import { withTenantTx } from '../src/tenantTx.js';
@@ -95,6 +96,60 @@ afterAll(async () => {
     try { await admin.query(`DROP ROLE IF EXISTS ${admin.escapeIdentifier(role)}`); } finally { await admin.end(); }
   }
   if (dir) rmSync(dir,{ recursive:true,force:true });
+});
+
+it('read-only report scopes dependencies, paginates, omits content and preserves all synthetic state',async()=>{
+  const target=legacy.find(f=>f.ai)!;
+  const other=legacy.find(f=>f.ai && f.tenant!==target.tenant)!;
+  const url=new URL(h.db.ownerUrl); url.searchParams.set('options',`-c role=${role}`);
+  const action=(await h.su.query('SELECT assistant_action_id AS id FROM messages WHERE tenant_id=$1 AND id=$2',[target.tenant,target.id])).rows[0].id;
+  const snapshot=async()=>JSON.stringify((await h.su.query(`SELECT
+    (SELECT jsonb_agg(to_jsonb(m) ORDER BY tenant_id,id) FROM messages m) AS messages,
+    (SELECT jsonb_agg(to_jsonb(a) ORDER BY tenant_id,id) FROM assistant_actions a) AS actions,
+    (SELECT jsonb_agg(to_jsonb(j) ORDER BY id) FROM jobs j) AS jobs`)).rows);
+  try {
+    await h.su.query(`INSERT INTO assistant_actions (tenant_id,id,contact_id,kind,action_category,autonomy,status,owner_user_id,explanation,payload,playbook_version_id,epoch)
+      SELECT tenant_id,$2,contact_id,kind,action_category,autonomy,'blocked',owner_user_id,'Synthetic unrelated action',payload,playbook_version_id,epoch
+        FROM assistant_actions WHERE tenant_id=$1 AND id=(SELECT assistant_action_id FROM messages WHERE tenant_id=$1 AND id=$3)`,[other.tenant,action,other.id]);
+    const clean=await readLegacyDeliveryReport(url.href,{tenantId:target.tenant});
+    expect(clean.totalBlockedMessages).toBe(0); // Same ID in another tenant is not this message's action.
+    const cleanOutput:string[]=[];
+    expect(await runLegacyDeliveryReport(['--tenant',target.tenant],{url:url.href,out:line=>cleanOutput.push(line)})).toBe(0);
+    expect(JSON.parse(cleanOutput[0]!).releaseReady).toBe(false);
+    await h.su.query("UPDATE assistant_actions SET status='blocked' WHERE tenant_id=$1 AND id=$2",[target.tenant,action]);
+    const before=await snapshot();
+    const blockedOutput:string[]=[];
+    expect(await runLegacyDeliveryReport(['--tenant',target.tenant,'--limit','1'],{url:url.href,out:line=>blockedOutput.push(line)})).toBe(2);
+    expect(JSON.parse(blockedOutput[0]!).totalBlockedMessages).toBe(1);
+    const first=await readLegacyDeliveryReport(url.href,{tenantId:target.tenant,limit:1});
+    expect(first).toMatchObject({tenantId:target.tenant,readOnly:true,releaseReady:false,drainVerified:false,totalCandidates:2,totalBlockedMessages:1,truncated:true});
+    const second=await readLegacyDeliveryReport(url.href,{tenantId:target.tenant,limit:1,afterMessageId:first.nextAfterMessageId!});
+    expect(second).toMatchObject({totalCandidates:2,totalBlockedMessages:1,truncated:false,nextAfterMessageId:null});
+    const rows=[...first.messages,...second.messages];
+    expect(rows.map((r:{messageId:string})=>r.messageId).sort()).toEqual(legacy.filter(f=>f.tenant===target.tenant && f.repaired).map(f=>f.id).sort());
+    expect(rows.find((r:{messageId:string})=>r.messageId===target.id)!.dependencies).toEqual([{kind:'assistant_action',id:action,status:'blocked'}]);
+    expect(JSON.stringify([first,second])).not.toMatch(/Synthetic|1555555|provider_ref|body|password|postgres:/);
+    expect(await snapshot()).toBe(before);
+  } finally {
+    await h.su.query("UPDATE assistant_actions SET status='executed' WHERE tenant_id=$1 AND id=$2",[target.tenant,action]);
+    await h.su.query('DELETE FROM assistant_actions WHERE tenant_id=$1 AND id=$2',[other.tenant,action]);
+  }
+});
+
+it('report refuses invalid scope, unknown tenant, and RLS-bound application credentials',async()=>{
+  await expect(readLegacyDeliveryReport('unused',{tenantId:'all'})).rejects.toThrow('LEGACY_REPORT_INVALID_SCOPE');
+  await expect(readLegacyDeliveryReport('unused',{tenantId:legacy[0]!.tenant,limit:501})).rejects.toThrow('LEGACY_REPORT_INVALID_SCOPE');
+  await expect(readLegacyDeliveryReport(h.db.ownerUrl,{tenantId:uuid()})).rejects.toThrow('LEGACY_REPORT_TENANT_NOT_FOUND');
+  await expect(readLegacyDeliveryReport(h.db.appUserUrl,{tenantId:legacy[0]!.tenant})).rejects.toThrow('LEGACY_REPORT_OPERATOR_ROLE_REQUIRED');
+});
+
+it('CLI requires explicit arguments and emits only safe failure codes',async()=>{
+  const lines:string[]=[];
+  expect(await runLegacyDeliveryReport([],{out:s=>lines.push(s)})).toBe(1);
+  expect(await runLegacyDeliveryReport(['--tenant','all'],{url:'unused',out:s=>lines.push(s)})).toBe(1);
+  expect(await runLegacyDeliveryReport(['--tenant',legacy[0]!.tenant,'--apply','true'],{url:'unused',out:s=>lines.push(s)})).toBe(1);
+  expect(await runLegacyDeliveryReport(['--tenant',legacy[0]!.tenant],{url:'postgres://synthetic:do-not-log@[invalid',out:s=>lines.push(s)})).toBe(1);
+  expect(lines).toEqual(['LEGACY_REPORT_EXPLICIT_TENANT_AND_MIGRATION_URL_REQUIRED','LEGACY_REPORT_INVALID_SCOPE','LEGACY_REPORT_INVALID_ARGUMENTS','LEGACY_REPORT_QUERY_FAILED']);
 });
 
 it.each([true,false])('blocked action alone: linked=%s aborts only the matching tenant dependency',async linked=>{
