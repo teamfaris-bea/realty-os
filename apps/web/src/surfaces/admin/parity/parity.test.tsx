@@ -3,9 +3,16 @@
 // self-reported details) and stage labels (module 57's GET/PUT /stage-labels).
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { FakeFetch, err, renderApp, sessionFixture, tableWith } from '../../../shell/testing/fakeApi.js';
 import { surface } from './index.js';
+
+// Load the real route modules before measuring UI behavior. Cold Vite transforms can otherwise
+// consume findByRole's budget while the route is still showing its Suspense fallback. The actual
+// surface, lazy routes, session gate and API calls remain in the test path.
+beforeAll(async () => {
+  await Promise.all([import('./TagsPage.js'), import('./FieldsPage.js'), import('./StageLabelsPage.js')]);
+});
 
 const T1 = '01900000-0000-7000-8000-0000000000b1';
 const T2 = '01900000-0000-7000-8000-0000000000b2';
