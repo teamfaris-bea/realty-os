@@ -28,7 +28,7 @@ import { AppError } from '../errors.js';
 import { reachableForVersion } from '../stageAutomation/reach.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { NO_AUTOMATED_CONTACT_STOP_REASON, sourceRefusal, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
+import { NO_AUTOMATED_CONTACT_STOP_REASON, sourceRefusal, lockSourcePolicy, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
 import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
@@ -257,6 +257,7 @@ export interface EnrollInput {
 /** POST /contacts/:id/enrollments */
 export async function enrollContact(actor: UserActor, contactId: string, input: EnrollInput, deps: AssistantDeps): Promise<EnrollmentView> {
   const out = await asUser(deps, actor, async (tx, now) => {
+    await lockSourcePolicy(tx);
     await lockContact(tx, contactId as ContactId);
     const c = await contactCore(tx, contactId);
     if (!c || c.deleted) throw new AppError('NOT_FOUND');
@@ -348,6 +349,7 @@ export async function stopEnrollment(actor: UserActor, enrollmentId: string, dep
  */
 export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
   return asUser(deps, actor, async (tx, now) => {
+    await lockSourcePolicy(tx);
     const e = await lockedEnrollment(tx, enrollmentId);
     if (e.state === 'active') return viewOf(e);
     if (e.state !== 'paused') throw new AppError('ENROLLMENT_NOT_LIVE', { state: e.state });

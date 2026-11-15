@@ -38,6 +38,11 @@ export async function sourceRefusal(tx: Tx, contactId: string): Promise<SourceRe
   return r.rows[0]?.reason ?? null;
 }
 
+/** Acquire only at a transaction boundary, before any contact or row locks. */
+export async function lockSourcePolicy(tx: Tx): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(app.tenant_id()::text || ':import-source-mapping', 0))`.execute(tx);
+}
+
 /** The setting's name, the same on the sources screen, the Owner's answer and every refusal. */
 export const NO_AUTOMATED_CONTACT_LABEL = 'No automated contact for leads from this source';
 
@@ -152,7 +157,7 @@ export async function withdrawAutomatedDrafts(tx: Tx, scope: { contactId: string
      WHERE tenant_id = app.tenant_id() AND assistant_action_id = ANY (${ids}::uuid[]) AND state IN ('open','snoozed')`.execute(tx);
   await sql`
     UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
-           trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', ${SOURCE_NO_AUTOMATED_CONTACT}::text, 'text', ${NO_AUTOMATED_CONTACT_SKIP_TEXT}::text))
+           trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', ${reason}::text, 'text', ${reason === SOURCE_UNCLASSIFIED ? SOURCE_UNCLASSIFIED_SENTENCE : NO_AUTOMATED_CONTACT_SKIP_TEXT}::text))
      WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND assistant_action_id = ANY (${ids}::uuid[]) AND status = 'converted_to_draft'`.execute(tx);
   return ids.length;
 }

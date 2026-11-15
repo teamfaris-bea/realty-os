@@ -241,3 +241,17 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
   }, 300_000);
 });
 
+
+it('groups whitespace-only evidence into one missing-source review row, including legacy blank mappings', async () => {
+  for (const label of ['', ' ', '\u00a0\ufeff']) {
+    const contact = await ownedContact(agent, { consent:false });
+    await withTenantTx(systemActor(w.tenantId,'worker'), tx => sql`UPDATE contacts SET original_source_detail =
+      ${JSON.stringify({import_system:'csv',import_source:label})}::jsonb WHERE id = ${contact.id}`.execute(tx), {db:h().database});
+  }
+  await withTenantTx(w.owner.actor(), tx => sql`UPDATE lead_sources SET import_labels = import_labels || ARRAY[' ',${'\u00a0\ufeff'}] WHERE id = ${open.id}`.execute(tx), {db:h().database});
+  const result = await call<{labels:LabelRow[]}>(w.owner,'GET','/lead-sources/import-labels');
+  expect(result.status).toBe(200);
+  expect(result.body.labels.filter(row => !row.label.trim())).toEqual([
+    expect.objectContaining({label:'',people:3,leadSourceId:null,noAutomatedContact:true,sentence:expect.stringMatching(/review the original import data/i)}),
+  ]);
+});

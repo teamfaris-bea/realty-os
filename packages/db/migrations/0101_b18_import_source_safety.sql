@@ -17,6 +17,14 @@ CREATE POLICY tenant_isolation ON contact_import_sources AS RESTRICTIVE
 GRANT SELECT, INSERT ON contact_import_sources TO app_definer;
 GRANT SELECT, DELETE ON contact_import_sources TO app_retention;
 
+CREATE FUNCTION app.import_label_key(p_label text) RETURNS text
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, public AS $$
+  SELECT CASE WHEN p_label IS NULL OR btrim(p_label, U&'\0009\000a\000b\000c\000d\0020\00a0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200a\2028\2029\202f\205f\3000\feff') = '' THEN '' ELSE p_label END
+$$;
+ALTER FUNCTION app.import_label_key(text) OWNER TO app_definer;
+REVOKE ALL ON FUNCTION app.import_label_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.import_label_key(text) TO app_user;
+
 CREATE FUNCTION app.person_import_labels(p_tenant uuid, p_contact uuid) RETURNS TABLE(label text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
   WITH person AS (SELECT unnest(app.contact_person_ids(p_tenant, p_contact)) AS id)
@@ -77,7 +85,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
       AND app.person_from_lead_source(p_tenant,p_contact,s.id)) THEN 'SOURCE_NO_AUTOMATED_CONTACT'
     -- ECMAScript trim whitespace only identifies missing evidence; labels are never normalized for matching.
     WHEN EXISTS (SELECT 1 FROM app.person_import_labels(p_tenant,p_contact) l
-      WHERE l.label IS NULL OR btrim(l.label, U&'\0009\000a\000b\000c\000d\0020\00a0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200a\2028\2029\202f\205f\3000\feff') = '' OR
+      WHERE l.label IS NULL OR app.import_label_key(l.label) = '' OR
         (SELECT count(*) FROM public.lead_sources s WHERE s.tenant_id = p_tenant AND l.label = ANY(s.import_labels)) <> 1)
       THEN 'SOURCE_UNCLASSIFIED' ELSE NULL END
 $$;
@@ -122,9 +130,11 @@ BEGIN
   ) SELECT array_agg(id) INTO actions FROM changed;
   UPDATE public.priority_feed_items SET state = 'done', resolved_at = now(), snoozed_until = NULL, updated_at = now()
     WHERE tenant_id = p_tenant AND assistant_action_id = ANY(actions) AND state IN ('open','snoozed');
-  UPDATE public.playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
-    trigger_ref = coalesce(trigger_ref,'{}'::jsonb) || jsonb_build_object('skip',jsonb_build_object('reason','SOURCE_UNCLASSIFIED','text','Source review required; automated draft withdrawn.'))
-    WHERE tenant_id = p_tenant AND assistant_action_id = ANY(actions) AND enrollment_id IS NULL AND status = 'converted_to_draft';
+  UPDATE public.playbook_step_runs r SET status = 'skipped_ineligible', updated_at = now(),
+    trigger_ref = coalesce(r.trigger_ref,'{}'::jsonb) || jsonb_build_object('skip',jsonb_build_object('reason',a.payload->'withdrawn'->>'reason','text','Source policy blocks automated contact; draft withdrawn.'))
+    FROM public.assistant_actions a
+    WHERE r.tenant_id = p_tenant AND a.tenant_id = r.tenant_id AND a.id = r.assistant_action_id
+      AND r.assistant_action_id = ANY(actions) AND r.enrollment_id IS NULL AND r.status = 'converted_to_draft';
 END $$;
 ALTER FUNCTION app.stop_import_automation(uuid,uuid) OWNER TO app_definer;
 REVOKE ALL ON FUNCTION app.stop_import_automation(uuid,uuid) FROM PUBLIC;
@@ -137,7 +147,16 @@ BEGIN
   IF NEW.tenant_id IS DISTINCT FROM app.tenant_id() THEN
     RAISE EXCEPTION 'SOURCE_TENANT_CONTEXT_REQUIRED' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0));
+  -- A new manual contact has no prior import provenance to capture or review.
+  -- Avoid serializing unrelated manual creates through the import policy gate.
+  IF TG_TABLE_NAME = 'contacts' AND TG_OP = 'INSERT' THEN
+    IF NEW.import_batch_id IS NULL AND NOT coalesce(NEW.original_source_detail ? 'import_system',false) THEN RETURN NEW; END IF;
+  END IF;
+  -- A row-trigger caller may already hold a row/contact lock. Never wait here:
+  -- release those locks by aborting the transaction, then retry from its boundary.
+  IF NOT pg_try_advisory_xact_lock(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0)) THEN
+    RAISE EXCEPTION 'SOURCE_POLICY_RETRY: acquire the source policy lock before row locks' USING ERRCODE = 'serialization_failure';
+  END IF;
   IF TG_TABLE_NAME = 'lead_sources' THEN
     PERFORM app.capture_import_sources(NEW.tenant_id,NULL);
     IF TG_WHEN = 'AFTER' THEN PERFORM app.stop_import_automation(NEW.tenant_id,NULL); END IF;
@@ -170,7 +189,11 @@ CREATE OR REPLACE FUNCTION app.playbook_enrollments_source_guard() RETURNS trigg
 DECLARE refusal text;
 BEGIN
   IF app.tenant_id() IS DISTINCT FROM NEW.tenant_id THEN RAISE EXCEPTION 'SOURCE_TENANT_CONTEXT_REQUIRED' USING ERRCODE = 'insufficient_privilege'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0));
+  -- The API takes a shared source lock before row locks. Legacy/direct row-first
+  -- writers must retry rather than wait behind a mapper that needs their row.
+  IF NOT pg_try_advisory_xact_lock_shared(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0)) THEN
+    RAISE EXCEPTION 'SOURCE_POLICY_RETRY: acquire the source policy lock before row locks' USING ERRCODE = 'serialization_failure';
+  END IF;
   refusal := app.person_source_refusal(NEW.tenant_id,NEW.contact_id);   -- RLS refuses another tenant's row
   IF NEW.state = 'active' AND (TG_OP = 'INSERT' OR OLD.state IS DISTINCT FROM 'active')
      AND refusal IS NOT NULL THEN
@@ -185,7 +208,11 @@ DECLARE refusal text;
 BEGIN
   IF NEW.status <> 'dispatching' THEN RETURN NEW; END IF;
   IF app.tenant_id() IS DISTINCT FROM NEW.tenant_id THEN RAISE EXCEPTION 'SOURCE_TENANT_CONTEXT_REQUIRED' USING ERRCODE = 'insufficient_privilege'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0));
+  -- The API takes a shared source lock before row locks. Legacy/direct row-first
+  -- writers must retry rather than wait behind a mapper that needs their row.
+  IF NOT pg_try_advisory_xact_lock_shared(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0)) THEN
+    RAISE EXCEPTION 'SOURCE_POLICY_RETRY: acquire the source policy lock before row locks' USING ERRCODE = 'serialization_failure';
+  END IF;
   refusal := app.person_source_refusal(NEW.tenant_id,NEW.contact_id);   -- RLS refuses another tenant's row
   IF NEW.status = 'dispatching' AND NEW.direction = 'outbound' AND NOT NEW.imported
      AND ((NEW.initiator = 'human' AND (NEW.bulk_action_id IS NOT NULL OR NEW.marketing_piece_id IS NOT NULL))
@@ -204,7 +231,11 @@ CREATE OR REPLACE FUNCTION app.calls_source_guard() RETURNS trigger LANGUAGE plp
 DECLARE refusal text;
 BEGIN
   IF app.tenant_id() IS DISTINCT FROM NEW.tenant_id THEN RAISE EXCEPTION 'SOURCE_TENANT_CONTEXT_REQUIRED' USING ERRCODE = 'insufficient_privilege'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0));
+  -- The API takes a shared source lock before row locks. Legacy/direct row-first
+  -- writers must retry rather than wait behind a mapper that needs their row.
+  IF NOT pg_try_advisory_xact_lock_shared(hashtextextended(NEW.tenant_id::text || ':import-source-mapping',0)) THEN
+    RAISE EXCEPTION 'SOURCE_POLICY_RETRY: acquire the source policy lock before row locks' USING ERRCODE = 'serialization_failure';
+  END IF;
   refusal := app.person_source_refusal(NEW.tenant_id,NEW.contact_id);   -- RLS refuses another tenant's row
   IF NEW.handled_by = 'assistant' AND (TG_OP = 'INSERT' OR OLD.handled_by IS DISTINCT FROM 'assistant')
      AND refusal IS NOT NULL THEN

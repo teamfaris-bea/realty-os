@@ -103,3 +103,12 @@ it('never classifies blank Unicode source evidence even if a legacy Owner mappin
   await map([blank]);
   expect(await reason(id)).toBe('SOURCE_UNCLASSIFIED');
 });
+
+
+it('consolidates blank review evidence before counting distinct people without changing nonblank labels', async () => {
+  const rows = await withTenantTx(w.system(), async tx => (await sql<{label:string;people:string}>`
+    WITH labels(label,id) AS (VALUES ('',1), (' ',1), (E'\\t',2), (${String.fromCharCode(0xa0)},2), (' Exact ',3))
+    SELECT app.import_label_key(label) AS label, count(DISTINCT id) AS people FROM labels GROUP BY 1 ORDER BY 1
+  `.execute(tx)).rows, { db:h.app });
+  expect(rows).toEqual([{label:'',people:'2'},{label:' Exact ',people:'1'}]);
+});

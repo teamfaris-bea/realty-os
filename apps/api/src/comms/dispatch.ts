@@ -60,7 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
-import { AUTOMATED_DRAFT_TRIGGER_KINDS, isSourceGuardViolation, sourceRefusal } from '../leads/automatedContact.js';
+import { AUTOMATED_DRAFT_TRIGGER_KINDS, isSourceGuardViolation, lockSourcePolicy, sourceRefusal } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
@@ -146,6 +146,7 @@ export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts:
 
 async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Promise<Tx1> {
   void txNow;
+  await lockSourcePolicy(tx);
   const peek = await msgs.messageById(tx, messageId);
   if (!peek) return { kind: 'invisible' };
   await lockContact(tx, peek.contactId as ContactId);

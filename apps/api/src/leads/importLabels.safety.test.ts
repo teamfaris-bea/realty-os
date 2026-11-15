@@ -16,3 +16,9 @@ describe('Owner source review safety', () => {
     });
   });
 });
+
+it('missing source evidence asks for original-data review instead of an impossible label mapping', () => {
+  const row = labelRows(new Map([['', 2]]), new Map())[0]!;
+  expect(row.sentence).toMatch(/review the original import data/i);
+  expect(row.sentence).not.toMatch(/confirms one exact source mapping/i);
+});

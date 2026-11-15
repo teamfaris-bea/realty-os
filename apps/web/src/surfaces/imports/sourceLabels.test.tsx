@@ -2,13 +2,14 @@
 // the lead source each one means and whether that source has "No automated contact for leads from this source" on; the
 // Owner maps a label there at import time, or later from the lead sources page (PUT /lead-sources/import-labels).
 // Anyone else sees the words and who maps them. The labels and sources are made up ("a referral partner").
+import { sessionFixture } from '../../shell/testing/fakeApi.js';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, leadAdminApp } from '../admin/lib/testing.js';
 import type { ImportBatch, ImportCategory, ImportStage } from '../admin/lib/types.js';
 import { OWNER_MAPS_LABELS, type ImportLabelView } from '../lead-sources/ImportLabels.js';
-import { overview, source, sourcesApp, sourcesFake } from '../lead-sources/testing.js';
+import { err, overview, source, sourcesApp, sourcesFake } from '../lead-sources/testing.js';
 import type { ParityResponse } from './lib.js';
 
 const SNAP = 'd'.repeat(64);
@@ -64,7 +65,8 @@ describe('E728 imported source labels on the import page and the lead sources pa
   it('E728: the preview lists each label with its people; the Owner maps it to the marked source at import time and the page then says it is marked', async () => {
     let labels = [unmapped];
     const f = fake(batch([stage('contacts', 'pending')]), labels);
-    f.on(`GET /imports/${BID}/parity`, () => ({ status: 200, body: parity(labels) }));
+    f.on(`GET /imports/${BID}/report`, () => ({ status: 200, body: { source: 'Follow Up Boss', categories: [], parity: null, sourceLabels: labels } }));
+  f.on(`GET /imports/${BID}/parity`, () => ({ status: 200, body: parity(labels) }));
     f.on('PUT /lead-sources/import-labels', () => {
       labels = [mapped];
       return { status: 200, body: { label: mapped, pausing: 0, stopping: 0 } };
@@ -78,7 +80,7 @@ describe('E728 imported source labels on the import page and the lead sources pa
     await u.selectOptions(pick, MARKED);
     await waitFor(() => expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(1));
     expect(f.callsTo('PUT /lead-sources/import-labels')[0]!.body).toEqual({ label: LABEL, leadSourceId: MARKED });
-    expect(await within(section).findByText(mapped.sentence)).toBeInTheDocument();
+    expect((await within(section).findAllByText(mapped.sentence)).length).toBeGreaterThan(0);
   });
 
   it('E728: the summary lists the labels with which are marked; an Admin sees the words and who maps them, with no choice', async () => {
@@ -118,4 +120,69 @@ it('opens Review Sources in the import preview and never offers a mapping for mi
   expect(within(section).getByText(missing.sentence)).toBeInTheDocument();
   expect(within(section).queryByRole('combobox')).toBeNull();
   expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(0);
+});
+
+
+it('defaults to source review before the other mappings without applying a source choice', async () => {
+  const f = fake(batch([stage('contacts', 'pending')]), [unmapped]);
+  leadAdminApp(f, `/imports/${BID}`, 'owner', { reauthenticatedAt: new Date().toISOString() });
+  const sources = await screen.findByRole('heading', { name: 'Review Sources' });
+  const other = await screen.findByRole('heading', { name: 'Stages, tags and custom fields' });
+  expect(sources.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(within(sources.closest('section')!).getByLabelText(`Lead source for "${LABEL}"`)).toHaveValue('');
+  expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(0);
+});
+
+it('keeps an unsuccessful source decision unapplied and allows the Owner to retry it', async () => {
+  let labels = [unmapped];
+  let writes = 0;
+  const f = fake(batch([stage('contacts', 'pending')]), labels);
+  f.on(`GET /imports/${BID}/report`, () => ({ status: 200, body: { source: 'Follow Up Boss', categories: [], parity: null, sourceLabels: labels } }));
+  f.on(`GET /imports/${BID}/parity`, () => ({ status: 200, body: parity(labels) }));
+  f.on('PUT /lead-sources/import-labels', () => {
+    if (++writes === 1) return err(500, 'INTERNAL_ERROR');
+    labels = [mapped];
+    return { status: 200, body: { label: mapped, pausing: 0, stopping: 0, withdrawn: 0 } };
+  });
+  leadAdminApp(f, `/imports/${BID}`, 'owner', { reauthenticatedAt: new Date().toISOString() });
+  const u = userEvent.setup();
+  const section = await screen.findByRole('region', { name: 'Lead sources in this import' });
+  await within(section).findByRole('option', { name: 'Partner referrals (test) (no automated contact)' });
+  const pick = within(section).getByLabelText(`Lead source for "${LABEL}"`);
+  await u.selectOptions(pick, MARKED);
+  await within(section).findByText(/Something went wrong/);
+  expect(pick).toHaveValue('');
+  expect(within(section).getByText(unmapped.sentence)).toBeInTheDocument();
+  await u.selectOptions(pick, MARKED);
+  await within(section).findAllByText(mapped.sentence);
+  expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(2);
+  await waitFor(() => expect(within(section).getByLabelText(`Lead source for "${LABEL}"`)).toHaveValue(MARKED));
+});
+
+it('reauthenticates and retries exactly the Owner source decision after an expired session', async () => {
+  let labels = [unmapped];
+  let writes = 0;
+  const base = sessionFixture({ reauthenticatedAt: new Date().toISOString() });
+  const session = { ...base, tenant: { ...base.tenant!, role: 'owner' as const }, csrfToken: 'source-review-csrf' };
+  const f = fake(batch([stage('contacts', 'pending')]), labels);
+  f.on(`GET /imports/${BID}/report`, () => ({ status: 200, body: { source: 'Follow Up Boss', categories: [], parity: null, sourceLabels: labels } }));
+  f.on(`GET /imports/${BID}/parity`, () => ({ status: 200, body: parity(labels) }));
+  f.on('PUT /lead-sources/import-labels', () => {
+    if (++writes === 1) return err(401, 'REAUTH_REQUIRED');
+    labels = [mapped];
+    return { status: 200, body: { label: mapped, pausing: 0, stopping: 0, withdrawn: 0 } };
+  }).on('POST /auth/reauth', { status: 200, body: { session } });
+  leadAdminApp(f, `/imports/${BID}`, 'owner');
+  const u = userEvent.setup();
+  const section = await screen.findByRole('region', { name: 'Lead sources in this import' });
+  await within(section).findByRole('option', { name: 'Partner referrals (test) (no automated contact)' });
+  await u.selectOptions(within(section).getByLabelText(`Lead source for "${LABEL}"`), MARKED);
+  const dialog = await screen.findByRole('dialog', { name: "Confirm it's you" });
+  expect(labels).toEqual([unmapped]);
+  await u.type(within(dialog).getByLabelText('Password'), 'synthetic reauth password');
+  await u.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+  await within(section).findAllByText(mapped.sentence);
+  expect(f.callsTo('PUT /lead-sources/import-labels').map(c => c.body)).toEqual([
+    { label: LABEL, leadSourceId: MARKED }, { label: LABEL, leadSourceId: MARKED },
+  ]);
 });

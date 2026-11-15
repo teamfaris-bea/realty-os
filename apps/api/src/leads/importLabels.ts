@@ -42,6 +42,7 @@ interface Mapped {
 /** The plain sentence of one label: who it labels, which source it means, and whether that source is marked. */
 export function importLabelSentence(label: string, people: number, m: Mapped | null): string {
   const who = `${label === '' ? 'Missing source label' : `"${label}"`} (${people === 1 ? '1 person' : `${people} people`})`;
+  if (!label.trim()) return `${who}: SOURCE_UNCLASSIFIED. Review the original import data with the Owner. Missing source evidence cannot be mapped here; automated contact stays blocked.`;
   if (!m) return `${who}: SOURCE_UNCLASSIFIED. Automated contact is blocked until the Owner confirms one exact source mapping.`;
   if (m.noAutomatedContact) return `${who}: mapped to ${m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.`;
   return `${who}: mapped to ${m.name}.`;
@@ -106,9 +107,9 @@ export async function tenantLabels(tx: Tx): Promise<ImportLabelRow[]> {
        WHERE c.tenant_id = app.tenant_id() AND (c.import_batch_id IS NOT NULL OR c.original_source_detail ? 'import_system')
          AND NOT EXISTS (SELECT 1 FROM import_records r WHERE r.tenant_id = c.tenant_id AND r.normalized->>'category' = 'contacts'
            AND ((r.target_table = 'contacts' AND r.target_id = c.id) OR r.match_contact_id = c.id))
-    ) SELECT label, count(DISTINCT id) AS people FROM labels GROUP BY label`.execute(tx);
+    ) SELECT app.import_label_key(label) AS label, count(DISTINCT id) AS people FROM labels GROUP BY 1`.execute(tx);
   const mapped = await labelMappings(tx);
   const counts = new Map<string, number>(r.rows.map((x) => [x.label, Number(x.people)]));
-  for (const label of mapped.keys()) if (!counts.has(label)) counts.set(label, 0);
+  for (const label of mapped.keys()) if (label.trim() && !counts.has(label)) counts.set(label, 0);
   return labelRows(counts, mapped);
 }

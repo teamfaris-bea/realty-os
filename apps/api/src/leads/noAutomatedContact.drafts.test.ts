@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApprovedPlaybook, actionsOf, appointment, approvedPlaybook, enrollmentRow, messagesOf, runJobs, smsStep, stepNow } from '../assistant/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
@@ -211,5 +212,65 @@ describe('Owner imported source unmapping', () => {
     const tap = await approve(agent, a.draftId);
     expect([tap.status, tap.code]).toEqual([409, 'SOURCE_UNCLASSIFIED']);
     expect(await automated(a.c.id)).toEqual([]);
+  });
+});
+
+
+describe('source mapping lock order', () => {
+  it.each(['dispatch', 'enrollment'] as const)('a legacy row-first %s retries without deadlocking or aborting the Owner unmap', async (writer) => {
+    const src = await newSource(`Concurrent imported source ${writer} (test)`);
+    const a = await planDraft(twoStep);
+    const label = `Concurrent imported source ${writer}`;
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: src.source.id })).status).toBe(200);
+    await withTenantTx(systemActor(w.tenantId, 'worker'), tx => sql`UPDATE contacts SET original_source_detail =
+      ${JSON.stringify({ import_system: 'csv', import_source: label })}::jsonb WHERE id = ${a.c.id}`.execute(tx), { db: h.database });
+    const step = (await h.su.query<{ id: string }>('SELECT id FROM playbook_step_runs WHERE enrollment_id = $1 ORDER BY id LIMIT 1', [a.enrollmentId])).rows[0]!.id;
+    const queued = await withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => queueOutboundInTx(tx, w.deps, {
+      contactId: a.c.id, channel: 'sms', body: 'Synthetic queued alert', initiator: 'system', purpose: 'marketing',
+      category: 'search_alert', playbookStepRunId: step, idempotencyKey: `source-race:${randomUUID()}`,
+    }, now), { db: h.database });
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) throw new Error(queued.code);
+    const dispatch = new pg.Client({ connectionString: h.testDb.appUserUrl });
+    const mapper = new pg.Client({ connectionString: h.testDb.appUserUrl });
+    await Promise.all([dispatch.connect(), mapper.connect()]);
+    const context = async (c: pg.Client, owner: boolean) => {
+      await c.query('BEGIN');
+      await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.actor_kind',$2,true),set_config('app.user_id',$3,true),set_config('app.principal_type','staff',true)", [w.tenantId, owner ? 'user' : 'system', owner ? w.owner.userId : '']);
+      return (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+    };
+    const finish = async (c: pg.Client, query: Promise<unknown>): Promise<string> => {
+      try { await query; await c.query('COMMIT'); return 'committed'; }
+      catch (e) { await c.query('ROLLBACK'); return (e as { code: string }).code; }
+    };
+    try {
+      const dispatchPid = await context(dispatch, false);
+      const mapperPid = await context(mapper, true);
+      if (writer === 'dispatch') await dispatch.query('SELECT id FROM messages WHERE tenant_id = $1 AND id = $2 FOR UPDATE', [w.tenantId, queued.messageId]);
+      else await dispatch.query('SELECT id FROM playbook_enrollments WHERE tenant_id = $1 AND id = $2 FOR UPDATE', [w.tenantId, a.enrollmentId]);
+      await mapper.query("SELECT pg_advisory_xact_lock(hashtextextended($1 || ':import-source-mapping',0))", [w.tenantId]);
+      const mapping = finish(mapper, mapper.query("UPDATE lead_sources SET import_labels = '{}' WHERE tenant_id = $1 AND id = $2", [w.tenantId, src.source.id]));
+      // Wait for a real database blocking edge, not a timing assumption.
+      let blocked = false;
+      for (let i = 0; i < 500; i++) {
+        const row = (await h.su.query<{ blocked: boolean }>('SELECT $1::int = ANY(pg_blocking_pids($2)) AS blocked', [dispatchPid, mapperPid])).rows[0]!;
+        if (row.blocked) { blocked = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+      const sending = finish(dispatch, writer === 'dispatch'
+        ? dispatch.query("UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE tenant_id = $1 AND id = $2", [w.tenantId, queued.messageId])
+        : dispatch.query("UPDATE playbook_enrollments SET state = 'active' WHERE tenant_id = $1 AND id = $2", [w.tenantId, a.enrollmentId]));
+      expect(await Promise.all([mapping, sending])).toEqual(['committed', '40001']);
+      expect(await messageRow(h, queued.messageId)).toMatchObject({ status: 'canceled', status_reason: 'SOURCE_UNCLASSIFIED' });
+      expect(await enrollmentRow(h, a.enrollmentId)).toMatchObject({ state: 'stopped', stop_reason: 'source_unclassified' });
+      expect(await actionRow(a.draftId)).toMatchObject({ status: 'invalidated' });
+      await runJobs(h, w.tenantId, ['comms.dispatch']);
+      expect(h.providers.telephony.sms.filter(x => x.to === a.c.phone)).toEqual([]);
+    } finally {
+      await Promise.all([dispatch.query('ROLLBACK').catch(() => {}), mapper.query('ROLLBACK').catch(() => {})]);
+      await Promise.all([dispatch.end(), mapper.end()]);
+    }
   });
 });
