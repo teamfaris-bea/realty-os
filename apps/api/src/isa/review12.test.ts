@@ -31,11 +31,12 @@ const cards = async (ids: string[]) => (await h.su.query<{ contact_id: string; u
 const actions = async (ids: string[]) => (await h.su.query<{ contact_id: string; owner_user_id: string; status: string }>(
   `SELECT contact_id, owner_user_id, status FROM assistant_actions WHERE contact_id = ANY($1::uuid[]) AND kind = 'ai_isa_handoff'`, [ids])).rows;
 const overdue = async (contactIds: string[]) => (await h.su.query(`SELECT user_id FROM notifications WHERE kind = 'ai_isa_handoff_overdue' AND subject_id = ANY($1::uuid[])`, [contactIds])).rows.length;
-/** Ages the handoff's deadline (the guard lets only the system move it; the superuser seeds the instant) and sweeps. */
+/** Ages both escalation deadlines into the past, retaining the one-minute SLA interval.
+ * Placing the second deadline exactly at DB now races with its conversion to millisecond JS time. */
 async function ageAndSweep(handoffId: string) {
   await h.su.query(`SET session_replication_role = replica`);
   try {
-    await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '1 minute', created_at = now() - interval '2 minutes' WHERE id = $1 AND sla_class <> 'none'`, [handoffId]);
+    await h.su.query(`UPDATE ai_isa_handoffs SET sla_due_at = now() - interval '2 minutes', created_at = now() - interval '3 minutes' WHERE id = $1 AND sla_class <> 'none'`, [handoffId]);
   } finally {
     await h.su.query(`SET session_replication_role = origin`);
   }
