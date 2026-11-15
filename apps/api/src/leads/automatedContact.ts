@@ -12,7 +12,8 @@
 //     one cannot be resumed;
 //   - module 26 trigger messages, saved-search alerts and any other assistant or system message, and bulk texts,
 //     bulk emails and open-house invites (each person is left out and counted);
-//   - AI care (start, Continue, resume: isa/, chain link 11) and AI-answered calls (voice/takeover.ts);
+//   - AI care (start, Continue, resume: isa/, chain link 11; a handoff's pending confirmation or holding line of an
+//     ended assignment is refused at dispatch, TX1 and the guard: round 3 item 5) and AI-answered calls (voice/takeover.ts);
 //   - a draft a plan step or a module 26 trigger wrote for a person to approve (round 3 item 3, OQ-B18-S6): it stays
 //     automated even when a person taps it. Pending ones are withdrawn (withdrawAutomatedDrafts) when the setting is
 //     turned on, when a label is mapped to a marked source, when a marked source sends the person again (leads/intake.ts)

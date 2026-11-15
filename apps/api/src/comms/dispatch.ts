@@ -242,11 +242,16 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   const isaTx1 = isaMsg ? await aiIsaGateFacts(tx, { db: c.deps.db, ids: c.deps.ids, providers: c.deps.providers, aiIsaLiveOff: c.deps.aiIsaLiveOff }, isaRef, addressHmac, now, c.actor) : null;
   if (isaTx1) extra.push(...(isaTx1.extra as DispatchDenyReason[]));
   // b18 review B18S-5 (owner boundary 2026-11-14): "No automated contact for leads from this source" (leads/automatedContact.ts).
-  // An automated or bulk message to a person the marked source sent never goes; a person's one-to-one message does. AI ISA
-  // messages are refused by their own chain (link 11). 0098's app.messages_source_guard refuses the same in the database.
+  // An automated or bulk message to a person the marked source sent never goes; a person's one-to-one message does.
+  // 0098's app.messages_source_guard refuses the same in the database (AI ISA messages included).
   // Round 3 item 3 (OQ-B18-S6): a draft a plan step or a module 26 trigger wrote is automated contact even after a
   // person approved it (one approved before the mark and still queued is refused here; 0100 widens the guard to match).
-  if (!isaMsg && (isAutomatedContact(m, gateInitiator) || automatedDraft) && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
+  // AI ISA messages: a LIVE assignment's message is refused by its own chain (link 11, AI_ISA_SOURCE_NO_AI_CARE, which
+  // pauses the care), so the code is not added twice. An ENDED assignment's pending confirmation or holding line is
+  // judged on chain links 1 to 3 only (isa/send.ts), so link 11 never runs for it and TX1 asks here (round 3 item 5);
+  // before, only the database guard refused it.
+  const sourceChecked = isaMsg ? isaTx1?.ended === true : isAutomatedContact(m, gateInitiator) || automatedDraft;
+  if (sourceChecked && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
 
   const intent: OutboundIntent = {
     contactId: m.contactId,

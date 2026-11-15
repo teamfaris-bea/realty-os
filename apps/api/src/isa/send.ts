@@ -100,6 +100,12 @@ export interface IsaTx1Facts {
   facts: AiIsaGateFacts;
   /** API-level reasons (offset disagreement), deferrable */
   extra: string[];
+  /**
+   * The message's assignment has ended: it is a handoff's pending confirmation or holding line, judged on chain links
+   * 1 to 3 only (below), so link 11 (the lead source's "No automated contact") is not among its failures and
+   * comms/dispatch.ts TX1 asks the source itself (b18 round 3 item 5).
+   */
+  ended: boolean;
 }
 
 /**
@@ -126,7 +132,7 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
     initiatedDays: [1, 2, 3, 4, 5, 6], holidays: [], counts: { ai24h: 0, automated24h: 0, initiated24h: 0, initiated7d: 0, lastAiOutboundAt: null },
     caps: { ...ISA_DEFAULT_CAPS }, sharedAddress: false, activeClient: false, soldDerivedFact: r?.sold ?? false, sellerPacksCleared: false,
   };
-  if (!r || !a) return { facts: empty, extra: [] };
+  if (!r || !a) return { facts: empty, extra: [], ended: false };
   const ctx = await contextFor(tx, a, now);
   const ch = m.channel === 'email' ? 'email' : 'sms';
   const live = a.endedAt === null;
@@ -153,6 +159,7 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
   const initiated = r.kind === 'initiated' || consent.tier === 'initiated';
   return {
     extra,
+    ended: !live,
     facts: {
       chainFailures: [...failures, ...sellerNow.codes],
       paused: stopped || (live ? a.pausedAt !== null : !handoffPending),

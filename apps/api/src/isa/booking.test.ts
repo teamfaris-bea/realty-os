@@ -14,7 +14,7 @@ import { inboundSms, sendText } from '../comms/testing.js';
 import { defaultIsaOutput } from '../providers/fake/isaAi.js';
 import { mlsConnection, REVIEWED_PACK } from '../mls/testing.js';
 import type * as CoreSeam from './coreSeam.js';
-import { aiMessages, assignmentOf, buyerListing, call, grantInitiated, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, seedClaims, startCare } from './testing.js';
+import { aiMessages, assignmentOf, buyerListing, call, freshReauth, grantInitiated, handoffOf, initiatedDayNow, isaLead, isaWorld, type IsaWorld, openZone, optInAgent, runIsa, seedClaims, startCare } from './testing.js';
 
 let h: ApiHarness;
 let w: IsaWorld;
@@ -985,6 +985,37 @@ describe('offers and booking (R-ISA-13, R-ISA-14, R-ISA-15)', () => {
     // b13 review B13S-3 / F4-ui: the web is told why, so it never asks for a hand confirmation here
     expect((await call<{ confirmationNotSent: string | null }>(agent(), 'GET', `/ai-isa/handoffs/${ho.id}`)).body.confirmationNotSent).toBe('not_needed');
     expect((await call<{ handoff: { confirmationNotSent: string | null } }>(agent(), 'GET', `/contacts/${l.id}/ai-isa`)).body.handoff!.confirmationNotSent).toBe('not_needed');
+  });
+
+  it('R-LSRC-8 E727 R-ISA-14 (b18 round 3 item 5): the person\'s lead source is marked "No automated contact" after the handoff → dispatch TX1 itself refuses the ended assignment\'s pending confirmation SOURCE_NO_AUTOMATED_CONTACT, with the sentence; with the database guard switched off (a fixture) it still does not go', async () => {
+    const { l } = await offered();
+    await reply(l, '2', 6, { holdConfirmation: true });
+    const ho = (await handoffOf(h, l.id))[0]!;
+    expect(ho.pending_message_id).not.toBeNull();
+    expect((await assignmentOf(h, l.id))!.ended_at).not.toBeNull();
+    // a made-up source turns out to have sent them, and the Owner marks it
+    const src = (await call<{ source: { id: string } }>(bw.owner, 'POST', '/lead-sources', { name: 'Northgate Referrals (test)', kind: 'portal' })).body.source.id;
+    await h.su.query('UPDATE contacts SET original_lead_source_id = $2 WHERE id = $1', [l.id, src]);
+    await freshReauth(h, bw.owner);
+    expect((await call(bw.owner, 'PUT', `/lead-sources/${src}/ai-care`, { noAiCare: true })).status).toBe(200);
+    // fixture: 0098's message guard is off, so TX1 alone stands between this message and the provider
+    await h.su.query('ALTER TABLE messages DISABLE TRIGGER messages_source_guard');
+    try {
+      await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND kind = 'comms.dispatch' AND status = 'pending'`, [bw.tenantId]);
+      await runIsa(h, bw.tenantId, 3);
+      const m = (await aiMessages(h, l.id)).find((x) => x.id === ho.pending_message_id)!;
+      expect(m.action_category).toBe('ai_isa_confirmation');
+      expect([m.status, m.status_reason]).toEqual(['blocked', 'SOURCE_NO_AUTOMATED_CONTACT']);
+      const dec = (await h.su.query<{ reason_codes: string[]; explanation: string }>('SELECT reason_codes, explanation FROM gate_decisions WHERE message_id = $1', [m.id])).rows[0]!;
+      expect(dec.reason_codes).toContain('SOURCE_NO_AUTOMATED_CONTACT');
+      expect(dec.explanation).toContain('No automated contact for leads from this source');
+      expect(h.providers.telephony.sms.filter((x) => x.to === l.phone && /You're set with/.test(x.body))).toEqual([]);
+      expect((await handoffOf(h, l.id))[0]!.confirmation_status).toBe('refused');
+    } finally {
+      await h.su.query('ALTER TABLE messages ENABLE TRIGGER messages_source_guard');
+      await freshReauth(h, bw.owner);
+      await call(bw.owner, 'PUT', `/lead-sources/${src}/ai-care`, { noAiCare: false });
+    }
   });
 
   // b13 integration (left open since the ISA-2b merge): confirmationNotSentInTx made the card critical, moved its due time
