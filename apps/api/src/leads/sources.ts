@@ -145,6 +145,8 @@ export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Ins
 
 /** PUT /lead-sources/import-labels: the Owner maps a label to a source (moving it off any other), or unmaps it. */
 export async function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow; pausing: number; stopping: number; withdrawn: number }> {
+  // Serialize all Owner mappings in this tenant, including initially unmapped labels.
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(app.tenant_id()::text || ':import-source-mapping', 0))`.execute(tx);
   // the sources that hold the label now and the target, locked in one order (the ai-care route locks a source the same way)
   const held = await sql<{ id: string; no_ai_care: boolean; has: boolean }>`
     SELECT id, no_ai_care, ${label} = ANY (import_labels) AS has FROM lead_sources
@@ -163,7 +165,17 @@ export async function setImportLabel(tx: Tx, actor: UserActor, label: string, le
       reason: target ? 'LEAD_SOURCE_IMPORT_LABEL_MAPPED' : 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED',
     });
   }
+  // The database has already stopped/withdrawn affected work atomically in this transaction.
+  const stopped = await sql<{ n: string }>`SELECT count(*) AS n FROM playbook_enrollments
+    WHERE tenant_id = app.tenant_id() AND state = 'stopped' AND ended_at = now()
+      AND stop_reason IN ('source_unclassified','source_no_automated_contact')`.execute(tx);
+  const withdrawn = await sql<{ n: string }>`SELECT count(*) AS n FROM assistant_actions
+    WHERE tenant_id = app.tenant_id() AND status = 'invalidated'
+      AND payload->'withdrawn'->>'reason' IN ('SOURCE_UNCLASSIFIED','SOURCE_NO_AUTOMATED_CONTACT')
+      AND (payload->'withdrawn'->>'at')::timestamptz = now()`.execute(tx);
   const safe = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : { pausing: 0, stopping: 0, withdrawn: 0 };
+  safe.stopping += Number(stopped.rows[0]?.n ?? 0);
+  safe.withdrawn += Number(withdrawn.rows[0]?.n ?? 0);
   const row = (await tenantLabels(tx)).find((r) => r.label === label) ?? labelRows(new Map([[label, 0]]), new Map())[0]!;
   return { label: row, ...safe };
 }

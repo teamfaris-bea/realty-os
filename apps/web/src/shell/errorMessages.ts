@@ -18,6 +18,7 @@ type CoreCode = BaseErrorCode | DenyCode | NormalizeErrorCode | ClientErrorCode;
 export const GENERIC_ERROR_MESSAGE = "Something went wrong on our side, and it wasn't saved. Try again in a moment.";
 
 export const errorMessages: Record<CoreCode, string> & Record<string, string> = {
+  SOURCE_UNCLASSIFIED: 'Automated contact is blocked until the Owner reviews the imported source. Existing source prohibitions still apply.',
   // ---- client ----
   NETWORK_ERROR: "Can't reach the server. Check your connection, then try again.",
   BAD_RESPONSE: 'The server sent an answer the app could not read. Try again in a moment.',

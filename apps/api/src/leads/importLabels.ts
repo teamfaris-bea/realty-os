@@ -1,7 +1,7 @@
 // b18 round 3 item 1 (owner boundary B18S-5; R-LSRC-8, E728): imported source labels and the lead sources they mean.
 //
-// A Follow Up Boss or CSV import keeps a person's source only as a label (imports/commit.ts stores its first 120
-// characters as contacts.original_source_detail.import_source; every import record keeps normalized.leadSourceLabel).
+// Imports preserve the full raw source label in original_source_detail.import_source and normalized.leadSourceLabel.
+// Unmapped, ambiguous and missing labels fail closed (0101); historical source associations survive unmapping.
 // The Owner maps a label, exactly as the import stored it, to one lead source (lead_sources.import_labels, 0099;
 // Owner only in the API and the database), at import time from the import's preview or afterwards from the lead
 // sources page. app.person_from_lead_source then counts the people it labels as sent by that source, so a source
@@ -17,17 +17,15 @@ import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { NO_AUTOMATED_CONTACT_LABEL } from './automatedContact.js';
 
-/** The longest label the import stores on a person (imports/commit.ts), and so the longest one that can be mapped. */
-export const IMPORT_LABEL_MAX = 120;
-
 /** A source label exactly as the import stores it on the person it creates (imports/commit.ts originalSourceDetail). */
 export function importLabelOf(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string' || raw === '') return null;
-  return raw.slice(0, IMPORT_LABEL_MAX);
+  return raw;
 }
 
 export interface ImportLabelRow {
   label: string;
+  classification: 'SOURCE_UNCLASSIFIED' | 'classified';
   people: number;
   leadSourceId: string | null;
   leadSourceName: string | null;
@@ -43,8 +41,9 @@ interface Mapped {
 
 /** The plain sentence of one label: who it labels, which source it means, and whether that source is marked. */
 export function importLabelSentence(label: string, people: number, m: Mapped | null): string {
-  const who = `"${label}" (${people === 1 ? '1 person' : `${people} people`})`;
-  if (!m) return `${who}: not mapped to a lead source.`;
+  const who = `${label === '' ? 'Missing source label' : `"${label}"`} (${people === 1 ? '1 person' : `${people} people`})`;
+  if (!label.trim()) return `${who}: SOURCE_UNCLASSIFIED. Review the original import data with the Owner. Missing source evidence cannot be mapped here; automated contact stays blocked.`;
+  if (!m) return `${who}: SOURCE_UNCLASSIFIED. Automated contact is blocked until the Owner confirms one exact source mapping.`;
   if (m.noAutomatedContact) return `${who}: mapped to ${m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.`;
   return `${who}: mapped to ${m.name}.`;
 }
@@ -55,10 +54,12 @@ export async function labelMappings(tx: Tx): Promise<Map<string, Mapped>> {
     SELECT l.label, s.id, s.name, s.no_ai_care FROM lead_sources s CROSS JOIN LATERAL unnest(s.import_labels) AS l(label)
      WHERE s.tenant_id = app.tenant_id() ORDER BY s.created_at, s.id`.execute(tx);
   const out = new Map<string, Mapped>();
+  const ambiguous = new Set<string>();
   for (const x of r.rows) {
     const prev = out.get(x.label);
-    // one label lives on one source (setImportLabel moves it); were two to hold it, a marked one is the one shown
-    if (!prev || (!prev.noAutomatedContact && x.no_ai_care)) out.set(x.label, { id: x.id, name: x.name, noAutomatedContact: x.no_ai_care });
+    if (prev?.id === x.id) continue;
+    if (prev || ambiguous.has(x.label)) { out.delete(x.label); ambiguous.add(x.label); }
+    else out.set(x.label, { id: x.id, name: x.name, noAutomatedContact: x.no_ai_care });
   }
   return out;
 }
@@ -68,17 +69,17 @@ export function labelRows(counts: ReadonlyMap<string, number>, mapped: ReadonlyM
   return [...counts.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([label, people]) => {
-      const m = mapped.get(label) ?? null;
-      return { label, people, leadSourceId: m?.id ?? null, leadSourceName: m?.name ?? null, noAutomatedContact: m?.noAutomatedContact ?? false, sentence: importLabelSentence(label, people, m) };
+      const m = label.trim() ? mapped.get(label) ?? null : null;
+      return { label, classification: m ? 'classified' : 'SOURCE_UNCLASSIFIED', people, leadSourceId: m?.id ?? null, leadSourceName: m?.name ?? null, noAutomatedContact: m?.noAutomatedContact ?? true, sentence: importLabelSentence(label, people, m) };
     });
 }
 
-/** Tallies labels (as the import stores them) over a list of raw source labels; a missing label is not counted. */
+/** Tallies labels (as the import stores them) over a list of raw source labels; missing labels are counted under the empty review key. */
 export function tallyLabels(raw: readonly (string | null | undefined)[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of raw) {
-    const l = importLabelOf(r);
-    if (l !== null) out.set(l, (out.get(l) ?? 0) + 1);
+    const l = r?.trim() ? importLabelOf(r)! : '';
+    out.set(l, (out.get(l) ?? 0) + 1);
   }
   return out;
 }
@@ -97,13 +98,18 @@ export async function stageLabels(tx: Tx, stageId: string): Promise<ImportLabelR
  */
 export async function tenantLabels(tx: Tx): Promise<ImportLabelRow[]> {
   const r = await sql<{ label: string; people: string }>`
-    SELECT left(r.normalized ->> 'leadSourceLabel', ${IMPORT_LABEL_MAX}) AS label, count(DISTINCT x.id) AS people
-      FROM import_records r CROSS JOIN LATERAL (VALUES (CASE WHEN r.target_table = 'contacts' THEN r.target_id END), (r.match_contact_id)) AS x(id)
-     WHERE r.tenant_id = app.tenant_id() AND x.id IS NOT NULL AND r.normalized ->> 'category' = 'contacts'
-       AND coalesce(r.normalized ->> 'leadSourceLabel', '') <> ''
-     GROUP BY 1`.execute(tx);
+    WITH labels AS (
+      SELECT coalesce(r.normalized ->> 'leadSourceLabel', '') AS label, x.id
+        FROM import_records r CROSS JOIN LATERAL (VALUES (CASE WHEN r.target_table = 'contacts' THEN r.target_id END), (r.match_contact_id)) AS x(id)
+       WHERE r.tenant_id = app.tenant_id() AND x.id IS NOT NULL AND r.normalized ->> 'category' = 'contacts'
+      UNION ALL
+      SELECT coalesce(c.original_source_detail->>'import_source',''), c.id FROM contacts c
+       WHERE c.tenant_id = app.tenant_id() AND (c.import_batch_id IS NOT NULL OR c.original_source_detail ? 'import_system')
+         AND NOT EXISTS (SELECT 1 FROM import_records r WHERE r.tenant_id = c.tenant_id AND r.normalized->>'category' = 'contacts'
+           AND ((r.target_table = 'contacts' AND r.target_id = c.id) OR r.match_contact_id = c.id))
+    ) SELECT app.import_label_key(label) AS label, count(DISTINCT id) AS people FROM labels GROUP BY 1`.execute(tx);
   const mapped = await labelMappings(tx);
   const counts = new Map<string, number>(r.rows.map((x) => [x.label, Number(x.people)]));
-  for (const label of mapped.keys()) if (!counts.has(label)) counts.set(label, 0);
+  for (const label of mapped.keys()) if (label.trim() && !counts.has(label)) counts.set(label, 0);
   return labelRows(counts, mapped);
 }

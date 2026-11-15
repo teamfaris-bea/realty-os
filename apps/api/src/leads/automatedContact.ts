@@ -30,6 +30,19 @@ import { sql } from 'kysely';
 /** The code every non-AI-care path refuses or skips with (AI care keeps AI_ISA_SOURCE_NO_AI_CARE). */
 export const SOURCE_NO_AUTOMATED_CONTACT = 'SOURCE_NO_AUTOMATED_CONTACT';
 
+export const SOURCE_UNCLASSIFIED = 'SOURCE_UNCLASSIFIED';
+export const SOURCE_UNCLASSIFIED_SENTENCE = 'Automated contact is blocked until the Owner confirms an exact mapping for every imported source label. Missing or ambiguous sources require review. Existing source prohibitions still apply.';
+export type SourceRefusal = typeof SOURCE_NO_AUTOMATED_CONTACT | typeof SOURCE_UNCLASSIFIED;
+export async function sourceRefusal(tx: Tx, contactId: string): Promise<SourceRefusal | null> {
+  const r = await sql<{ reason: SourceRefusal | null }>`SELECT app.person_source_refusal(app.tenant_id(), ${contactId}::uuid) AS reason`.execute(tx);
+  return r.rows[0]?.reason ?? null;
+}
+
+/** Acquire only at a transaction boundary, before any contact or row locks. */
+export async function lockSourcePolicy(tx: Tx): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(app.tenant_id()::text || ':import-source-mapping', 0))`.execute(tx);
+}
+
 /** The setting's name, the same on the sources screen, the Owner's answer and every refusal. */
 export const NO_AUTOMATED_CONTACT_LABEL = 'No automated contact for leads from this source';
 
@@ -82,7 +95,7 @@ export function notResumedSentence(plans: number): string {
 export function isSourceGuardViolation(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const { code, message } = err as { code?: unknown; message?: unknown };
-  return code === '23514' && typeof message === 'string' && message.startsWith(`${SOURCE_NO_AUTOMATED_CONTACT}:`);
+  return code === '23514' && typeof message === 'string' && (message.startsWith(`${SOURCE_NO_AUTOMATED_CONTACT}:`) || message.startsWith(`${SOURCE_UNCLASSIFIED}:`));
 }
 
 // ---- b18 round 3 item 3 (OQ-B18-S6): drafts automation wrote ----
@@ -115,7 +128,7 @@ export function withdrawnDraftsSentence(drafts: number): string {
 /** Whether a draft's payload says it was withdrawn for the setting (payload.withdrawn.reason). */
 export function withdrawnForSource(payload: Record<string, unknown> | null): boolean {
   const w = payload?.['withdrawn'];
-  return typeof w === 'object' && w !== null && (w as { reason?: unknown }).reason === SOURCE_NO_AUTOMATED_CONTACT;
+  return typeof w === 'object' && w !== null && [SOURCE_NO_AUTOMATED_CONTACT, SOURCE_UNCLASSIFIED].includes(String((w as { reason?: unknown }).reason));
 }
 
 /**
@@ -130,7 +143,8 @@ export async function withdrawAutomatedDrafts(tx: Tx, scope: { contactId: string
   const who = 'contactId' in scope
     ? sql`a.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${scope.contactId}::uuid))`
     : sql`a.contact_id IS NOT NULL AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${scope.sourceId}::uuid)`;
-  const mark = JSON.stringify({ withdrawn: { reason: SOURCE_NO_AUTOMATED_CONTACT, at: toIso(now) } });
+  const reason = 'contactId' in scope ? (await sourceRefusal(tx, scope.contactId)) ?? SOURCE_NO_AUTOMATED_CONTACT : SOURCE_NO_AUTOMATED_CONTACT;
+  const mark = JSON.stringify({ withdrawn: { reason, at: toIso(now) } });
   const r = await sql<{ id: string }>`
     UPDATE assistant_actions a SET status = 'invalidated', payload = a.payload || ${mark}::jsonb
      WHERE a.tenant_id = app.tenant_id() AND a.status = 'proposed' AND a.autonomy = 'requires_approval'
@@ -143,7 +157,7 @@ export async function withdrawAutomatedDrafts(tx: Tx, scope: { contactId: string
      WHERE tenant_id = app.tenant_id() AND assistant_action_id = ANY (${ids}::uuid[]) AND state IN ('open','snoozed')`.execute(tx);
   await sql`
     UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
-           trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', ${SOURCE_NO_AUTOMATED_CONTACT}::text, 'text', ${NO_AUTOMATED_CONTACT_SKIP_TEXT}::text))
+           trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', ${reason}::text, 'text', ${reason === SOURCE_UNCLASSIFIED ? SOURCE_UNCLASSIFIED_SENTENCE : NO_AUTOMATED_CONTACT_SKIP_TEXT}::text))
      WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND assistant_action_id = ANY (${ids}::uuid[]) AND status = 'converted_to_draft'`.execute(tx);
   return ids.length;
 }

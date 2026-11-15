@@ -83,6 +83,7 @@ export const REASON_PHRASES: Readonly<Record<SkipReason, string>> = Object.freez
 /** Reasons the API adds after core's preflight (the AI care skip, Q-ISA-23; b18 review B18S-5's lead-source setting). */
 const API_REASON_PHRASES: Readonly<Record<string, string>> = Object.freeze({
   UNDER_AI_CARE: 'under AI care',
+  SOURCE_UNCLASSIFIED: 'source needs Owner review',
   SOURCE_NO_AUTOMATED_CONTACT: 'no automated contact (their lead source)',
 });
 

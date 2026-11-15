@@ -28,7 +28,7 @@ import { AppError } from '../errors.js';
 import { reachableForVersion } from '../stageAutomation/reach.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { NO_AUTOMATED_CONTACT_STOP_REASON, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
+import { NO_AUTOMATED_CONTACT_STOP_REASON, sourceRefusal, lockSourcePolicy, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
 import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
@@ -257,6 +257,7 @@ export interface EnrollInput {
 /** POST /contacts/:id/enrollments */
 export async function enrollContact(actor: UserActor, contactId: string, input: EnrollInput, deps: AssistantDeps): Promise<EnrollmentView> {
   const out = await asUser(deps, actor, async (tx, now) => {
+    await lockSourcePolicy(tx);
     await lockContact(tx, contactId as ContactId);
     const c = await contactCore(tx, contactId);
     if (!c || c.deleted) throw new AppError('NOT_FOUND');
@@ -272,7 +273,8 @@ export async function enrollContact(actor: UserActor, contactId: string, input: 
     // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact, so a person the source marked "No
     // automated contact for leads from this source" sent is not enrolled even by hand (OQ-B18-S5's conservative
     // default); refused before anything is written (0098's playbook_enrollments_source_guard refuses it too)
-    if (await noAutomatedContact(tx, contactId)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
+    const sourceReason = await sourceRefusal(tx, contactId);
+    if (sourceReason) throw new AppError(sourceReason, { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
     const v = await P.approvedVersionOf(tx, pb.id);
     // an agent playbook speaks for its agent: only for contacts that agent owns (dispatch re-checks)
     if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
@@ -347,6 +349,7 @@ export async function stopEnrollment(actor: UserActor, enrollmentId: string, dep
  */
 export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
   return asUser(deps, actor, async (tx, now) => {
+    await lockSourcePolicy(tx);
     const e = await lockedEnrollment(tx, enrollmentId);
     if (e.state === 'active') return viewOf(e);
     if (e.state !== 'paused') throw new AppError('ENROLLMENT_NOT_LIVE', { state: e.state });
@@ -358,7 +361,8 @@ export async function resumeEnrollment(actor: UserActor, enrollmentId: string, d
     if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
     if (!(await P.approvedVersionOf(tx, pb.id))) throw new AppError('PLAYBOOK_NOT_APPROVED');
     // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
-    if (await noAutomatedContact(tx, e.contactId)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
+    const sourceReason = await sourceRefusal(tx, e.contactId);
+    if (sourceReason) throw new AppError(sourceReason, { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
     if (reason === 'client_reply') await resumeAutomation(tx, e.contactId, actor.userId);
     await P.resumeEnrollment(tx, e.id, actor.userId, now);
     await enqueueStep(tx, e.id, now);

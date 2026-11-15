@@ -60,7 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
-import { AUTOMATED_DRAFT_TRIGGER_KINDS, isSourceGuardViolation, noAutomatedContact } from '../leads/automatedContact.js';
+import { AUTOMATED_DRAFT_TRIGGER_KINDS, isSourceGuardViolation, lockSourcePolicy, sourceRefusal } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
@@ -146,6 +146,7 @@ export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts:
 
 async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Promise<Tx1> {
   void txNow;
+  await lockSourcePolicy(tx);
   const peek = await msgs.messageById(tx, messageId);
   if (!peek) return { kind: 'invisible' };
   await lockContact(tx, peek.contactId as ContactId);
@@ -251,7 +252,8 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   // judged on chain links 1 to 3 only (isa/send.ts), so link 11 never runs for it and TX1 asks here (round 3 item 5);
   // before, only the database guard refused it.
   const sourceChecked = isaMsg ? isaTx1?.ended === true : isAutomatedContact(m, gateInitiator) || automatedDraft;
-  if (sourceChecked && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
+  const sourceReason = sourceChecked ? await sourceRefusal(tx, m.contactId) : null;
+  if (sourceReason) extra.push(sourceReason);
 
   const intent: OutboundIntent = {
     contactId: m.contactId,
@@ -360,7 +362,8 @@ export function isAutomatedContact(m: { initiator: string; actionCategory: strin
 
 /** 0098's app.messages_source_guard refusing a dispatch (a check_violation 'SOURCE_NO_AUTOMATED_CONTACT: ...'). */
 function sourceGuardRefusal(err: unknown): DispatchDenyReason | null {
-  return isSourceGuardViolation(err) ? 'SOURCE_NO_AUTOMATED_CONTACT' : null;
+  if (!isSourceGuardViolation(err)) return null;
+  return (err as { message: string }).message.startsWith('SOURCE_UNCLASSIFIED:') ? 'SOURCE_UNCLASSIFIED' : 'SOURCE_NO_AUTOMATED_CONTACT';
 }
 
 /** The kind of touch a gate-allowed human send on this channel is (R-OWN-14; calls are dial.ts's 'call'). */
