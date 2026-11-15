@@ -24,18 +24,27 @@ afterAll(async()=>{await h?.close();});
 function wire() {
   const calls:string[]=[];
   let body=''; let at=new Date(); let visible=false;
+  let hold: {entered:()=>void; release:Promise<void>} | null = null;
   const providerRef='SM'+randomUUID().replaceAll('-','');
   const fetchStub=(async (_input:unknown,init?:RequestInit)=>{
     const method=init?.method ?? 'GET'; calls.push(method);
     if(method==='POST') { body=new URLSearchParams(String(init?.body)).get('Body')!; return new Response('{broken',{status:201}); }
-    return new Response(JSON.stringify({messages:visible?[{sid:providerRef,body,status:'delivered',direction:'outbound-api',date_created:at.toUTCString()}]:[]}),{status:200});
+    const response = new Response(JSON.stringify({messages:visible?[{sid:providerRef,body,status:'delivered',direction:'outbound-api',date_created:at.toUTCString()}]:[]}),{status:200});
+    const barrier=hold; hold=null;
+    if (barrier) { barrier.entered(); await barrier.release; }
+    return response;
   }) as typeof fetch;
   const adapter=new TwilioTelephony({accountSid:'AC'+'1'.repeat(32),authToken:'synthetic-master-token',publicBaseUrl:'https://api.example.test',apiBase:'https://twilio.example.test',fetch:fetchStub,liveRequests:true,sleep:async()=>undefined});
   // Test-only adapter substitution; all calls originate from the normal dispatcher after its gates.
   // eslint-disable-next-line realty/no-provider-outbound
   const send=vi.spyOn(h.providers.telephony,'sendSms').mockImplementation(adapter.sendSms.bind(adapter));
   vi.spyOn(h.providers.telephony,'lookupMessage').mockImplementation(adapter.lookupMessage.bind(adapter));
-  return {calls,send,providerRef,show:(time:Date)=>{at=time;visible=true;}};
+  return {calls,send,providerRef,show:(time:Date)=>{at=time;visible=true;}, hide:()=>{visible=false;}, holdNextLookup:()=>{
+    let entered!:()=>void; let release!:()=>void;
+    const started=new Promise<void>(resolve=>{entered=resolve;});
+    const wait=new Promise<void>(resolve=>{release=resolve;});
+    hold={entered,release:wait}; return {started,release};
+  }};
 }
 
 describe('malformed accepted response persists uncertainty without replay',()=>{
@@ -113,4 +122,26 @@ it('repairs legacy unresolved rows without changing evidenced failures',async()=
   expect(await messageRow(h,ids[0]!)).toMatchObject({status:'dispatch_unknown',status_reason:'DISPATCH_UNKNOWN_UNRESOLVED'});
   expect(await messageRow(h,ids[1]!)).toMatchObject({status:'failed',status_reason:'PROVIDER_REJECTED'});
   expect((await h.su.query("SELECT ref_id FROM app.due_work(now(),100) WHERE ref_id=ANY($1::uuid[])",[ids])).rows).toEqual([]);
+});
+
+it.each(['unresolved','callback'] as const)('a slow positive lookup respects a competing %s result without replay',async competitor=>{
+  const c=await ownedContact(w.agents[0]!);
+  const transport=wire();
+  const first=await sendText(w.agents[0]!,c.id,'Synthetic concurrent recovery',{idempotencyKey:randomUUID()});
+  const id=first.body.message!.id;
+  await h.su.query("UPDATE messages SET dispatched_at=now()-interval '11 minutes' WHERE id=$1",[id]);
+  transport.show((await messageRow(h,id)).dispatched_at!);
+  const barrier=transport.holdNextLookup();
+  const slow=reconcileOutbound(id,w.deps,w.tenantId);
+  await barrier.started;
+  try {
+    transport.hide();
+    if (competitor==='unresolved') expect(await reconcileOutbound(id,w.deps,w.tenantId)).toEqual({kind:'unresolved'});
+    else expect((await telephonyWebhook(h,`/webhooks/telephony/status?m=${id}`,{MessageSid:transport.providerRef,MessageStatus:'undelivered',ErrorCode:'30003',From:w.mainNumber,To:c.phone})).statusCode).toBe(200);
+  } finally { barrier.release(); }
+  expect(await slow).toEqual(competitor==='unresolved'?{kind:'resolved',status:'delivered'}:{kind:'noop'});
+  expect(await messageRow(h,id)).toMatchObject(competitor==='unresolved'?{status:'delivered',status_reason:null}:{status:'undelivered'});
+  expect(transport.calls.filter(method=>method==='POST')).toHaveLength(1);
+  expect(transport.calls.filter(method=>method==='GET')).toHaveLength(competitor==='unresolved'?2:1);
+  expect((await dispatchOutbound(id,w.deps,{tenantId:w.tenantId})).kind).toBe('noop');
 });

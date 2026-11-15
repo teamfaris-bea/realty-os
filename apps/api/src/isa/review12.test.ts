@@ -1257,6 +1257,44 @@ describe('b12 recheck R12: every AI text counts once toward the 40-message limit
       expect(await care(l.id)).toEqual({ sent: 1, n: 1, end_reason: null, machine_sent: 1 });
     });
 
+    it('legacy failed processing leaves dependent states that cannot be safely guessed back to pending', async () => {
+      const l=await caredLead();
+      const {aiMessages}=await import('./testing.js');
+      const {emitIsaSendResultsInTx}=await import('./sendResult.js');
+      const {readFileSync}=await import('node:fs');
+      telephony().failNext('timeout');
+      await inboundSms(h,l.phone,w.mainNumber,'Synthetic legacy failure');
+      await runIsa(h,w.tenantId);
+      const m=(await aiMessages(h,l.id)).at(-1)!;
+      const a=(await assignmentOf(h,l.id))!;
+      const fact=randomUUID();
+      await h.su.query(`INSERT INTO ai_isa_shared_facts (tenant_id,id,assignment_id,contact_id,message_id,fact_kind,line_sha256)
+        VALUES ($1,$2,$3,$4,$5,'listing_active',repeat('a',64))`,[w.tenantId,fact,a.id,l.id,m.id]);
+      const handoff=randomUUID();
+      await h.su.query(`INSERT INTO ai_isa_handoffs (tenant_id,id,assignment_id,contact_id,reason,assistant_action_id,package,package_sha256,pending_message_id,confirmation_status,sla_class,sla_due_at,recipient_user_id)
+        SELECT tenant_id,$2,$3,contact_id,'appointment_booked',assistant_action_id,'{}',encode(sha256(convert_to('{}','UTF8')),'hex'),id,'queued','normal',now()+interval '1 hour',$4 FROM messages WHERE id=$1`,[m.id,handoff,a.id,w.agents[0]!.userId]);
+      await h.su.query("UPDATE messages SET action_category='ai_isa_confirmation' WHERE id=$1",[m.id]);
+      // Execute the old deadline's actual persisted status and result-handler path, not just a message-only fixture.
+      await h.su.query("UPDATE messages SET status='failed',status_reason='DISPATCH_UNKNOWN_UNRESOLVED' WHERE id=$1",[m.id]);
+      await withTenantTx(systemActor(w.tenantId,'worker'),tx=>emitIsaSendResultsInTx(tx,[m.id],'failed'),{db:h.database});
+      await runIsa(h,w.tenantId);
+      expect((await h.su.query('SELECT status FROM ai_isa_shared_facts WHERE id=$1',[fact])).rows[0]).toEqual({status:'canceled'});
+      expect((await h.su.query('SELECT status FROM ai_isa_turns WHERE message_id=$1',[m.id])).rows[0]).toEqual({status:'blocked'});
+      expect((await h.su.query('SELECT confirmation_status FROM ai_isa_handoffs WHERE id=$1',[handoff])).rows[0]).toEqual({confirmation_status:'refused'});
+      const before=await care(l.id);
+      await expect(h.su.query(readFileSync(new URL('../../../../packages/db/migrations/0102_preserve_unresolved_outcomes.sql',import.meta.url),'utf8'))).rejects.toThrow('UNRESOLVED_LEGACY_DEPENDENCIES_REQUIRE_REVIEW');
+      expect(await care(l.id)).toEqual(before);
+      expect((await h.su.query('SELECT status FROM messages WHERE id=$1',[m.id])).rows[0]).toEqual({status:'failed'});
+      // Existing late delivery processing does not reconstruct these terminal dependent records either.
+      const {applyMessageStatus}=await import('../comms/status.js');
+      await applyMessageStatus(systemActor(w.tenantId,'provider'),{providerEventRef:`legacy-delivered-${m.id}`,message:{id:m.id},providerStatus:'delivered',mapped:'delivered',errorCode:null,occurredAt:Date.now() as never},depsFromPlatform(h.app.platform));
+      await runIsa(h,w.tenantId);
+      expect((await h.su.query('SELECT status FROM messages WHERE id=$1',[m.id])).rows[0]).toEqual({status:'failed'}); // Legacy terminal failure rejects this late delivery too.
+      expect((await h.su.query('SELECT status FROM ai_isa_shared_facts WHERE id=$1',[fact])).rows[0]).toEqual({status:'canceled'});
+      expect((await h.su.query('SELECT status FROM ai_isa_turns WHERE message_id=$1',[m.id])).rows[0]).toEqual({status:'blocked'});
+      expect((await h.su.query('SELECT confirmation_status FROM ai_isa_handoffs WHERE id=$1',[handoff])).rows[0]).toEqual({confirmation_status:'refused'});
+    });
+
     it('R-ISA-11: the 40th text, its dispatch never resolved, ends care limit_reached with a handoff', async () => {
       const l = await caredLead(39);
       await unresolved(l);

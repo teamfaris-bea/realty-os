@@ -651,7 +651,8 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
     await lockContact(tx, m.contactId as ContactId);
     const cur = await msgs.lockMessage(tx, m.id);
     if (!cur || cur.status !== 'dispatch_unknown') return { kind: 'noop' as const };
-    if (cur.statusReason === DISPATCH_UNKNOWN_UNRESOLVED) return { kind: 'unresolved' as const };
+    // A lookup already in flight may resolve uncertainty after another job exhausts the window.
+    // Only the current unknown status may be advanced; a callback's final status wins above.
     if (found && found.status !== 'unknown') {
       const status = found.status === 'delivered' ? 'delivered' : found.status === 'failed' ? 'failed' : found.status === 'undelivered' ? 'undelivered' : 'sent';
       await msgs.markSent(tx, m.id, m.channel === 'email' ? 'email' : 'telephony', found.providerRef);
@@ -661,6 +662,7 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
       if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, status);
       return { kind: 'resolved' as const, status };
     }
+    if (cur.statusReason === DISPATCH_UNKNOWN_UNRESOLVED) return { kind: 'unresolved' as const };
     const deadline = plusMs(m.dispatchedAt as Instant, MAX_RECONCILE_MS);
     if (now < deadline) return { kind: 'retry' as const, at: (Math.min(deadline, now + 2 * MINUTE_MS) as Instant) };
     // An exhausted lookup window is not evidence of rejection. Persist uncertainty, but stop polling.

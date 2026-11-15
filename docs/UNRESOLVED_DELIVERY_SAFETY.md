@@ -40,3 +40,23 @@ Final focused results: 78 API tests passed; three AI R15 tests passed; final mig
 - No new browser-level compose verification: the preceding branch recorded baseline useViewer/casing failures. UI coverage here is focused outcome/thread text. Full repository tests, scale/performance, production migration and mixed-version rollout are not verified. Workers must be coordinated with the new migration/code; older workers can still write the old failed classification.
 - Backfill cannot recover purged messages, prove whether a send occurred, or reconstruct unknown outcomes mislabeled with other reasons. Existing sent counters are deliberately not decremented.
 - The callback path still records status without backfilling a missing provider reference; the existing event retains its provider SID.
+
+
+## Review follow-up: race, seeded upgrade and migration blocker
+
+A deterministic raw-HTTP barrier reproduced a slow successful lookup being discarded after a competing miss marked the message unresolved (one failing regression; final-callback control passed). Reconciliation now applies a usable result from an already-running lookup before checking the exhausted-window marker. It still checks current message status first: a terminal callback wins, and a miss cannot regress it. Exhausted rows do not start new lookups. No submit/replay or matching policy changed.
+
+The non-superuser upgrade fixture now contains six actual legacy submissions across two tenants: eligible system and AI submissions plus genuine refusal controls. It verifies repaired states and exactly one unknown-result job per eligible AI message. All constraints/triggers remain enabled; no messages are dispatched. Earlier fixture construction failures were corrected to conform to the published sender and AI mandate constraints; they were not migration failures.
+
+**Unresolved blocker:** the old failed-result handler cancels shared facts, blocks turns and marks handoff confirmations refused. The new regression executes that actual old status/result path and confirms all three effects. Existing late delivery handling does not repair them: the legacy failed message itself also rejects the tested late delivered event. These records lack trustworthy per-transition cause provenance: ending care also cancels pending facts, and human decisions must not be inferred away. No automatic restoration is implemented. Migration 0102 now aborts before changing anything with `UNRESOLVED_LEGACY_DEPENDENCIES_REQUIRE_REVIEW` when an eligible legacy message has those terminal dependencies. This is a conservative stop, not completion of legacy repair. The guard does not detect historical cases whose message reason was already cleared by a later callback; those need a separate evidence-backed audit. Do not publish this as release-ready.
+
+**Hard rollout barrier (required, not executed or operationally verified):** stop all old API/job writers and drain running work, including pending provider responses, before migration. Confirm no old process can resume; do not overlap old and new workers. Run migration only after that barrier. A dependency preflight rejection blocks rollout until the affected records receive an evidence-backed repair design; never clear the marker just to bypass it. Start only the updated workers after migration succeeds. There is no mixed-version compatibility guarantee or database enforcement preventing an old worker from writing failed again.
+
+
+Follow-up verification commands/results (same synthetic local PostgreSQL and Node 22 setup):
+- Before the race fix: `vitest run --root apps/api src/comms/unknownResponse.test.ts -t 'slow positive' --maxWorkers=1`: one failed, one passed, five filtered out.
+- Before the dependency guard: `vitest run --root apps/api src/isa/review12.test.ts -t 'legacy failed processing' --maxWorkers=1`: one failed, 50 filtered out; the migration wrongly succeeded despite the reproduced terminal dependencies.
+- After both changes: `vitest run --root apps/api src/isa/review12.test.ts src/comms/unknownResponse.test.ts -t 'b12 recheck R15|slow positive' --maxWorkers=1`: six passed, 52 filtered out. These include an explicit regression documenting the still-unrepaired legacy states.
+- Full raw-HTTP file: `vitest run --root apps/api src/comms/unknownResponse.test.ts --maxWorkers=1`: seven passed.
+- Seeded non-superuser upgrade command above: one passed, with six legacy rows across two tenants and AI result-job assertions.
+- API typecheck, changed-file ESLint and whitespace checks passed. No full browser, production migration, live provider, mixed-version or load tests were run for this follow-up.

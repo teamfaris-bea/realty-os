@@ -1,3 +1,22 @@
+-- HARD ROLLOUT BARRIER: drain all old workers before running this migration; deploy only new workers afterward.
+-- Legacy failure handling could also cancel facts, block turns and refuse a handoff. These states have no
+-- trustworthy cause marker (ending care can cancel facts too). Do not silently restore human decisions or
+-- leave false dependent outcomes behind. Abort atomically for explicit review; never restart ended care.
+DO $$
+BEGIN
+ IF EXISTS (
+   SELECT 1 FROM messages m WHERE m.status='failed' AND m.status_reason='DISPATCH_UNKNOWN_UNRESOLVED'
+    AND m.provider_message_ref IS NULL AND m.provider_error_code IS NULL
+    AND (
+      EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id=m.tenant_id AND f.message_id=m.id AND f.status='canceled') OR
+      EXISTS (SELECT 1 FROM ai_isa_turns t WHERE t.tenant_id=m.tenant_id AND t.message_id=m.id AND t.status IN ('blocked','canceled','canceled_paused')) OR
+      EXISTS (SELECT 1 FROM ai_isa_handoffs h WHERE h.tenant_id=m.tenant_id AND h.pending_message_id=m.id AND h.confirmation_status IN ('refused','canceled'))
+    )
+ ) THEN
+   RAISE EXCEPTION 'UNRESOLVED_LEGACY_DEPENDENCIES_REQUIRE_REVIEW: ambiguous legacy AI outcomes; migration aborted without restoring care or human decisions';
+ END IF;
+END $$;
+
 -- End polling without asserting non-delivery. Preserve existing function ownership and grants.
 CREATE OR REPLACE FUNCTION app.due_work(p_now timestamptz, p_limit integer)
 RETURNS TABLE (tenant_id uuid, work_kind text, ref_id uuid, due_at timestamptz)
