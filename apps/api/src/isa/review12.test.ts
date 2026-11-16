@@ -1282,6 +1282,12 @@ describe('b12 recheck R12: every AI text counts once toward the 40-message limit
       expect((await h.su.query('SELECT status FROM ai_isa_shared_facts WHERE id=$1',[fact])).rows[0]).toEqual({status:'canceled'});
       expect((await h.su.query('SELECT status FROM ai_isa_turns WHERE message_id=$1',[m.id])).rows[0]).toEqual({status:'blocked'});
       expect((await h.su.query('SELECT confirmation_status FROM ai_isa_handoffs WHERE id=$1',[handoff])).rows[0]).toEqual({confirmation_status:'refused'});
+      const {readLegacyDeliveryReport}=await import('@realty/db/legacy-delivery-preflight');
+      const report=await readLegacyDeliveryReport(h.testDb.ownerUrl,{tenantId:w.tenantId});
+      const dependencies=report.messages.find(row=>row.messageId===m.id)!.dependencies;
+      expect(dependencies).toEqual(expect.arrayContaining([{kind:'shared_fact',id:fact,status:'canceled'},{kind:'handoff',id:handoff,status:'refused'},{kind:'turn',id:expect.any(String),status:'blocked'}]));
+      expect(report.totalBlockedMessages).toBeGreaterThanOrEqual(1);
+      expect(report.releaseReady).toBe(false);
       const before=await care(l.id);
       await expect(h.su.query(readFileSync(new URL('../../../../packages/db/migrations/0102_preserve_unresolved_outcomes.sql',import.meta.url),'utf8'))).rejects.toThrow('UNRESOLVED_LEGACY_DEPENDENCIES_REQUIRE_REVIEW');
       expect(await care(l.id)).toEqual(before);
