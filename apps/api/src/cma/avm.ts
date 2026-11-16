@@ -267,7 +267,7 @@ export const displayPackReviewed = (p: Parameters<typeof packReviewed>[0]) => pa
 
 // ---- after the queue: the sweep -----------------------------------------------------------------------------
 
-/** Notes canceled per sweep pass at most (bounded work in the shared 5-minute transaction). */
+/** Candidate rows per pass at most; scheduled-run scanning/sorting can exceed this count. */
 export const HOME_VALUE_SWEEP_LIMIT = 500;
 export const HOME_VALUE_NOT_DISPLAYABLE = 'HOME_VALUE_NOT_DISPLAYABLE';
 
@@ -276,27 +276,30 @@ export const HOME_VALUE_NOT_DISPLAYABLE = 'HOME_VALUE_NOT_DISPLAYABLE';
  * runs and their in-house valuations by primary key, at most `limit`. A builder of its own so the volume test can
  * EXPLAIN exactly this statement (b13 audit V2B-6, values.volume.test.ts).
  *
- * The run's valuation id is computed in a MATERIALIZED step first, so the join to home_valuations is a plain
- * `uuid = uuid` on its primary key. Written inline (`v.id = CASE WHEN … ~ … THEN (…)::uuid END`) the join clause holds
- * the non-leakproof regex match and uuid cast, which FORCE RLS keeps from being an index condition on home_valuations:
- * PostgreSQL then seq-scanned home_valuations once per run, and 10,000 queued notes hit the statement timeout.
+ * The ordered subquery computes the guarded valuation UUID before its RLS-protected join. OFFSET 0
+ * prevents flattening the non-leakproof regex/cast into that join (which otherwise can lose its PK
+ * index condition). Unlike a MATERIALIZED CTE, this preserves ordering for the final LIMIT so the
+ * message, valuation and address probes stop after enough qualifying rows. The limit stays AFTER
+ * every eligibility/visibility filter: sparse or invalid runs never shorten the requested page.
+ * Scheduled-run scanning/sorting is still proportional to matching runs, not universally bounded.
  */
 export function homeValueSweepCandidates(limit: number) {
   return sql<{ message_id: string; contact_id: string; action_id: string | null; provider_ref: string | null; region: string | null }>`
-    WITH c AS MATERIALIZED (
-      SELECT m.tenant_id, m.id AS message_id, m.contact_id, m.assistant_action_id AS action_id,
-             CASE WHEN r.trigger_ref->'ref'->>'valuationId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN (r.trigger_ref->'ref'->>'valuationId')::uuid END AS valuation_id
-        FROM messages m
-        JOIN playbook_step_runs r ON r.tenant_id = m.tenant_id AND r.contact_id = m.contact_id AND r.status = 'scheduled' AND r.enrollment_id IS NULL AND r.message_id = m.id
-       WHERE m.tenant_id = app.tenant_id() AND m.direction = 'outbound' AND m.status IN ('queued','scheduled')
-         AND r.trigger_ref->>'trigger' = 'home_value'
-    )
-    SELECT c.message_id, c.contact_id, c.action_id, v.provider_ref, a.region
-      FROM c
-      JOIN home_valuations v ON v.tenant_id = c.tenant_id AND v.id = c.valuation_id
+    SELECT r.message_id, r.contact_id, m.assistant_action_id AS action_id, v.provider_ref, a.region
+      FROM (
+        SELECT tenant_id, contact_id, message_id,
+               CASE WHEN trigger_ref->'ref'->>'valuationId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN (trigger_ref->'ref'->>'valuationId')::uuid END AS valuation_id
+          FROM playbook_step_runs
+         WHERE tenant_id = app.tenant_id() AND status = 'scheduled' AND enrollment_id IS NULL
+           AND trigger_ref->>'trigger' = 'home_value'
+         ORDER BY contact_id, message_id OFFSET 0
+      ) r
+      JOIN messages m ON m.tenant_id = r.tenant_id AND m.contact_id = r.contact_id AND m.id = r.message_id
+      JOIN home_valuations v ON v.tenant_id = r.tenant_id AND v.id = r.valuation_id
       LEFT JOIN contact_addresses a ON a.tenant_id = v.tenant_id AND a.id = v.contact_address_id
-     WHERE v.provider_ref LIKE 'inhouse:%' OR v.provider = ${IN_HOUSE_PROVIDER}
-     ORDER BY c.contact_id, c.message_id LIMIT ${limit}`;
+     WHERE m.tenant_id = app.tenant_id() AND m.direction = 'outbound' AND m.status IN ('queued','scheduled')
+       AND (v.provider_ref LIKE 'inhouse:%' OR v.provider = ${IN_HOUSE_PROVIDER})
+     ORDER BY r.contact_id, r.message_id LIMIT ${limit}`;
 }
 
 /**
