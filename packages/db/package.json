@@ -10,6 +10,11 @@
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./legacy-delivery-preflight": {
+      "@realty/source": "./src/legacyDeliveryPreflight.ts",
+      "types": "./src/legacyDeliveryPreflight.ts",
+      "default": "./dist/legacyDeliveryPreflight.js"
+    },
     "./migrate": {
       "@realty/source": "./src/migrate.ts",
       "types": "./src/migrate.ts",
@@ -29,6 +34,7 @@
     "setup-dev": "tsx src/scripts/setup-dev.ts",
     "counsel-review": "tsx src/scripts/counsel-review.ts",
     "preflight": "tsx src/scripts/preflight.ts",
+    "legacy-delivery-report": "tsx src/scripts/legacy-delivery-report.ts",
     "gen-schema": "tsx --conditions=@realty/source src/schemaGen.ts"
   },
   "dependencies": {
