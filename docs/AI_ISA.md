@@ -338,6 +338,8 @@ A DB guard in the style of `tenant_settings_batch_text_guard` (0021_fub_parity.s
 5. `calendar.book:{tenant}:{user}` (apps/api/src/calendar/repos/links.ts:174-176);
 6. `ai_isa.send:{tenant}:{hmac}` for every HMAC of the person, sorted (guard).
 
+**Model-budget lock.** TX-A first takes the tenant-scoped `realty.isa.model-budget:` advisory transaction lock, before locks 1–6. It serializes the daily count and `ai_runs` reservation. A repair reservation takes the same budget lock in a separate transaction after TX-B. No model provider call holds this lock.
+
 **Rule: no provider call (AI, calendar, MLS, SMS or email) while lock 2, 3 or 4 is held.** The only provider call under any lock is the booking job's live free/busy read under lock 5 alone, exactly as `bookSlot` does today (service.ts:400-410).
 
 **Controls.**
@@ -386,8 +388,11 @@ any non-terminal ─► ended{reason}  (terminal; writes exactly one handoff)
 ### 4.2 Turns and limits
 - **One turn** = one trigger (a batch of inbounds, a timer or an event). It makes at most one model call, plus one repair retry on a schema failure. It queues at most one message. **One open (proposed) AI message per assignment** (a partial unique index): a turn that needs to speak while one is pending withdraws it, cancels its facts and composes from both inputs.
 - **Model limits:**
-  - 12 calls per person per day; calls discarded as stale count only against the tenant budget;
-  - a tenant budget of 1,000 calls a day (VERIFY);
+  - 12 model-call reservations per person and 1,000 per tenant, per **team-local calendar day** (`tenant_settings.default_timezone`; local midnight boundaries, including daylight-saving changes). These are the values in `ISA_TURN_LIMITS`, not message/send caps.
+  - Before each original call and each schema-repair call, the system counts the tenant's `ai_runs` rows with purpose `ai_isa_turn` in that day and inserts one durable reservation under the tenant budget lock. The person count joins each run's assignment to `app.contact_person_ids`, including earlier assignments and merged records. Other AI purposes and other tenants do not count.
+  - Successful, failed, stale and control-discarded calls count against **both** budgets. A committed reservation also counts if a crash prevents the call or recording its outcome; it is never refunded because the provider outcome may be unknown. Historical recorded ISA runs count, but calls omitted by the old implementation cannot be reconstructed. This is a conservative call-attempt budget, not a token or message budget.
+  - At either limit, the turn is `deferred` without a provider call, with `ISA_MODEL_PERSON_DAILY_LIMIT` or `ISA_MODEL_TENANT_DAILY_LIMIT`, `not_before` and worker `retryAt` set to the next team-local midnight. The care panel explains the hold. The initial inbound is not consumed. A held repair preserves its schema-failure counter and resumes after rechecking the normal chain; a newer inbound takes the normal turn path. Eligibility and send gates still apply on retry.
+  - Each provider call, including a repair, has its **own** `ai_runs` row. Returned `inputTokens` and `outputTokens` are stored unchanged. Provider errors and unfinished reservations have null token counts, rather than invented zeros. Returned usage and encrypted output are recorded before TX-B can discard a stale or canceled decision.
   - a flood (10 or more inbounds in 10 minutes) escalates `flood`, high priority when an inbound is unanswered.
 - **Minimum gap** of 120 seconds between AI outbounds, enforced in TX1 and the guard.
 - **Debounce.** TX-A returns `{retryAt: last_inbound_at + 20 s}` while `conversations.last_inbound_at > now − 20 s`, capped at 2 minutes of total deferral. This uses the worker's retryAt (apps/api/src/worker/handlers/dispatchStale.ts:28), because a dedupe-keyed enqueue cannot push `run_at` back (packages/db/src/jobs.ts:92-105).
@@ -822,11 +827,11 @@ Applied to model text (`reply.text`, the summary) and, for the identity check, t
 ```
 - Strict: unknown keys, wrong types or extra handles fail the parse.
 - One repair retry happens with a server note of the schema error (no model text is echoed). A second failure means no send and `uncertain`.
-- `ai_isa_turns.decision` and `.denied` hold codes and handles only, enforced by a CHECK against a jsonb shape of keys and an enum of codes. Prompts and outputs stay in `ai_runs.output_enc` (purged after 30 days, 0001:1490-1511).
+- `ai_isa_turns.decision` and `.denied` hold codes and handles only, enforced by a CHECK against a jsonb shape of keys and an enum of codes. Provider output stays encrypted in `ai_runs.output_enc` (purged after 30 days, 0001:1490-1511); the turn path does not persist the prompt. Token counts remain in the usage columns.
 
 ### 7.5 Rate limits and abuse
 - Inbounds are debounced (§4.2).
-- The per-person (12) and tenant (1,000) model budgets fail closed with `limit`, high priority when an inbound is unanswered.
+- The per-person (12) and tenant (1,000) model budgets fail closed as a deferred turn with the explicit daily-budget code, care-panel explanation and next-team-local-midnight retry described in §4.2. This spend hold does not create a separate high-priority escalation card.
 - Flood escalation. One turn at a time. Inbound bodies over 1,600 characters are truncated and flagged.
 - There is no reach without an explicit start by the owner, and no turn except from a bound point.
 - **The hostile suite** `HostileIsaAi` extends apps/api/src/providers/fake/hostileAi.ts:25-38 with: unoffered_slot, unverified_quote, team_text_quote, quoted_email_slot, price_number, a_grand, appraisal_word, market_claim, comparative_claim, promise, human_claim, missing_disclosure, other_contact_handle, recipient_override, unsourced_phone, fh_steering, ready_without_evidence, negated_value, deescalate, free_text_note, summary_injection, oversized, schema, listing_not_in_bundle, comps_subset, comps_when_gated, sold_event_paraphrase.
@@ -988,21 +993,22 @@ All routes are under MATRIX rows. No response carries confidence or score fields
 ### 9.2 Turn processing
 The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:1-34).
 
-- **TX-A** (locks 2 → 3 → 4):
+- **TX-A** (tenant model-budget lock → locks 2 → 3 → 4):
   1. Debounce: return `retryAt` (§4.2).
   2. The link-failure table (§3.1). A hold returns `retryAt` before any model call; a pause or end applies it and stops.
   3. Collect the events: inbounds with seq > `last_inbound_seq` that are turns, timers, listing events and stop signals.
   4. The deterministic `step()` (§4.4); a stop class may finish without the model.
   5. Build the bundles from the DB only (buyer search, seller facts through ISA-3, structured labels).
-  6. Insert the turn (or, on replay, reuse the row for `trigger_key` with `attempt + 1`) as `deciding`, with `pinned_inbound_seq` and `epoch`.
+  6. Insert the turn (or, on replay, reuse the row for `trigger_key` with `attempt + 1`) with `pinned_inbound_seq` and `epoch`. Before applying a transition that awaits the model, reserve its call (§4.2), or defer without consuming the inbound. An allowed turn is `deciding`.
 - **The provider call**, with no lock held (the TX-A/TX-B pattern of apps/api/src/assistant/runs.ts:1-22). One call through the unchanged `AiProvider.complete` (providers/types.ts:148-166). With `ai_enabled=false` there is no call (R-AST-18): a hold of `ai_off` becomes a pause.
+- **Usage recording:** after the provider returns (or throws), update its reserved `ai_runs` row in a separate tenant transaction, including encrypted output and returned tokens. This survives a later stale/control discard.
 - **TX-B** (locks 2 → 3 → 4):
-  1. `UPDATE ai_isa_turns SET status='deciding' WHERE id AND status='deciding' AND attempt=:attempt`. Zero rows means discard everything.
+  1. `UPDATE ai_isa_turns SET status='deciding' WHERE id AND status='deciding' AND attempt=:attempt`. Zero rows means discard the decision; the usage row remains.
   2. If `conversations.inbound_seq > pinned`, the turn is `stale`: re-enqueue with retryAt (E493).
   3. Re-check the chain, the pause and the epoch.
   4. Parse, screen and verify (`normalizeClaims`, claims.ts:185; R-ISA-27).
   5. `decideAction` and the final `step()`.
-  6. Write `ai_runs` (encrypted), claims and evidence.
+  6. Link the recorded `ai_runs` row to the turn; write claims and evidence. A schema repair must obtain a new reservation before the second call.
   7. If a message results:
      - withdraw any proposed AI action of the assignment;
      - insert the `assistant_actions` row (kind `ai_isa_message`, `ai_isa_mandate`, `proposed`, `pinned_inbound_seq`, `bound_ownership_seq`, `epoch`, dedupe `ai_isa_msg:{turn}`);
