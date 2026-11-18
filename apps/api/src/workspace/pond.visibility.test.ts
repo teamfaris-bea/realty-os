@@ -61,8 +61,9 @@ it.each(['open', 'snoozed'] as const)('R-OWN-16 R-PERM-6 R-TEN-5: a historical %
 });
 
 it('R-OWN-16: idle incremental revalidation costs one query independent of card count', async () => {
-  const w = await workspaceWorld(h, { agents: 1, teamLead: false });
-  const viewer = w.agents[0]!;
+  const w = await workspaceWorld(h, { agents: 1, teamLead: true });
+  // The routing rule offers only to the agent; the team lead never releases these leads.
+  const viewer = w.teamLead!;
   const measure = () => withTenantTx(actorOf(viewer), async (tx, now) => {
     const queries: string[] = [];
     const counted = tx.withPlugin({
