@@ -102,9 +102,13 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
       // b18 review B18S-5 (owner boundary 2026-11-14): an invite is a mass send, so a person a source marked "No automated
       // contact for leads from this source" sent is left out and counted (dispatch and 0098 refuse such a send anyway)
       // R-LSRC-9 (0101): an imported person whose source is not reviewed yet is left out the same way, counted on its own.
-      // The definer reads past RLS, so it is asked only for the people the caller can see: a record the caller cannot
-      // see keeps its plain 'no_email' outcome and never reveals that it is imported, unreviewed or a marked source's.
-      const visible = await sql<{ id: string }>`SELECT id FROM contacts WHERE tenant_id = app.tenant_id() AND id = ANY (${unique}::uuid[])`.execute(tx);
+      // R-LSRC-10 M6: visibility is decided FIRST. The definer reads past RLS, so it is asked only for the people whose
+      // DETAIL the caller can see (the audience of their email address and history: app.contact_detail_visible). A
+      // record the caller cannot see at all, and one they see only listed (a pond lead, a lead offered to them), keeps
+      // the plain 'no_email' outcome of an id that does not exist: the answer never reveals that such a record exists,
+      // is imported, is unreviewed or is a marked source's.
+      const visible = await sql<{ id: string }>`SELECT c.id FROM contacts c
+         WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${unique}::uuid[]) AND app.contact_detail_visible(c.tenant_id, c.id)`.execute(tx);
       const noAuto = new Map<string, SourceRefusal>();
       for (const { id } of visible.rows) {
         if (mergedIds.has(id)) continue;

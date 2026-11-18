@@ -2,6 +2,9 @@
 // lead source marked "No automated contact for leads from this source" sent is left out of it and counted: no message is
 // created for them, the answer and its sentence say how many were left out and why, and everyone else is invited as
 // before. A made-up source; fakes only.
+import { randomUUID } from 'node:crypto';
+import { withTenantTx } from '@realty/db';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { marketingReady } from '../bulk/testing.js';
@@ -78,5 +81,32 @@ describe('R-LSRC-9 A2 A3: open-house invites leave out an imported person whose 
     expect(r.status).toBe(200);
     expect(r.body.recipients.map((x) => x.outcome)).toEqual(['no_email', 'no_email']);
     expect(r.body).toMatchObject({ sent: 0, noAutomatedContact: 0, sourceUnclassified: 0 });
+  });
+
+  it('R-LSRC-10 M6 R-PERM-5: visibility is decided first. A pond lead the sender can see listed but not open (no detail: no email, no history) gets exactly the answer of an id that does not exist, whether it is imported and unreviewed or a marked source\'s', async () => {
+    const l = await teamListing(w.agent, {});
+    const p = (await generateAll(w.agent, l, { kinds: ['open_house_invite'] })).open_house_invite!;
+    expect((await approve(w.agent, p)).status).toBe(200);
+    // two people another agent released to the pond: the sender sees their rows there, never their detail
+    const other = w.agents[1]!;
+    const pondUnreviewed = await ownedContact(other, { consent: false });
+    const pondMarked = await ownedContact(other, { consent: false });
+    await importedPerson(h, w.tenantId, w.owner.userId!, pondUnreviewed.id);
+    await h.su.query('UPDATE contacts SET original_lead_source_id = $2 WHERE id = $1', [pondMarked.id, marked]);
+    for (const c of [pondUnreviewed, pondMarked]) {
+      const seq = (await h.su.query<{ s: string }>('SELECT ownership_seq AS s FROM contacts WHERE id = $1', [c.id])).rows[0]!.s;
+      expect((await call(other, 'POST', `/leads/${c.id}/release`, { commandId: randomUUID(), reason: 'not_a_fit', expectedSeq: Number(seq) })).status).toBe(200);
+    }
+    const sees = await withTenantTx(w.agent.actor(), async (tx) => (await sql<{ rows: number; detail: number; points: number }>`
+      SELECT (SELECT count(*)::int FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${[pondUnreviewed.id, pondMarked.id]}::uuid[])) AS rows,
+             (SELECT count(*)::int FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${[pondUnreviewed.id, pondMarked.id]}::uuid[]) AND app.contact_detail_visible(c.tenant_id, c.id)) AS detail,
+             (SELECT count(*)::int FROM contact_points cp WHERE cp.tenant_id = app.tenant_id() AND cp.contact_id = ANY (${[pondUnreviewed.id, pondMarked.id]}::uuid[])) AS points`.execute(tx)).rows[0]!, { db: h.database });
+    expect(sees).toEqual({ rows: 2, detail: 0, points: 0 });
+    const missing = randomUUID();
+    const r = await call<Sent>(w.agent, 'POST', `/marketing-pieces/${p.id}/invite/send`, { recipientContactIds: [pondUnreviewed.id, pondMarked.id, missing] });
+    expect(r.status).toBe(200);
+    expect(r.body.recipients.map((x) => [x.outcome, x.messageId])).toEqual([['no_email', null], ['no_email', null], ['no_email', null]]);
+    expect(r.body).toMatchObject({ sent: 0, total: 3, noAutomatedContact: 0, sourceUnclassified: 0, text: 'Sent 0 of 3; 3 without an email address' });
+    expect((await h.su.query('SELECT count(*)::int AS n FROM messages WHERE marketing_piece_id = $1', [p.id])).rows[0].n).toBe(0);
   });
 });
