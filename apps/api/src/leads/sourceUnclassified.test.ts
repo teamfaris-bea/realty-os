@@ -95,13 +95,14 @@ describe('R-LSRC-9 A2 A3: an unclassified imported person gets no automated cont
     expect((await enroll(agent, c.id)).status).toBe(201);
   });
 
-  it('R-LSRC-9 E729: no 60-second first response; the lead card says the imported source has not been reviewed yet, never that a setting is on', async () => {
+  it('R-LSRC-9 E729: no 60-second first response; its reason is SOURCE_UNCLASSIFIED and its explanation (the lead card\'s line) says the imported source has not been reviewed yet, never that a setting is on', async () => {
     await approvedPlaybook(w.owner, { templateKey: 'new_lead_response' });
     const c = await ownedContact(agent);
     await unreviewed(c.id);
     const r = await sendFirstResponse(systemActor(w.tenantId, 'assistant'), c.id, depsOf(h));
     expect(r).toMatchObject({ kind: 'not_sent', reason: SOURCE_UNCLASSIFIED, explanation: noInstantReplySentence(SOURCE_UNCLASSIFIED) });
     expect(noInstantReplySentence(SOURCE_UNCLASSIFIED)).toMatch(/^No instant reply was sent: /);
+    expectUnclassifiedWords(noInstantReplySentence(SOURCE_UNCLASSIFIED));
     expect(await automated(c.id)).toEqual([]);
   });
 
@@ -170,7 +171,7 @@ describe('R-LSRC-9 A2 A3: an unclassified imported person gets no automated cont
     expect(await enrollmentRow(h, q.body.enrollment.id)).toMatchObject({ state: 'paused', pause_reason: 'client_reply' });
   });
 
-  it('R-LSRC-9 E729: an automated message already queued is blocked at dispatch with SOURCE_UNCLASSIFIED and its own sentence; the database refuses a direct move to dispatching and a row inserted in a sending state', async () => {
+  it('R-LSRC-9 E729: an automated message already queued is blocked at dispatch with SOURCE_UNCLASSIFIED and its own sentence; a system message too; the database refuses a direct move to dispatching with the same code', async () => {
     const c = await ownedContact(agent);
     expect((await enroll(agent, c.id)).status).toBe(201);
     await runJobs(h, w.tenantId, ['playbook.step'], 3, ['default']); // the step queues its text; dispatch has not run
@@ -233,7 +234,7 @@ describe('R-LSRC-9 A2 A3: an unclassified imported person gets no automated cont
     expect((await messageRow(h, (q as { messageId: string }).messageId)).status_reason).toBe(SOURCE_UNCLASSIFIED);
   });
 
-  it('R-LSRC-9 E729: bulk enroll and bulk email leave them out and count them as SOURCE_UNCLASSIFIED, at the draft and again at the run; the finished title says "source not reviewed yet"', async () => {
+  it('R-LSRC-9 E729: bulk enroll and bulk email leave them out and count them as SOURCE_UNCLASSIFIED, at the draft and again at the run; the finished title says "imported source not reviewed yet"', async () => {
     const [a, b, late] = [await ownedContact(agent), await ownedContact(agent), await ownedContact(agent)];
     await unreviewed(a.id);
     const d = await draft(agent, { kind: 'enroll', selection: { contactIds: [a.id, b.id, late.id] }, playbookId: plan.id });

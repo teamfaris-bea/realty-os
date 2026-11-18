@@ -348,6 +348,43 @@ describe('R-LSRC-9 A2 A3: no AI care for an imported person whose source is not 
     expect((await call(agent, 'POST', `/contacts/${l.id}/ai-isa/end`, {})).status).toBeLessThan(500);
   });
 
+  it('R-LSRC-9 E729: care paused by a re-inquiry cannot be continued for a person who has since become an unreviewed import: the panel offers no Continue and says why in the unclassified words, Continue is refused AI_ISA_SOURCE_UNCLASSIFIED and nothing ends', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    await fromSource(l.id, other);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const a0 = (await assignmentOf(h, l.id))!;
+    // the last touch is old, so a new inquiry (from a source with no setting) starts a same-owner new period (R-OWN-20)
+    await h.su.query(`SET session_replication_role = replica`);
+    try {
+      await h.su.query(`UPDATE contacts SET owned_at = owned_at - interval '8 days', last_human_touch_at = last_human_touch_at - interval '8 days' WHERE id = $1`, [l.id]);
+    } finally {
+      await h.su.query(`SET session_replication_role = origin`);
+    }
+    const plainSource = await call<{ source: { id: string }; ingestToken: string }>(w.owner, 'POST', '/lead-sources', { name: `Open house form ${Date.now()} (test)`, kind: 'portal' });
+    const again = await postIntake(h, plainSource.body.ingestToken, { inquiryType: 'buy', fullName: 'Jane Doe', phones: [l.phone], message: 'Asking again (test).' });
+    expect(JSON.parse(again.body)).toMatchObject({ contactId: l.id, outcome: 'reinquiry' });
+    await h.su.query(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at) VALUES ($1, 'realtime', 'ai_isa.turn', $2::jsonb, now())`,
+      [w.tenantId, JSON.stringify({ assignmentId: a0.id, trigger: 'sweep', epoch: a0.epoch })]);
+    await runIsa(h, w.tenantId);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: a0.id, pause_reason: 'reinquiry', ended_at: null });
+    const before = await panel(agent, l.id);
+    expect(before.body.canContinue).toBe(true);
+    // an import then commits a record of theirs with a label nobody has mapped
+    await importedPerson(h, w.tenantId, w.owner.userId!, l.id);
+    const p = await panel(agent, l.id);
+    expect(p.body.canContinue).toBe(false);
+    expect(p.body.continueRefusal).toMatchObject({ code: 'AI_ISA_SOURCE_UNCLASSIFIED' });
+    expect(p.body.continueRefusal!.sentence).toMatch(UNREVIEWED);
+    expect(p.body.continueRefusal!.sentence).not.toMatch(SETTING);
+    expect(p.body.chain.find((x) => x.link === 11)).toMatchObject({ effect: 'pause', code: 'AI_ISA_SOURCE_UNCLASSIFIED' });
+    const c = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/continue`, {});
+    expect([c.status, c.code]).toEqual([409, 'AI_ISA_SOURCE_UNCLASSIFIED']);
+    expect(await assignmentOf(h, l.id)).toMatchObject({ id: a0.id, pause_reason: 'reinquiry', ended_at: null });
+    expect((await h.su.query('SELECT 1 FROM ai_isa_assignments WHERE contact_id = $1', [l.id])).rows).toHaveLength(1);
+  });
+
   it('R-LSRC-9 E732 (A4): removing a label\'s mapping pauses the live AI care of that label\'s people at once (the request asks each for a turn and counts it) and no other person\'s', async () => {
     const agent = w.agents[0]!;
     const a = await isaLead(h, agent);
