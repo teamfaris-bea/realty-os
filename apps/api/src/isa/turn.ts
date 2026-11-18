@@ -1,13 +1,13 @@
 // Turn processing (R-ISA-4, R-ISA-5, R-ISA-20, R-ISA-27; docs/AI_ISA.md §4.2, §7, §9.2). The `ai_isa.turn` job:
 //
-//   TX-A (locks 2 → 3 → 4): debounce through retryAt; the link-failure table (a hold defers BEFORE any model call);
+//   TX-A (tenant model-budget lock → locks 2 → 3 → 4): debounce through retryAt; the link-failure table (a hold defers BEFORE any model call);
 //        the events (turn inbounds from bound points since the last consumed one, timers, start); the deterministic
 //        step(); when the machine awaits the model, a turn row `deciding` with the pinned inbound seq and the epoch.
 //   The provider call, with NO lock held (the TX-A/TX-B pattern of assistant/runs.ts), through the unchanged
 //        AiProvider.complete; tool-less; one repair retry on a schema failure.
 //   TX-B (locks 2 → 3 → 4): the attempt-guarded UPDATE (zero rows ⇒ a replayed lease: discard everything, E492);
 //        a newer inbound ⇒ stale, re-enqueued (E493); the chain, the pause and the epoch again; parse, decideAction,
-//        step(model_output); the encrypted ai_runs row; the actions through effects.applyActionsInTx.
+//        step(model_output); link the already-recorded ai_runs row; the actions through effects.applyActionsInTx.
 import type { Instant, SystemActor, TenantId } from '@realty/core/foundation';
 import { instantFromDate } from '@realty/core/foundation';
 import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
@@ -19,6 +19,7 @@ import { systemActor } from '../worker/systemActor.js';
 import {
   buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
+import { lockModelBudget, reserveModelCall } from './spend.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
@@ -44,6 +45,8 @@ export interface TurnPayload {
 export type TurnResult = { kind: 'done'; code: string } | { kind: 'retry'; retryAt: Instant };
 
 interface Prepared {
+  runId: string;
+  repair?: boolean;
   a: AssignmentRow;
   ctx: IsaContext;
   turnId: string;
@@ -97,6 +100,7 @@ function actor(tenantId: string): SystemActor {
 /** TX-A. Returns a prepared model call, or the turn's outcome when no model call is needed. */
 async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Prepared | TurnResult> {
   return withTenantTx(actor(tenantId), async (tx, now) => {
+    await lockModelBudget(tx);
     const peek = await assignmentById(tx, p.assignmentId);
     if (peek === null || peek.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
     await lockForTurn(tx, peek.contactId, peek.id);
@@ -161,12 +165,29 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
       : inbounds.length > 0 ? { type: 'inbound', at: now, messages: inbounds }
       : a.machine.phase === 'starting' ? { type: 'start', at: now }
       : { type: 'timer', at: now, timer: 'follow_up' };
+    // A repair held at midnight keeps its consumed inbound and schema-failure counter. Rebuild its
+    // prompt only after the normal chain/epoch checks; a newer inbound takes the ordinary path instead.
+    if (inbounds.length === 0 && a.machine.awaitingModel) {
+      const held = (await sql<{ id: string; attempt: number }>`SELECT id, attempt FROM ai_isa_turns
+        WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND epoch = ${a.epoch}
+          AND status = 'deferred' AND decision->>'budgetRepair' = 'true' AND trigger_kind = ${p.trigger}
+          AND (${p.trigger !== 'timer'} OR trigger_key = ${`${p.trigger}:${a.epoch}:${p.timer ?? 'start'}`})
+        ORDER BY seq DESC LIMIT 1`.execute(tx)).rows[0];
+      if (held) {
+        const reservation = await reserveModelCall(tx, deps, a, held.id, true);
+        if ('kind' in reservation) return reservation;
+        await sql`UPDATE ai_isa_turns SET attempt = attempt + 1 WHERE tenant_id = app.tenant_id() AND id = ${held.id}`.execute(tx);
+        return { ...await prepare(tx, ctx, a, held.id, held.attempt + 1, conv.seq, event, now, { repair: true, initiated: !a.machine.inboundUnanswered }), ...reservation, repair: true };
+      }
+    }
     if (event.type === 'timer' && event.timer === 'follow_up' && p.trigger !== 'timer') return { kind: 'done', code: 'NOTHING_TO_DO' } as const;
     const r = step(a.machine, event, ctx.facts);
     const triggerKey = `${p.trigger}:${a.epoch}:${event.type === 'inbound' ? inbounds.at(-1)!.seq : p.timer ?? 'start'}`;
     const turn = await ensureTurn(tx, deps.ids, ctx, { triggerKind: p.trigger === 'control' || p.trigger === 'sweep' ? p.trigger : event.type === 'inbound' ? 'inbound' : p.trigger, triggerKey, pinnedSeq: conv.seq });
     const lastSeq = inbounds.at(-1)?.seq ?? a.machine.lastInboundSeq;
     const awaiting = r.actions.find((x) => x.kind === 'await_model');
+    const reservation = awaiting ? await reserveModelCall(tx, deps, a, turn.id, false) : null;
+    if (reservation && 'kind' in reservation) return reservation;
     const applied = await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: turn.id, pinnedSeq: conv.seq }, { state: r.state, actions: r.actions.filter((x) => x.kind !== 'await_model') });
     await sql`UPDATE ai_isa_assignments SET last_inbound_seq = GREATEST(last_inbound_seq, ${lastSeq}) WHERE tenant_id = app.tenant_id() AND id = ${a.id} AND ended_at IS NULL AND last_inbound_seq < ${lastSeq}`.execute(tx);
     if (!awaiting || applied.ended || applied.paused) {
@@ -176,11 +197,11 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
       return { kind: 'done', code: applied.ended ? 'ENDED' : 'NO_MODEL' } as const;
     }
     const fresh = (await assignmentById(tx, a.id))!;
-    return prepare(tx, { ...ctx, a: fresh }, fresh, turn.id, turn.attempt, conv.seq, event, now, awaiting.kind === 'await_model' ? awaiting : null);
+    return { ...await prepare(tx, { ...ctx, a: fresh }, fresh, turn.id, turn.attempt, conv.seq, event, now, awaiting.kind === 'await_model' ? awaiting : null), runId: reservation!.runId };
   }, { db: deps.db, retries: 2 });
 }
 
-async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string, attempt: number, pinnedSeq: number, event: IsaEvent, now: Instant, aw: { repair: boolean; initiated: boolean } | null): Promise<Prepared> {
+async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string, attempt: number, pinnedSeq: number, event: IsaEvent, now: Instant, aw: { repair: boolean; initiated: boolean } | null): Promise<Omit<Prepared, 'runId'>> {
   // R-ISA-20: the last 20 messages to and from bound points only; inbound as client own text; team text not quotable;
   // never a portal sign-in link (module 45, b14 audit F1: flagged edit, defence in depth behind its sealed URL)
   const bound = Object.values(a.boundPoints).map((p) => p!.point_id);
@@ -252,20 +273,43 @@ export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload):
   const pre = await txA(deps, tenantId, p);
   if ('kind' in pre) return pre;
   let note: string | undefined;
-  for (let call = 0; call < 2; call += 1) {
+  for (let call = pre.repair ? 1 : 0; call < 2; call += 1) {
+    if (call > 0 && !pre.repair) {
+      const reservation = await withTenantTx(actor(tenantId), async (tx) => {
+        await lockModelBudget(tx);
+        return reserveModelCall(tx, deps, pre.a, pre.turnId, true);
+      }, { db: deps.db, retries: 2 });
+      if ('kind' in reservation) return reservation;
+      pre.runId = reservation.runId;
+    }
     const started = Date.now();
     let text = '';
     let model = 'none';
     let failed = false;
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
     try {
       const res = await deps.providers.ai.complete({ templateKey: pre.prompt.templateKey, system: pre.prompt.system, user: note ? `${pre.prompt.user}\n\nnote: ${note}` : pre.prompt.user, maxOutputTokens: pre.prompt.maxOutputTokens });
       text = res.text;
       model = res.model;
+      inputTokens = res.inputTokens;
+      outputTokens = res.outputTokens;
     } catch {
       failed = true;
     }
     const latency = Math.max(0, Date.now() - started);
-    const r = await txB(deps, tenantId, pre, { text, model, failed, latency, repairAllowed: call === 0 });
+    // Persist every provider outcome before the stale/control guards in TX-B can discard its decision.
+    await withTenantTx(actor(tenantId), async (tx) => {
+      const parsed = failed ? null : parseIsaModelOutput(text);
+      const enc = text === '' ? null : Buffer.from(await deps.envelope.inTx(tx, tenantId as TenantId).encrypt(tenantId as TenantId, aiRunAad(pre.runId as never), Buffer.from(text.slice(0, 64_000), 'utf8')));
+      await sql`UPDATE ai_runs SET model = ${model.slice(0, 100)}, prompt_template_key = ${pre.prompt.templateKey},
+        prompt_version = ${pre.prompt.templateVersion}, output_enc = ${enc}, key_version = ${enc === null ? null : 1},
+        internal_signals = ${JSON.stringify(parsed === null ? { error: 'PROVIDER' } : parsed.ok ? {} : { error: parsed.code })}::jsonb,
+        input_tokens = ${inputTokens}, output_tokens = ${outputTokens}, latency_ms = ${latency},
+        status = ${parsed !== null && parsed.ok ? 'succeeded' : 'failed'}
+        WHERE tenant_id = app.tenant_id() AND id = ${pre.runId}`.execute(tx);
+    }, { db: deps.db, retries: 2 });
+    const r = await txB(deps, tenantId, pre, { text, failed, repairAllowed: call === 0 });
     if (r.kind !== 'repair') return r.result;
     note = r.note;
   }
@@ -274,7 +318,7 @@ export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload):
 
 type TxBResult = { kind: 'final'; result: TurnResult } | { kind: 'repair'; note: string };
 
-async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: string; model: string; failed: boolean; latency: number; repairAllowed: boolean }): Promise<TxBResult> {
+async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: string; failed: boolean; repairAllowed: boolean }): Promise<TxBResult> {
   return withTenantTx(actor(tenantId), async (tx, now): Promise<TxBResult> => {
     await lockForTurn(tx, pre.a.contactId, pre.a.id);
     const a = await assignmentById(tx, pre.a.id, 'update');
@@ -295,17 +339,9 @@ async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: s
     }
     const chain = await evaluateChain(tx, a, chainEnvOf(deps));
     if (chain.effect !== 'ok') return fail(chain.effect === 'hold' ? 'deferred' : 'canceled_paused', `CHAIN_${chain.effect.toUpperCase()}:${chain.worst?.code ?? ''}`);
-    // the encrypted run (prompts and outputs stay in ai_runs.output_enc, purged after 30 days)
+    // Usage and encrypted output were persisted before the decision guards above.
     const parsed = m.failed ? null : parseIsaModelOutput(m.text);
-    const runId = deps.ids.next<'AiRunId'>() as string;
-    const enc = m.text === '' ? null : Buffer.from(await deps.envelope.inTx(tx, tenantId as TenantId).encrypt(tenantId as TenantId, aiRunAad(runId as never), Buffer.from(m.text.slice(0, 64_000), 'utf8')));
-    const signals = parsed === null ? { error: 'PROVIDER' } : parsed.ok ? {} : { error: parsed.code };
-    await sql`INSERT INTO ai_runs (tenant_id, id, purpose, model, prompt_template_key, prompt_version, input_refs, output_enc, key_version, internal_signals,
-        input_tokens, output_tokens, latency_ms, status, requested_for_user_id)
-      VALUES (app.tenant_id(), ${runId}, 'ai_isa_turn', ${m.model.slice(0, 100)}, ${pre.prompt.templateKey}, ${pre.prompt.templateVersion},
-        ${JSON.stringify({ assignmentId: a.id, turnId: pre.turnId })}::jsonb, ${enc}, ${enc === null ? null : 1}, ${JSON.stringify(signals)}::jsonb,
-        0, 0, ${m.latency}, ${parsed !== null && parsed.ok ? 'succeeded' : 'failed'}, ${a.ownerUserId})`.execute(tx);
-    await sql`UPDATE ai_isa_turns SET ai_run_id = ${runId} WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
+    await sql`UPDATE ai_isa_turns SET ai_run_id = ${pre.runId} WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
     const ctx = await contextFor(tx, a, now);
     const env = { tx, deps, actor: actor(tenantId), ctx, now, turnId: pre.turnId, pinnedSeq: pre.pinnedSeq, bundle: pre.bundle };
     if (parsed === null || !parsed.ok) {

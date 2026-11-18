@@ -125,7 +125,9 @@ async function panel(req: FastifyRequest, contactId: string) {
       capsSentence: ctx === null ? '' : `${sent.rows[0]!.n} of ${ctx.content.caps.ai24h} today`,
       // batch 13 audit ISA2B-11 (Q3): an offer refused because they already have an appointment says on which date
       lastDecision: last ? { status: last.status, codes: (last.denied as string[]).slice(0, 10), at: last.created_at.toISOString(),
-        sentence: (last.decision['code'] === 'APPOINTMENT_ALREADY_SET' ? appointmentAlreadySetSentence(String(last.decision['appointmentOn'] ?? '')) : null) ?? `Last turn: ${last.status.replace(/_/g, ' ')}.` } : null,
+        sentence: (last.decision['code'] === 'ISA_MODEL_PERSON_DAILY_LIMIT' ? 'AI care is held: this person has reached the daily model-call budget. It retries on the next team-local day.'
+          : last.decision['code'] === 'ISA_MODEL_TENANT_DAILY_LIMIT' ? 'AI care is held: the team has reached the daily model-call budget. It retries on the next team-local day.' : null)
+          ?? (last.decision['code'] === 'APPOINTMENT_ALREADY_SET' ? appointmentAlreadySetSentence(String(last.decision['appointmentOn'] ?? '')) : null) ?? `Last turn: ${last.status.replace(/_/g, ' ')}.` } : null,
       factsSent: facts.rows.map((f) => ({ factKind: f.fact_kind, listingId: f.listing_id, sentAt: f.created_at.toISOString(), source: f.source, asOf: f.as_of?.toISOString() ?? null })),
       openOffer: offerRow ? { id: offerRow.id, status: offerRow.status, slots: offerRow.slots.map((x) => ({ startsAt: new Date(x.startsAt).toISOString(), endsAt: new Date(x.endsAt).toISOString() })), expiresAt: new Date(offerRow.expiresAt).toISOString() } : null,
       heldTopics: ctx === null ? [] : a.machine.held.map((x) => ({ class: x.class, since: new Date(x.since).toISOString(), sentence: `Waiting on ${ctx.who.agentFirstName}: ${x.class.replace(/_/g, ' ')}.` })),
