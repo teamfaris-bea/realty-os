@@ -61,3 +61,38 @@ describe('b18 review item 3: Continue AI care is hidden when the person\'s lead 
     expect(await screen.findByRole('button', { name: 'Continue AI care' })).toBeInTheDocument();
   });
 });
+
+// R-LSRC-9 (owner decision 2026-11-14): the same for an imported person whose source is in review. The panel says so in
+// its own words: never that the Owner turned a setting on, never that a lead source is marked, never a code.
+const IN_REVIEW = 'This person came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources), so the AI assistant does not care for them (nothing automatic goes to them; call, text or email them one to one).';
+const NOT_THE_SETTING = /No automated contact for leads from this source|turned this on|Owner setting|is marked|AI_ISA_|source_unclassified/;
+
+function pausedFor(reason: string, o: Partial<Pick<PanelResponse, 'canContinue' | 'continueRefusal'>> = {}): PanelResponse {
+  const p = panel({ state: 'paused' });
+  p.assignment!.pauseReason = reason;
+  return { ...p, ...o };
+}
+
+describe('R-LSRC-9 E729: the AI care panel for an imported person whose source is in review', () => {
+  it('care paused because the source is in review says so in its own words, with no way offered to continue it', async () => {
+    isaApp(person(pausedFor('source_unclassified', { canContinue: false, continueRefusal: { code: 'AI_ISA_SOURCE_UNCLASSIFIED', sentence: IN_REVIEW } })), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText(/They came in from an import and their imported source has not been reviewed yet \(an Owner reviews it under Lead sources\)\./)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Continue AI care' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Re-attest in My AI assistant' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(NOT_THE_SETTING);
+  });
+
+  it('a re-inquiry from such a person: the refusal sentence is the in-review one, and there is no "Continue AI care" button', async () => {
+    isaApp(person(pausedFor('reinquiry', { canContinue: false, continueRefusal: { code: 'AI_ISA_SOURCE_UNCLASSIFIED', sentence: IN_REVIEW } })), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText(IN_REVIEW)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Continue AI care' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(NOT_THE_SETTING);
+  });
+
+  it.each(['policy_updated', 'approval_revoked'] as const)('care paused %s for such a person: the in-review sentence replaces the re-attest link', async (reason) => {
+    isaApp(person(pausedFor(reason, { canContinue: false, continueRefusal: { code: 'AI_ISA_SOURCE_UNCLASSIFIED', sentence: IN_REVIEW } })), `/contacts/${IDS.jane}`, 'agent');
+    expect(await screen.findByText(IN_REVIEW)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Re-attest in My AI assistant' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(NOT_THE_SETTING);
+  });
+});

@@ -421,6 +421,27 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)[0]!.body).toMatchObject({ channel: 'sms', body: 'Hi Jane, Saturday at 11 works. Want me to book it?' });
   });
 
+  it("R-LSRC-9 E729 (owner decision 2026-11-14): a draft a plan or an alert wrote, for an imported person whose source is in review (409 SOURCE_UNCLASSIFIED), sends nothing and says why in the server's own sentence, never that a setting is on; the draft is let go, and Send then sends the text as the agent's own one-to-one message", async () => {
+    const sentence = 'This draft was written by a plan or an alert, and this person came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources), so it was withdrawn and nothing was sent. Call, text or email them one to one.';
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'SOURCE_UNCLASSIFIED', { reason: 'source_unclassified', sentence }))
+      .on(`POST /contacts/${IDS.jane}/messages`, sent());
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const u = user();
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?'));
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(`${sentence} Your text is still here; Send sends it as your own message.`)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Something went wrong|No automated contact for leads from this source|turned this on|SOURCE_UNCLASSIFIED|source_unclassified/);
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
+    // the agent's own one-to-one text still goes: the next Send is a plain message, never another approval of the withdrawn draft
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)[0]!.body).toMatchObject({ channel: 'sms', body: 'Hi Jane, Saturday at 11 works. Want me to book it?' });
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('R-LSRC-8 E727 (b18 round 3 item 3): a draft a plan or an alert wrote, for a person whose lead source is marked "No automated contact", sends nothing and says why in the server\'s sentence; the text stays and Send then sends it as the agent’s own one-to-one message', async () => {
     const sentence = `This draft was written by a plan or an alert, and "No automated contact for leads from this source" is on for this person's lead source (an Owner setting), so it was withdrawn and nothing was sent. Call, text or email them one to one.`;
     const fake = threadFake()
