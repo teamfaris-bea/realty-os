@@ -152,4 +152,23 @@ describe('R-LSRC-9 A5: migration 0101 on a database that already holds imported 
     await expect(withTenantTx(unreviewed.world.agents[0]!.actor, (tx) => sql`UPDATE playbook_enrollments SET state = 'active', pause_reason = NULL, paused_at = NULL, resumed_by_user_id = app.user_id()
       WHERE tenant_id = app.tenant_id() AND contact_id = ${unreviewed.contact}::uuid`.execute(tx), { db: h.app })).rejects.toThrow(/SOURCE_UNCLASSIFIED/);
   }, 240_000);
+
+  it('R-LSRC-10 E745 (migration 0102): every label and every no-label group a committed record already carried has its review row, with the import it came in and that import\'s kind; a label the Owner had already mapped keeps its mapping, and who mapped it is left blank (it was not recorded then)', async () => {
+    for (const w of new Set(people.map((p) => p.world))) {
+      const rows = (await h.su.query<{ label: string | null; unlabeled: string | null; batch: string; kind: string; at: Date; source: string | null; by: string | null }>(
+        `SELECT import_label AS label, unlabeled_batch_id AS unlabeled, first_seen_batch_id AS batch, first_seen_kind AS kind, first_seen_at AS at, lead_source_id AS source, mapped_by_user_id AS by
+           FROM import_source_labels WHERE tenant_id = $1 ORDER BY import_label NULLS LAST`, [w.tenantId])).rows;
+      const batch = (await h.su.query<{ id: string }>('SELECT id FROM import_batches WHERE tenant_id = $1', [w.tenantId])).rows[0]!.id;
+      expect(rows.map((r) => [r.label, r.unlabeled, r.batch, r.kind, r.source, r.by])).toEqual([
+        ['Mapped label (upgrade test)', null, batch, 'fub_api', null, null],
+        ['Partner label (upgrade test)', null, batch, 'fub_api', null, null],
+        ['Unmapped label (upgrade test)', null, batch, 'fub_api', null, null],
+        [null, batch, batch, 'fub_api', null, null],
+      ]);
+      for (const r of rows) expect(r.at).toBeInstanceOf(Date);
+      // the mapping itself (what every check reads) is where the Owner left it
+      const held = (await h.su.query<{ l: string[] }>('SELECT import_labels AS l FROM lead_sources WHERE tenant_id = $1 AND cardinality(import_labels) > 0 ORDER BY 1', [w.tenantId])).rows.map((r) => r.l);
+      expect(held).toEqual([['Mapped label (upgrade test)'], ['Partner label (upgrade test)']]);
+    }
+  });
 });

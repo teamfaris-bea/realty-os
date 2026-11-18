@@ -150,6 +150,8 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   feed_dirty: { group_key: "'c:' || gen_random_uuid()" },
   feed_groups: { group_key: "'c:' || gen_random_uuid()" },
   smart_lists: { scope: "'team'" },
+  // b18 owner decision (0102): a label's row (a row is a label XOR one import's no-label group; first-seen all or none)
+  import_source_labels: { import_label: "'Fixture label'", unlabeled_batch_id: 'NULL', first_seen_batch_id: 'NULL', first_seen_kind: 'NULL', first_seen_at: 'NULL', lead_source_id: 'NULL', mapped_by_user_id: 'NULL', mapped_at: 'NULL' },
   // parity module 67: a recorded skip (the generic row; a start needs an enrollment)
   stage_automation_decisions: { outcome: "'skipped'", reason: "'not_visible'", playbook_id: 'NULL', enrollment_id: 'NULL' },
   // D2 migration (Gmail inbox sync): a revoked link holds no token, so the generic row is a revoked one

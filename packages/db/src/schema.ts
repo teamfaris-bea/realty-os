@@ -1322,6 +1322,22 @@ export interface ImportRecordsTable {
   created_rows: Generated<Json>;
 }
 
+/** public.import_source_labels (table) */
+export interface ImportSourceLabelsTable {
+  tenant_id: string;
+  id: Generated<string>;
+  import_label: string | null;
+  unlabeled_batch_id: string | null;
+  first_seen_batch_id: string | null;
+  first_seen_kind: string | null;
+  first_seen_at: Timestamp | null;
+  lead_source_id: string | null;
+  mapped_by_user_id: string | null;
+  mapped_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.import_stages (table) */
 export interface ImportStagesTable {
   tenant_id: string;
@@ -3063,6 +3079,7 @@ export interface DB {
   homeowner_profiles: HomeownerProfilesTable;
   import_batches: ImportBatchesTable;
   import_records: ImportRecordsTable;
+  import_source_labels: ImportSourceLabelsTable;
   import_stages: ImportStagesTable;
   import_user_mappings: ImportUserMappingsTable;
   integration_connections: IntegrationConnectionsTable;
@@ -3241,6 +3258,7 @@ export const TABLE_NAMES = [
   'homeowner_profiles',
   'import_batches',
   'import_records',
+  'import_source_labels',
   'import_stages',
   'import_user_mappings',
   'integration_connections',
