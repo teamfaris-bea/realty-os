@@ -34,7 +34,7 @@ function overview(over: Partial<SystemOverview> = {}): SystemOverview {
   return {
     generatedAt: '2026-11-11T15:05:00.000Z',
     jobs: { counts: { dead: 1, retrying: 1 }, dead: [job()], retrying: [retrying] },
-    messages: [{ id: ID.message, contactId: ID.pat, channel: 'sms', status: 'dispatch_unknown', dispatchedAt: '2026-11-11T14:40:00.000Z', ageSeconds: 1500, reconcile: { state: 'unresolved', sentence: 'The provider has no record of it. It will be marked failed so someone can decide to send it again by hand.', nextStepAt: null } }],
+    messages: [{ id: ID.message, contactId: ID.pat, channel: 'sms', status: 'dispatch_unknown', dispatchedAt: '2026-11-11T14:40:00.000Z', ageSeconds: 1500, reconcile: { state: 'unresolved', sentence: 'The provider did not confirm it either way, so it may have reached them. It will be marked failed as "delivery not confirmed"; it is never sent again automatically, and a person should check with them before sending it again.', nextStepAt: null } }],
     timers: { windowHours: 24, thresholdSeconds: 60, fired: 40, lateCount: 2, late: [{ contactId: ID.pat, kind: 'first_touch_breached', label: 'First-touch deadline missed', dueAt: '2026-11-11T10:00:00.000Z', firedAt: '2026-11-11T10:04:00.000Z', lateSeconds: 240 }] },
     connections: [{ id: 'c1', kind: 'zillow_feed', name: 'Harbor Zillow', status: 'degraded', statusReason: 'TOKEN_EXPIRED', lastErrorCode: 'HTTP_401', lastSyncedAt: '2026-11-11T12:00:00.000Z' }],
     registrations: [{ id: 'r1', kind: 'a2p_campaign', status: 'approved', changedAt: '2026-11-01T00:00:00.000Z' }],
@@ -86,7 +86,7 @@ describe('System page', () => {
     expect(within(msgs).getByText('Text messages')).toBeInTheDocument();
     expect(within(msgs).getByText('Not known yet whether it left')).toBeInTheDocument();
     expect(within(msgs).getByText(/Started sending 25 min ago/)).toBeInTheDocument();
-    expect(within(msgs).getByText(/The provider has no record of it/)).toBeInTheDocument();
+    expect(within(msgs).getByText(/The provider did not confirm it either way, so it may have reached them\./)).toBeInTheDocument();
     expect(within(msgs).getByRole('link', { name: 'Open conversation' })).toHaveAttribute('href', `/contacts/${ID.pat}/thread`);
 
     const timers = screen.getByRole('region', { name: 'Timers that fired late (last 24 hours)' });

@@ -67,6 +67,8 @@ export function reconcileState(status: 'dispatching' | 'dispatch_unknown', dispa
     if (age < 20 * 60_000) return { state: 'sending', sentence: 'Sending now. If the sender stopped part-way, this is checked automatically 20 minutes after sending started.', nextStepAt: iso(at + 20 * 60_000) };
     return { state: 'awaiting_recovery', sentence: 'The sender stopped part-way. The next sweep marks it unknown and asks the provider whether it left. It is never sent twice automatically.', nextStepAt: null };
   }
-  if (age < 10 * 60_000) return { state: 'checking_provider', sentence: 'We do not know yet whether it left. We are asking the provider; it is never sent twice automatically.', nextStepAt: iso(at + 10 * 60_000) };
-  return { state: 'unresolved', sentence: 'The provider has no record of it. It will be marked failed so someone can decide to send it again by hand.', nextStepAt: null };
+  // W8: no answer, or an unreadable one, is not a non-delivery. The lookup finds a text by sender, recipient, body and
+  // time, so "not found" proves nothing either: neither sentence says the provider has no record of it.
+  if (age < 10 * 60_000) return { state: 'checking_provider', sentence: 'We do not know yet whether it left: it may have reached them. We are asking the provider; it is never sent twice automatically.', nextStepAt: iso(at + 10 * 60_000) };
+  return { state: 'unresolved', sentence: 'The provider did not confirm it either way, so it may have reached them. It will be marked failed as "delivery not confirmed"; it is never sent again automatically, and a person should check with them before sending it again.', nextStepAt: null };
 }

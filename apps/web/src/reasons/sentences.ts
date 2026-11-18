@@ -272,8 +272,17 @@ const FAILED: Record<string, string> = {
   PROVIDER_UNAVAILABLE: "the phone service wasn't answering",
   PROVIDER_TIMEOUT: "the phone service didn't answer in time",
   PROVIDER_NOT_CONFIGURED: "sending isn't set up yet",
-  DISPATCH_UNKNOWN_UNRESOLVED: "we couldn't confirm it went out",
 };
+
+/**
+ * W8: a text or email the provider never confirmed either way. After ten minutes without an answer the API marks it
+ * failed with this reason (apps/api comms/dispatch.ts reconcileOutbound), but it was never proved undelivered: the
+ * provider may have accepted it. The words say so, and to check before sending again; they never say "not delivered".
+ */
+export const DISPATCH_UNKNOWN_UNRESOLVED = 'DISPATCH_UNKNOWN_UNRESOLVED';
+export const DELIVERY_UNCONFIRMED_LINE = 'Delivery could not be confirmed: this may have reached them. Check with them before sending it again.';
+/** The same while reconciliation is still asking the provider (status dispatch_unknown, as after an unreadable reply). */
+export const DELIVERY_NOT_CONFIRMED_YET_LINE = "Delivery is not confirmed yet: this may have reached them. We're still checking; check with them before sending it again.";
 
 const CANCELED: Record<string, string> = {
   CANCELED_BY_SENDER: 'Canceled, not sent',
@@ -324,6 +333,8 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
       // R-TWL-1 / R-TWL-9: said exactly as the server words them (the agent sees these sentences verbatim)
       if (reason === 'TELEPHONY_LIVE_OFF') return { text: 'Live texting and calling are off on this deployment.', tone: 'failed' };
       if (reason === 'SENDER_NOT_VERIFIED') return { text: "Not delivered: the team's number isn't verified for texting. The Owner has been told.", tone: 'failed' };
+      // W8: never proved undelivered, so never "Not delivered" (the tone stays failed: it is not drawn like a sent message)
+      if (m.status === 'failed' && reason === DISPATCH_UNKNOWN_UNRESOLVED) return { text: DELIVERY_UNCONFIRMED_LINE, tone: 'failed' };
       if (m.status === 'failed' && reason === 'MEDIA_UNAVAILABLE') return { text: 'Not sent: the photos or videos were no longer available', tone: 'failed' };
       // module 45 (b14): a client's sign-in link that failed before any provider was called, never worded as a rejection
       if (m.status === 'failed' && reason === 'PORTAL_LINK_UNAVAILABLE') return { text: 'Not sent: the sign-in link had expired, so nothing was sent. They can ask for a new one.', tone: 'failed' };
@@ -344,7 +355,7 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     case 'dispatching':
       return { text: 'Sending', tone: 'info' };
     case 'dispatch_unknown':
-      return { text: 'Checking whether it went out', tone: 'info' };
+      return { text: DELIVERY_NOT_CONFIRMED_YET_LINE, tone: 'info' };
     default:
       return null;
   }

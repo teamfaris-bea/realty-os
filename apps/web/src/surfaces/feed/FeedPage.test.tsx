@@ -215,6 +215,17 @@ describe('Priority Feed', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it("W8: a draft card's Send whose outcome nobody can confirm (dispatch_unknown) is never announced as \"Not sent.\": it may have reached them, and the words say to check before sending again", async () => {
+    const c = card({ itemType: 'assistant_draft', primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'dispatch_unknown', messageId: IDS.message, decision: decision({}) } });
+    agentApp(fake);
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText("We couldn't confirm it was delivered. The service may have accepted it, so it may have reached them. We're still checking, and this attempt won't be sent again automatically. Check the conversation before you send it again.")).toBeInTheDocument();
+    expect(screen.queryByText(/^Not sent/)).toBeNull();
+  });
+
   it('a draft approval the send-time check blocks says why, and there is no way past it', async () => {
     const c = card({ itemType: 'assistant_draft', primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
     const blocked = decision({ outcome: 'deny', explanation: 'Opted out of texts' });

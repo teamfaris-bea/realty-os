@@ -239,11 +239,21 @@ const BY_STATUS: Record<string, string> = {
  * message's status (`message.status`, or an approval's `messageStatus`), so a blocked, failed or canceled message is
  * never shown as sent (finding F1). A replay whose message is unknown stays 'noop': nobody can say it went out.
  */
-export function sentResult(r: { result: string; message?: { status: string } | null; messageStatus?: string | null }): string {
+export function sentResult(r: { result: string; message?: { status: string; statusReason?: string | null } | null; messageStatus?: string | null }): string {
+  // W8: a message that ended failed only because nobody could confirm it within ten minutes was never proved
+  // undelivered: it is its own outcome, on a first answer and on a replay alike
+  if ((r.result === 'noop' || r.result === 'failed') && r.message?.status === 'failed' && r.message.statusReason === DISPATCH_UNKNOWN_UNRESOLVED) return DELIVERY_UNCONFIRMED;
   if (r.result !== 'noop') return r.result;
   const status = r.messageStatus ?? r.message?.status ?? null;
   return (status !== null ? BY_STATUS[status] : undefined) ?? 'noop';
 }
+
+/** messages.status_reason of a text or email the provider never confirmed either way (apps/api comms/dispatch.ts). */
+const DISPATCH_UNKNOWN_UNRESOLVED = 'DISPATCH_UNKNOWN_UNRESOLVED';
+/** sentResult's word for it: failed in the record, but it may have reached the person. */
+export const DELIVERY_UNCONFIRMED = 'delivery_unconfirmed';
+/** The outcomes whose delivery nobody can confirm: never worded as "not sent" (W8). */
+export const UNCONFIRMED: ReadonlySet<string> = new Set(['dispatch_unknown', DELIVERY_UNCONFIRMED]);
 
 /** The outcomes after which the text is on its way (the box clears; "Sent to Jane." / "Sending" / "Sends at"). */
 export const WENT_OUT: ReadonlySet<string> = new Set(['sent', 'queued', 'scheduled']);
@@ -259,8 +269,11 @@ export function sendOutcomeText(r: Pick<ComposeResponse, 'result' | 'decision' |
     case 'scheduled':
     case 'not_due':
       return { tone: 'ok', title: until ? `Sends ${formatDateTime(until)}.` : 'Scheduled.' };
+    // W8: an answer that never came, or came back unreadable, is not a non-delivery. Neither sentence says "not sent".
     case 'dispatch_unknown':
-      return { tone: 'warn', title: "We can't confirm it was delivered yet.", detail: "The service may have accepted it. We'll check its status; this attempt won't be sent again automatically." };
+      return { tone: 'warn', title: "We couldn't confirm it was delivered.", detail: "The service may have accepted it, so it may have reached them. We're still checking, and this attempt won't be sent again automatically. Check the conversation before you send it again." };
+    case DELIVERY_UNCONFIRMED:
+      return { tone: 'warn', title: "We couldn't confirm it was delivered.", detail: 'It may have reached them. Check with them before you send it again.' };
     case 'failed':
       return { tone: 'error', title: "It didn't send.", detail: 'The phone service refused it. Nothing reached them.' };
     case 'blocked':

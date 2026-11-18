@@ -187,4 +187,17 @@ describe('plain-language explanations', () => {
     expect(reconcileState('dispatch_unknown', ago(3), now).state).toBe('checking_provider');
     expect(reconcileState('dispatch_unknown', ago(12), now).state).toBe('unresolved');
   });
+
+  it('W8: a message nobody could confirm is never said to be undelivered: neither sentence claims the provider has no record of it, both say it may have reached them and that it is not sent again automatically', () => {
+    const now = new Date('2026-11-11T12:00:00Z');
+    const ago = (m: number) => new Date(now.getTime() - m * 60_000);
+    const checking = reconcileState('dispatch_unknown', ago(3), now).sentence;
+    const unresolved = reconcileState('dispatch_unknown', ago(12), now).sentence;
+    expect(unresolved).toBe('The provider did not confirm it either way, so it may have reached them. It will be marked failed as "delivery not confirmed"; it is never sent again automatically, and a person should check with them before sending it again.');
+    expect(checking).toBe('We do not know yet whether it left: it may have reached them. We are asking the provider; it is never sent twice automatically.');
+    for (const s of [checking, unresolved]) {
+      expect(s).toMatch(/may have reached them/);
+      expect(s).not.toMatch(/no record|did not leave|was not sent|not delivered\b/i);
+    }
+  });
 });

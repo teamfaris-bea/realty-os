@@ -33,7 +33,7 @@ import { type ChannelState, ReasonCaption, channelState, useChannelState, useRea
 import { replyChatState } from '../compose/channelChoice.js';
 import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
-import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
+import { UNCONFIRMED, sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
 import { useMutate } from './lib/hooks.js';
 import { automatedDraftRefusalWords, dealDateStaleWords, homeValueRefusalWords } from './lib/messages.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
@@ -195,7 +195,11 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
     if (did === 'sent' || did === 'queued') sheets.announce(`Sent to ${name}.`);
     else if (did === 'acknowledged') sheets.announce('Marked as reviewed.');
     else if (did === 'noop') sheets.announce(sendOutcomeText({ result: did, decision: r.data.decision, message: null }, name).title);
-    else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
+    // W8: an outcome nobody can confirm is never announced as "Not sent."
+    else if (UNCONFIRMED.has(did)) {
+      const o = sendOutcomeText({ result: did, decision: null, message: null }, name);
+      sheets.announce(`${o.title} ${o.detail ?? ''}`.trim());
+    } else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
   };
   return (
     <Wrap note={action.note} error={withdrawn ?? dateStale ?? (cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null)} block={block} reach={reach} reasonId={reasonId}>
