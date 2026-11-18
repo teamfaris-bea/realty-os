@@ -1,5 +1,6 @@
-// Playwright is preinstalled globally (browsers in $PLAYWRIGHT_BROWSERS_PATH); apps/web links it with
-// "playwright": "link:/opt/node-tools/node_modules/playwright". Specs import from 'playwright/test'.
+// apps/web depends on "playwright": "1.63.0" from the registry (pinned: it is the version the pre-installed browsers
+// in $PLAYWRIGHT_BROWSERS_PATH belong to). Never run "playwright install" here; on another machine install the
+// browsers of exactly this version once. Specs import from 'playwright/test'.
 // Run: pnpm --filter @realty/web test:e2e
 //
 // The config's own Vite dev server (for specs without a stack of their own, e.g. foundation.spec.ts) listens on

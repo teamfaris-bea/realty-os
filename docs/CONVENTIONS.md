@@ -27,7 +27,7 @@ pnpm workspace, TypeScript 6 (`strict`, `noUncheckedIndexedAccess`), Node 22, ES
 **Dependencies are already installed.** Do not run `pnpm add` or `pnpm install` unless something is truly missing. If you must, use `pnpm --filter <pkg> add <dep>` and say so in your output. Already available:
 - runtime: `fastify@5`, `@fastify/{cookie,cors,helmet,rate-limit,multipart,swagger}`, `fastify-type-provider-zod`, `zod@4`, `kysely`, `pg`, `argon2`, `otplib`, `web-push`, `@anthropic-ai/sdk`, `uuid` (v7), `luxon`, `libphonenumber-js`, `csv-parse`, `@noble/hashes`, `react@18`, `react-dom@18`, `react-router-dom@7`, `@tanstack/react-query@5`
 - dev: `vitest@5`, `@vitest/coverage-v8`, `fast-check`, `@stryker-mutator/core` + `vitest-runner` (in core), `jsdom`, `@testing-library/{react,dom,user-event,jest-dom}`, `axe-core`, `tailwindcss@4` + `@tailwindcss/vite`, `vite@8`, `@vitejs/plugin-react`, `tsx`, `typescript@6`
-- Playwright is preinstalled globally and linked into `apps/web` as `playwright` (`link:` to `/opt/node-tools/node_modules/playwright`; browsers in `$PLAYWRIGHT_BROWSERS_PATH`). Specs import from `'playwright/test'`. Only Chromium is installed, so the iPhone 13 project runs Chromium with iPhone viewport, touch and user agent.
+- Playwright is a pinned dev dependency of `apps/web` (`"playwright": "1.63.0"`, from the registry: no path of one machine is in `package.json`, so typecheck works anywhere). The pin is the version the pre-installed browsers in `$PLAYWRIGHT_BROWSERS_PATH` belong to; do not run `playwright install` in this container, and change the pin only together with the browsers. Specs import from `'playwright/test'`. Only Chromium is installed, so the iPhone 13 project runs Chromium with iPhone viewport, touch and user agent.
 
 ---
 
