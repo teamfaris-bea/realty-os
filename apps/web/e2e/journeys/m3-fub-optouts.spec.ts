@@ -409,6 +409,17 @@ test('M3.0 the FUB account migrates through the API: contacts and ownership comm
     p.id = r.id;
     p.name = r.display_name;
   }
+  // R-LSRC-9, R-LSRC-10 (owner decision 2026-11-14): this Follow Up Boss account gives nobody a source, so the six
+  // people are the import's no-label group and are in review: nothing automatic goes to them (no bulk send, no plan)
+  // until the Owner chooses their lead source. The Owner does, as in "Review sources" (the password again, then the
+  // no-label row mapped to the team's lead source), so what this journey then proves refused is refused for the
+  // opt-out alone, and Carl, the control, is open to the bulk sends and plans below.
+  const inReview = await must(stack.api<{ sourceLabels: { label: string; unlabeledImportId: string | null; state: string; committedPeople: number }[] }>(OWNER, 'GET', `/imports/${batchId}/report`));
+  expect(inReview.sourceLabels).toEqual([expect.objectContaining({ label: '', unlabeledImportId: batchId, state: 'in_review', committedPeople: 6 })]);
+  await stack.fixture('/reauth', { as: OWNER });
+  const reviewed = await must(stack.api<{ label: { state: string; inReview: boolean; leadSourceId: string | null } }>(OWNER, 'PUT', '/lead-sources/import-labels', { unlabeledImportId: batchId, leadSourceId: w.sourceId }));
+  expect(reviewed.label).toMatchObject({ state: 'mapped', inReview: false, leadSourceId: w.sourceId });
+
   // the opt-outs are in force from the contacts commit (outbound-2), before ownership and consent; the
   // Owner (who sees everyone) is refused, and the DNC tag stayed a tag
   expect((await stageOf('consent')).status).toBe('pending');
