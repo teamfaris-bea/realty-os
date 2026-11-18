@@ -201,21 +201,21 @@ export function withdrawnForSource(payload: Record<string, unknown> | null): Sou
 }
 
 /**
- * Withdraws the pending drafts automation wrote for one person, for a set of people, or for every person a source sent:
- * each becomes `invalidated` with payload.withdrawn { reason, at }, its feed cards close, and a module 26 trigger run that
- * waited on it is skipped with the visible reason (never left as "drafted: it waits for the contact owner"). `why` is
- * the reason the person is refused for (a marked source's people: SOURCE_NO_AUTOMATED_CONTACT); it is written on the
- * draft and chooses the run's skip sentence. Returns how many were withdrawn. The caller is tenant-wide (the Owner on
- * the sources routes, or the system: intake, the import commit, the step runner, the trigger runner, the first response,
- * the approval's follow-up); RLS and the tenant filter bound it to this tenant.
+ * Withdraws the pending drafts automation wrote for one person or for a set of people: each becomes `invalidated` with
+ * payload.withdrawn { reason, at }, its feed cards close, and a module 26 trigger run that waited on it is skipped with
+ * the visible reason (never left as "drafted: it waits for the contact owner"). `why` is the reason the person is
+ * refused for (a marked source's people: SOURCE_NO_AUTOMATED_CONTACT); it is written on the draft and chooses the run's
+ * skip sentence. Returns how many were withdrawn. The caller is tenant-wide (the Owner on the sources routes, or the
+ * system: intake, the import commit, the step runner, the trigger runner, the first response, the approval's
+ * follow-up); RLS and the tenant filter bound it to this tenant. A whole source's or label's people go through
+ * leads/sourceStop.ts, which finds them from the source's side and passes their ids here: nothing here asks a definer
+ * per pending draft of the team.
  */
-export async function withdrawAutomatedDrafts(tx: Tx, scope: { contactId: string } | { contactIds: readonly string[] } | { sourceId: string }, now: Instant, why: SourceRefusal = SOURCE_NO_AUTOMATED_CONTACT): Promise<number> {
+export async function withdrawAutomatedDrafts(tx: Tx, scope: { contactId: string } | { contactIds: readonly string[] }, now: Instant, why: SourceRefusal = SOURCE_NO_AUTOMATED_CONTACT): Promise<number> {
   // one person: every record of them (the merge tree, app.contact_person_ids, as app.person_source_refusal reads it)
   const who = 'contactId' in scope
     ? sql`a.contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${scope.contactId}::uuid))`
-    : 'contactIds' in scope
-      ? sql`a.contact_id = ANY (${[...scope.contactIds]}::uuid[])`
-      : sql`a.contact_id IS NOT NULL AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${scope.sourceId}::uuid)`;
+    : sql`a.contact_id = ANY (${[...scope.contactIds]}::uuid[])`;
   if ('contactIds' in scope && scope.contactIds.length === 0) return 0;
   const mark = JSON.stringify({ withdrawn: { reason: why, at: toIso(now) } });
   const r = await sql<{ id: string }>`

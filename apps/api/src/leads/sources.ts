@@ -22,7 +22,6 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { enqueueStep } from '../assistant/enrollments.js';
 import { firstResponseWouldQueue } from '../assistant/firstResponse.js';
 import { audit, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
@@ -33,10 +32,10 @@ import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
-import { noAutomatedContactSentence, withdrawAutomatedDrafts } from './automatedContact.js';
+import { noAutomatedContactSentence } from './automatedContact.js';
 import { type ImportLabelRow, labelRowOf, recordMapping, sourceCatalog, tenantLabels, unlabeledRowOf } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
-import { NOTHING_STOPPED as NOTHING, type Stopped, askCareForATurn, stopAutomatedContactForPeople } from './sourceStop.js';
+import { NOTHING_STOPPED as NOTHING, type Stopped, stopAutomatedContactForPeople } from './sourceStop.js';
 import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelConfirmBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
@@ -129,18 +128,13 @@ export const noAiCareSentence = noAutomatedContactSentence;
  * AI care is asked for a turn now, whose chain (link 11) pauses it source_no_ai_care, and each of their active plans for a
  * step now, which stops it (assistant/enrollments.ts, before any due check). The pending drafts a plan step or a
  * trigger wrote for them are withdrawn here, in this transaction, and their cards closed (round 3 item 3). Only this
- * source's people are counted (app.person_from_lead_source, 0099).
+ * source's people are counted, and the work starts from THEM (leads/sourceStop.ts `{ sourceId }`: the source's own
+ * records, its inquiries, and the committed people of each label and no-label group it holds), never from the team's
+ * plans, AI care and drafts: it asked app.person_from_lead_source once per such row of the whole team before, which
+ * took seconds at a few thousand running plans (leads/sourceStop.volume.test.ts).
  */
-export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<Stopped> {
-  const live = await sql<{ id: string; epoch: number }>`SELECT a.id, a.epoch FROM ai_isa_assignments a
-     WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
-       AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${sourceId}::uuid) ORDER BY a.id`.execute(tx);
-  for (const a of live.rows) await askCareForATurn(tx, a);
-  const plans = await sql<{ id: string }>`SELECT e.id FROM playbook_enrollments e
-     WHERE e.tenant_id = app.tenant_id() AND e.state = 'active' AND app.person_from_lead_source(e.tenant_id, e.contact_id, ${sourceId}::uuid) ORDER BY e.id`.execute(tx);
-  for (const e of plans.rows) await enqueueStep(tx, e.id, now);
-  const withdrawn = await withdrawAutomatedDrafts(tx, { sourceId }, now);
-  return { pausing: live.rows.length, stopping: plans.rows.length, withdrawn };
+export function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<Stopped> {
+  return stopAutomatedContactForPeople(tx, { sourceId }, now);
 }
 
 /** How many imported labels, and how many imports' no-label groups, one lead source may hold (the column checks of 0099 and 0101). */
@@ -152,7 +146,7 @@ export type ImportSourceKey = { label: string } | { unlabeledImportId: string };
 /**
  * PUT /lead-sources/import-labels: the Owner maps an imported label, or one import's no-label group, to a source (moving
  * it off any other), or removes the mapping. After every change the people's state follows it, in both directions:
- *  - to a MARKED source: its people are refused for that reason, and stopAutomatedContactNow stops their automation;
+ *  - to a MARKED source: its people are refused for that reason, and stopAutomatedContactForPeople stops their automation;
  *  - to an unmarked source: the refusal lifts for the people whose every imported source is now reviewed (nothing is
  *    restarted: a stopped plan stays stopped and a withdrawn draft stays withdrawn);
  *  - removed (or the key now held by two sources): its committed people are unclassified again, and
@@ -194,10 +188,11 @@ export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourc
   // the review record says who made this change and when (only a real change is recorded: asking for the mapping a
   // label already has leaves the first record standing)
   const recordId = changed ? await recordMapping(tx, key, target?.id ?? null, actor.userId, toIso(now)) : null;
-  // the people follow the mapping now. A marked target: that source's people (0099's reading: the key's committed
-  // people, and a label's matched people too). Otherwise: the key's own committed people who are refused after the
-  // change (unclassified again, ambiguous, or still carrying another unreviewed or marked source).
-  const safe: Stopped = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : await stopAutomatedContactForPeople(tx, key, now);
+  // the people follow the mapping now: the key's own committed people who are refused after the change (their label
+  // now means a marked source; or they are unclassified again, ambiguous, or still carry another unreviewed or marked
+  // source). Always this key's people and nobody else's: a marked target's other people were made safe when the
+  // setting was turned on or their own label was mapped (M4: never the team's plans, AI care and drafts).
+  const safe: Stopped = await stopAutomatedContactForPeople(tx, key, now);
   if (changed || safe.pausing + safe.stopping + safe.withdrawn > 0) {
     const what = !target ? 'UNMAPPED' : o.confirmedSuggestion ? 'SUGGESTION_CONFIRMED' : from.length > 0 ? 'REMAPPED' : 'MAPPED';
     await audit(tx, actor, {

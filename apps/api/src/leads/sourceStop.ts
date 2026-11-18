@@ -30,39 +30,88 @@ export async function askPlanForAStep(tx: Tx, enrollmentId: string, at: Instant)
   await enqueueJob(tx, { queue: PLAYBOOK_STEP.queue, kind: PLAYBOOK_STEP.kind, priority: PLAYBOOK_STEP.priority, payload: p, dedupeKey: PLAYBOOK_STEP.dedupeKey(p), runAt: at });
 }
 
-/** Whose automation a change may have to stop: one label's people, one import's no-label group, or named records. */
-export type PeopleScope = { label: string } | { unlabeledImportId: string } | { contactIds: readonly string[] };
+/**
+ * Whose automation a change may have to stop: one label's people, one import's no-label group, every person a lead
+ * source sent, or named records.
+ */
+export type PeopleScope = { label: string } | { unlabeledImportId: string } | { sourceId: string } | { contactIds: readonly string[] };
 
 /**
- * R-LSRC-9 A4 (owner decision 2026-11-14): the people of `scope`, made safe now when nothing automatic may go to them
- * any more: a mapping was removed (their label is unclassified again), their label became ambiguous, or an import just
- * committed them. For each of them who is refused NOW (app.person_source_refusal: unclassified, or a marked source),
- * live AI care is asked for a turn (its chain, link 11, pauses it), each active plan is asked for a step (the step
- * runner stops it before any due check) and the pending drafts a plan step or a trigger wrote are withdrawn here, with
- * the reason that applies. A person who is not refused (classified to an unmarked source) is left alone.
- *
- * Bounded work, no lock: one statement finds the scope's people through an index (app.import_source_people over
- * import_records_contact_label, or the import's stage), follows a merged-away record to its person, and joins straight to the rows there are to stop;
- * the definer is asked once per person who HAS something to stop, never per person of the label and never over the
- * tenant. It takes no contact lock and no advisory lock (an opt-out, a pause, a stop or an inbound call for one of
- * these people never waits on this transaction, except on the very draft rows it withdraws). Paused plans stay paused
- * (they cannot be resumed while refused: the enrolment guard).
+ * The records a lead source sent, as one set (R-LSRC-8; the same four ways as app.person_from_lead_source, 0103, read
+ * from the SOURCE's side so nothing is asked per row of the team): a record whose own lead source it is (live, through
+ * contacts_list_source_idx, or merged away since, through contacts_merged_into_idx), a record an inquiry of the source
+ * is on, and the people an import COMMITTED under each label, and in each no-label group, the source holds
+ * (app.import_source_people, through import_records_contact_label or the import's stage). The caller is tenant-wide
+ * (the Owner on the sources routes): it reads these rows under its own row-level security.
  */
-export async function stopAutomatedContactForPeople(tx: Tx, scope: PeopleScope, now: Instant): Promise<Stopped> {
-  if ('contactIds' in scope && scope.contactIds.length === 0) return NOTHING_STOPPED;
+export function sourceRecordsSql(sourceId: string) {
+  return sql`
+    SELECT c.id FROM contacts c
+     WHERE c.tenant_id = app.tenant_id() AND c.original_lead_source_id = ${sourceId}::uuid AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
+    UNION
+    SELECT c.id FROM contacts c
+     WHERE c.tenant_id = app.tenant_id() AND c.merged_into_contact_id IS NOT NULL AND c.original_lead_source_id = ${sourceId}::uuid
+    UNION
+    SELECT i.contact_id FROM lead_inquiries i
+     WHERE i.tenant_id = app.tenant_id() AND i.lead_source_id = ${sourceId}::uuid AND i.contact_id IS NOT NULL
+    UNION
+    SELECT p.contact_id FROM lead_sources s CROSS JOIN LATERAL unnest(s.import_labels) AS l(label)
+           CROSS JOIN LATERAL app.import_source_people(app.tenant_id(), l.label, NULL::uuid) p
+     WHERE s.tenant_id = app.tenant_id() AND s.id = ${sourceId}::uuid AND p.committed
+    UNION
+    SELECT p.contact_id FROM lead_sources s CROSS JOIN LATERAL unnest(s.import_unlabeled_batches) AS b(id)
+           CROSS JOIN LATERAL app.import_source_people(app.tenant_id(), NULL::text, b.id) p
+     WHERE s.tenant_id = app.tenant_id() AND s.id = ${sourceId}::uuid AND p.committed`;
+}
+
+/** The records of a scope, as a query of one `id` column (see PeopleScope). */
+export function scopeRecordsSql(scope: PeopleScope) {
   // a label's or a no-label group's COMMITTED people come from app.import_source_people (0101): a definer, so the lookup
   // may use import_records_contact_label (under row-level security the caller's own query could not), answering only
   // the tenant-wide caller who may read import_records anyway
-  const targets = 'label' in scope
+  return 'label' in scope
     ? sql`SELECT p.contact_id AS id FROM app.import_source_people(app.tenant_id(), ${scope.label}::text, NULL::uuid) p WHERE p.committed`
     : 'unlabeledImportId' in scope
       ? sql`SELECT p.contact_id AS id FROM app.import_source_people(app.tenant_id(), NULL::text, ${scope.unlabeledImportId}::uuid) p WHERE p.committed`
-      : sql`SELECT unnest(${[...scope.contactIds]}::uuid[]) AS id`;
-  const r = await sql<{ kind: 'care' | 'plan' | 'draft'; id: string | null; epoch: number | null; contact_id: string; why: string }>`
-    WITH t AS MATERIALIZED (${targets}),
-         -- a record merged away since the import: the person lives on (app.contact_person_ids); only those are walked
+      : 'sourceId' in scope
+        ? sourceRecordsSql(scope.sourceId)
+        : sql`SELECT unnest(${[...scope.contactIds]}::uuid[]) AS id`;
+}
+
+/**
+ * The people of a scope, as the CTEs `t` (its records), `gone` and `person` (each record, and for a record merged away
+ * since, every record of its person: app.contact_person_ids; only those are walked). A merge stops the merged-away
+ * record's plans and moves its drafts and its saved searches' person to the survivor (packages/db ownership/merge.ts),
+ * so whatever is live for a person sits on a record in `person`.
+ */
+export function scopePeopleCtes(scope: PeopleScope) {
+  return sql`t AS MATERIALIZED (${scopeRecordsSql(scope)}),
          gone AS MATERIALIZED (SELECT DISTINCT c.id FROM t JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = t.id WHERE c.merged_into_contact_id IS NOT NULL),
-         person AS MATERIALIZED (SELECT id FROM t UNION SELECT p.id FROM gone g CROSS JOIN LATERAL unnest(app.contact_person_ids(app.tenant_id(), g.id)) AS p(id)),
+         person AS MATERIALIZED (SELECT id FROM t UNION SELECT p.id FROM gone g CROSS JOIN LATERAL unnest(app.contact_person_ids(app.tenant_id(), g.id)) AS p(id))`;
+}
+
+/**
+ * R-LSRC-9 A4 (owner decision 2026-11-14) and R-LSRC-8: the people of `scope`, made safe now when nothing automatic may
+ * go to them any more: a mapping was removed (their label is unclassified again), their label became ambiguous, an
+ * import just committed them, their label was mapped to a marked source, or the Owner turned "No automated contact for
+ * leads from this source" on for the source that sent them (`{ sourceId }`). For each of them who is refused NOW
+ * (app.person_source_refusal: unclassified, or a marked source), live AI care is asked for a turn (its chain, link 11,
+ * pauses it), each active plan is asked for a step (the step runner stops it before any due check) and the pending
+ * drafts a plan step or a trigger wrote are withdrawn here, with the reason that applies. A person who is not refused
+ * (classified to an unmarked source) is left alone.
+ *
+ * Bounded work, no lock: one statement finds the scope's people through an index (app.import_source_people over
+ * import_records_contact_label, the import's stage, or the source's own records and inquiries), follows a merged-away
+ * record to its person, and joins straight to the rows there are to stop; the definer is asked once per person who HAS
+ * something to stop, never per person of the scope and never per plan, AI care or draft of the team
+ * (leads/sourceStop.volume.test.ts). It takes no contact lock and no advisory lock (an opt-out, a pause, a stop or an
+ * inbound call for one of these people never waits on this transaction, except on the very draft rows it withdraws).
+ * Paused plans stay paused (they cannot be resumed while refused: the enrolment guard).
+ */
+export async function stopAutomatedContactForPeople(tx: Tx, scope: PeopleScope, now: Instant): Promise<Stopped> {
+  if ('contactIds' in scope && scope.contactIds.length === 0) return NOTHING_STOPPED;
+  const r = await sql<{ kind: 'care' | 'plan' | 'draft'; id: string | null; epoch: number | null; contact_id: string; why: string }>`
+    WITH ${scopePeopleCtes(scope)},
          cand AS MATERIALIZED (
            SELECT 'care'::text AS kind, a.id, a.epoch, a.contact_id FROM ai_isa_assignments a JOIN person p ON p.id = a.contact_id
             WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
