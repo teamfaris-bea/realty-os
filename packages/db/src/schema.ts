@@ -2459,6 +2459,7 @@ export interface SavedSearchesTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   origin: Generated<string>;
+  alerts_held_until: Timestamp | null;
 }
 
 /** public.scoreboard_activity_daily (table) */

@@ -35,7 +35,7 @@ import { actorOf, leadsTx, platformOf } from './common.js';
 import { noAutomatedContactSentence } from './automatedContact.js';
 import { type ImportLabelRow, labelRowOf, recordMapping, sourceCatalog, tenantLabels, unlabeledRowOf } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
-import { NOTHING_STOPPED as NOTHING, type Stopped, stopAutomatedContactForPeople } from './sourceStop.js';
+import { NOTHING_STOPPED as NOTHING, type Stopped, releaseAlertHolds, stopAutomatedContactForPeople } from './sourceStop.js';
 import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelConfirmBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
@@ -193,6 +193,9 @@ export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourc
   // source). Always this key's people and nobody else's: a marked target's other people were made safe when the
   // setting was turned on or their own label was mapped (M4: never the team's plans, AI care and drafts).
   const safe: Stopped = await stopAutomatedContactForPeople(tx, key, now);
+  // ...and the saved-search alerts held for this key's people while they were refused are looked at again on the
+  // sender's next run (E756): whoever is still refused is held again, whoever is released gets the homes still waiting
+  if (changed) await releaseAlertHolds(tx, key);
   if (changed || safe.pausing + safe.stopping + safe.withdrawn > 0) {
     const what = !target ? 'UNMAPPED' : o.confirmedSuggestion ? 'SUGGESTION_CONFIRMED' : from.length > 0 ? 'REMAPPED' : 'MAPPED';
     await audit(tx, actor, {
@@ -550,6 +553,9 @@ async function register(app: FastifyInstance): Promise<void> {
       // round 3 item 4: only THIS source's people are asked and counted (app.person_from_lead_source, 0099), never the
       // people of another marked source; round 3 item 3: their pending plan and alert drafts are withdrawn here
       const safe = req.body.noAiCare ? await stopAutomatedContactNow(tx, s.id, now) : NOTHING;
+      // turned off: the saved-search alerts held for this source's people are looked at again on the sender's next run
+      // (E756; whoever another marked source or an unreviewed import still covers is held again)
+      if (!req.body.noAiCare && was) await releaseAlertHolds(tx, { sourceId: s.id });
       return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, ...safe };
     }),
   );

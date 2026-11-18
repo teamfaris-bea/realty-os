@@ -430,40 +430,80 @@ function alertLines(s: SearchRow, listings: readonly { row: RawListing; mls: Dis
   return [lead, ...homes.map((h) => `- ${h}`), 'Reply here if you want to see any of them.', ...notes].join('\n');
 }
 
+/** How long a search the source check refused is left alone before it is asked again (saved_searches.alerts_held_until, 0104). */
+export const ALERT_HOLD_MS = 3_600_000;
+/** How many due searches the source check is asked about in one statement. */
+const ALERT_SOURCE_PAGE = 200;
+/** The most searches one run puts on hold; the rest wait for the next run (every ten minutes). */
+const ALERT_HOLDS_PER_RUN = 10_000;
+
 /**
  * Sends the due alerts: an active search with matches not yet alerted, whose frequency window has passed
  * (instant: at once; daily / weekly). Queued as `search_alert` marketing from the system; the send-time
  * gate decides (opt-out / unsubscribe, suppression, brokerage name, autonomy switch, pause). A search of a
  * deleted or merged-away record sends nothing (F1: a merge moves no saved search; the person lives on the
- * survivor, and a merged-away record is never a send target). A person nothing automatic may go to (a marked source's
- * person, or an imported person whose source is not reviewed yet: leads/automatedContact.ts) is skipped before anything
- * is queued or marked, so nothing is recorded as alerted that was not sent; once the Owner reviews the source, the
- * homes still on the market are alerted then (R-LSRC-10 M7).
+ * survivor, and a merged-away record is never a send target).
+ *
+ * A person nothing automatic may go to (a marked source's person, or an imported person whose source is not reviewed
+ * yet: leads/automatedContact.ts) is skipped before anything is queued or marked, so nothing is recorded as alerted
+ * that was not sent; once the Owner reviews the source, the homes still on the market are alerted then (R-LSRC-10 M7).
+ * Their matches therefore stay pending, so the source check must not be asked for them on every run (E756; review round
+ * 5): the due query holds NO definer. The due searches are read once, a page of them at a time is asked the source
+ * check in one statement (once per person, no lock on anyone), and every active search of a refused person is put on
+ * hold for an hour (`alerts_held_until`), which the due query skips on a plain column. A held search costs later runs
+ * nothing; the Owner's mapping or setting change clears the holds of the people it may have released
+ * (leads/sourceStop.ts releaseAlertHolds), and a hold that runs out is asked again once. Refused people never count
+ * against `limit`, so they neither fill the batch nor starve it. A hold only ever withholds: the source check is asked
+ * again under the person's lock before anything is queued (below), and dispatch TX1 and the database guard still refuse.
  */
 export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: string, now: Instant, o: { searchId?: string; limit?: number }): Promise<number> {
   // the frequency window is applied in the query, so searches that are not due yet never fill the batch
   // and starve the ones that are (a daily digest waiting for tomorrow is not "due"); searches of records that
   // can never be alerted (deleted, merged away) are left out for the same reason
   const nowIso = new Date(now).toISOString();
+  const limit = o.limit ?? 200;
   const e = await mlsEligibility(tx, now);
-  const due = await sql<RawSearch>`
-    SELECT ${COLS} FROM saved_searches s WHERE s.tenant_id = app.tenant_id() AND s.status = 'active'
+  const due = await sql<{ id: string; contact_id: string; alert_frequency: SearchRow['alertFrequency']; last_alerted_at: Date | null }>`
+    SELECT s.id, s.contact_id, s.alert_frequency, s.last_alerted_at FROM saved_searches s WHERE s.tenant_id = app.tenant_id() AND s.status = 'active'
        AND (${o.searchId ?? null}::uuid IS NULL OR s.id = ${o.searchId ?? null}::uuid)
+       -- E756: a search the source check refused within the last hour is not looked at (a column, never the definer)
+       AND (s.alerts_held_until IS NULL OR s.alerts_held_until <= ${nowIso}::timestamptz)
        AND (s.last_alerted_at IS NULL OR s.alert_frequency = 'instant'
             OR s.last_alerted_at <= ${nowIso}::timestamptz - CASE s.alert_frequency WHEN 'weekly' THEN interval '7 days' ELSE interval '1 day' END)
        AND EXISTS (SELECT 1 FROM saved_search_matches m JOIN listings l ON l.tenant_id = m.tenant_id AND l.id = m.listing_id
                     WHERE m.tenant_id = s.tenant_id AND m.search_id = s.id AND m.alerted_message_id IS NULL AND ${mlsEligibleSql(e)})
        AND EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = s.tenant_id AND c.id = s.contact_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL)
-       -- R-LSRC-10 M7 (R-LSRC-8, R-LSRC-9): nothing automatic goes to a marked source's person or to an imported person whose
-       -- source is not reviewed yet. They are left out HERE, so their searches never fill the batch and nothing of theirs
-       -- is queued or marked (the same definer every automated path asks)
-       AND app.person_source_refusal(s.tenant_id, s.contact_id) IS NULL
        -- R-ISA-2/R-ISA-17 (D12 proposed; b12 review B12X-4): an AI-proposed search sends no alert while its person is under live AI care
        AND NOT (s.origin = 'ai_isa' AND EXISTS (SELECT 1 FROM ai_isa_assignments a WHERE a.tenant_id = s.tenant_id AND a.ended_at IS NULL
                                                 AND a.contact_id = ANY (app.contact_person_ids(s.tenant_id, s.contact_id))))
-     ORDER BY s.contact_id, s.id LIMIT ${o.limit ?? 200}`.execute(tx);
+     ORDER BY s.contact_id, s.id LIMIT ${limit + ALERT_HOLDS_PER_RUN}`.execute(tx);
   let sent = 0;
-  for (const s0 of due.rows.map(row)) {
+  let considered = 0;
+  let holds = 0;
+  /** the people of the pages read so far, with what the source check said of each */
+  const refused = new Map<string, boolean>();
+  for (let i = 0; i < due.rows.length && considered < limit; i++) {
+    if (i % ALERT_SOURCE_PAGE === 0) {
+      if (holds >= ALERT_HOLDS_PER_RUN) break;
+      // R-LSRC-10 M7 (R-LSRC-8, R-LSRC-9): this page's people, asked once each in one statement (the same definer every
+      // automated path asks), and the refused ones' searches held. No contact lock is taken for a person who is refused.
+      const page = [...new Set(due.rows.slice(i, i + ALERT_SOURCE_PAGE).map((x) => x.contact_id))].filter((id) => !refused.has(id));
+      if (page.length > 0) {
+        const asked = await sql<{ id: string; why: string | null }>`
+          SELECT p.id, app.person_source_refusal(app.tenant_id(), p.id) AS why FROM unnest(${page}::uuid[]) AS p(id)`.execute(tx);
+        for (const x of asked.rows) refused.set(x.id, x.why !== null);
+        const hold = asked.rows.filter((x) => x.why !== null).map((x) => x.id);
+        if (hold.length > 0) {
+          const u = await sql`UPDATE saved_searches SET alerts_held_until = ${new Date(now + ALERT_HOLD_MS).toISOString()}::timestamptz
+             WHERE tenant_id = app.tenant_id() AND status = 'active' AND contact_id = ANY (${hold}::uuid[])`.execute(tx);
+          holds += Number(u.numAffectedRows ?? 0n);
+        }
+      }
+    }
+    const d = due.rows[i]!;
+    if (refused.get(d.contact_id) === true) continue; // held: it does not count against the batch
+    considered += 1;
+    const s0 = { id: d.id, contactId: d.contact_id, alertFrequency: d.alert_frequency, lastAlertedAt: d.last_alerted_at ? (d.last_alerted_at.getTime() as Instant) : null };
     if (s0.lastAlertedAt !== null && now - s0.lastAlertedAt < PERIOD_MS[s0.alertFrequency]) continue;
     await lockContact(tx, s0.contactId as ContactId);
     const s = await searchById(tx, s0.id, true);
@@ -481,8 +521,14 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
     const c = await contactCore(tx, s.contactId);
     if (!c || c.deleted || c.merged) continue; // re-read under the contact lock: a merge may have committed since
     // R-LSRC-10 M7: asked again under the contact lock, BEFORE anything is queued or marked: a person covered since the
-    // batch was read gets no alert, and no match of theirs is recorded as alerted (dispatch would refuse the message)
-    if ((await noAutomatedContact(tx, c.id)) !== null) continue;
+    // page was asked gets no alert, and no match of theirs is recorded as alerted (dispatch would refuse the message).
+    // Their searches are held like the others'
+    if ((await noAutomatedContact(tx, c.id)) !== null) {
+      await sql`UPDATE saved_searches SET alerts_held_until = ${new Date(now + ALERT_HOLD_MS).toISOString()}::timestamptz
+         WHERE tenant_id = app.tenant_id() AND status = 'active' AND contact_id = ${c.id}::uuid`.execute(tx);
+      refused.set(c.id, true);
+      continue;
+    }
     const identity = await identityFacts(tx, { scope: c.ownerUserId ? 'agent' : 'team', agentUserId: c.ownerUserId });
     const first = await firstInThread(tx, c.id);
     const lines = [`Hi ${c.firstName?.trim() || 'there'},`, alertLines(s, homes), signOffFor(identity), identity.brokerageLegalName];
