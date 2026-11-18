@@ -66,22 +66,52 @@ export const AiCareBody = z.strictObject({ noAiCare: z.boolean() });
  */
 export const AiCareResponse = z.object({ source: z.object({ id: Id, name: z.string(), noAiCare: z.boolean(), noAiCareSentence: z.string() }), pausing: z.number().int(), stopping: z.number().int(), withdrawn: z.number().int() });
 
+/** The kind of an import: import_batches.source. */
+const ImportKind = z.enum(['csv', 'fub_api', 'fub_export']);
 /**
- * b18 round 3 item 1 (E728): one imported source label, the people it labels, the source it means and whether that source
- * is marked. R-LSRC-9 (0101): `inReview` is true while no lead source, or more than one, holds it (the people committed
- * with it are unclassified: nothing automatic goes to them); `unlabeledImportId` is set on the row of one import's
- * no-label group (its `label` is then '').
+ * One row of the source review (R-LSRC-10, owner decision 2026-11-14; leads/importLabels.ts ImportLabelRow): an
+ * imported source label EXACTLY as imported, or one import's no-label group (`label` is then '' and
+ * `unlabeledImportId` is set).
+ *   state              mapped (to the named lead source) | suggested (an exact known match: `suggestion` names the
+ *                      source; nothing is applied until the Owner confirms) | ambiguous (two lead sources match or
+ *                      hold it; nothing is suggested) | in_review
+ *   inReview           true unless state is mapped: the people committed with it get no automated contact
+ *   people             the CRM-wide list: people an import committed with it; an import's rows: that import's people
+ *   committedPeople    of those, the people an import has committed with it
+ *   firstSeen          the import that first committed a person with it, its kind and when
+ *   changedBy/At       who last mapped, re-mapped or un-mapped it, and when
  */
-export const ImportLabel = z.object({ label: z.string(), people: z.number().int(), leadSourceId: Id.nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), inReview: z.boolean(), unlabeledImportId: Id.nullable(), sentence: z.string() });
+export const ImportLabel = z.object({
+  id: Id.nullable(),
+  label: z.string(),
+  unlabeledImportId: Id.nullable(),
+  people: z.number().int(),
+  committedPeople: z.number().int(),
+  state: z.enum(['mapped', 'suggested', 'ambiguous', 'in_review']),
+  leadSourceId: Id.nullable(),
+  leadSourceName: z.string().nullable(),
+  noAutomatedContact: z.boolean(),
+  inReview: z.boolean(),
+  suggestion: z.object({ leadSourceId: Id, leadSourceName: z.string(), noAutomatedContact: z.boolean() }).nullable(),
+  firstSeen: z.object({ importId: Id, kind: ImportKind, at: Iso }).nullable(),
+  changedBy: z.object({ userId: Id, name: z.string() }).nullable(),
+  changedAt: Iso.nullable(),
+  sentence: z.string(),
+});
 export const ImportLabelsResponse = z.object({ labels: z.array(ImportLabel), canChange: z.boolean() });
 /**
- * Either the label exactly as the import stored it, compared whole (at most 500 characters, the import's own cut), or
- * `unlabeledImportId`: the import whose people came in with no source label (R-LSRC-9). leadSourceId null removes the mapping.
+ * Either the label exactly as imported, compared whole (at most 32,768 characters, the longest an import keeps: no
+ * imported label is too long to map), or `unlabeledImportId`: the import whose people came in with no source label
+ * (R-LSRC-9). leadSourceId null removes the mapping.
  */
+/** An imported label is never empty or only whitespace (core sourceLabel reads that as no label at all). */
+const Label = z.string().min(1).max(32_768).refine((s) => s.trim() !== '', 'blank');
 export const ImportLabelBody = z.union([
-  z.strictObject({ label: z.string().min(1).max(500), leadSourceId: Id.nullable() }),
+  z.strictObject({ label: Label, leadSourceId: Id.nullable() }),
   z.strictObject({ unlabeledImportId: Id, leadSourceId: Id.nullable() }),
 ]);
+/** POST /lead-sources/import-labels/confirm: the suggestion the Owner was shown for this label (R-LSRC-10). */
+export const ImportLabelConfirmBody = z.strictObject({ label: Label, leadSourceId: Id });
 export const ImportLabelResponse = z.object({ label: ImportLabel, pausing: z.number().int(), stopping: z.number().int(), withdrawn: z.number().int() });
 
 export const PatchBody = z.strictObject({ name: z.string().trim().min(1).max(80).optional(), consentDisclosure: ConsentDisclosureInput.optional() });

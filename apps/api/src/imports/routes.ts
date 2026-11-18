@@ -18,11 +18,12 @@
 //   POST /imports/:id/revert                          { category? } (R-IMPORT-10)
 //   POST /imports/:id/abandon                         purge the FUB key now (R-IMPORT-11)
 //   GET|PUT /imports/:id/parity                     stage map, keep-stage-as-tag, typed custom fields (R-PAR-46; resets the contacts dry run);
-//                                                     GET also lists the source labels found and which are marked (E728;
-//                                                     the Owner maps a label with PUT /lead-sources/import-labels)
+//                                                     GET also carries the import's source review (R-LSRC-10, E728): every
+//                                                     label found and the no-label group, with state and counts (the Owner
+//                                                     maps with PUT /lead-sources/import-labels, or confirms a suggestion)
 //   GET  /imports/:id/report                          per category source | imported | needs review | rejected | duplicate;
 //                                                     the people the ownership commit brought in unassigned (owner decision B4);
-//                                                     the source labels found and which are marked (b18 round 3 item 1, E728)
+//                                                     the same source review rows as the preview (R-LSRC-10, E728)
 import type { UserActor } from '@realty/core/foundation';
 import { type Category } from '@realty/core/import';
 import { withTenantTx } from '@realty/db';
@@ -259,7 +260,7 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
             const zone = unassigned.some((u) => u.asked_again_at !== null) ? await brepo.tenantZone(tx) : 'UTC';
             // b18 round 3 item 1 (E728): the source labels of the contacts records, each with its lead source and mark
             const contacts = stages.find((s) => s.category === 'contacts');
-            return { ...reportView(b, stages, { unassigned, names, zone }), sourceLabels: contacts ? await stageLabels(tx, contacts.id) : [] };
+            return { ...reportView(b, stages, { unassigned, names, zone }), sourceLabels: contacts ? await stageLabels(tx, b.id, contacts.id) : [] };
           },
           { db: deps(req).db },
         ),

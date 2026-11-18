@@ -2422,6 +2422,76 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "changedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "changedBy": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                    },
+                    "userId": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "userId",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "committedPeople": {
+              "type": "number",
+            },
+            "firstSeen": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "importId": {
+                      "type": "string",
+                    },
+                    "kind": {
+                      "enum": [
+                        "csv",
+                        "fub_api",
+                        "fub_export",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "importId",
+                    "kind",
+                    "at",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "inReview": {
               "type": "boolean",
             },
@@ -2449,6 +2519,42 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "sentence": {
               "type": "string",
             },
+            "state": {
+              "enum": [
+                "mapped",
+                "suggested",
+                "ambiguous",
+                "in_review",
+              ],
+              "type": "string",
+            },
+            "suggestion": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "leadSourceId": {
+                      "type": "string",
+                    },
+                    "leadSourceName": {
+                      "type": "string",
+                    },
+                    "noAutomatedContact": {
+                      "type": "boolean",
+                    },
+                  },
+                  "required": [
+                    "leadSourceId",
+                    "leadSourceName",
+                    "noAutomatedContact",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "unlabeledImportId": {
               "type": [
                 "string",
@@ -2457,13 +2563,20 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             },
           },
           "required": [
+            "id",
             "label",
+            "unlabeledImportId",
             "people",
+            "committedPeople",
+            "state",
             "leadSourceId",
             "leadSourceName",
             "noAutomatedContact",
             "inReview",
-            "unlabeledImportId",
+            "suggestion",
+            "firstSeen",
+            "changedBy",
+            "changedAt",
             "sentence",
           ],
           "type": "object",
@@ -3218,6 +3331,76 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "changedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "changedBy": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                    },
+                    "userId": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "userId",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "committedPeople": {
+              "type": "number",
+            },
+            "firstSeen": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "importId": {
+                      "type": "string",
+                    },
+                    "kind": {
+                      "enum": [
+                        "csv",
+                        "fub_api",
+                        "fub_export",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "importId",
+                    "kind",
+                    "at",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "inReview": {
               "type": "boolean",
             },
@@ -3245,6 +3428,42 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "sentence": {
               "type": "string",
             },
+            "state": {
+              "enum": [
+                "mapped",
+                "suggested",
+                "ambiguous",
+                "in_review",
+              ],
+              "type": "string",
+            },
+            "suggestion": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "leadSourceId": {
+                      "type": "string",
+                    },
+                    "leadSourceName": {
+                      "type": "string",
+                    },
+                    "noAutomatedContact": {
+                      "type": "boolean",
+                    },
+                  },
+                  "required": [
+                    "leadSourceId",
+                    "leadSourceName",
+                    "noAutomatedContact",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "unlabeledImportId": {
               "type": [
                 "string",
@@ -3253,13 +3472,20 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             },
           },
           "required": [
+            "id",
             "label",
+            "unlabeledImportId",
             "people",
+            "committedPeople",
+            "state",
             "leadSourceId",
             "leadSourceName",
             "noAutomatedContact",
             "inReview",
-            "unlabeledImportId",
+            "suggestion",
+            "firstSeen",
+            "changedBy",
+            "changedAt",
             "sentence",
           ],
           "type": "object",

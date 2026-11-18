@@ -13,8 +13,9 @@
 // lead insert's FK check would wait on it). PATCH, off/on and the preview run as the person (Owner/Admin are
 // tenant-wide under RLS). The preview writes and sends nothing, not even an audit row (R-LSRC-4).
 import { createHash, randomBytes } from 'node:crypto';
-import type { IdGenerator, Instant, SystemActor, UserActor } from '@realty/core/foundation';
+import { type IdGenerator, type Instant, type SystemActor, type UserActor, toIso } from '@realty/core/foundation';
 import type { InquiryFacts, RoutingPreview, SkipReason } from '@realty/core/ownership';
+import { suggestLeadSource } from '@realty/core/import';
 import { matchRule, previewRouting } from '@realty/core/ownership';
 import { type Database, type Tx, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, lockAddresses, withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -33,10 +34,10 @@ import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
 import { noAutomatedContactSentence, withdrawAutomatedDrafts } from './automatedContact.js';
-import { type ImportLabelRow, labelRowOf, tenantLabels, unlabeledGroups, unlabeledMappings, unlabeledRow } from './importLabels.js';
+import { type ImportLabelRow, labelRowOf, recordMapping, sourceCatalog, tenantLabels, unlabeledRowOf } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
 import { NOTHING_STOPPED as NOTHING, type Stopped, askCareForATurn, stopAutomatedContactForPeople } from './sourceStop.js';
-import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
+import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelConfirmBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
 
@@ -153,11 +154,13 @@ export type ImportSourceKey = { label: string } | { unlabeledImportId: string };
  *    restarted: a stopped plan stays stopped and a withdrawn draft stays withdrawn);
  *  - removed (or the key now held by two sources): its committed people are unclassified again, and
  *    stopAutomatedContactForPeople stops their running plans, pauses their live AI care and withdraws their drafts.
- * The audit row carries who, when, the sources, a digest of the label (never its text) and what was asked to stop.
- * The sources are locked FOR NO KEY UPDATE, in id order: a lead insert's foreign-key check on lead_sources never waits
- * on this transaction (the file's rule, line 12), and it takes no other lock.
+ * Every change is recorded twice, in this transaction (R-LSRC-10 M3): on the label's review record (who, when, which
+ * source: import_source_labels, 0102) and as an audit row with the label, the old and the new source, and what was
+ * asked to stop (the audit row's own actor and time say who and when). The sources are locked FOR NO KEY UPDATE, in id
+ * order: a lead insert's foreign-key check on lead_sources never waits on this transaction (the file's rule, line 12),
+ * and it takes no other lock. Bounded work: the label's own people and records only, never the team's (M4).
  */
-export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourceKey, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow } & Stopped> {
+export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourceKey, leadSourceId: string | null, now: Instant, o: { confirmedSuggestion?: boolean } = {}): Promise<{ label: ImportLabelRow } & Stopped> {
   const byLabel = 'label' in key;
   if (!byLabel) {
     // the import must be this tenant's (the Owner reads import_batches under RLS); never another tenant's id
@@ -181,36 +184,64 @@ export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourc
     if (byLabel) await sql`UPDATE lead_sources SET import_labels = array_append(import_labels, ${key.label}::text), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${target.id}::uuid`.execute(tx);
     else await sql`UPDATE lead_sources SET import_unlabeled_batches = array_append(import_unlabeled_batches, ${key.unlabeledImportId}::uuid), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${target.id}::uuid`.execute(tx);
   }
+  const changed = from.length > 0 || added;
+  // the review record says who made this change and when (only a real change is recorded: asking for the mapping a
+  // label already has leaves the first record standing)
+  const recordId = changed ? await recordMapping(tx, key, target?.id ?? null, actor.userId, toIso(now)) : null;
   // the people follow the mapping now. A marked target: that source's people (0099's reading: the key's committed
   // people, and a label's matched people too). Otherwise: the key's own committed people who are refused after the
   // change (unclassified again, ambiguous, or still carrying another unreviewed or marked source).
   const safe: Stopped = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : await stopAutomatedContactForPeople(tx, key, now);
-  if (from.length > 0 || added || safe.pausing + safe.stopping + safe.withdrawn > 0) {
+  if (changed || safe.pausing + safe.stopping + safe.withdrawn > 0) {
+    const what = !target ? 'UNMAPPED' : o.confirmedSuggestion ? 'SUGGESTION_CONFIRMED' : from.length > 0 ? 'REMAPPED' : 'MAPPED';
     await audit(tx, actor, {
       action: 'routing.changed',
       // the source it was mapped to or taken from; when no source is involved (a removal that only stopped what was
       // still running for a group nobody had mapped), the import, or the team
       entity: target ?? from[0] ? { type: 'lead_source', id: (target ?? from[0]!).id } : byLabel ? { type: 'tenant', id: actor.tenantId } : { type: 'import_batch', id: key.unlabeledImportId },
       changes: redactSnapshot({
+        // the label itself, classified plain on purpose (audit.ts PLAIN_EXACT import_label): a lead-source name from
+        // another system, which the Owner and Admin already read on this list; its digest names it exactly even where
+        // an email or a phone number inside it is masked
+        ...(byLabel ? { importLabel: key.label, labelSha256: createHash('sha256').update(key.label, 'utf8').digest('hex') } : { importBatchId: key.unlabeledImportId }),
+        ...(recordId ? { importSourceLabelId: recordId } : {}),
         fromLeadSourceIds: from.map((s) => s.id),
         toLeadSourceId: target?.id ?? null,
-        ...(byLabel ? { labelSha256: createHash('sha256').update(key.label, 'utf8').digest('hex') } : { importBatchId: key.unlabeledImportId }),
         aiCarePausingCount: safe.pausing,
         plansStoppingCount: safe.stopping,
         draftsWithdrawnCount: safe.withdrawn,
       }, { entity: 'lead_source' }),
-      reason: byLabel ? (target ? 'LEAD_SOURCE_IMPORT_LABEL_MAPPED' : 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED') : target ? 'LEAD_SOURCE_IMPORT_UNLABELED_MAPPED' : 'LEAD_SOURCE_IMPORT_UNLABELED_UNMAPPED',
+      reason: `${byLabel ? 'LEAD_SOURCE_IMPORT_LABEL' : 'LEAD_SOURCE_IMPORT_UNLABELED'}_${what}`,
     });
   }
-  const row = byLabel
-    ? await labelRowOf(tx, key.label) // this label only, through its index: never the tenant's whole import history
-    : ((await unlabeledGroups(tx, { importId: key.unlabeledImportId }))[0] ?? unlabeledRow(key.unlabeledImportId, 0, (await unlabeledMappings(tx)).get(key.unlabeledImportId) ?? null));
-  return { label: row, ...safe };
+  // this label only, through its index: never the tenant's whole import history
+  return { label: byLabel ? await labelRowOf(tx, key.label) : await unlabeledRowOf(tx, key.unlabeledImportId), ...safe };
 }
 
 /** The label form of setImportSource (its first name; imports and tests call it). */
 export function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow } & Stopped> {
   return setImportSource(tx, actor, { label }, leadSourceId, now);
+}
+
+/**
+ * POST /lead-sources/import-labels/confirm (R-LSRC-10 M2): the Owner confirms the suggestion a review row showed. The
+ * suggestion is worked out again here, by core suggestLeadSource and nothing else, over the team's lead sources as they
+ * are now (locked FOR NO KEY UPDATE so a rename cannot slip between the check and the mapping): unless it still names
+ * exactly the source the Owner was shown, nothing is mapped (409 IMPORT_LABEL_SUGGESTION_CHANGED, with what is true
+ * now). A label already mapped to that source is answered as it stands. Then it is an ordinary mapping (setImportSource).
+ */
+export async function confirmImportSuggestion(tx: Tx, actor: UserActor, label: string, leadSourceId: string, now: Instant): Promise<{ label: ImportLabelRow } & Stopped> {
+  await sql`SELECT id FROM lead_sources WHERE tenant_id = app.tenant_id() ORDER BY id FOR NO KEY UPDATE`.execute(tx);
+  const cat = await sourceCatalog(tx);
+  if (!cat.sources.some((x) => x.id === leadSourceId)) throw new AppError('NOT_FOUND'); // never another team's source
+  const holder = cat.byLabel.get(label);
+  if (holder && holder.ambiguous !== true && holder.id === leadSourceId) return { label: await labelRowOf(tx, label), ...NOTHING };
+  const s = holder ? null : suggestLeadSource(label, cat.sources.map((x) => ({ id: x.id, name: x.name, ownerConfirmedLabels: x.labels })));
+  if (!s || s.status !== 'suggestion' || s.leadSourceId !== leadSourceId) {
+    const row = await labelRowOf(tx, label);
+    throw new AppError('IMPORT_LABEL_SUGGESTION_CHANGED', { state: row.state, suggestedLeadSourceId: row.suggestion?.leadSourceId ?? null, leadSourceId: row.leadSourceId });
+  }
+  return setImportSource(tx, actor, { label }, leadSourceId, now, { confirmedSuggestion: true });
 }
 
 export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.infer<typeof OverviewResponse>> {
@@ -522,10 +553,11 @@ async function register(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  // b18 round 3 item 1 (E728): imported source labels. Anyone who manages routing sees every label in the CRM and the source
-  // it means; only the Owner maps, moves or unmaps one (core lead_source.ai_care, 🔒 every time: a move can loosen the
-  // setting for the people it labels; app.lead_sources_import_labels_guard in the database). A label mapped to a source
-  // with "No automated contact for leads from this source" on stops its people's plans and pauses their AI care now.
+  // b18 round 3 item 1 (E728) and R-LSRC-10: the source review. Anyone who manages routing (Owner, Admin) reads the list:
+  // every imported label and no-label group, its state, people, where it was first seen and who mapped it. Only the
+  // Owner maps, re-maps, un-maps or confirms a suggestion (core lead_source.ai_care, 🔒 every time: a move can loosen the
+  // setting for the people it labels; the database guards of 0099, 0101 and 0102). A label mapped to a source with
+  // "No automated contact for leads from this source" on stops its people's plans and pauses their AI care now.
   r.get('/lead-sources/import-labels', { ...routing, schema: { response: { 200: ImportLabelsResponse } } }, async (req) =>
     leadsTx(req, async (tx, _now, actor) => ({ labels: await tenantLabels(tx), canChange: actor.role === 'owner' })),
   );
@@ -534,6 +566,12 @@ async function register(app: FastifyInstance): Promise<void> {
     preHandler: authorize('lead_source.ai_care', () => ({ loosening: true })),
     schema: { body: ImportLabelBody, response: { 200: ImportLabelResponse } },
   }, async (req) => leadsTx(req, (tx, now, actor) => setImportSource(tx, actor, 'label' in req.body ? { label: req.body.label } : { unlabeledImportId: req.body.unlabeledImportId }, req.body.leadSourceId, now)));
+  // R-LSRC-10 M2: confirm the exact-match suggestion a review row showed (Owner only, the password every time, as a mapping)
+  r.post('/lead-sources/import-labels/confirm', {
+    config: { auth: 'lead_source.ai_care' },
+    preHandler: authorize('lead_source.ai_care', () => ({ loosening: true })),
+    schema: { body: ImportLabelConfirmBody, response: { 200: ImportLabelResponse } },
+  }, async (req) => leadsTx(req, (tx, now, actor) => confirmImportSuggestion(tx, actor, req.body.label, req.body.leadSourceId, now)));
 
   r.post('/lead-sources/:id/off', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, false)));
   r.post('/lead-sources/:id/on', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, true)));

@@ -5,7 +5,7 @@
 // an unmarked source: the refusal lifts. Classified to a marked source: refused for that reason. In both directions, the
 // list tells the truth after every change. An import's no-label group is one row, classified per import, mappable like
 // a label. A dry run changes nothing for anyone; only the commit does. Made-up labels and sources; fakes only.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApprovedPlaybook, actionsOf, appointment, approvedPlaybook, enrollmentRow, messagesOf, runJobs, smsStep } from '../assistant/testing.js';
@@ -125,7 +125,8 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
     expect(await enrollmentRow(h(), b.enrollmentId)).toMatchObject({ state: 'active', stop_reason: null });
     expect((await actionRow(b.draftId)).status).toBe('proposed');
     expect(await cardStates(b.draftId)).toEqual(['open']);
-    // the audit: who, when, which sources, a digest of the label (never its text) and what was asked to stop
+    // the audit: who, when, which sources, the label and its digest, and what was asked to stop (R-LSRC-10 M3: the
+    // label is named in its audit row, classified plain on purpose; the digest names it exactly)
     const au = (await lastAudit('LEAD_SOURCE_IMPORT_LABEL_UNMAPPED'))!;
     expect(au.actor_user_id).toBe(w.owner.userId);
     expect(au.changes).toMatchObject({
@@ -134,9 +135,9 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
       draftsWithdrawnCount: { to: 1 },
       aiCarePausingCount: { to: 0 },
     });
-    expect(String(au.changes['labelSha256']!.to)).toMatch(/^[0-9a-f]{64}$/);
-    expect(JSON.stringify(au.changes)).not.toContain('Northgate label');
-    expect(au.changes).not.toHaveProperty('label');
+    expect(au.changes['labelSha256']!.to).toBe(createHash('sha256').update(la, 'utf8').digest('hex'));
+    expect(au.changes['importLabel']).toEqual({ from: null, to: la });
+    expect(au.changes).not.toHaveProperty('label'); // never under a key the redaction would not know
     expect(au.changes).not.toHaveProperty('toLeadSourceId'); // removed: no source holds it now
   });
 
@@ -178,7 +179,8 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
     expect(await refusalOf(c.id)).toBe(SOURCE_NO_AUTOMATED_CONTACT);
     await runJobs(h(), w.tenantId, ['playbook.step', 'comms.dispatch']);
     expect(await enrollmentRow(h(), e.body.enrollment.id)).toMatchObject({ state: 'stopped', stop_reason: 'source_no_automated_contact' });
-    expect((await lastAudit('LEAD_SOURCE_IMPORT_LABEL_MAPPED'))!.changes).toMatchObject({ fromLeadSourceIds: { to: [plain.id] }, toLeadSourceId: { to: marked.id }, plansStoppingCount: { to: 1 } });
+    // a move has its own audit reason (R-LSRC-10 M3: mapped, re-mapped and un-mapped are told apart)
+    expect((await lastAudit('LEAD_SOURCE_IMPORT_LABEL_REMAPPED'))!.changes).toMatchObject({ fromLeadSourceIds: { to: [plain.id] }, toLeadSourceId: { to: marked.id }, plansStoppingCount: { to: 1 }, importLabel: { to: label } });
   });
 
   it('R-LSRC-9 E734: people imported with NO label are one row per import, classified by the Owner like a label ({ unlabeledImportId }): the Owner only; classified, the refusal lifts for that import\'s people and not another import\'s; removed, their running plan stops; a marked source keeps them refused for that reason', async () => {
@@ -198,7 +200,7 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
     const on = await put(w.owner, { unlabeledImportId: first.batchId, leadSourceId: plain.id });
     expect(on.status).toBe(200);
     expect(on.body.label).toMatchObject({ label: '', unlabeledImportId: first.batchId, people: 1, leadSourceId: plain.id, leadSourceName: plain.name, inReview: false, noAutomatedContact: false });
-    expect(on.body.label.sentence).toBe(`No source label in this import (1 person): counted as ${plain.name}.`);
+    expect(on.body.label.sentence).toBe(`No source label in one file import (1 person): counted as ${plain.name}.`);
     expect(await refusalOf(c.id)).toBeNull();
     expect(await refusalOf(d.id)).toBe(SOURCE_UNCLASSIFIED); // another import's no-label group is its own
     const e = await enroll(c.id);
@@ -208,7 +210,7 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
     const off = await put(w.owner, { unlabeledImportId: first.batchId, leadSourceId: null });
     expect([off.status, off.body.stopping]).toEqual([200, 1]);
     expect(off.body.label).toMatchObject({ unlabeledImportId: first.batchId, leadSourceId: null, inReview: true });
-    expect(off.body.label.sentence).toBe('No source label in this import (1 person): not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.');
+    expect(off.body.label.sentence).toBe('No source label in one file import (1 person): not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.');
     await runJobs(h(), w.tenantId, ['playbook.step', 'comms.dispatch']);
     expect(await enrollmentRow(h(), e.body.enrollment.id)).toMatchObject({ state: 'stopped', stop_reason: 'source_unclassified' });
 

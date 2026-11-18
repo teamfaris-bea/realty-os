@@ -185,6 +185,22 @@ describe('R-AUDIT-4 redacted diffs', () => {
     expect(d).toEqual({ id: { from: null, to: 'x' }, match: { from: null, to: { postal_codes: ['29401'], note: '[redacted]' } }, status: { from: null, to: 'active' }, value: { changed: true } });
   });
 
+  it('R-AUDIT-4 R-LSRC-10 M3: the batch 18 columns are classified on purpose, not by the fail-closed default: the redaction code, the Owner\'s setting, the imported labels and the review record are plain; a label\'s audit entry names it, with any email or phone number in it masked', async () => {
+    // each of these is named in PLAIN_EXACT with its reason (audit.ts); none reaches the default
+    for (const n of ['content_redacted', 'no_ai_care', 'import_labels', 'import_label', 'import_unlabeled_batches']) expect([n, classifyField(n)]).toEqual([n, 'plain']);
+    // every column of import_source_labels (0102): the label on purpose, the rest ids, an import kind and instants
+    const cols = (await h.su.query<{ c: string }>("SELECT column_name AS c FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'import_source_labels' ORDER BY ordinal_position")).rows.map((r) => r.c);
+    expect(cols).toEqual(['tenant_id', 'id', 'import_label', 'unlabeled_batch_id', 'first_seen_batch_id', 'first_seen_kind', 'first_seen_at', 'lead_source_id', 'mapped_by_user_id', 'mapped_at', 'created_at', 'updated_at']);
+    expect(cols.filter((c) => classifyField(c) !== 'plain')).toEqual([]);
+    // the keys of a mapping's audit row (leads/sources.ts setImportSource)
+    const d = redactSnapshot({ importLabel: ' Northgate Referrals ', labelSha256: 'ab'.repeat(32), importSourceLabelId: 'x', fromLeadSourceIds: ['a'], toLeadSourceId: 'b', importBatchId: 'c', aiCarePausingCount: 0, plansStoppingCount: 2, draftsWithdrawnCount: 1 }, { entity: 'lead_source' });
+    expect(Object.values(d).filter((v) => 'changed' in v)).toEqual([]);
+    expect(d['importLabel']).toEqual({ from: null, to: ' Northgate Referrals ' });
+    expect(redactSnapshot({ importLabel: 'Ask jane@example.test or +18435550100' })['importLabel']).toEqual({ from: null, to: 'Ask [email] or [phone]' });
+    // a person's own fields stay PII whatever the label rule says
+    for (const n of ['label', 'labels', 'import_source', 'imported_fields', 'normalized']) expect([n, classifyField(n)]).toEqual([n, 'pii']);
+  });
+
   it('R-AUDIT-4: generated field classification — every column in the schema gets a definite class, unknown names fail closed to PII (snapshot)', async () => {
     const cols = await h.su.query<{ table_name: string; column_name: string; udt_name: string }>(
       "SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",

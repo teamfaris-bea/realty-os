@@ -314,18 +314,44 @@ interface Preview2 {
 describe('cross-tenant (R-TEN-3)', () => {
   it('R-TEN-3: another tenant\'s source id is 404 on every new route, and nothing is read or written', async () => {
     await freshReauth(h, w.owner);
-    const before = (await h.su.query('SELECT name, active, ingest_token_hash FROM lead_sources WHERE id = $1', [other.sourceId])).rows;
+    // b18 (R-LSRC-8 to R-LSRC-10): the "No automated contact" setting and the source review. The other team has an
+    // import with people in it, and a label of its own already mapped to its source
+    const otherImport = randomUUID();
+    await h.su.query(`INSERT INTO import_batches (tenant_id, id, source, status, source_snapshot_sha256, source_snapshot_at, created_by_user_id) VALUES ($1, $2, 'csv', 'dry_run', repeat('a', 64), now(), $3)`, [other.tenantId, otherImport, other.owner.userId]);
+    await freshReauth(h, other.owner);
+    expect((await call(other.owner, 'PUT', '/lead-sources/import-labels', { label: 'Their label (test)', leadSourceId: other.sourceId })).status).toBe(200);
+    await freshReauth(h, w.owner);
+    const state = async () => [
+      (await h.su.query('SELECT name, active, ingest_token_hash, no_ai_care, import_labels, import_unlabeled_batches::text[] AS batches FROM lead_sources WHERE tenant_id IN ($1, $2) ORDER BY id', [other.tenantId, w.tenantId])).rows,
+      (await h.su.query('SELECT tenant_id, import_label, unlabeled_batch_id, lead_source_id, mapped_by_user_id FROM import_source_labels ORDER BY tenant_id, id')).rows,
+    ];
+    const before = await state();
     for (const [m, path, body] of [
       ['PATCH', `/lead-sources/${other.sourceId}`, { name: 'Taken over' }],
       ['POST', `/lead-sources/${other.sourceId}/off`, undefined],
       ['POST', `/lead-sources/${other.sourceId}/on`, undefined],
       ['POST', `/lead-sources/${other.sourceId}/webhook`, undefined],
       ['POST', `/lead-sources/${other.sourceId}/preview`, {}],
+      // the Owner-only setting, on and off
+      ['PUT', `/lead-sources/${other.sourceId}/ai-care`, { noAiCare: true }],
+      ['PUT', `/lead-sources/${other.sourceId}/ai-care`, { noAiCare: false }],
+      // the source review: another team's source as the target, another team's import as the no-label group, and
+      // another team's source in a confirmation (even for a label that reads exactly like its name)
+      ['PUT', '/lead-sources/import-labels', { label: 'Their label (test)', leadSourceId: other.sourceId }],
+      ['PUT', '/lead-sources/import-labels', { label: 'A new label (test)', leadSourceId: other.sourceId }],
+      ['PUT', '/lead-sources/import-labels', { unlabeledImportId: otherImport, leadSourceId: w.sourceId }],
+      ['PUT', '/lead-sources/import-labels', { unlabeledImportId: otherImport, leadSourceId: null }],
+      ['POST', '/lead-sources/import-labels/confirm', { label: 'Portal', leadSourceId: other.sourceId }],
     ] as const) {
       const r = await call(w.owner, m, path, body);
-      expect(r.status, path).toBe(404);
+      expect(r.status, `${m} ${path} ${JSON.stringify(body ?? null)}`).toBe(404);
     }
-    expect((await h.su.query('SELECT name, active, ingest_token_hash FROM lead_sources WHERE id = $1', [other.sourceId])).rows).toEqual(before);
+    expect(await state()).toEqual(before);
+    // and the list reads only this team's own labels
+    const mine = await call<{ labels: { label: string }[] }>(w.owner, 'GET', '/lead-sources/import-labels');
+    expect(mine.body.labels.map((l) => l.label)).not.toContain('Their label (test)');
+    const theirs = await call<{ labels: { label: string; leadSourceId: string | null }[] }>(other.owner, 'GET', '/lead-sources/import-labels');
+    expect(theirs.body.labels.filter((l) => l.label === 'Their label (test)')).toMatchObject([{ leadSourceId: other.sourceId }]);
   });
 });
 

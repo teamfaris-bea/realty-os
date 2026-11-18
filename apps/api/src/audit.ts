@@ -139,7 +139,17 @@ const PLAIN_EXACT = new Set([
   'is_lead',
   'is_primary',
   'resolved_by', // priority_feed_items: 'user' | 'condition' (0011)
+  // ---- batch 18, classified on purpose (R-AUDIT-4; R-LSRC-10 M3): none of these is left to the fail-closed default ----
+  'content_redacted', // messages, message_text_parts, lead_inquiries (0093, 0097): NULL or the code of WHY stored content was redacted ('portal_signin_token'); never the content
+  'no_ai_care', // lead_sources (0094): the Owner's on/off setting "No automated contact for leads from this source"; its audit row shows from and to
   'import_unlabeled_batches', // lead_sources (0101): import ids only (the imports whose no-label people are this source's), never text
+  // An imported source label is the name of a lead source in the system the people came from ("a referral partner",
+  // "open house"): a category the Owner and Admin read on the lead sources page, like lead_sources.name (plain on
+  // LABEL_NAME_ENTITIES), not a field of a person. Owner decision 2026-11-14 point 3 asks that who mapped WHICH label,
+  // and when, be audited, so the mapping's audit row names the label (changes.importLabel) beside its digest. An email
+  // address or a phone number typed into a label is still masked in the audit row (maskPii, toJson).
+  'import_label', // import_source_labels (0102) and the audit key importLabel
+  'import_labels', // lead_sources (0099): the labels the Owner mapped to this source
 ]);
 
 /** Structural suffixes that never hold free text (ids, instants, counts, digests), checked after secrets. */

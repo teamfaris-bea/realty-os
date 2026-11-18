@@ -271,6 +271,7 @@ export const ERROR_STATUS = {
   // ---- module 22 lead intake expansion (Lead sources page, Google lead forms, tracking numbers) ----
   NUMBER_NOT_TRACKING: 422, // module 22: only a live number with purpose tracking may be tied to a lead source (R-TRK-1)
   LEAD_SOURCE_OFF: 409, // module 22: the lead source is turned off; turn it on before setting up a path for it (R-LSRC-2)
+  IMPORT_LABEL_SUGGESTION_CHANGED: 409, // R-LSRC-10 (owner decision 2026-11-14): the suggestion the Owner confirmed for an imported source label is no longer what the exact match gives (a lead source was renamed, added or mapped meanwhile); nothing was mapped. details: state, suggestedLeadSourceId, leadSourceId as they are now
   GOOGLE_LEAD_FORM_NOT_AVAILABLE: 409, // module 22: this deployment has no public https address for Google to post to (R-GADS-4)
   GOOGLE_LEAD_FORM_ALREADY_ON: 409, // module 22: the source's Google lead form is already on (current state in details; R-GADS-4)
   LEAD_EMAIL_NOT_A_LEAD: 409, // module 22: a held forwarding confirmation is never a lead; it can only be discarded (R-LEM-12)

@@ -70,10 +70,29 @@ const FieldActionView = z.union([
   z.object({ action: z.literal('existing'), fieldId: z.string() }),
 ]);
 /**
- * b18 round 3 item 1 (E728): one source label found in the import, with the lead source it means and whether that source is
- * marked. R-LSRC-9: `inReview` while no lead source (or more than one) holds it; `unlabeledImportId` on a no-label group's row.
+ * One row of the import's source review (R-LSRC-10, E728; leads/importLabels.ts ImportLabelRow): a source label found
+ * in the import, exactly as imported, or its no-label group (`label` '' and `unlabeledImportId` set). The same shape,
+ * states and counts as GET /lead-sources/import-labels (leads/sourcesSchemas.ts ImportLabel): `state` mapped |
+ * suggested (with `suggestion`; never applied until the Owner confirms) | ambiguous | in_review; `people` the people of
+ * this import who carry it and `committedPeople` how many of them it has committed.
  */
-const SourceLabel = z.object({ label: z.string(), people: z.number(), leadSourceId: z.string().nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), inReview: z.boolean(), unlabeledImportId: z.string().nullable(), sentence: z.string() });
+const SourceLabel = z.object({
+  id: z.string().nullable(),
+  label: z.string(),
+  unlabeledImportId: z.string().nullable(),
+  people: z.number(),
+  committedPeople: z.number(),
+  state: z.enum(['mapped', 'suggested', 'ambiguous', 'in_review']),
+  leadSourceId: z.string().nullable(),
+  leadSourceName: z.string().nullable(),
+  noAutomatedContact: z.boolean(),
+  inReview: z.boolean(),
+  suggestion: z.object({ leadSourceId: z.string(), leadSourceName: z.string(), noAutomatedContact: z.boolean() }).nullable(),
+  firstSeen: z.object({ importId: z.string(), kind: z.enum(['csv', 'fub_api', 'fub_export']), at: z.string() }).nullable(),
+  changedBy: z.object({ userId: z.string(), name: z.string() }).nullable(),
+  changedAt: z.string().nullable(),
+  sentence: z.string(),
+});
 export const ParityResponse = z.object({
   options: z.object({ stageMap: z.record(z.string(), Stage8), keepStageAsTag: z.boolean(), fields: z.record(z.string(), FieldActionView) }),
   stages: z.array(z.object({ label: z.string(), people: z.number(), suggested: Stage8.nullable(), mapped: Stage8.nullable() })),

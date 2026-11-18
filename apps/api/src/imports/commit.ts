@@ -71,12 +71,12 @@ import type { ContactId, Instant, SystemActor, TenantId, UserActor, UserId } fro
 import { canOwnLeads, toIso } from '@realty/core/foundation';
 import { canReceiveLead } from '@realty/core/ownership';
 import type { FieldDef } from '@realty/core/parity/fields';
-import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockAddresses, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
+import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, isRetryable, lockAddresses, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactSnapshot } from '../audit.js';
 import { TRANSCRIBE_JOB } from '../comms/recordings.js';
 import { AppError } from '../errors.js';
-import { importLabelOf } from '../leads/importLabels.js';
+import { importLabelOf, recordCommitted } from '../leads/importLabels.js';
 import { stopAutomatedContactForPeople } from '../leads/sourceStop.js';
 import { addContactTags, ensureFieldDef, ensureTags, setFieldValue } from '../lists/index.js';
 import { systemActor } from '../worker/systemActor.js';
@@ -110,6 +110,20 @@ export class RecordError extends Error {
 class MemberChangedDuringChunk extends Error {
   override readonly name = 'MemberChangedDuringChunk';
   readonly code = '40001';
+}
+
+/**
+ * A condition of the moment, not a fact about the record (R-LSRC-10 M4): a serialization failure or a deadlock (40001,
+ * 40P01: the chunk's transaction runs again, withTenantTx), a lock that could not be had in time (55P03), a canceled
+ * or timed-out statement and a server going down (class 57), a lost connection (class 08) or a server out of resources
+ * (class 53). None of these says anything about the person in the record, so none of them may reject it: the chunk
+ * fails as a whole, nothing of it is kept, and the job runs it again. A record is rejected (COMMIT_FAILED) only for an
+ * error of its own.
+ */
+export function isTransient(e: unknown): boolean {
+  if (e instanceof RecordError) return false;
+  const code = (e as { code?: unknown } | null)?.code;
+  return isRetryable(e) || (typeof code === 'string' && (code === '55P03' || /^(08|53|57)[0-9A-Z]{3}$/.test(code)));
 }
 
 function pgCode(e: unknown): string {
@@ -741,6 +755,7 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
             try {
               await rrepo.markOptOutsCarried(tx, rec.id, await inSavepoint(tx, () => applySkippedOptOuts(ctx, rec)));
             } catch (e) {
+              if (isTransient(e)) throw e; // the chunk runs again; a busy moment never becomes a failed record
               // never dropped silently: the record fails like any other (COMMIT_FAILED), so the recount refuses to verify
               await rrepo.markCommitFailed(tx, rec.id, pgCode(e));
             }
@@ -770,6 +785,10 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
         // R-LSRC-9 A4: the people already in the CRM that this chunk's contacts records were committed onto (an update or
         // an attach; a person the chunk created has no plan, AI care or draft yet)
         const alreadyHere = new Set<string>();
+        // R-LSRC-10 M1: the labels this chunk COMMITTED a person with (and whether it committed one with no label), for
+        // the source review's provenance
+        const committedLabels = new Set<string>();
+        let committedUnlabeled = false;
         for (const rec of recs) {
           try {
             const a = await inSavepoint(tx, () => applyRecord(ctx, rec));
@@ -778,7 +797,13 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
             } else {
               await rrepo.markImported(tx, rec.id, a.target, a.created, a.duplicate ? 'duplicate' : 'imported');
               await addIssues(tx, rec.id, a.extraIssues ?? []);
-              if (stage.category === 'contacts' && !a.duplicate && a.target?.table === 'contacts' && a.created[0]?.action !== 'create') alreadyHere.add(a.target.id);
+              if (stage.category === 'contacts' && !a.duplicate && a.target?.table === 'contacts') {
+                if (a.created[0]?.action !== 'create') alreadyHere.add(a.target.id);
+                const n = rec.normalized as NormalizedRecord | null;
+                const label = n?.category === 'contacts' ? importLabelOf(n.leadSourceLabel) : null;
+                if (label === null) committedUnlabeled = true;
+                else committedLabels.add(label);
+              }
             }
             if (a.assignedTo) assignedTo.add(a.assignedTo);
             if (a.parity) {
@@ -786,10 +811,18 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
               for (const [k, v] of Object.entries(a.parity.counts)) parityTotals.counts[k] = (parityTotals.counts[k] ?? 0) + v;
             }
           } catch (e) {
+            // R-LSRC-10 M4: a transient condition (a deadlock, a lock or statement timeout, a lost connection) is never
+            // recorded as this record's failure: the whole chunk runs again and the record is committed then
+            if (isTransient(e)) throw e;
             await rrepo.markCommitFailed(tx, rec.id, pgCode(e));
           }
         }
         if (stage.category === 'contacts') await prepo.recordParity(tx, batch.id, parityTotals);
+        // R-LSRC-10 M1 (owner decision 2026-11-14, point 3): where each label was first seen. Written here and only here:
+        // by the commit, for committed people, in the chunk's own transaction (a dry run writes nothing). One statement.
+        if (committedLabels.size > 0 || committedUnlabeled) {
+          await recordCommitted(tx, { importId: batch.id, kind: batch.source, labels: [...committedLabels], unlabeled: committedUnlabeled, atIso: toIso(now) });
+        }
         // R-LSRC-9 A4 (owner decision 2026-11-14): a committed import record whose source the Owner has not reviewed
         // makes its person unclassified from this commit on (never from the dry run: nothing above ran then). Those of
         // them already here with something running are made safe now, in this chunk's transaction and in bounded work
