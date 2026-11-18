@@ -17,7 +17,7 @@ const responseCases = [
   ['invalid SID',()=>new Response('{"sid":"invalid"}',{status:201})],
 ] as const;
 
-describe('ambiguous successful Twilio submits are unknown, never safe failures',()=>{
+describe('R-GATE-8 E754: ambiguous successful Twilio submits are unknown, never safe failures',()=>{
   it.each(responseCases)('SMS %s: exactly one raw POST',async (_name,response)=>{
     const h = transport(response);
     await expect(h.adapter.sendSms({account,from:'+15555550100',to:'+15555550101',body:'Synthetic response test',idempotencyKey:'local-only'})).rejects.toMatchObject({kind:'timeout',providerCode:'TWILIO_BAD_RESPONSE'});

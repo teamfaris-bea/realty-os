@@ -1,4 +1,4 @@
-// R-LSRC-10 W1, W2 (owner decision 2026-11-14; E738 to E747): the source review on the Lead sources page, the same list
+// R-LSRC-10 W1, W2 (owner decision 2026-11-14; E748 to E751): the source review on the Lead sources page, the same list
 // an import shows as its step. Loading, empty and error with a retry; a mapping applied only by an explicit button,
 // changed and removed there (removal asks first and says what it stops); a failed action stays on its row with Try
 // again; the password prompt when the server asks; the label limit in a plain sentence; no control for an Admin; and
@@ -32,7 +32,7 @@ function review(labels: () => unknown[], canChange = true, sources = SOURCES) {
 }
 
 describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
-  it('says it is loading, then that nothing was imported yet; it is shown even when the team has no lead source', async () => {
+  it('R-LSRC-10 E751: says it is loading, then that nothing was imported yet; it is shown even when the team has no lead source', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const f = sourcesFake(overview([])).on('GET /lead-sources/import-labels', async () => {
@@ -49,7 +49,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(document.getElementById('review-sources')).not.toBeNull();
   });
 
-  it('a failed load says so and offers Try again, which loads the list', async () => {
+  it('R-LSRC-10 E751: a failed load says so and offers Try again, which loads the list', async () => {
     let failing = true;
     const f = sourcesFake(SOURCES).on('GET /lead-sources/import-labels', () => (failing ? err(500, 'INTERNAL_ERROR') : { status: 200, body: { labels: [flyer], canChange: true } }));
     sourcesApp(f, '/admin/lead-sources', 'owner');
@@ -62,7 +62,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(s.queryByRole('alert')).toBeNull();
   });
 
-  it('with labels in review it says what that means for the people; every row says where it came from and who changed it; no raw code or state key is shown', async () => {
+  it('R-LSRC-10 E748: with labels in review it says what that means for the people; every row says where it came from and who changed it; no raw code or state key is shown', async () => {
     sourcesApp(review(() => [flyer, desk, blank]), '/admin/lead-sources', 'owner');
     const s = await section();
     for (const r of [flyer, desk, blank]) expect(await s.findByText(r.sentence)).toBeInTheDocument();
@@ -73,7 +73,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(screen.getByRole('region', { name: 'Review sources' }).textContent).not.toMatch(/SOURCE_|in_review|fub_export|csv\b/);
   });
 
-  it('E739: a mapping is applied by its button, never by the dropdown; it can be changed; removing it asks first, says what it stops, and can be backed out of', async () => {
+  it('R-LSRC-10 E749: a mapping is applied by its button, never by the dropdown; it can be changed; removing it asks first, says what it stops, and can be backed out of', async () => {
     let labels = [flyer, desk];
     const f = review(() => labels);
     f.on('PUT /lead-sources/import-labels', (c) => {
@@ -118,7 +118,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(r().queryByRole('button', { name: 'Remove mapping' })).toBeNull();
   });
 
-  it('W2: a failed action stays on its row with what happened and Try again, which sends the same request', async () => {
+  it('R-LSRC-10 E751: a failed action stays on its row with what happened and Try again, which sends the same request', async () => {
     let labels = [flyer];
     let down = true;
     const after = labelRow('Sunday flyer', { people: 4, committedPeople: 4, id: 'r1', mappedTo: OPEN });
@@ -145,7 +145,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(r().queryByRole('alert')).toBeNull();
   });
 
-  it('W2: when the server asks for the password, the prompt opens and the same change is sent again; closing the prompt changes nothing and says so', async () => {
+  it('R-LSRC-10 R-PERM-13 E751: when the server asks for the password, the prompt opens and the same change is sent again; closing the prompt changes nothing and says so', async () => {
     let labels = [labelRow(' open houses', { people: 3, committedPeople: 3, suggest: OPEN })];
     let authed = false;
     const done = labelRow(' open houses', { people: 3, committedPeople: 3, mappedTo: OPEN });
@@ -180,7 +180,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     ]);
   });
 
-  it('E742: a lead source that already holds 200 labels is said in a plain sentence, with the way out', async () => {
+  it('R-LSRC-10 E751 E742: a lead source that already holds 200 labels is said in a plain sentence, with the way out', async () => {
     const f = review(() => [flyer]);
     f.on('PUT /lead-sources/import-labels', err(422, 'VALIDATION_FAILED', { issues: [{ path: '/leadSourceId', code: 'lead_source_label_limit' }], limit: 200 }));
     sourcesApp(f, '/admin/lead-sources', 'owner', { reauthenticatedAt: new Date().toISOString() });
@@ -194,7 +194,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(sentenceFor({ code: 'VALIDATION_FAILED', details: { issues: [{ path: '/name', code: 'too_small' }] } })).not.toMatch(/200/);
   });
 
-  it('W2: an Admin reads the review and is told who maps; there is no dropdown and no button the server would refuse', async () => {
+  it('R-LSRC-10 E751: an Admin reads the review and is told who maps; there is no dropdown and no button the server would refuse', async () => {
     const f = review(() => [flyer, desk, blank], false);
     sourcesApp(f, '/admin/lead-sources', 'admin');
     const s = await section();
@@ -204,7 +204,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(s.queryByRole('button')).toBeNull();
   });
 
-  it('W2: an Owner with no lead source yet is told to add one; nothing offers a choice that cannot be made', async () => {
+  it('R-LSRC-10 E751: an Owner with no lead source yet is told to add one; nothing offers a choice that cannot be made', async () => {
     sourcesApp(review(() => [flyer], true, overview([])), '/admin/lead-sources', 'owner');
     const s = await section();
     expect(await s.findByText(/There is no lead source to choose yet\./)).toBeInTheDocument();
@@ -212,7 +212,7 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(s.queryByRole('button', { name: /^Map to/ })).toBeNull();
   });
 
-  it('W2: the review has no axe violations, with a suggestion, a choice in progress and the removal question open; every control is reached by keyboard and named', async () => {
+  it('R-LSRC-10 E749: the review has no axe violations, with a suggestion, a choice in progress and the removal question open; every control is reached by keyboard and named', async () => {
     const f = review(() => [labelRow(' open houses', { people: 3, committedPeople: 3, suggest: OPEN }), flyer, desk, blank]);
     sourcesApp(f, '/admin/lead-sources', 'owner');
     const u = userEvent.setup();

@@ -61,4 +61,24 @@ describe('P2C imported source suggestions', () => {
     expect(catalog).toEqual([source, source]);
     expect(source.ownerConfirmedLabels).toEqual(['northgate referrals', 'Northgate Referrals ']);
   });
+  // owner question OQ-B18-I9 (default as built): the comparison is trim() and toLowerCase() and nothing else
+  it('R-LSRC-10 E752: letters outside plain English are compared by plain trim and lowercase only: an accented capital and a no-break space around a label match; a decomposed accent, full-width letters, ß against SS, a dotted capital I and a zero-width space do not, so they get no suggestion', () => {
+    const catalog = [
+      { id: 'cafe', name: 'Caf\u00e9 tour', ownerConfirmedLabels: [] },
+      { id: 'street', name: 'Stra\u00dfe', ownerConfirmedLabels: [] },
+      { id: 'open', name: 'Open house', ownerConfirmedLabels: [] },
+      { id: 'izmir', name: 'izmir', ownerConfirmedLabels: [] },
+    ];
+    const yes = (id: string) => ({ status: 'suggestion', leadSourceId: id, requiresOwnerConfirmation: true });
+    const no = { status: 'no_match' };
+    expect(suggestLeadSource('CAF\u00c9 TOUR', catalog)).toEqual(yes('cafe'));
+    expect(suggestLeadSource('\u00a0Open House\u00a0', catalog)).toEqual(yes('open'));
+    // the same accent stored as a letter plus a combining mark (NFD) is another string: nothing normalizes it
+    expect(suggestLeadSource('Cafe\u0301 tour', catalog)).toEqual(no);
+    expect(suggestLeadSource('\uff2f\uff50\uff45\uff4e house', catalog)).toEqual(no);
+    expect(suggestLeadSource('STRASSE', catalog)).toEqual(no);
+    expect(suggestLeadSource('\u0130zmir', catalog)).toEqual(no);
+    expect(suggestLeadSource('Open\u200b house', catalog)).toEqual(no);
+    expect(suggestLeadSource('\u200bOpen house', catalog)).toEqual(no);
+  });
 });

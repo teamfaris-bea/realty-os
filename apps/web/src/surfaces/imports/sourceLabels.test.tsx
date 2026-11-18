@@ -1,4 +1,4 @@
-// R-LSRC-10 W1, W2 (owner decision 2026-11-14; E728, E738 to E747): "Review sources" is a step of every import, Follow Up
+// R-LSRC-10 W1, W2 (owner decision 2026-11-14; E728, E744, E748 to E751): "Review sources" is a step of every import, Follow Up
 // Boss and CSV alike. From the snapshot until the contacts are imported it sits above the categories: every label found,
 // exactly as imported, with its people and its state, the people with no label as their own row, a Confirm on an
 // exact-match suggestion and an explicit Map button (changing the dropdown alone sends nothing). The import may run with
@@ -70,7 +70,7 @@ const row = (s: ReturnType<typeof within>, name: string) => within(s.getByRole('
 const writes = (f: FakeFetch) => f.calls.filter((c) => c.method !== 'GET' && c.path.startsWith('/lead-sources/import-labels'));
 
 describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
-  it('E728 E738: a Follow Up Boss import shows the step above the categories, before any dry run: every label as imported, its people and state, the no-label group as its own row, and what "in review" means', async () => {
+  it('R-LSRC-10 E748 E728: a Follow Up Boss import shows the step above the categories, before any dry run: every label as imported, its people and state, the no-label group as its own row, and what "in review" means', async () => {
     const f = fake(batch([stage('contacts', 'pending')]), () => ROWS);
     leadAdminApp(f, `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
     const s = await step();
@@ -97,7 +97,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(document.body.textContent).not.toMatch(/SOURCE_UNCLASSIFIED|in_review|source_unclassified/);
   });
 
-  it('E728 E738: a CSV import shows the same step, worded for a file', async () => {
+  it('R-LSRC-10 E748 E728: a CSV import shows the same step, worded for a file', async () => {
     const csv: ImportBatch['csv'] = { headers: ['First Name', 'Source'], mapping: [{ field: 'first_name' }, { field: 'lead_source' }] };
     leadAdminApp(fake(batch([stage('contacts', 'dry_run_ready')], { source: 'csv', fileLabel: 'old-crm.csv', csv }), () => ROWS), `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
     const s = await step();
@@ -109,7 +109,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(headings.indexOf('Review sources')).toBeLessThan(headings.indexOf('Categories'));
   });
 
-  it('E739: changing the dropdown maps nothing; the explicit button does, with the label exactly as received', async () => {
+  it('R-LSRC-10 E749: changing the dropdown maps nothing; the explicit button does, with the label exactly as received', async () => {
     let labels = ROWS;
     const f = fake(batch([stage('contacts', 'pending')]), () => labels);
     const after = labelRow('Sunday flyer', { people: 2, mappedTo: OPEN });
@@ -141,7 +141,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     await waitFor(() => expect(s.getByText('Still in review: 1 label and the people with no source label (4 people). You can run the import with these left in review.')).toBeInTheDocument());
   });
 
-  it('E740: an exact-match suggestion is only suggested; Confirm asks the server for exactly the source shown, and a suggestion that changed meanwhile maps nothing and reloads the list', async () => {
+  it('R-LSRC-10 E750 E741: an exact-match suggestion is only suggested; Confirm asks the server for exactly the source shown, and a suggestion that changed meanwhile maps nothing and reloads the list', async () => {
     let labels = ROWS;
     let answer: 'ok' | 'changed' = 'changed';
     const f = fake(batch([stage('contacts', 'pending')]), () => labels);
@@ -170,7 +170,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(0);
   });
 
-  it("E744: the people imported with no source label are their own row, and the Owner's choice for it asks the server by the import, never with an empty label (which the server refuses)", async () => {
+  it("R-LSRC-10 E744 E749: the people imported with no source label are their own row, and the Owner's choice for it asks the server by the import, never with an empty label (which the server refuses)", async () => {
     let labels = [unknown, blank];
     const counted = labelRow('', { unlabeledImportId: BID, people: 1, mappedTo: MARKED });
     const f = fake(batch([stage('contacts', 'pending')]), () => labels);
@@ -193,7 +193,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     await waitFor(() => expect(row(s, 'People imported with no source label').getByText(counted.sentence)).toBeInTheDocument());
   });
 
-  it('E738: next to Approve and Import of the contacts category the page says what is still in review, and that the import may run anyway', async () => {
+  it('R-LSRC-10 E748: next to Approve and Import of the contacts category the page says what is still in review, and that the import may run anyway', async () => {
     const DRY = 'e'.repeat(64);
     const counts = { source: 9, willImport: 9, imported: null, needsReview: 0, rejected: 0, duplicate: 0 };
     leadAdminApp(fake(batch([stage('contacts', 'dry_run_ready', { counts, dryRunSha256: DRY })]), () => ROWS), `/imports/${BID}`, 'admin', { reauthenticatedAt: NOW() });
@@ -204,7 +204,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(card.getByRole('button', { name: 'Approve these 9 records' })).toBeEnabled();
   });
 
-  it('E738: when every source of the import is mapped the step says so, and the contacts category carries no reminder', async () => {
+  it('R-LSRC-10 E748: when every source of the import is mapped the step says so, and the contacts category carries no reminder', async () => {
     const all = [labelRow('Sunday flyer', { people: 2, mappedTo: OPEN }), mapped];
     leadAdminApp(fake(batch([stage('contacts', 'approved')]), () => all), `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
     const s = await step();
@@ -214,7 +214,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(card.queryByText(/Still in review/)).toBeNull();
   });
 
-  it('E741: the summary after the import repeats the review with the people it actually brought in, once, with the same controls for the Owner', async () => {
+  it('R-LSRC-10 E748: the summary after the import repeats the review with the people it actually brought in, once, with the same controls for the Owner', async () => {
     const imported = [
       labelRow('Sunday flyer', { people: 2, committedPeople: 2, id: 'r0', firstSeen: { importId: BID, kind: 'fub_api', at: '2026-11-10T11:00:00.000Z' } }),
       labelRow(' open houses', { people: 3, committedPeople: 2, mappedTo: OPEN }),
@@ -233,14 +233,14 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(screen.queryByRole('heading', { level: 2, name: 'Review sources' })).toBeNull();
   });
 
-  it('E741: a summary with nothing left in review says so', async () => {
+  it('R-LSRC-10 E748: a summary with nothing left in review says so', async () => {
     leadAdminApp(fake(batch([stage('contacts', 'committed')]), () => [labelRow('Sunday flyer', { people: 2, committedPeople: 2, mappedTo: OPEN })]), `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
     const s = within(await screen.findByRole('region', { name: 'Review sources' }));
     expect(s.getByText('Every source this import brought in is mapped to a lead source.')).toBeInTheDocument();
     expect(s.queryByText(IN_REVIEW_MEANS)).toBeNull();
   });
 
-  it('W2: an Admin runs the import and reads the review, with no control the server would refuse', async () => {
+  it('R-LSRC-10 E751: an Admin runs the import and reads the review, with no control the server would refuse', async () => {
     const f = fake(batch([stage('contacts', 'pending')]), () => ROWS);
     leadAdminApp(f, `/imports/${BID}`, 'admin', { reauthenticatedAt: NOW() });
     const s = await step();
@@ -252,7 +252,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     expect(f.callsTo('GET /lead-sources/overview')).toHaveLength(0);
   });
 
-  it('W2: the step says it is loading; a failed load is one error with Try again; an import with no people has nothing to review', async () => {
+  it('R-LSRC-10 E751: the step says it is loading; a failed load is one error with Try again; an import with no people has nothing to review', async () => {
     let failing = true;
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));

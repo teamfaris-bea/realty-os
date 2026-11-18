@@ -15,7 +15,7 @@ const CHECK_FIRST = /[Cc]heck .*before (you send|sending) (it )?again/;
 
 const unresolved = { status: 'failed', statusReason: 'DISPATCH_UNKNOWN_UNRESOLVED' } as const;
 
-describe('W8: an unconfirmed send is never worded as a non-delivery', () => {
+describe('R-GATE-8 E753 (W8): an unconfirmed send is never worded as a non-delivery', () => {
   it.each(['sms', 'mms', 'email', 'web_chat'] as const)("the thread's line for a %s that ended DISPATCH_UNKNOWN_UNRESOLVED says delivery could not be confirmed, that it may have reached them, and to check before sending again", (channel) => {
     const line = messageStatus({ ...unresolved, channel }, 'Jane');
     expect(line?.text).toBe('Delivery could not be confirmed: this may have reached them. Check with them before sending it again.');

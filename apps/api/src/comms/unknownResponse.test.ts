@@ -37,7 +37,7 @@ function wire() {
   return {calls,send,providerRef,show:(time:Date)=>{at=time;visible=true;}};
 }
 
-describe('malformed accepted response persists uncertainty without replay',()=>{
+describe('R-GATE-8 E754: malformed accepted response persists uncertainty without replay',()=>{
   it('a deliberate new command is still a new submit, so uncertainty must not be described as non-delivery',async()=>{
     const c=await ownedContact(w.agents[0]!);
     const transport=wire();

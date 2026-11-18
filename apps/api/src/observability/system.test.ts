@@ -188,7 +188,7 @@ describe('plain-language explanations', () => {
     expect(reconcileState('dispatch_unknown', ago(12), now).state).toBe('unresolved');
   });
 
-  it('W8: a message nobody could confirm is never said to be undelivered: neither sentence claims the provider has no record of it, both say it may have reached them and that it is not sent again automatically', () => {
+  it('R-GATE-8 E753 (W8): a message nobody could confirm is never said to be undelivered: neither sentence claims the provider has no record of it, both say it may have reached them and that it is not sent again automatically', () => {
     const now = new Date('2026-11-11T12:00:00Z');
     const ago = (m: number) => new Date(now.getTime() - m * 60_000);
     const checking = reconcileState('dispatch_unknown', ago(3), now).sentence;
