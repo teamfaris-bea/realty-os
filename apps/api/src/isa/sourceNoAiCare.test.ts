@@ -347,4 +347,31 @@ describe('R-LSRC-9 A2 A3: no AI care for an imported person whose source is not 
     // a pause and an end still pass (the guard looks only at a start and a resume)
     expect((await call(agent, 'POST', `/contacts/${l.id}/ai-isa/end`, {})).status).toBeLessThan(500);
   });
+
+  it('R-LSRC-9 E732 (A4): removing a label\'s mapping pauses the live AI care of that label\'s people at once (the request asks each for a turn and counts it) and no other person\'s', async () => {
+    const agent = w.agents[0]!;
+    const a = await isaLead(h, agent);
+    const b = await isaLead(h, agent);
+    const la = (await importedPerson(h, w.tenantId, w.owner.userId!, a.id, { label: 'Northgate Referrals (A4 test)' })).label!;
+    const lb = (await importedPerson(h, w.tenantId, w.owner.userId!, b.id, { label: 'Hillside Referrals (A4 test)' })).label!;
+    const map = async (label: string, leadSourceId: string | null) => {
+      await freshReauth(h, w.owner);
+      return call<{ pausing: number; stopping: number; withdrawn: number }>(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId });
+    };
+    expect((await map(la, other)).status).toBe(200);
+    expect((await map(lb, other)).status).toBe(200);
+    for (const l of [a, b]) expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    for (const l of [a, b]) expect((await assignmentOf(h, l.id))!.paused_at).toBeNull();
+    const off = await map(la, null);
+    expect([off.status, off.body.pausing]).toEqual([200, 1]);
+    await runIsa(h, w.tenantId);
+    expect(await assignmentOf(h, a.id)).toMatchObject({ ended_at: null, pause_reason: 'source_unclassified' });
+    expect((await assignmentOf(h, b.id))!.paused_at).toBeNull();
+    const au = (await h.su.query<{ changes: Record<string, { to: unknown }> }>("SELECT changes FROM audit_log WHERE tenant_id = $1 AND reason = 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED' ORDER BY seq DESC LIMIT 1", [w.tenantId])).rows[0]!;
+    expect(au.changes).toMatchObject({ aiCarePausingCount: { to: 1 } });
+    // reviewed again (an unmarked source): the owner may resume
+    expect((await map(la, other)).status).toBe(200);
+    expect((await call(agent, 'POST', `/contacts/${a.id}/ai-isa/resume`, {})).status).toBe(200);
+  });
 });

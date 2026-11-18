@@ -69,8 +69,11 @@ const FieldActionView = z.union([
   z.object({ action: z.literal('create'), type: FieldTypeEnum, label: z.string() }),
   z.object({ action: z.literal('existing'), fieldId: z.string() }),
 ]);
-/** b18 round 3 item 1 (E728): one source label found in the import, with the lead source it means and whether that source is marked */
-const SourceLabel = z.object({ label: z.string(), people: z.number(), leadSourceId: z.string().nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), sentence: z.string() });
+/**
+ * b18 round 3 item 1 (E728): one source label found in the import, with the lead source it means and whether that source is
+ * marked. R-LSRC-9: `inReview` while no lead source (or more than one) holds it; `unlabeledImportId` on a no-label group's row.
+ */
+const SourceLabel = z.object({ label: z.string(), people: z.number(), leadSourceId: z.string().nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), inReview: z.boolean(), unlabeledImportId: z.string().nullable(), sentence: z.string() });
 export const ParityResponse = z.object({
   options: z.object({ stageMap: z.record(z.string(), Stage8), keepStageAsTag: z.boolean(), fields: z.record(z.string(), FieldActionView) }),
   stages: z.array(z.object({ label: z.string(), people: z.number(), suggested: Stage8.nullable(), mapped: Stage8.nullable() })),

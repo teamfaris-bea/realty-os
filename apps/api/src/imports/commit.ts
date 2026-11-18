@@ -73,10 +73,11 @@ import { canReceiveLead } from '@realty/core/ownership';
 import type { FieldDef } from '@realty/core/parity/fields';
 import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockAddresses, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
-import { audit } from '../audit.js';
+import { audit, redactSnapshot } from '../audit.js';
 import { TRANSCRIBE_JOB } from '../comms/recordings.js';
 import { AppError } from '../errors.js';
 import { importLabelOf } from '../leads/importLabels.js';
+import { stopAutomatedContactForPeople } from '../leads/sourceStop.js';
 import { addContactTags, ensureFieldDef, ensureTags, setFieldValue } from '../lists/index.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
@@ -766,6 +767,9 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           parityTotals.fieldIds.push(...r.createdIds);
         }
         const assignedTo = new Set<string>();
+        // R-LSRC-9 A4: the people already in the CRM that this chunk's contacts records were committed onto (an update or
+        // an attach; a person the chunk created has no plan, AI care or draft yet)
+        const alreadyHere = new Set<string>();
         for (const rec of recs) {
           try {
             const a = await inSavepoint(tx, () => applyRecord(ctx, rec));
@@ -774,6 +778,7 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
             } else {
               await rrepo.markImported(tx, rec.id, a.target, a.created, a.duplicate ? 'duplicate' : 'imported');
               await addIssues(tx, rec.id, a.extraIssues ?? []);
+              if (stage.category === 'contacts' && !a.duplicate && a.target?.table === 'contacts' && a.created[0]?.action !== 'create') alreadyHere.add(a.target.id);
             }
             if (a.assignedTo) assignedTo.add(a.assignedTo);
             if (a.parity) {
@@ -785,6 +790,23 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           }
         }
         if (stage.category === 'contacts') await prepo.recordParity(tx, batch.id, parityTotals);
+        // R-LSRC-9 A4 (owner decision 2026-11-14): a committed import record whose source the Owner has not reviewed
+        // makes its person unclassified from this commit on (never from the dry run: nothing above ran then). Those of
+        // them already here with something running are made safe now, in this chunk's transaction and in bounded work
+        // (the chunk's people only, one statement, no lock): their plans are asked for a step, which stops them, their
+        // live AI care for a turn, which pauses it, and their pending plan or alert drafts are withdrawn. A person whose
+        // label the Owner already mapped to an unmarked source is left alone. Counted in the audit.
+        if (alreadyHere.size > 0) {
+          const stopped = await stopAutomatedContactForPeople(tx, { contactIds: [...alreadyHere] }, now);
+          if (stopped.pausing + stopped.stopping + stopped.withdrawn > 0) {
+            await audit(tx, actor, {
+              action: 'import.committed',
+              entity: { type: 'import_stage', id: stage.id },
+              changes: redactSnapshot({ importBatchId: batch.id, aiCarePausingCount: stopped.pausing, plansStoppingCount: stopped.stopping, draftsWithdrawnCount: stopped.withdrawn }),
+              reason: 'CONTACTS_COMMIT_SOURCE_NOT_REVIEWED_STOPPED',
+            });
+          }
+        }
         await deps.inCommitChunk?.({ category: stage.category, phase: 'applied', assignedTo: [...assignedTo] });
         await fenceAssignedMembers(tx, assignedTo);
         await deps.inCommitChunk?.({ category: stage.category, phase: 'fenced', assignedTo: [...assignedTo] });

@@ -38,6 +38,7 @@ interface LabelRow {
   leadSourceId: string | null;
   leadSourceName: string | null;
   noAutomatedContact: boolean;
+  inReview: boolean;
   sentence: string;
 }
 
@@ -147,7 +148,9 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
       ['Open house (test)', 1, null, false],
       [PARTNER_LABEL, 2, null, false],
     ]);
-    expect(p0.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!.sentence).toBe(`"${PARTNER_LABEL}" (2 people): not mapped to a lead source.`);
+    // R-LSRC-9 (owner decision 2026-11-14): an unmapped label is in review, and the row says what that means
+    expect(p0.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!.sentence).toBe(`"${PARTNER_LABEL}" (2 people): not reviewed yet. Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.`);
+    expect(p0.body.sourceLabels.map((l) => l.inReview)).toEqual([true, true]);
 
     // only the Owner maps a label (the Admin who runs the import gets 404, and the database refuses them too)
     const byAdmin = await mapLabel(admin, PARTNER_LABEL, marked.id);
@@ -189,7 +192,7 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     expect(ih.h.providers.telephony.sms.filter((x) => x.body.includes('Do you have a minute today?'))).toHaveLength(1);
   }, 300_000);
 
-  it('E728 CSV, mapped afterwards: an imported person is not covered until the Owner maps the label; the mapping stops their running plan at once, the CRM-wide list says which labels are marked, and a one-to-one text still goes', async () => {
+  it('E728 E729 CSV, mapped afterwards: an imported person is in review (SOURCE_UNCLASSIFIED) until the Owner maps the label; mapped to an unmarked source they are open to a plan; moved to the marked source their running plan stops at once, the CRM-wide list says which labels are marked, and a one-to-one text still goes; unmapped, they are in review again', async () => {
     const phone = writtenBulkPhone(4011);
     const csv = `First Name,Last Name,Mobile Phone,Email,Source\nCai,Filed,${phone},cai.filed@example.com,"${FILE_LABEL}"\nDee,Filed,${writtenBulkPhone(4012)},dee.filed@example.com,Website\n`;
     const up = await call<{ batch: { id: string } }>(w.owner, 'POST', '/imports', { source: 'csv', fileName: 'partner.csv', fileBase64: csvBase64(csv) });
@@ -201,15 +204,22 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     expect(preview.body.sourceLabels.map((l) => [l.label, l.people, l.noAutomatedContact])).toEqual([[FILE_LABEL, 1, false], ['Website', 1, false]]);
     await fullStage(ih, w.owner, b.id, 'contacts');
     const cai = await contactByName(b.id, 'Cai');
-    // give Cai an owner, then a plan, before anyone maps the label: not covered yet
+    // give Cai an owner. Before anyone maps the label Cai is in review (R-LSRC-9, owner decision 2026-11-14): no plan,
+    // refused with the unclassified reason, never the marked source's
     expect((await call(w.owner, 'POST', `/leads/${cai}/reassign`, { commandId: randomUUID(), toUserId: agent.userId })).status).toBe(200);
+    expect(await definer(cai)).toBe(true);
+    const early = await call(agent, 'POST', `/contacts/${cai}/enrollments`, { playbookId: plan.id });
+    expect([early.status, early.code]).toEqual([409, 'SOURCE_UNCLASSIFIED']);
+    const list0 = await call<{ labels: LabelRow[] }>(w.owner, 'GET', '/lead-sources/import-labels');
+    expect(list0.body.labels.find((l) => l.label === FILE_LABEL)).toMatchObject({ people: 1, leadSourceId: null, noAutomatedContact: false, inReview: true });
+    // the Owner reviews the label: first to a source without the setting, so a plan may run for Cai
+    await freshReauth(ih.h, w.owner);
+    expect((await mapLabel(w.owner, FILE_LABEL, open.id)).body.label).toMatchObject({ leadSourceId: open.id, inReview: false, noAutomatedContact: false });
     expect(await definer(cai)).toBe(false);
     const e = await call<{ enrollment: { id: string } }>(agent, 'POST', `/contacts/${cai}/enrollments`, { playbookId: plan.id });
     expect(e.status).toBe(201);
 
-    // afterwards, from the CRM-wide list: the Owner maps the file's label to the marked source; the plan stops now
-    const list0 = await call<{ labels: LabelRow[] }>(w.owner, 'GET', '/lead-sources/import-labels');
-    expect(list0.body.labels.find((l) => l.label === FILE_LABEL)).toMatchObject({ people: 1, leadSourceId: null, noAutomatedContact: false });
+    // afterwards, from the CRM-wide list: the Owner moves the file's label to the marked source; the plan stops now
     await freshReauth(ih.h, w.owner);
     const m = await mapLabel(w.owner, FILE_LABEL, marked.id);
     expect(m.status).toBe(200);
@@ -225,11 +235,14 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     const t = await sendText(agent, cai, 'Hi Cai, this is Alex from the team. Is now a good time?');
     expect([t.status, t.body.result]).toEqual([200, 'sent']);
 
-    // unmapping is the Owner's too (a loosening, asked with the password again): Cai is no longer covered
+    // unmapping is the Owner's too (asked with the password again): Cai is no longer covered by the marked source, and is
+    // in review again, so still refused, now for the unclassified reason (R-LSRC-9)
     const off = await mapLabel(w.owner, FILE_LABEL, null);
     expect(off.status).toBe(200);
-    expect(off.body.label).toMatchObject({ label: FILE_LABEL, leadSourceId: null, noAutomatedContact: false });
-    expect(await definer(cai)).toBe(false);
+    expect(off.body.label).toMatchObject({ label: FILE_LABEL, leadSourceId: null, noAutomatedContact: false, inReview: true });
+    expect(await definer(cai)).toBe(true);
+    const late = await call(agent, 'POST', `/contacts/${cai}/enrollments`, { playbookId: plan.id });
+    expect([late.status, late.code]).toEqual([409, 'SOURCE_UNCLASSIFIED']);
   }, 300_000);
 });
 

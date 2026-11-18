@@ -66,11 +66,22 @@ export const AiCareBody = z.strictObject({ noAiCare: z.boolean() });
  */
 export const AiCareResponse = z.object({ source: z.object({ id: Id, name: z.string(), noAiCare: z.boolean(), noAiCareSentence: z.string() }), pausing: z.number().int(), stopping: z.number().int(), withdrawn: z.number().int() });
 
-/** b18 round 3 item 1 (E728): one imported source label, the people it labels, the source it means and whether that source is marked */
-export const ImportLabel = z.object({ label: z.string(), people: z.number().int(), leadSourceId: Id.nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), sentence: z.string() });
+/**
+ * b18 round 3 item 1 (E728): one imported source label, the people it labels, the source it means and whether that source
+ * is marked. R-LSRC-9 (0101): `inReview` is true while no lead source, or more than one, holds it (the people committed
+ * with it are unclassified: nothing automatic goes to them); `unlabeledImportId` is set on the row of one import's
+ * no-label group (its `label` is then '').
+ */
+export const ImportLabel = z.object({ label: z.string(), people: z.number().int(), leadSourceId: Id.nullable(), leadSourceName: z.string().nullable(), noAutomatedContact: z.boolean(), inReview: z.boolean(), unlabeledImportId: Id.nullable(), sentence: z.string() });
 export const ImportLabelsResponse = z.object({ labels: z.array(ImportLabel), canChange: z.boolean() });
-/** the label exactly as the import stored it (at most 120 characters); leadSourceId null unmaps it */
-export const ImportLabelBody = z.strictObject({ label: z.string().min(1).max(120), leadSourceId: Id.nullable() });
+/**
+ * Either the label exactly as the import stored it, compared whole (at most 500 characters, the import's own cut), or
+ * `unlabeledImportId`: the import whose people came in with no source label (R-LSRC-9). leadSourceId null removes the mapping.
+ */
+export const ImportLabelBody = z.union([
+  z.strictObject({ label: z.string().min(1).max(500), leadSourceId: Id.nullable() }),
+  z.strictObject({ unlabeledImportId: Id, leadSourceId: Id.nullable() }),
+]);
 export const ImportLabelResponse = z.object({ label: ImportLabel, pausing: z.number().int(), stopping: z.number().int(), withdrawn: z.number().int() });
 
 export const PatchBody = z.strictObject({ name: z.string().trim().min(1).max(80).optional(), consentDisclosure: ConsentDisclosureInput.optional() });

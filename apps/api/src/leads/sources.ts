@@ -33,8 +33,9 @@ import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
 import { noAutomatedContactSentence, withdrawAutomatedDrafts } from './automatedContact.js';
-import { type ImportLabelRow, labelRows, tenantLabels } from './importLabels.js';
+import { type ImportLabelRow, labelRows, tenantLabels, unlabeledGroups, unlabeledMappings, unlabeledRow } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
+import { NOTHING_STOPPED as NOTHING, type Stopped, askCareForATurn, stopAutomatedContactForPeople } from './sourceStop.js';
 import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
 import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
@@ -129,13 +130,11 @@ export const noAiCareSentence = noAutomatedContactSentence;
  * trigger wrote for them are withdrawn here, in this transaction, and their cards closed (round 3 item 3). Only this
  * source's people are counted (app.person_from_lead_source, 0099).
  */
-export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<{ pausing: number; stopping: number; withdrawn: number }> {
+export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Instant): Promise<Stopped> {
   const live = await sql<{ id: string; epoch: number }>`SELECT a.id, a.epoch FROM ai_isa_assignments a
      WHERE a.tenant_id = app.tenant_id() AND a.ended_at IS NULL AND a.paused_at IS NULL
        AND app.person_from_lead_source(a.tenant_id, a.contact_id, ${sourceId}::uuid) ORDER BY a.id`.execute(tx);
-  for (const a of live.rows) {
-    await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
-  }
+  for (const a of live.rows) await askCareForATurn(tx, a);
   const plans = await sql<{ id: string }>`SELECT e.id FROM playbook_enrollments e
      WHERE e.tenant_id = app.tenant_id() AND e.state = 'active' AND app.person_from_lead_source(e.tenant_id, e.contact_id, ${sourceId}::uuid) ORDER BY e.id`.execute(tx);
   for (const e of plans.rows) await enqueueStep(tx, e.id, now);
@@ -143,29 +142,73 @@ export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Ins
   return { pausing: live.rows.length, stopping: plans.rows.length, withdrawn };
 }
 
-/** PUT /lead-sources/import-labels: the Owner maps a label to a source (moving it off any other), or unmaps it. */
-export async function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow; pausing: number; stopping: number; withdrawn: number }> {
-  // the sources that hold the label now and the target, locked in one order (the ai-care route locks a source the same way)
+/** Which mapping the Owner changes: an imported label, or the people one import brought in with no label. */
+export type ImportSourceKey = { label: string } | { unlabeledImportId: string };
+
+/**
+ * PUT /lead-sources/import-labels: the Owner maps an imported label, or one import's no-label group, to a source (moving
+ * it off any other), or removes the mapping. After every change the people's state follows it, in both directions:
+ *  - to a MARKED source: its people are refused for that reason, and stopAutomatedContactNow stops their automation;
+ *  - to an unmarked source: the refusal lifts for the people whose every imported source is now reviewed (nothing is
+ *    restarted: a stopped plan stays stopped and a withdrawn draft stays withdrawn);
+ *  - removed (or the key now held by two sources): its committed people are unclassified again, and
+ *    stopAutomatedContactForPeople stops their running plans, pauses their live AI care and withdraws their drafts.
+ * The audit row carries who, when, the sources, a digest of the label (never its text) and what was asked to stop.
+ * The sources are locked FOR NO KEY UPDATE, in id order: a lead insert's foreign-key check on lead_sources never waits
+ * on this transaction (the file's rule, line 12), and it takes no other lock.
+ */
+export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourceKey, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow } & Stopped> {
+  const byLabel = 'label' in key;
+  if (!byLabel) {
+    // the import must be this tenant's (the Owner reads import_batches under RLS); never another tenant's id
+    const b = await sql`SELECT 1 FROM import_batches WHERE tenant_id = app.tenant_id() AND id = ${key.unlabeledImportId}::uuid`.execute(tx);
+    if (b.rows.length === 0) throw new AppError('NOT_FOUND');
+  }
+  const holds = byLabel ? sql`${key.label}::text = ANY (import_labels)` : sql`${key.unlabeledImportId}::uuid = ANY (import_unlabeled_batches)`;
+  // the sources that hold the key now and the target, locked in one order (the ai-care route locks a source the same way)
   const held = await sql<{ id: string; no_ai_care: boolean; has: boolean }>`
-    SELECT id, no_ai_care, ${label} = ANY (import_labels) AS has FROM lead_sources
-     WHERE tenant_id = app.tenant_id() AND (${label} = ANY (import_labels) OR id = ${leadSourceId}::uuid) ORDER BY id FOR UPDATE`.execute(tx);
+    SELECT id, no_ai_care, ${holds} AS has FROM lead_sources
+     WHERE tenant_id = app.tenant_id() AND (${holds} OR id = ${leadSourceId}::uuid) ORDER BY id FOR NO KEY UPDATE`.execute(tx);
   if (leadSourceId !== null && !held.rows.some((s) => s.id === leadSourceId)) throw new AppError('NOT_FOUND');
   const from = held.rows.filter((s) => s.has && s.id !== leadSourceId);
-  for (const s of from) await sql`UPDATE lead_sources SET import_labels = array_remove(import_labels, ${label}), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
   const target = held.rows.find((s) => s.id === leadSourceId) ?? null;
   const added = target !== null && !target.has;
-  if (added) await sql`UPDATE lead_sources SET import_labels = array_append(import_labels, ${label}), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${target.id}::uuid`.execute(tx);
-  if (from.length > 0 || added) {
+  for (const s of from) {
+    if (byLabel) await sql`UPDATE lead_sources SET import_labels = array_remove(import_labels, ${key.label}::text), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
+    else await sql`UPDATE lead_sources SET import_unlabeled_batches = array_remove(import_unlabeled_batches, ${key.unlabeledImportId}::uuid), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
+  }
+  if (added) {
+    if (byLabel) await sql`UPDATE lead_sources SET import_labels = array_append(import_labels, ${key.label}::text), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${target.id}::uuid`.execute(tx);
+    else await sql`UPDATE lead_sources SET import_unlabeled_batches = array_append(import_unlabeled_batches, ${key.unlabeledImportId}::uuid), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${target.id}::uuid`.execute(tx);
+  }
+  // the people follow the mapping now. A marked target: that source's people (0099's reading: the key's committed
+  // people, and a label's matched people too). Otherwise: the key's own committed people who are refused after the
+  // change (unclassified again, ambiguous, or still carrying another unreviewed or marked source).
+  const safe: Stopped = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : await stopAutomatedContactForPeople(tx, key, now);
+  if (from.length > 0 || added || safe.pausing + safe.stopping + safe.withdrawn > 0) {
     await audit(tx, actor, {
       action: 'routing.changed',
-      entity: { type: 'lead_source', id: target?.id ?? from[0]!.id },
-      changes: redactSnapshot({ importLabel: { from: from.map((s) => s.id), to: target?.id ?? null } }, { entity: 'lead_source' }),
-      reason: target ? 'LEAD_SOURCE_IMPORT_LABEL_MAPPED' : 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED',
+      entity: { type: 'lead_source', id: target?.id ?? from[0]?.id ?? leadSourceId ?? (byLabel ? actor.tenantId : key.unlabeledImportId) },
+      changes: redactSnapshot({
+        fromLeadSourceIds: from.map((s) => s.id),
+        toLeadSourceId: target?.id ?? null,
+        ...(byLabel ? { labelSha256: createHash('sha256').update(key.label, 'utf8').digest('hex') } : { importBatchId: key.unlabeledImportId }),
+        aiCarePausingCount: safe.pausing,
+        plansStoppingCount: safe.stopping,
+        draftsWithdrawnCount: safe.withdrawn,
+      }, { entity: 'lead_source' }),
+      reason: byLabel ? (target ? 'LEAD_SOURCE_IMPORT_LABEL_MAPPED' : 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED') : target ? 'LEAD_SOURCE_IMPORT_UNLABELED_MAPPED' : 'LEAD_SOURCE_IMPORT_UNLABELED_UNMAPPED',
     });
   }
-  const safe = target?.no_ai_care ? await stopAutomatedContactNow(tx, target.id, now) : { pausing: 0, stopping: 0, withdrawn: 0 };
-  const row = (await tenantLabels(tx)).find((r) => r.label === label) ?? labelRows(new Map([[label, 0]]), new Map())[0]!;
+  const row = byLabel
+    ? ((await tenantLabels(tx)).find((r) => r.label === key.label) ?? labelRows(new Map([[key.label, 0]]), new Map())[0]!)
+    : ((await unlabeledGroups(tx, { importId: key.unlabeledImportId }))[0] ?? unlabeledRow(key.unlabeledImportId, 0, (await unlabeledMappings(tx)).get(key.unlabeledImportId) ?? null));
   return { label: row, ...safe };
+}
+
+/** The label form of setImportSource (its first name; imports and tests call it). */
+export function setImportLabel(tx: Tx, actor: UserActor, label: string, leadSourceId: string | null, now: Instant): Promise<{ label: ImportLabelRow } & Stopped> {
+  return setImportSource(tx, actor, { label }, leadSourceId, now);
 }
 
 export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.infer<typeof OverviewResponse>> {
@@ -465,14 +508,14 @@ async function register(app: FastifyInstance): Promise<void> {
     leadsTx(req, async (tx, now, actor) => {
       const s = await sourceRow(tx, req.params.id);
       if (!s) throw new AppError('NOT_FOUND');
-      const was = (await sql<{ v: boolean }>`SELECT no_ai_care AS v FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid FOR UPDATE`.execute(tx)).rows[0]!.v;
+      const was = (await sql<{ v: boolean }>`SELECT no_ai_care AS v FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid FOR NO KEY UPDATE`.execute(tx)).rows[0]!.v;
       if (was !== req.body.noAiCare) {
         await sql`UPDATE lead_sources SET no_ai_care = ${req.body.noAiCare}, no_ai_care_changed_at = now(), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
         await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id: s.id }, changes: redactSnapshot({ noAiCare: { from: was, to: req.body.noAiCare } }, { entity: 'lead_source' }), reason: req.body.noAiCare ? 'LEAD_SOURCE_NO_AI_CARE_ON' : 'LEAD_SOURCE_NO_AI_CARE_OFF' });
       }
       // round 3 item 4: only THIS source's people are asked and counted (app.person_from_lead_source, 0099), never the
       // people of another marked source; round 3 item 3: their pending plan and alert drafts are withdrawn here
-      const safe = req.body.noAiCare ? await stopAutomatedContactNow(tx, s.id, now) : { pausing: 0, stopping: 0, withdrawn: 0 };
+      const safe = req.body.noAiCare ? await stopAutomatedContactNow(tx, s.id, now) : NOTHING;
       return { source: { id: s.id, name: s.name, noAiCare: req.body.noAiCare, noAiCareSentence: noAiCareSentence(req.body.noAiCare) }, ...safe };
     }),
   );
@@ -488,7 +531,7 @@ async function register(app: FastifyInstance): Promise<void> {
     config: { auth: 'lead_source.ai_care' },
     preHandler: authorize('lead_source.ai_care', () => ({ loosening: true })),
     schema: { body: ImportLabelBody, response: { 200: ImportLabelResponse } },
-  }, async (req) => leadsTx(req, (tx, now, actor) => setImportLabel(tx, actor, req.body.label, req.body.leadSourceId, now)));
+  }, async (req) => leadsTx(req, (tx, now, actor) => setImportSource(tx, actor, 'label' in req.body ? { label: req.body.label } : { unlabeledImportId: req.body.unlabeledImportId }, req.body.leadSourceId, now)));
 
   r.post('/lead-sources/:id/off', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, false)));
   r.post('/lead-sources/:id/on', { ...manage, schema: { params: Params, response: { 200: OnOffResponse } } }, async (req) => leadsTx(req, (tx, _now, actor) => setActive(tx, actor, req.params.id, true)));

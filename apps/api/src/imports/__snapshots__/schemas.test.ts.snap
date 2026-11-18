@@ -2422,6 +2422,9 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "inReview": {
+              "type": "boolean",
+            },
             "label": {
               "type": "string",
             },
@@ -2446,6 +2449,12 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "sentence": {
               "type": "string",
             },
+            "unlabeledImportId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
           },
           "required": [
             "label",
@@ -2453,6 +2462,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "leadSourceId",
             "leadSourceName",
             "noAutomatedContact",
+            "inReview",
+            "unlabeledImportId",
             "sentence",
           ],
           "type": "object",
@@ -3207,6 +3218,9 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "inReview": {
+              "type": "boolean",
+            },
             "label": {
               "type": "string",
             },
@@ -3231,6 +3245,12 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "sentence": {
               "type": "string",
             },
+            "unlabeledImportId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
           },
           "required": [
             "label",
@@ -3238,6 +3258,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "leadSourceId",
             "leadSourceName",
             "noAutomatedContact",
+            "inReview",
+            "unlabeledImportId",
             "sentence",
           ],
           "type": "object",
