@@ -265,3 +265,14 @@ export function parityEditable(stages: readonly { category: string; status: stri
   const c = stages.find((s) => s.category === 'contacts');
   return !!c && ['pending', 'dry_run_ready', 'approved', 'failed'].includes(c.status);
 }
+
+/**
+ * R-LSRC-10 (owner decision 2026-11-14): "Review sources" is its own step of the import from the snapshot until the
+ * contacts are imported (the labels come from the snapshot, so they show before any dry run). Once the contacts stage
+ * is importing or imported, the report carries the review as the summary instead, so the page shows it once.
+ */
+export function sourceReviewIsAStep(batch: { snapshotSha256: string | null; status: string; stages: readonly { category: string; status: string }[] }): boolean {
+  if (!batch.snapshotSha256 || batch.status === 'reverted' || batch.status === 'abandoned') return false;
+  const c = batch.stages.find((s) => s.category === 'contacts');
+  return !!c && ['pending', 'dry_run_running', 'dry_run_ready', 'approved', 'failed'].includes(c.status);
+}

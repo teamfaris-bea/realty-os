@@ -8,6 +8,9 @@
 //      recount and the side-by-side checks (R-IMPORT-5). A category imports only after the ones before
 //      it are verified or skipped (R-IMPORT-3); the page says which one it is waiting for.
 //   4. The report never claims more than the counts show (the server writes its sentences).
+// "Review sources" (owner decision 2026-11-14; R-LSRC-10) is a step of every import, Follow Up Boss and CSV alike:
+// from the snapshot until the contacts are imported it sits above the categories, and the contacts category repeats
+// what is still in review next to Approve and Import; afterwards the report carries it as the summary with counts.
 // Every import call needs a password confirmation within 15 minutes (R-PERM-13); the page asks for
 // it once and continues. Undo works per category in reverse order, or for the whole import.
 import { useQuery } from '@tanstack/react-query';
@@ -22,8 +25,9 @@ import type { ImportBatch, ImportCounts, ImportRecord, ImportStage, MappingsResp
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
 import { ParityMapping } from './ParityMapping.js';
-import { ImportLabelList, type ImportLabelView } from '../lead-sources/ImportLabels.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
+import { ImportLabelList, type ImportLabelView, REVIEW_PATH } from '../lead-sources/ImportLabels.js';
+import { IN_REVIEW_MEANS, afterImportLine, beforeImportLine } from '../lead-sources/reviewWords.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, sourceReviewIsAStep, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -168,6 +172,7 @@ export function ImportPage() {
           {b.source === 'csv' && b.csv && !b.stages.some((s) => ['approved', 'committing', 'committed', 'verified'].includes(s.status)) ? <CsvMapping batch={b} onDone={announce} /> : null}
           {b.source !== 'csv' && b.snapshotSha256 && b.stages.some((s) => s.category === 'ownership' && !['verified', 'skipped', 'committed', 'committing'].includes(s.status)) ? <UserMappings batch={b} onDone={announce} /> : null}
           {b.snapshotSha256 && parityEditable(b.stages) ? <Parity batch={b} onDone={announce} /> : null}
+          {sourceReviewIsAStep(b) ? <ReviewSourcesStep batch={b} /> : null}
           <Section title="Categories" description="Each category is checked, approved, imported and verified on its own. A category imports only after the ones above it are verified or skipped.">
             <ol className="flex flex-col gap-3">
               {stages.map((s) => (
@@ -185,31 +190,89 @@ export function ImportPage() {
   );
 }
 
+/** GET /imports/:id/parity: the stage map / tag / custom-field choices and the import's source labels, from the snapshot. */
+function useParity(batch: Pick<ImportBatch, 'id' | 'snapshotSha256'>, enabled = true) {
+  return useImportsQuery<ParityResponse>([...batchKey(batch.id), 'parity', batch.snapshotSha256], `/imports/${batch.id}/parity`, { enabled });
+}
+
 /** PARITY 65: the stage map / tag / custom-field section (loaded once the snapshot exists). */
 function Parity({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void }) {
-  const q = useImportsQuery<ParityResponse>([...batchKey(batch.id), 'parity', batch.snapshotSha256], `/imports/${batch.id}/parity`);
-  if (q.isError) return <QueryError error={q.error} retry={() => void q.refetch()} />;
+  const q = useParity(batch);
+  // the same read feeds "Review sources" below, which says when it failed and offers the retry: one error, not two
+  if (q.isError) return sourceReviewIsAStep(batch) ? null : <QueryError error={q.error} retry={() => void q.refetch()} />;
   if (!q.data) return null;
+  return <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />;
+}
+
+const sourceOf = (source: string): string => (source === 'csv' ? 'Your file' : 'Follow Up Boss');
+
+/**
+ * "Review sources", a step of every import (owner decision 2026-11-14; R-LSRC-10, E728): after the snapshot and before
+ * the contacts are imported, every source label the import found, exactly as imported, with its people and its state,
+ * and the people with no label as their own row. The Owner confirms an exact-match suggestion or chooses a lead source
+ * here; the mapping is the team's, not this import's. The import may run with labels left in review: the step says
+ * plainly what that means, and the contacts category repeats it next to Approve and Import (SourcesInReview).
+ */
+export function ReviewSourcesStep({ batch }: { batch: ImportBatch }) {
+  const q = useParity(batch);
+  const rows = q.data?.sourceLabels ?? [];
   return (
-    <>
-      <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />
-      {(q.data.sourceLabels ?? []).length > 0 ? <SourceLabels rows={q.data.sourceLabels ?? []} source={batch.source} onChanged={() => void q.refetch()} /> : null}
-    </>
+    <Section title="Review sources" description={`${sourceOf(batch.source)} gives each person's source as a label, shown here exactly as it was imported. A label counts as one of your lead sources only after an Owner chooses that source. A match is only ever suggested, never applied for you.`}>
+      {q.isPending ? <p className="text-[15px] text-ink-muted">Loading the sources of this import</p> : null}
+      {q.isError ? <QueryError error={q.error} retry={() => void q.refetch()} /> : null}
+      {q.data && rows.length === 0 ? <p className="text-[15px] text-ink">This import has no people, so there is no source to review.</p> : null}
+      {rows.length > 0 ? (
+        <Card className="flex flex-col gap-3">
+          <Notice tone={rows.some((r) => r.inReview) ? 'warn' : 'ok'} title={beforeImportLine(rows)}>
+            {rows.some((r) => r.inReview) ? IN_REVIEW_MEANS : null}
+          </Notice>
+          <ImportLabelList rows={rows} onChanged={() => void q.refetch()} />
+          <p className="text-[14px] text-ink-muted">
+            The same review stays open after the import, under{' '}
+            <Link to={REVIEW_PATH} className="text-accent underline">
+              Lead sources
+            </Link>
+            .
+          </p>
+        </Card>
+      ) : null}
+    </Section>
+  );
+}
+
+/** Next to Approve and Import of the contacts category: what is still in review, so nobody imports past it unseen. */
+function SourcesInReview({ batch }: { batch: ImportBatch }) {
+  const q = useParity(batch, !!batch.snapshotSha256);
+  const rows = q.data?.sourceLabels ?? [];
+  if (!rows.some((r) => r.inReview)) return null;
+  return (
+    <Notice tone="warn" title={beforeImportLine(rows)}>
+      Those people get no automated contact until an Owner chooses a lead source in "Review sources" above, or later under Lead sources. The team can still call, text or email them one to one.
+    </Notice>
   );
 }
 
 /**
- * b18 round 3 item 1 (E728): the source labels the import found, each with the lead source it means and whether that
- * source has "No automated contact for leads from this source" on. The Owner maps a label here, at import time, or later
- * on the lead sources page; the mapping is the team's, not this import's.
+ * The import's summary of the source review (R-LSRC-10): the same rows once the contacts are imported, with how many of
+ * the people it brought in are still in review, and the same controls for the Owner.
  */
-export function SourceLabels({ rows, source, onChanged }: { rows: readonly ImportLabelView[]; source: string; onChanged(): void }) {
+export function SourceLabels({ rows, onChanged }: { rows: readonly ImportLabelView[]; onChanged(): void }) {
+  const open = rows.some((r) => r.inReview);
   return (
-    <section aria-label="Lead sources in this import">
-      <Card className="flex flex-col gap-2">
-        <h3 className="text-[16px] font-semibold text-ink">Lead sources</h3>
-        <p className="text-[15px] text-ink-muted">{`${source === 'csv' ? 'Your file' : 'Follow Up Boss'} gives each person's source as a label. Map a label to a lead source so the people it brings in count as that source's leads.`}</p>
+    <section aria-label="Review sources">
+      <Card className="flex flex-col gap-3">
+        <h3 className="text-[16px] font-semibold text-ink">Review sources</h3>
+        <Notice tone={open ? 'warn' : 'ok'} title={afterImportLine(rows)}>
+          {open ? IN_REVIEW_MEANS : null}
+        </Notice>
         <ImportLabelList rows={rows} onChanged={onChanged} />
+        <p className="text-[14px] text-ink-muted">
+          The same review stays open under{' '}
+          <Link to={REVIEW_PATH} className="text-accent underline">
+            Lead sources
+          </Link>
+          .
+        </p>
       </Card>
     </section>
   );
@@ -468,6 +531,7 @@ function StageCard({ batch, stage, stages, onDone }: { batch: ImportBatch; stage
       </div>
       {step === 'commit' && blockers.length > 0 ? <p className="text-[14px] text-ink-muted">Waiting for {blockers.map((b) => CATEGORY_LABEL[b.category]).join(', ')} to be verified or skipped.</p> : null}
       {step === 'review' ? <p className="text-[14px] text-ink-muted">Approving imports exactly what this dry run found, plus your review decisions. Nothing else.</p> : null}
+      {stage.category === 'contacts' && (step === 'review' || step === 'commit') ? <SourcesInReview batch={batch} /> : null}
       {reviewing && step === 'review' ? <ReviewList batch={batch} stage={stage} /> : null}
       {step === 'verify' ? <Verify batch={batch} stage={stage} onDone={onDone} /> : null}
       <ErrorLine message={failure?.message} />
@@ -701,7 +765,9 @@ function Report({ batch }: { batch: ImportBatch }) {
   // owner decision B7: the final report says what doesn't come over once something was imported; until then the
   // "What doesn't come over" notice above is the one place it is said (review F3: no report of that sentence alone)
   const left = reportSaysNotImported(batch.stages) ? (q.data.notImported?.lines ?? []) : [];
-  const labels = q.data.sourceLabels ?? [];
+  // R-LSRC-10: before the contacts are imported the review is its own step above (ReviewSourcesStep); from then on
+  // the report carries it as the summary, so it is on the page once
+  const labels = sourceReviewIsAStep(batch) ? [] : (q.data.sourceLabels ?? []);
   if (lines.length === 0 && !parity && !unassigned && left.length === 0 && labels.length === 0) return null;
   return (
     <Section title="Report">
@@ -753,7 +819,7 @@ function Report({ batch }: { batch: ImportBatch }) {
           </ul>
         </Card>
       ) : null}
-      {labels.length > 0 ? <SourceLabels rows={labels} source={batch.source} onChanged={() => void q.refetch()} /> : null}
+      {labels.length > 0 ? <SourceLabels rows={labels} onChanged={() => void q.refetch()} /> : null}
       {unassigned ? <UnassignedPeople view={unassigned} onClosed={() => void q.refetch()} /> : null}
       {left.length > 0 ? (
         <section aria-label="Not brought over">

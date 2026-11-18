@@ -5,7 +5,8 @@
 // and forwarding confirmations), linking there; one chip per path with its state in words (On / Off / Not set up /
 // Not available on this deployment / Needs partner access: a partner feed is never said to be connected); and ONE
 // primary action: Copy the lead-email address when lead email is on (one tap), otherwise Set up (opens the source).
-// "Add a source" opens a sheet (AddSource.tsx). One column on a phone, two on desktop.
+// "Add a source" opens a sheet (AddSource.tsx). One column on a phone, two on desktop. Under the cards: "Review sources"
+// (ImportLabels.tsx; R-LSRC-10), the review of every imported source label, also reached from each import.
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, ButtonLink, Card, EmptyState, Notice } from '../../design/index.js';
@@ -13,7 +14,7 @@ import { useAnnounce } from '../admin/lib/hooks.js';
 import { Pill } from '../admin/lib/ui.js';
 import { AddSource } from './AddSource.js';
 import { useOverview } from './hooks.js';
-import { ImportLabelsSection } from './ImportLabels.js';
+import { ReviewSourcesSection } from './ImportLabels.js';
 import { sentenceFor } from './messages.js';
 import type { SourceOverview } from './types.js';
 import { copyText } from './ui.js';
@@ -44,7 +45,8 @@ export default function LeadSourcesPage() {
           </li>
         ))}
       </ul>
-      {q.data && sources.length > 0 ? <ImportLabelsSection /> : null}
+      {/* R-LSRC-10: the source review is its own read and is shown whatever the lead sources are (even none yet) */}
+      <ReviewSourcesSection />
       {adding ? <AddSource deployment={q.data?.deployment ?? null} onClose={() => setAdding(false)} /> : null}
     </div>
   );

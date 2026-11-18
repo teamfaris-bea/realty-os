@@ -6,6 +6,7 @@ import { FakeFetch } from '../../shell/testing/fakeApi.js';
 import { member } from '../admin/lib/testing.js';
 import type { PhoneNumber } from '../admin/lib/types.js';
 import { leadEmailApp } from '../lead-email/testing.js';
+import type { ImportLabelView } from './reviewWords.js';
 import type { GoogleLeadForm, OverviewResponse, SourceOverview } from './types.js';
 
 export const S1 = '01900000-0000-7000-8000-00000000510a';
@@ -69,3 +70,60 @@ export function sourcesFake(o: OverviewResponse = overview([source()])): FakeFet
 export const sourcesApp = leadEmailApp;
 export { FakeFetch };
 export { err } from '../../shell/testing/fakeApi.js';
+
+// ---- the source review (R-LSRC-10): rows as the API sends them ----
+
+const people = (n: number): string => (n === 1 ? '1 person' : `${n} people`);
+const SETTING = 'No automated contact for leads from this source';
+
+/**
+ * The API's own sentence for a review row (apps/api/src/leads/importLabels.ts importLabelSentence and unlabeledSentence,
+ * word for word), so the web tests hold the real contract. `where` is how a no-label row names its import.
+ */
+export function reviewSentence(r: Pick<ImportLabelView, 'label' | 'unlabeledImportId' | 'people' | 'state' | 'leadSourceName' | 'noAutomatedContact' | 'suggestion'>, where = 'this import'): string {
+  if (r.unlabeledImportId) {
+    const who = `No source label in ${where} (${people(r.people)})`;
+    if (r.state !== 'mapped') return `${who}: not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`;
+    return r.noAutomatedContact ? `${who}: counted as ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches them.` : `${who}: counted as ${r.leadSourceName}.`;
+  }
+  const who = `"${r.label}" (${people(r.people)})`;
+  const inReview = 'Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.';
+  if (r.state === 'mapped') return r.noAutomatedContact ? `${who}: mapped to ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches them.` : `${who}: mapped to ${r.leadSourceName}.`;
+  if (r.state === 'suggested' && r.suggestion) {
+    const n = r.suggestion.leadSourceName;
+    return `${who}: not reviewed yet. It reads the same as the lead source ${n}, or a label already mapped to it, apart from capital letters and spaces around it, so ${n} is suggested. Nothing is mapped until the Owner confirms it${r.suggestion.noAutomatedContact ? ` (${n} has "${SETTING}" on)` : ''}, and nothing automatic goes to the people imported with it until then.`;
+  }
+  if (r.state === 'ambiguous') return `${who}: not reviewed yet. It reads the same as more than one lead source, so none is suggested. ${inReview}`;
+  return `${who}: not reviewed yet. ${inReview}`;
+}
+
+/** One review row with the API's sentence for its state. `mappedTo` and `suggest` name a lead source. */
+export function labelRow(
+  label: string,
+  o: Partial<Omit<ImportLabelView, 'label' | 'sentence' | 'suggestion' | 'leadSourceId' | 'leadSourceName' | 'noAutomatedContact' | 'inReview'>> & {
+    mappedTo?: { id: string; name: string; noAiCare?: boolean };
+    suggest?: { id: string; name: string; noAiCare?: boolean };
+    where?: string;
+  } = {},
+): ImportLabelView {
+  const { mappedTo, suggest, where, ...rest } = o;
+  const state: ImportLabelView['state'] = rest.state ?? (mappedTo ? 'mapped' : suggest ? 'suggested' : 'in_review');
+  const row = {
+    id: null,
+    label,
+    unlabeledImportId: null,
+    people: 1,
+    committedPeople: 0,
+    firstSeen: null,
+    changedBy: null,
+    changedAt: null,
+    ...rest,
+    state,
+    leadSourceId: mappedTo?.id ?? null,
+    leadSourceName: mappedTo?.name ?? null,
+    noAutomatedContact: mappedTo?.noAiCare === true,
+    inReview: state !== 'mapped',
+    suggestion: state === 'suggested' && suggest ? { leadSourceId: suggest.id, leadSourceName: suggest.name, noAutomatedContact: suggest.noAiCare === true } : null,
+  };
+  return { ...row, sentence: reviewSentence(row, where) };
+}
