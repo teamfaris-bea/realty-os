@@ -10,14 +10,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
 import { classifyProtected } from '@realty/core/parity/tags';
-import { configureDatabase, createDatabase } from '@realty/db';
+import { configureDatabase, createDatabase, withTenantTx } from '@realty/db';
 import { type TestDb, createTestDb } from '@realty/db/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TEST_ORIGIN, testConfig } from '../auth/testHarness.js';
+import { noAutomatedContact } from '../leads/automatedContact.js';
 import { HOLD_SENTENCES } from '../leadEmail/trust.js';
 import { createFakeProviders } from '../providers/index.js';
 import { buildServer } from '../server.js';
+import { systemActor } from '../worker/systemActor.js';
 import { SeedClient } from './client.js';
 import { DEMO_PASSWORD, DEMO_SLUG, type DemoSeedOptions, runDemoSeed } from './demo.js';
 
@@ -190,6 +192,45 @@ describe('pnpm seed: the demo tenant', () => {
       await app.close();
       await database.close();
     }
+  });
+
+  // R-LSRC-9, R-LSRC-10 (owner decision 2026-11-14): the seed's own file import, and the Owner's source review as an
+  // explicit seed step. Nothing automatic may go to an imported person until the Owner reviews their source, so the seed
+  // confirms the mappings of its own invented labels the way an Owner does, and leaves two rows in review to show.
+  it('R-LSRC-10 E739 E741: four people came in from a file; the Owner confirmed the one suggested source and mapped one label by choosing, both recorded and audited in the Owner\'s name; "Old spreadsheet" and the person with no source label are in review and get no automated contact', async () => {
+    const owner = await userId('owner@demo.realty-os.test');
+    const rows = await q<{ label: string | null; unlabeled: boolean; kind: string; source: string | null; by: string | null }>(
+      `SELECT l.import_label AS label, l.unlabeled_batch_id IS NOT NULL AS unlabeled, l.first_seen_kind AS kind, s.name AS source, l.mapped_by_user_id AS by
+         FROM import_source_labels l LEFT JOIN lead_sources s ON s.tenant_id = l.tenant_id AND s.id = l.lead_source_id WHERE l.tenant_id = $1 ORDER BY l.import_label NULLS LAST`, [tenantId]);
+    expect(rows).toEqual([
+      { label: 'Harbor open house sign-in', unlabeled: false, kind: 'csv', source: 'Open houses', by: owner },
+      { label: 'Old spreadsheet', unlabeled: false, kind: 'csv', source: null, by: null },
+      { label: 'website inquiry form', unlabeled: false, kind: 'csv', source: 'Website inquiry form', by: owner },
+      { label: null, unlabeled: true, kind: 'csv', source: null, by: null },
+    ]);
+    // the mapping every check reads, and what it means for each person (asked as the system of the demo team)
+    expect(await q('SELECT name, import_labels FROM lead_sources WHERE tenant_id = $1 AND cardinality(import_labels) > 0 ORDER BY name', [tenantId])).toEqual([
+      { name: 'Open houses', import_labels: ['Harbor open house sign-in'] },
+      { name: 'Website inquiry form', import_labels: ['website inquiry form'] },
+    ]);
+    const refusals: Record<string, string | null> = {};
+    const app = createDatabase({ url: db.appUserUrl });
+    try {
+      for (const name of ['Iris Bell', 'Omar Reyes', 'Tess Lund', 'Milo Hart']) {
+        const id = await contactId(name);
+        refusals[name] = await withTenantTx(systemActor(tenantId, 'worker'), (tx) => noAutomatedContact(tx, id), { db: app });
+      }
+    } finally {
+      await app.close();
+    }
+    expect(refusals).toEqual({ 'Iris Bell': null, 'Omar Reyes': null, 'Tess Lund': 'SOURCE_UNCLASSIFIED', 'Milo Hart': 'SOURCE_UNCLASSIFIED' });
+    const audited = await q<{ reason: string; actor_user_id: string; label: string }>(
+      `SELECT reason, actor_user_id, changes -> 'importLabel' ->> 'to' AS label FROM audit_log WHERE tenant_id = $1 AND reason LIKE 'LEAD_SOURCE_IMPORT_%' ORDER BY seq`, [tenantId]);
+    expect(audited).toEqual([
+      { reason: 'LEAD_SOURCE_IMPORT_LABEL_SUGGESTION_CONFIRMED', actor_user_id: owner, label: 'website inquiry form' },
+      { reason: 'LEAD_SOURCE_IMPORT_LABEL_MAPPED', actor_user_id: owner, label: 'Harbor open house sign-in' },
+    ]);
+    expect(lines.some((l) => l.includes('wait in the source review'))).toBe(true);
   });
 
   // b17: one invited portal client on one deal, so the staff "What {name} sees" preview has a grant to show. platform:portal

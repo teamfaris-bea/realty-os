@@ -143,6 +143,9 @@ export async function stopAutomatedContactNow(tx: Tx, sourceId: string, now: Ins
   return { pausing: live.rows.length, stopping: plans.rows.length, withdrawn };
 }
 
+/** How many imported labels, and how many imports' no-label groups, one lead source may hold (the column checks of 0099 and 0101). */
+export const IMPORT_KEYS_PER_SOURCE = 200;
+
 /** Which mapping the Owner changes: an imported label, or the people one import brought in with no label. */
 export type ImportSourceKey = { label: string } | { unlabeledImportId: string };
 
@@ -169,13 +172,16 @@ export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourc
   }
   const holds = byLabel ? sql`${key.label}::text = ANY (import_labels)` : sql`${key.unlabeledImportId}::uuid = ANY (import_unlabeled_batches)`;
   // the sources that hold the key now and the target, locked in one order (the ai-care route locks a source the same way)
-  const held = await sql<{ id: string; no_ai_care: boolean; has: boolean }>`
-    SELECT id, no_ai_care, ${holds} AS has FROM lead_sources
+  const held = await sql<{ id: string; no_ai_care: boolean; has: boolean; n: number }>`
+    SELECT id, no_ai_care, ${holds} AS has, ${byLabel ? sql`cardinality(import_labels)` : sql`cardinality(import_unlabeled_batches)`} AS n FROM lead_sources
      WHERE tenant_id = app.tenant_id() AND (${holds} OR id = ${leadSourceId}::uuid) ORDER BY id FOR NO KEY UPDATE`.execute(tx);
   if (leadSourceId !== null && !held.rows.some((s) => s.id === leadSourceId)) throw new AppError('NOT_FOUND');
   const from = held.rows.filter((s) => s.has && s.id !== leadSourceId);
   const target = held.rows.find((s) => s.id === leadSourceId) ?? null;
   const added = target !== null && !target.has;
+  // one lead source holds at most 200 imported labels (0099) and 200 imports' no-label groups (0101). The Owner is told,
+  // and maps this one to another lead source: nothing is changed, and nobody is left without a way to be classified
+  if (added && target.n >= IMPORT_KEYS_PER_SOURCE) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/leadSourceId', code: 'lead_source_label_limit' }], limit: IMPORT_KEYS_PER_SOURCE });
   for (const s of from) {
     if (byLabel) await sql`UPDATE lead_sources SET import_labels = array_remove(import_labels, ${key.label}::text), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);
     else await sql`UPDATE lead_sources SET import_unlabeled_batches = array_remove(import_unlabeled_batches, ${key.unlabeledImportId}::uuid), updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx);

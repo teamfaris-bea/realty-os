@@ -28,6 +28,7 @@ import { summarizeCall } from '../assistant/callPipeline.js';
 import { totpCode, totpStep } from '../auth/totp.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import type { Config } from '../config.js';
+import { defaultFubConnector, makeImportHandlers } from '../imports/handlers.js';
 import { createFakeProviders } from '../providers/index.js';
 import { signedHeader, telephonySignature } from '../providers/webhooks.js';
 import { buildServer } from '../server.js';
@@ -107,7 +108,10 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
   const providers = createFakeProviders({ clock });
   const app = buildServer(config, { providers, clock, ids, db });
   await app.ready();
-  const registry = new HandlerRegistry().registerAll(handlers);
+  // the import jobs read the uploaded file with THIS server's keys and storage (the default import handlers take theirs
+  // from the process environment, which is the same thing under `pnpm seed` and not under a test's own configuration)
+  const importJobs = makeImportHandlers((p) => ({ db, envelope: app.platform.envelope, ids, storage: p.storage, fub: defaultFubConnector(config.fub) }));
+  const registry = new HandlerRegistry().registerAll([...handlers.filter((x) => !x.kind.startsWith('imports.')), ...importJobs]);
   const worker = createWorker({ db, registry, providers, queues: ['realtime', 'default', 'bulk', 'maintenance'], concurrency: 4, worker: 'seed', idleMs: 10, log: silentLogger });
   /** Runs every due job (and the jobs they enqueue) through the real worker loop and handler list. */
   const drain = async () => {
@@ -534,6 +538,41 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
   } else {
     log('lead email: this deployment has no inbound domain (LEAD_EMAIL_INBOUND_DOMAIN), so no email intake and nothing in Needs review');
   }
+
+  // ---- 18b. a small file import, then the Owner's source review (R-LSRC-9, R-LSRC-10) ----------------------
+  // Four people come in from a spreadsheet through the real import routes (snapshot, check, approval, commit). Their
+  // source labels are invented. An imported person is in review, with nothing automatic going to them, until the Owner
+  // reviews their source: so the review is an EXPLICIT seed step, done the way an Owner does it on the screen. The
+  // label that reads exactly like the lead source "Website inquiry form" is suggested, and the Owner confirms it;
+  // "Harbor open house sign-in" is mapped by choosing a lead source; "Old spreadsheet" and the one person with no
+  // source at all are left in review on purpose, so the review has something to show.
+  const sheet = [
+    'First Name,Last Name,Mobile Phone,Email,Source',
+    `Iris,Bell,${phone()},${email('Iris', 'Bell')},website inquiry form`,
+    `Omar,Reyes,${phone()},${email('Omar', 'Reyes')},Harbor open house sign-in`,
+    `Tess,Lund,${phone()},${email('Tess', 'Lund')},Old spreadsheet`,
+    `Milo,Hart,${phone()},${email('Milo', 'Hart')},`,
+  ];
+  const imported = await owner.must<{ batch: { id: string } }>('POST', '/imports', { source: 'csv', fileName: 'open-house-sign-in.csv', fileBase64: Buffer.from(`${sheet.join('\n')}\n`, 'utf8').toString('base64') });
+  const importId = imported.batch.id;
+  await owner.must('POST', `/imports/${importId}/snapshot`);
+  await drain();
+  await owner.must('POST', `/imports/${importId}/stages/contacts/dry-run`);
+  await drain();
+  const checked = await owner.must<{ batch: { stages: { category: string; status: string; dryRunSha256: string | null }[] } }>('GET', `/imports/${importId}`);
+  const people = checked.batch.stages.find((x) => x.category === 'contacts');
+  if (people?.status !== 'dry_run_ready' || !people.dryRunSha256) throw new SeedError(`the file import's check ended ${people?.status ?? 'missing'}`);
+  await owner.must('POST', `/imports/${importId}/stages/contacts/approve`, { snapshotSha256: people.dryRunSha256 });
+  await owner.must('POST', `/imports/${importId}/stages/contacts/commit`);
+  await drain();
+  // the Owner's review: one suggestion confirmed, one label mapped by choosing, two rows left in review
+  const openHouses = await owner.must<{ source: { id: string } }>('POST', '/lead-sources', { name: 'Open houses', kind: 'open_house' });
+  await owner.must('POST', '/lead-sources/import-labels/confirm', { label: 'website inquiry form', leadSourceId: source.source.id });
+  await owner.must('PUT', '/lead-sources/import-labels', { label: 'Harbor open house sign-in', leadSourceId: openHouses.source.id });
+  const review = await owner.must<{ labels: { label: string; unlabeledImportId: string | null; state: string; people: number }[] }>('GET', '/lead-sources/import-labels');
+  const reviewed = review.labels.map((l) => `${l.unlabeledImportId ? '(no label)' : l.label}: ${l.state}, ${l.people}`).join('; ');
+  if (reviewed !== 'Harbor open house sign-in: mapped, 1; Old spreadsheet: in_review, 1; website inquiry form: mapped, 1; (no label): in_review, 1') throw new SeedError(`the source review reads: ${reviewed}`);
+  log('a 4-person file import; the Owner confirmed one suggested source and mapped one label; "Old spreadsheet" and one person with no source label wait in the source review');
 
   // ---- 19. run the worker: follow-ups, notifications, and the exception queue -----------------------
   await drain();

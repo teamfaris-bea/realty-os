@@ -313,7 +313,12 @@ export async function tenantLabels(tx: Tx): Promise<ImportLabelRow[]> {
   for (const l of [...prov.byLabel.keys(), ...cat.byLabel.keys()]) if (!labels.has(l)) labels.set(l, 0);
   for (const b of [...prov.byBatch.keys(), ...cat.byBatch.keys()]) if (!groups.has(b)) groups.set(b, 0);
   const kinds = await importKinds(tx, [...groups.keys()]);
-  const labelRows = [...labels.entries()].map(([label, people]) => labelRow(label, { people, committedPeople: people }, cat, prov.byLabel.get(label) ?? null)).sort(byLabel);
+  const labelRows = [...labels.entries()]
+    .map(([label, people]) => labelRow(label, { people, committedPeople: people }, cat, prov.byLabel.get(label) ?? null))
+    // a label no import ever committed and no source holds (the Owner mapped it ahead from a preview, then removed the
+    // mapping) labels nobody and means nothing: it is not a row of the review
+    .filter((r) => r.people > 0 || r.state === 'mapped' || r.firstSeen !== null)
+    .sort(byLabel);
   const groupRows = [...groups.entries()]
     .map(([id, people]) => ({ row: groupRow(id, { people, committedPeople: people }, cat, prov.byBatch.get(id) ?? null, kinds.get(id)?.kind ?? null), at: kinds.get(id)?.at ?? '' }))
     .sort((a, b) => (a.at > b.at ? -1 : a.at < b.at ? 1 : a.row.unlabeledImportId! < b.row.unlabeledImportId! ? -1 : 1))

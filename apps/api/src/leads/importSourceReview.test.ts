@@ -234,8 +234,11 @@ describe('R-LSRC-10 M2 M3: the Owner confirms, maps, re-maps and un-maps; the pe
     const lookalike = await confirm(w.owner, { label: SUGGESTED.trim(), leadSourceId: northgate.id });
     expect(lookalike.status).toBe(200); // itself an exact known match, but its own label: mapping it maps only itself
     expect(await refusalOf(ada)).toBe(SOURCE_UNCLASSIFIED);
+    expect(await listRow(SUGGESTED.trim())).toMatchObject({ state: 'mapped', people: 0, firstSeen: null });
     expect((await put(w.owner, { label: SUGGESTED.trim(), leadSourceId: null })).status).toBe(200);
     expect(await heldLabels()).toEqual([]);
+    // mapped ahead of any commit and then removed: it labels nobody and means nothing, so it is no row of the review
+    expect(await listRow(SUGGESTED.trim())).toBeUndefined();
     expect((await call(w.owner, 'POST', '/lead-sources/import-labels/confirm', { label: '   ', leadSourceId: northgate.id })).status).toBe(422);
 
     const since = new Date();
@@ -350,6 +353,23 @@ describe('R-LSRC-10 M2 M3: the Owner confirms, maps, re-maps and un-maps; the pe
     expect((await put(w.owner, { label: 'harbor desk', leadSourceId: harbor.id })).body.label).toMatchObject({ state: 'mapped', leadSourceId: harbor.id });
     expect(await refusalOf(hal.id)).toBeNull();
     expect(await listRow('HARBOR DESK')).toMatchObject({ state: 'mapped', leadSourceId: open.id });
+  }, 300_000);
+});
+
+describe('R-LSRC-10 M2: nobody is left without a way to be classified', () => {
+  it('E742: a lead source that already holds 200 imported labels (or 200 imports\' no-label groups) refuses one more with a plain 422 and changes nothing; the Owner maps it to another lead source', async () => {
+    const full = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Full source (test)', kind: 'referral' })).body.source;
+    await withTenantTx(w.owner.actor(), (tx) => sql`UPDATE lead_sources SET import_labels = (SELECT array_agg('Filler label ' || g) FROM generate_series(1, 200) g),
+      import_unlabeled_batches = (SELECT array_agg(gen_random_uuid()) FROM generate_series(1, 200)) WHERE tenant_id = app.tenant_id() AND id = ${full.id}::uuid`.execute(tx), { db: h().database });
+    const one = await put(w.owner, { label: LONG, leadSourceId: full.id });
+    expect([one.status, one.code, detailsOf(one)['limit']]).toEqual([422, 'VALIDATION_FAILED', 200]);
+    expect(detailsOf(one)['issues']).toEqual([{ path: '/leadSourceId', code: 'lead_source_label_limit' }]);
+    const group = await put(w.owner, { unlabeledImportId: batchId, leadSourceId: full.id });
+    expect([group.status, detailsOf(group)['limit']]).toEqual([422, 200]);
+    expect(await listRow(LONG)).toMatchObject({ state: 'in_review', leadSourceId: null });
+    // the way out: another lead source
+    expect((await put(w.owner, { label: LONG, leadSourceId: open.id })).body.label).toMatchObject({ label: LONG, state: 'mapped', leadSourceId: open.id });
+    expect(await refusalOf(await person('Bo'))).toBeNull();
   }, 300_000);
 });
 

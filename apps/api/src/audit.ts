@@ -140,7 +140,7 @@ const PLAIN_EXACT = new Set([
   'is_primary',
   'resolved_by', // priority_feed_items: 'user' | 'condition' (0011)
   // ---- batch 18, classified on purpose (R-AUDIT-4; R-LSRC-10 M3): none of these is left to the fail-closed default ----
-  'content_redacted', // messages, message_text_parts, lead_inquiries (0093, 0097): NULL or the code of WHY stored content was redacted ('portal_signin_token'); never the content
+  'content_redacted', // messages, their MMS text parts and lead_inquiries (0093, 0097): NULL or the code of WHY stored content was redacted ('portal_signin_token'); never the content
   'no_ai_care', // lead_sources (0094): the Owner's on/off setting "No automated contact for leads from this source"; its audit row shows from and to
   'import_unlabeled_batches', // lead_sources (0101): import ids only (the imports whose no-label people are this source's), never text
   // An imported source label is the name of a lead source in the system the people came from ("a referral partner",
