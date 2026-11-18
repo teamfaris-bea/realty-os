@@ -13,7 +13,8 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { actionsOf, call, messagesOf, ownedContact } from '../assistant/testing.js';
 import { queueOutboundInTx } from '../comms/compose.js';
 import { freshReauth, inboundSms } from '../comms/testing.js';
-import { AUTOMATED_DRAFT_REFUSAL, NO_AUTOMATED_CONTACT_LABEL, NO_AUTOMATED_CONTACT_SKIP_TEXT, SOURCE_NO_AUTOMATED_CONTACT, isSourceGuardViolation } from '../leads/automatedContact.js';
+import { AUTOMATED_DRAFT_REFUSAL, NO_AUTOMATED_CONTACT_LABEL, NO_AUTOMATED_CONTACT_SKIP_TEXT, SOURCE_NO_AUTOMATED_CONTACT, SOURCE_UNCLASSIFIED, SOURCE_UNCLASSIFIED_SKIP_TEXT, UNCLASSIFIED_DRAFT_REFUSAL, UNCLASSIFIED_DRAFT_WITHDRAWN_EARLIER, isSourceGuardViolation } from '../leads/automatedContact.js';
+import { importedPerson } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type NurtureWorld, approveTemplate, firingsDue, follow, mlsRecord, nurtureWorld, reconcileAndRun, triggerRuns } from './testing.js';
 
@@ -149,5 +150,49 @@ describe('R-LSRC-8 B18S-5 round 3 item 3: a module 26 trigger draft made before 
       [w.tenantId, reply, a.id, agent.userId],
     );
     expect(await move(await queued(reply, `assistant-approve:${reply}`))).toBeNull();
+  });
+});
+
+describe('R-LSRC-9 A2 A3: no module 26 trigger message, and no trigger draft, for an imported person whose source is not reviewed yet (owner decision 2026-11-14)', () => {
+  it('R-LSRC-9 E729: a price-drop firing for such a person is skipped SOURCE_UNCLASSIFIED with its own sentence (the imported source has not been reviewed yet; never the setting\'s words) and nothing is sent', async () => {
+    const c = await ownedContact(w.agents[0]!);
+    await importedPerson(h, w.tenantId, w.owner.userId!, c.id);
+    await dropFor(c.id);
+    await reconcileAndRun(h, w.tenantId);
+    expect(await alerts(c.id)).toEqual([]);
+    expect(h.providers.email.sent.filter((m) => m.to === c.email)).toEqual([]);
+    const [run] = await triggerRuns(h, c.id);
+    expect(run!.status).toBe('skipped_ineligible');
+    const skip = (run!.trigger_ref as { skip?: { reason: string; text: string } }).skip;
+    expect(skip).toEqual({ reason: SOURCE_UNCLASSIFIED, text: SOURCE_UNCLASSIFIED_SKIP_TEXT });
+    expect(SOURCE_UNCLASSIFIED_SKIP_TEXT).toMatch(/imported source has not been reviewed yet \(an Owner reviews it under Lead sources\)/);
+    expect(SOURCE_UNCLASSIFIED_SKIP_TEXT).not.toContain(NO_AUTOMATED_CONTACT_LABEL);
+    const shown = await call<Runs>(w.agents[0]!, 'GET', `/contacts/${c.id}/trigger-runs`);
+    expect(shown.body.runs.map((r) => [r.status, r.skip?.reason, r.skip?.text])).toEqual([['skipped_ineligible', SOURCE_UNCLASSIFIED, SOURCE_UNCLASSIFIED_SKIP_TEXT]]);
+  });
+
+  it('R-LSRC-9 E729 E733: approving a trigger draft for a person since imported and not reviewed is refused 409 SOURCE_UNCLASSIFIED with its own sentence; the draft is withdrawn for that reason and nothing is sent; once the Owner maps the label the late tap still says it was withdrawn, and why', async () => {
+    const agent = w.agents[0]!;
+    const a = await triggerDraft(agent);
+    const { label } = await importedPerson(h, w.tenantId, w.owner.userId!, a.id);
+    const tap = await approve(agent, a.draftId);
+    expect([tap.status, tap.code]).toEqual([409, SOURCE_UNCLASSIFIED]);
+    expect((tap.body as unknown as { error: { details: { reason: string; sentence: string } } }).error.details).toMatchObject({ reason: 'source_unclassified', sentence: UNCLASSIFIED_DRAFT_REFUSAL });
+    expect(UNCLASSIFIED_DRAFT_REFUSAL).toMatch(/imported source has not been reviewed yet/);
+    expect(UNCLASSIFIED_DRAFT_REFUSAL).toMatch(/withdrawn and nothing was sent/);
+    expect(UNCLASSIFIED_DRAFT_REFUSAL).not.toContain(NO_AUTOMATED_CONTACT_LABEL);
+    expect(await draftRow(a.draftId)).toMatchObject({ status: 'invalidated', payload: { withdrawn: { reason: SOURCE_UNCLASSIFIED } } });
+    expect(await cardStates(a.draftId)).toEqual(['done']);
+    expect((await triggerRuns(h, a.id))[0]).toMatchObject({ status: 'skipped_ineligible', trigger_ref: expect.objectContaining({ skip: { reason: SOURCE_UNCLASSIFIED, text: SOURCE_UNCLASSIFIED_SKIP_TEXT } }) });
+    expect(await alerts(a.id)).toEqual([]);
+    expect(h.providers.telephony.sms.filter((x) => x.to === a.phone)).toEqual([]);
+    // the Owner reviews the source (an unmarked one): the person is no longer refused, the draft stays withdrawn
+    const plain = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Northgate Referrals (test)', kind: 'referral' })).body.source.id;
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: plain })).status).toBe(200);
+    const late = await approve(agent, a.draftId);
+    expect([late.status, late.code]).toEqual([409, SOURCE_UNCLASSIFIED]);
+    expect((late.body as unknown as { error: { details: { sentence: string } } }).error.details.sentence).toBe(UNCLASSIFIED_DRAFT_WITHDRAWN_EARLIER);
+    expect(UNCLASSIFIED_DRAFT_WITHDRAWN_EARLIER).not.toContain(NO_AUTOMATED_CONTACT_LABEL);
   });
 });

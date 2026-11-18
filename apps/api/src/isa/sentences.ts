@@ -16,6 +16,24 @@ export const SOURCE_NO_AI_CARE_SENTENCE = "No automated contact for leads from t
 /** The pause note's body (notifications.body is at most 240 characters). */
 export const SOURCE_NO_AI_CARE_NOTE = 'No automated contact for leads from this source is on for their lead source (an Owner setting). AI care stays paused and cannot be resumed or continued while it is on.';
 
+/**
+ * R-LSRC-9 (owner decision 2026-11-14, migration 0101): why an imported person whose source nobody has reviewed gets no
+ * AI care. Its own words on the start refusal, Continue, chain link 11 and the pause note: an import brought them in,
+ * the imported source has not been reviewed yet, and an Owner reviews it under Lead sources. Never the setting's words.
+ */
+export const SOURCE_UNCLASSIFIED_AI_CARE_SENTENCE = 'This person came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources), so the AI assistant does not care for them (nothing automatic goes to them; call, text or email them one to one).';
+/** The pause note's body for that reason (at most 240 characters). */
+export const SOURCE_UNCLASSIFIED_AI_CARE_NOTE = 'They came in from an import and their imported source has not been reviewed yet. AI care stays paused and cannot be resumed or continued until an Owner reviews it under Lead sources.';
+
+/** The AI care codes of the two source refusals (leads/automatedContact.ts SourceRefusal), and the pause reason each writes. */
+export const AI_CARE_SOURCE_CODE = { SOURCE_NO_AUTOMATED_CONTACT: 'AI_ISA_SOURCE_NO_AI_CARE', SOURCE_UNCLASSIFIED: 'AI_ISA_SOURCE_UNCLASSIFIED' } as const;
+export const AI_CARE_SOURCE_PAUSE = { SOURCE_NO_AUTOMATED_CONTACT: 'source_no_ai_care', SOURCE_UNCLASSIFIED: 'source_unclassified' } as const;
+export type AiCareSourceCode = (typeof AI_CARE_SOURCE_CODE)[keyof typeof AI_CARE_SOURCE_CODE];
+/** The pause note for a source pause reason, or null for any other pause. */
+export function sourcePauseNote(reason: string): string | null {
+  return reason === 'source_no_ai_care' ? SOURCE_NO_AI_CARE_NOTE : reason === 'source_unclassified' ? SOURCE_UNCLASSIFIED_AI_CARE_NOTE : null;
+}
+
 const START_REFUSALS: Record<string, string> = {
   AI_ISA_OFF: 'The AI assistant is off for your team.',
   AI_ISA_NOT_CLEARED: 'Waiting on counsel review (platform:ai_isa). Nothing is sent until counsel clears it.',
@@ -33,6 +51,8 @@ const START_REFUSALS: Record<string, string> = {
   AI_ISA_LISTED_ELSEWHERE: 'Their home is listed with another brokerage.',
   // b18 item f: an Owner setting on the lead source (the panel names it; the source itself is the owner's data)
   AI_ISA_SOURCE_NO_AI_CARE: SOURCE_NO_AI_CARE_SENTENCE,
+  // R-LSRC-9 (0101): an imported person whose source is not reviewed yet (never worded as the Owner's setting)
+  AI_ISA_SOURCE_UNCLASSIFIED: SOURCE_UNCLASSIFIED_AI_CARE_SENTENCE,
 };
 /**
  * b13 review B13S-2: what this tree implements, one list for the panel and the opt-in form (the web reads it from

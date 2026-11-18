@@ -21,7 +21,7 @@ import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
 import { adminLoosening, adminPut, adminView, meView, optIn, optInLoosening, reattest, revokeOptIn } from './settings.js';
 import type { TurnDeps } from './turn.js';
-import { ISA_BUILT_CAPABILITIES, STATE_SENTENCES, appointmentAlreadySetSentence, capabilityRow, chipOf, startRefusalSentence } from './sentences.js';
+import { AI_CARE_SOURCE_CODE, ISA_BUILT_CAPABILITIES, STATE_SENTENCES, appointmentAlreadySetSentence, capabilityRow, chipOf, startRefusalSentence } from './sentences.js';
 import { calendarLiveInTx, liveOfferOf } from './booking/rows.js';
 
 function depsOf(req: FastifyRequest): TurnDeps {
@@ -99,7 +99,8 @@ async function panel(req: FastifyRequest, contactId: string) {
     // refused for a person a source marked "No automated contact for leads from this source" sent, so the panel says why
     // instead of offering it; any other refusal still comes back on the tap, as before
     const continuable = !history && a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && continueEndReasonOf(a.pauseReason) !== null;
-    const continueBlocked = continuable && (await personNoAiCareSource(tx, contactId));
+    // R-LSRC-9 (0101): the same for an imported person whose source is not reviewed yet, with its own code and sentence
+    const continueBlocked = continuable ? await personNoAiCareSource(tx, contactId) : null;
     return {
       ...base,
       assignment: {
@@ -109,8 +110,8 @@ async function panel(req: FastifyRequest, contactId: string) {
         undoUntil: a.finalizeAt ? new Date(a.finalizeAt).toISOString() : null, ownerUserId: a.ownerUserId,
       },
       canResume: !history && a.endedAt === null && a.pausedAt !== null && a.finalizeAt === null && actor.userId === a.ownerUserId && (chain.effect === 'ok' || chain.effect === 'hold'),
-      canContinue: continuable && !continueBlocked && actor.userId === a.ownerUserId,
-      continueRefusal: continueBlocked ? { code: 'AI_ISA_SOURCE_NO_AI_CARE', sentence: startRefusalSentence('AI_ISA_SOURCE_NO_AI_CARE') } : null,
+      canContinue: continuable && continueBlocked === null && actor.userId === a.ownerUserId,
+      continueRefusal: continueBlocked !== null ? { code: AI_CARE_SOURCE_CODE[continueBlocked], sentence: startRefusalSentence(AI_CARE_SOURCE_CODE[continueBlocked]) } : null,
       chain: chain.links.map((l) => ({ link: l.link, name: l.name, effect: l.effect, code: l.code, sentence: l.sentence })),
       // b13 review B13S-2: allowed is what turn.ts grants (the policy and the opt-in, capabilitiesInEffect), for every
       // capability this tree builds (ISA_BUILT_CAPABILITIES), never converse alone

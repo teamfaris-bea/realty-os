@@ -80,6 +80,8 @@ export const REASON_WORDS: Record<string, string> = {
   UNDER_AI_CARE: 'are under AI care', // module 76 (Q4: always skipped, live or paused)
   // b18 review B18S-5 (owner boundary 2026-11-14): a bulk enroll or send is automated contact
   SOURCE_NO_AUTOMATED_CONTACT: 'came from a lead source marked "No automated contact for leads from this source" (call, text or email them one to one)',
+  // R-LSRC-9 (owner decision 2026-11-14): imported people whose source is not reviewed yet are left out, in their own words
+  SOURCE_UNCLASSIFIED: 'came in from an import and their imported source is not reviewed yet (an Owner reviews it under Lead sources; call, text or email them one to one)',
 };
 
 export function reasonWords(code: string): string {

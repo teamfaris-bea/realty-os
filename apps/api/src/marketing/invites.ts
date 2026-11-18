@@ -21,7 +21,7 @@ import { visibleSurvivorOf } from '../comms/repos/contacts.js';
 import type { CommsDeps } from '../comms/types.js';
 import { AppError } from '../errors.js';
 import { assertLivePasses } from './pieces.js';
-import { NO_AUTOMATED_CONTACT_LABEL, noAutomatedContact } from '../leads/automatedContact.js';
+import { NO_AUTOMATED_CONTACT_LABEL, SOURCE_UNCLASSIFIED, type SourceRefusal, noAutomatedContact } from '../leads/automatedContact.js';
 import * as repo from './repo.js';
 
 export const MAX_INVITE_RECIPIENTS = 1000;
@@ -41,9 +41,11 @@ export interface InviteSendResult {
   merged: number;
   /** b18 review B18S-5: left out because their lead source is marked "No automated contact for leads from this source" */
   noAutomatedContact: number;
+  /** R-LSRC-9 (0101): left out because they came in from an import whose source the Owner has not reviewed yet */
+  sourceUnclassified: number;
   recipients: {
     contactId: string;
-    outcome: 'sent' | 'opted_out' | 'blocked' | 'no_email' | 'already_invited' | 'merged' | 'no_automated_contact';
+    outcome: 'sent' | 'opted_out' | 'blocked' | 'no_email' | 'already_invited' | 'merged' | 'no_automated_contact' | 'source_unclassified';
     messageId: string | null;
     mergedInto?: { contactId: string; name: string } | null;
   }[];
@@ -99,8 +101,16 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
       const mergedIds = new Set(merged.rows.map((x) => x.id));
       // b18 review B18S-5 (owner boundary 2026-11-14): an invite is a mass send, so a person a source marked "No automated
       // contact for leads from this source" sent is left out and counted (dispatch and 0098 refuse such a send anyway)
-      const noAuto = new Set<string>();
-      for (const id of unique) if (!mergedIds.has(id) && (await noAutomatedContact(tx, id))) noAuto.add(id);
+      // R-LSRC-9 (0101): an imported person whose source is not reviewed yet is left out the same way, counted on its own.
+      // The definer reads past RLS, so it is asked only for the people the caller can see: a record the caller cannot
+      // see keeps its plain 'no_email' outcome and never reveals that it is imported, unreviewed or a marked source's.
+      const visible = await sql<{ id: string }>`SELECT id FROM contacts WHERE tenant_id = app.tenant_id() AND id = ANY (${unique}::uuid[])`.execute(tx);
+      const noAuto = new Map<string, SourceRefusal>();
+      for (const { id } of visible.rows) {
+        if (mergedIds.has(id)) continue;
+        const refused = await noAutomatedContact(tx, id);
+        if (refused !== null) noAuto.set(id, refused);
+      }
       return {
         noAuto,
         subject,
@@ -121,8 +131,9 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
         recipients.push({ contactId: id, outcome: 'merged', messageId: null, mergedInto: await mergedIntoOf(deps, actor, id) });
         continue;
       }
-      if (prep.noAuto.has(id)) {
-        recipients.push({ contactId: id, outcome: 'no_automated_contact', messageId: null });
+      const refused = prep.noAuto.get(id);
+      if (refused !== undefined) {
+        recipients.push({ contactId: id, outcome: refused === SOURCE_UNCLASSIFIED ? 'source_unclassified' : 'no_automated_contact', messageId: null });
         continue;
       }
       if (prep.already.has(id)) {
@@ -149,19 +160,22 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, unique.length) }, worker));
   const alreadyInvited = recipients.filter((r) => r.outcome === 'already_invited').length;
-  const counted = recipients.filter((r) => r.outcome !== 'no_email' && r.outcome !== 'already_invited' && r.outcome !== 'merged' && r.outcome !== 'no_automated_contact').map((r) => ({ outcome: r.outcome as 'sent' | 'opted_out' | 'blocked' }));
+  const counted = recipients.filter((r) => r.outcome !== 'no_email' && r.outcome !== 'already_invited' && r.outcome !== 'merged' && r.outcome !== 'no_automated_contact' && r.outcome !== 'source_unclassified').map((r) => ({ outcome: r.outcome as 'sent' | 'opted_out' | 'blocked' }));
   const s = inviteSendSummary(counted);
   const noEmail = recipients.filter((r) => r.outcome === 'no_email').length;
   const merged = recipients.filter((r) => r.outcome === 'merged').length;
   const noAutomated = recipients.filter((r) => r.outcome === 'no_automated_contact').length;
-  // core's words ("Sent 41 of 45; 4 opted out"); recipients without an email address, merged-away records and people
-  // left out by their lead source's "No automated contact" setting count in the total too
-  const extra = noEmail + merged + noAutomated;
+  const unclassified = recipients.filter((r) => r.outcome === 'source_unclassified').length;
+  // core's words ("Sent 41 of 45; 4 opted out"); recipients without an email address, merged-away records, people left
+  // out by their lead source's "No automated contact" setting and imported people whose source is not reviewed yet
+  // count in the total too
+  const extra = noEmail + merged + noAutomated + unclassified;
   let text = extra > 0 ? s.text.replace(/^Sent (\d+) of \d+/, `Sent $1 of ${s.total + extra}`) : s.text;
   if (noEmail > 0) text = `${text}; ${noEmail} without an email address`;
   if (merged > 0) text = `${text}; ${merged} merged into another record (invite the record they were merged into)`;
   if (noAutomated > 0) text = `${text}; ${noAutomated} left out (${NO_AUTOMATED_CONTACT_LABEL.replace('this source', 'their source')})`;
+  if (unclassified > 0) text = `${text}; ${unclassified} left out (imported, source not reviewed yet: an Owner reviews it under Lead sources)`;
   if (alreadyInvited > 0) text = `${text}; ${alreadyInvited} already invited earlier`;
   await withTenantTx(actor, (tx) => audit(tx, actor, { action: 'marketing.invites_sent', entity: { type: 'marketing_piece', id: pieceId }, changes: redactSnapshot({ sent: s.sent, total: s.total, opted_out: s.optedOut, blocked: s.blocked, no_email: noEmail }), reason: 'SENT' }), { db: deps.db });
-  return { sent: s.sent, total: s.total + extra, optedOut: s.optedOut, blocked: s.blocked, noEmail, merged, noAutomatedContact: noAutomated, alreadyInvited, text, recipients };
+  return { sent: s.sent, total: s.total + extra, optedOut: s.optedOut, blocked: s.blocked, noEmail, merged, noAutomatedContact: noAutomated, sourceUnclassified: unclassified, alreadyInvited, text, recipients };
 }

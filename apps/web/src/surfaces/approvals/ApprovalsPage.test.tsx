@@ -149,6 +149,22 @@ describe('Approvals inbox', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it('R-LSRC-9 E729 (owner decision 2026-11-14): a draft a plan or an alert wrote, tapped for an imported person whose source is not reviewed yet (409 SOURCE_UNCLASSIFIED), says why in the server\'s own sentence, never that a setting is on; Send, Edit and Dismiss go away, since the server withdrew it', async () => {
+    const sentence = 'This draft was written by a plan or an alert, and this person came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources), so it was withdrawn and nothing was sent. Call, text or email them one to one.';
+    const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'SOURCE_UNCLASSIFIED', { reason: 'source_unclassified', sentence }));
+    const { router } = agentApp(fake, '/approvals');
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    expect(screen.queryByText(/No automated contact for leads from this source/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(router.state.location.pathname).toBe('/approvals');
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('b13 audit V2B-2 E624 R-CMA-7: a home-value draft whose estimate can no longer be shown says so in the server\'s sentence, never that the client replied: no Send anyway, no re-tap, Dismiss stays', async () => {
     const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'FEED_STALE', sentence: HV_SENTENCE }));
     const { router } = agentApp(fake, '/approvals');

@@ -7,7 +7,8 @@ import { type Tx, lockContacts } from '@realty/db';
 import { sql } from 'kysely';
 import { type IsaSide, type IsaState, initialState } from './coreSeam.js';
 import { sellerSubjectLinkInTx } from './seller/index.js';
-import { SOURCE_NO_AI_CARE_SENTENCE } from './sentences.js';
+import { type SourceRefusal, noAutomatedContact } from '../leads/automatedContact.js';
+import { AI_CARE_SOURCE_CODE, AI_CARE_SOURCE_PAUSE, SOURCE_NO_AI_CARE_SENTENCE, SOURCE_UNCLASSIFIED_AI_CARE_SENTENCE } from './sentences.js';
 
 export interface BoundPoint {
   point_id: string;
@@ -280,9 +281,12 @@ export async function evaluateChain(tx: Tx, a: AssignmentRow, env: ChainEnv): Pr
   if (home !== null) links.push(home);
   // b18 item f / B18S-5: link 11 "Lead source": a person from a source the Owner marked "No automated contact for leads from this source"
   // pauses (source_no_ai_care); the resume and the database refuse to clear it while the setting is on
-  links.push((await personNoAiCareSource(tx, a.contactId))
-    ? L(11, 'Lead source', 'pause', 'AI_ISA_SOURCE_NO_AI_CARE', 'source_no_ai_care', SOURCE_NO_AI_CARE_SENTENCE)
-    : L(11, 'Lead source', 'ok', null, null, 'No lead source that sent them is marked "No automated contact for leads from this source".'));
+  // R-LSRC-9 (0101): the same link pauses care for an imported person whose source the Owner has not reviewed yet, with
+  // its own code, pause reason and sentence (source_unclassified); a marked source wins when both apply
+  const sourceRefusal = await personNoAiCareSource(tx, a.contactId);
+  links.push(sourceRefusal !== null
+    ? L(11, 'Lead source', 'pause', AI_CARE_SOURCE_CODE[sourceRefusal], AI_CARE_SOURCE_PAUSE[sourceRefusal], sourceRefusal === 'SOURCE_UNCLASSIFIED' ? SOURCE_UNCLASSIFIED_AI_CARE_SENTENCE : SOURCE_NO_AI_CARE_SENTENCE)
+    : L(11, 'Lead source', 'ok', null, null, 'No lead source that sent them is marked "No automated contact for leads from this source", and no imported source of theirs waits for review.'));
   let worst: LinkResult | null = null;
   for (const l of links) if (l.effect !== 'ok' && (worst === null || RANK[l.effect] > RANK[worst.effect])) worst = l;
   return { links, effect: worst?.effect ?? 'ok', worst };
@@ -293,9 +297,10 @@ export async function evaluateChain(tx: Tx, a: AssignmentRow, env: ChainEnv): Pr
  * "No automated contact for leads from this source" (b18 review B18S-5; first named "No AI care"), by its original source or (b18 review B18S-1, 0096) by any inquiry of it
  * the intake attached later (app.person_no_ai_care_source, a definer returning one boolean).
  */
-export async function personNoAiCareSource(tx: Tx, contactId: string): Promise<boolean> {
-  const r = await sql<{ no: boolean }>`SELECT app.person_no_ai_care_source(app.tenant_id(), ${contactId}::uuid) AS no`.execute(tx);
-  return r.rows[0]?.no === true;
+export async function personNoAiCareSource(tx: Tx, contactId: string): Promise<SourceRefusal | null> {
+  // R-LSRC-9 (0101): the one question every automated path asks (leads/automatedContact.ts), answering WHICH reason:
+  // a marked source (SOURCE_NO_AUTOMATED_CONTACT) or an imported source not reviewed yet (SOURCE_UNCLASSIFIED)
+  return noAutomatedContact(tx, contactId);
 }
 
 export async function exclusivity(tx: Tx, contactId: string): Promise<{ shared: boolean; activeClient: boolean }> {

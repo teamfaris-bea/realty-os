@@ -80,10 +80,14 @@ export const REASON_PHRASES: Readonly<Record<SkipReason, string>> = Object.freez
   SEND_BLOCKED: 'blocked at send',
 });
 
-/** Reasons the API adds after core's preflight (the AI care skip, Q-ISA-23; b18 review B18S-5's lead-source setting). */
+/**
+ * Reasons the API adds after core's preflight (the AI care skip, Q-ISA-23; b18 review B18S-5's lead-source setting;
+ * R-LSRC-9: an imported person whose source the Owner has not reviewed yet, never worded as the setting).
+ */
 const API_REASON_PHRASES: Readonly<Record<string, string>> = Object.freeze({
   UNDER_AI_CARE: 'under AI care',
   SOURCE_NO_AUTOMATED_CONTACT: 'no automated contact (their lead source)',
+  SOURCE_UNCLASSIFIED: 'imported source not reviewed yet',
 });
 
 /** A reason code the creator may not have a phrase for (an engine rejection code) reads as itself. */

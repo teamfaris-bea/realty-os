@@ -85,6 +85,8 @@ export const PAUSE_WORDS: Record<IsaPauseReason, string> = {
   taking_over: 'Someone on the team is taking over.',
   ending: 'Someone on the team is ending it.',
   source_no_ai_care: 'Their lead source is marked "No automated contact for leads from this source" (an Owner setting).',
+  // R-LSRC-9 (owner decision 2026-11-14): an imported person whose source is not reviewed yet
+  source_unclassified: 'They came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources).',
 };
 
 /** The always-human topics (R-ISA-23): their sentences never say the AI may come back to them. */
@@ -341,6 +343,9 @@ export const CHAIN_CODE_WORDS: Record<string, string> = {
   ISA_STOPPED: 'They opted out, were suppressed or asked not to be contacted.',
   ISA_SHARED_ADDRESS: 'Another person shares one of their phone numbers or emails.',
   ISA_ACTIVE_CLIENT: 'They are a client on an open deal or an active listing.',
+  // link 11, "Lead source": the two reasons nothing automatic goes to a person, each in its own words (R-LSRC-8, R-LSRC-9)
+  AI_ISA_SOURCE_NO_AI_CARE: 'Their lead source is marked "No automated contact for leads from this source" (an Owner setting).',
+  AI_ISA_SOURCE_UNCLASSIFIED: 'They came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources).',
 };
 
 const LINK_OK: Record<number, (v: Viewer) => string> = {
@@ -352,8 +357,9 @@ const LINK_OK: Record<number, (v: Viewer) => string> = {
   6: (v) => (v.isOwner ? 'You own this lead, and the phone and email bound at the start are live.' : `${v.ownerFirst} owns this lead, and the phone and email bound at the start are live.`),
   7: () => 'No opt-out since care started.',
   8: () => 'No shared phone or email and no open deal.',
+  11: () => 'No lead source that sent them is marked "No automated contact for leads from this source", and no imported source of theirs waits for review.',
 };
-export const LINK_NAME: Record<number, string> = { 1: 'Live sending', 2: 'Counsel review', 3: 'Team switch', 4: 'Team policy', 5: 'Opt-in', 6: 'Lead', 7: 'Opt-outs', 8: 'Exclusivity' };
+export const LINK_NAME: Record<number, string> = { 1: 'Live sending', 2: 'Counsel review', 3: 'Team switch', 4: 'Team policy', 5: 'Opt-in', 6: 'Lead', 7: 'Opt-outs', 8: 'Exclusivity', 11: 'Lead source' };
 export const EFFECT_WORDS: Record<string, string> = { ok: 'Holds', hold: 'Holding sending', pause: 'Pauses care', end: 'Ends care' };
 
 export function chainLinkWords(l: { link: number; effect: string; code: string | null }, v: Viewer): string {
@@ -547,6 +553,8 @@ export const ISA_ERROR_MESSAGES: Record<string, string> = {
   AI_ISA_FIRST_TOUCH_PENDING: "Text or call them yourself first. AI messages don't count as your first contact.",
   AI_ISA_PERSON_DECLINED: 'This person declined or stopped AI care.',
   AI_ISA_SOURCE_NO_AI_CARE: "No automated contact for leads from this source: the Owner turned this on for this person's lead source, so the AI assistant does not care for them (nothing automatic goes to them; call, text or email them one to one).",
+  // R-LSRC-9 (owner decision 2026-11-14): the API's own sentence for an imported person whose source is not reviewed yet
+  AI_ISA_SOURCE_UNCLASSIFIED: 'This person came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources), so the AI assistant does not care for them (nothing automatic goes to them; call, text or email them one to one).',
   AI_ISA_HANDBACK_STALE: 'They wrote again or a reply was already queued. Open the thread instead.',
   AI_ISA_UNDO_EXPIRED: 'Too late to undo.',
   AI_ISA_NOT_LIVE: 'AI care is not on for this person any more.',

@@ -245,11 +245,13 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
   }
   // b18 review B18S-5 (owner boundary 2026-11-14): no trigger message for a person a source marked "No automated contact
   // for leads from this source" sent; skipped visibly (each firing's own job meets this too; dispatch and 0098 back it)
-  if (await noAutomatedContact(tx, lead.contactId)) {
+  // R-LSRC-9 (0101): nor for an imported person whose source the Owner has not reviewed yet; the skip names that reason
+  const refused = await noAutomatedContact(tx, lead.contactId);
+  if (refused !== null) {
     // round 3 item 3: a draft an earlier firing (or a plan step) wrote for them is withdrawn too, its card closed
-    await withdrawAutomatedDrafts(tx, { contactId: lead.contactId }, now);
-    await R.skipRun(tx, lead.id, 'SOURCE_NO_AUTOMATED_CONTACT');
-    return { kind: 'skipped', runIds: [lead.id], reasons: ['SOURCE_NO_AUTOMATED_CONTACT'] };
+    await withdrawAutomatedDrafts(tx, { contactId: lead.contactId }, now, refused);
+    await R.skipRun(tx, lead.id, refused);
+    return { kind: 'skipped', runIds: [lead.id], reasons: [refused] };
   }
   const leadFiring = firingOfRow(lead);
   if (leadFiring === null) {

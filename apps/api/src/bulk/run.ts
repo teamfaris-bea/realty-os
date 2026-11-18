@@ -15,7 +15,7 @@
 //   - a bulk message must match a PENDING item at exactly its frozen address (messages_bulk_guard).
 // Every send goes through compose → dispatchOutbound (D1: canContact and both DB guards, no bulk exemption).
 import { liveAssignmentOf } from '../isa/repo.js';
-import { SOURCE_NO_AUTOMATED_CONTACT, noAutomatedContact } from '../leads/automatedContact.js';
+import { noAutomatedContact } from '../leads/automatedContact.js';
 import { type ContactId, type Instant, type UserActor, MINUTE_MS, plusMs } from '@realty/core/foundation';
 import { type ItemOutcome, bulkPreflight, bulkSendKey, derivedCommandId, itemOutcomeForDispatch, itemOutcomeForMessageStatus, skipForGateReasons, tally } from '@realty/core/parity/bulk';
 import { type Tx, applyOwnershipCommandInTx, lockContact, setOwnershipCommand, withTenantTx } from '@realty/db';
@@ -176,8 +176,10 @@ async function sendItem(deps: CommsDeps, tenantId: string, creator: UserActor, a
     }
     // b18 review B18S-5: a person a source marked "No automated contact for leads from this source" sent (marked since
     // the draft, or sent again by it) is left out and counted; dispatch and 0098 refuse any bulk message to them anyway
-    if (await noAutomatedContact(tx, it.contactId)) {
-      await B.finishItem(tx, a.id, it.contactId, 'skipped', SOURCE_NO_AUTOMATED_CONTACT);
+    // R-LSRC-9 (0101): an imported person whose source is not reviewed is left out the same way, under its own reason
+    const refused = await noAutomatedContact(tx, it.contactId);
+    if (refused !== null) {
+      await B.finishItem(tx, a.id, it.contactId, 'skipped', refused);
       return { kind: 'skip' };
     }
     const r = bulkPreflight(a.kind, person, s.facts, { actor: creator, now });
@@ -358,7 +360,9 @@ async function apply(tx: Tx, deps: CommsDeps, creator: UserActor, a: B.ActionRow
       const pb = await P.playbookById(tx, String(a.params['playbookId']));
       if (!pb || pb.status !== 'active') return 'PLAYBOOK_NOT_APPROVED';
       if (pb.scope === 'agent' && pb.ownerUserId !== p.ownerUserId) return 'NOT_PERMITTED';
-      if (await noAutomatedContact(tx, p.id)) return SOURCE_NO_AUTOMATED_CONTACT; // b18 review B18S-5 (0098 refuses it too)
+      // b18 review B18S-5 and R-LSRC-9: the reason that applies (the enrolment guard refuses it too)
+      const refused = await noAutomatedContact(tx, p.id);
+      if (refused !== null) return refused;
       if (await P.liveEnrollmentOf(tx, p.id)) return 'ALREADY_ENROLLED';
       const id = deps.ids.next<'EnrollmentId'>();
       await P.insertEnrollment(tx, { id, playbookId: pb.id, versionId: v.id, contactId: p.id, enrolledBy: 'bulk', userId: creator.userId, dueAt: now, anchor: null });

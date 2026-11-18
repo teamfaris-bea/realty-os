@@ -24,7 +24,7 @@ import { pauseAiSearchesAtHandoffInTx } from './buyer/handoffSearches.js';
 import { insertPendingFactsInTx, type PlannedFacts, planFactsMessageInTx } from './buyer/facts.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
 import { onEscalationInTx, renderSellerFactsInTx, writeSellerFactsInTx } from './seller/index.js';
-import { SOURCE_NO_AI_CARE_NOTE } from './sentences.js';
+import { sourcePauseNote } from './sentences.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
 
@@ -297,7 +297,7 @@ export async function pauseCardInTx(env: Pick<ApplyEnv, 'tx' | 'deps' | 'ctx' | 
   for (const userId of await owners(tx, ctx.a)) {
     // b18 item f: a pause for the lead source's "No AI care" setting says why, and that it cannot be resumed while on
     await notifyUser(tx, deps.ids, { userId, kind: 'ai_isa_paused', priority: ctx.a.machine.inboundUnanswered ? 'high' : 'normal',
-      title: `AI care paused: ${label}`.slice(0, 120), body: reason === 'source_no_ai_care' ? SOURCE_NO_AI_CARE_NOTE : null, subjectType: 'contact', subjectId: ctx.a.contactId, dedupeKey: `ai_isa_paused:${ctx.a.id}:${ctx.a.epoch}:${reason}` }, now);
+      title: `AI care paused: ${label}`.slice(0, 120), body: sourcePauseNote(reason), subjectType: 'contact', subjectId: ctx.a.contactId, dedupeKey: `ai_isa_paused:${ctx.a.id}:${ctx.a.epoch}:${reason}` }, now);
   }
 }
 

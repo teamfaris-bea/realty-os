@@ -60,7 +60,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
-import { AUTOMATED_DRAFT_TRIGGER_KINDS, isSourceGuardViolation, noAutomatedContact } from '../leads/automatedContact.js';
+import { AUTOMATED_DRAFT_TRIGGER_KINDS, type SourceRefusal, noAutomatedContact, sourceGuardViolation } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
@@ -250,8 +250,12 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   // pauses the care), so the code is not added twice. An ENDED assignment's pending confirmation or holding line is
   // judged on chain links 1 to 3 only (isa/send.ts), so link 11 never runs for it and TX1 asks here (round 3 item 5);
   // before, only the database guard refused it.
-  const sourceChecked = isaMsg ? isaTx1?.ended === true : isAutomatedContact(m, gateInitiator) || automatedDraft;
-  if (sourceChecked && (await noAutomatedContact(tx, m.contactId))) extra.push('SOURCE_NO_AUTOMATED_CONTACT');
+  // R-LSRC-9 (owner decision 2026-11-14, 0101): the same check refuses an imported person whose source the Owner has
+  // not reviewed yet, with its own code (SOURCE_UNCLASSIFIED) and sentence; a marked source wins when both apply.
+  // A8: the restriction cannot be left out of an automated send: `sourceDeny` takes the reader of the person's refusal
+  // as a required argument and asks it for every message of a judged class (a person's one-to-one send never reads it).
+  const sourceDenied = await sourceDeny({ isaMessage: isaMsg, isaEnded: isaTx1?.ended === true, automated: isAutomatedContact(m, gateInitiator), automatedDraft }, () => noAutomatedContact(tx, m.contactId));
+  if (sourceDenied !== null) extra.push(sourceDenied);
 
   const intent: OutboundIntent = {
     contactId: m.contactId,
@@ -358,9 +362,23 @@ export function isAutomatedContact(m: { initiator: string; actionCategory: strin
   return gateInitiator !== 'human';
 }
 
-/** 0098's app.messages_source_guard refusing a dispatch (a check_violation 'SOURCE_NO_AUTOMATED_CONTACT: ...'). */
+/**
+ * A8 (R-LSRC-9): whether dispatch TX1 denies this message for the person's source, and with which code. `refusalOf` is
+ * REQUIRED (it answers what `noAutomatedContact` says of the recipient): no caller can judge an automated message without
+ * handing it over, and it is asked for every message of a judged class. A message is judged when it is automated contact
+ * (`isAutomatedContact`), when it is an approved draft a plan step or a trigger wrote, or when it is an ENDED AI care
+ * assignment's pending confirmation or holding line (a LIVE assignment's message is refused by its own chain, link 11,
+ * which pauses the care; the code is not added twice). A person's one-to-one message, the keyword replies and a client's
+ * own sign-in link are not judged, so they never read the source and never wait on it.
+ */
+export async function sourceDeny(m: { isaMessage: boolean; isaEnded: boolean; automated: boolean; automatedDraft: boolean }, refusalOf: () => Promise<SourceRefusal | null>): Promise<SourceRefusal | null> {
+  const judged = m.isaMessage ? m.isaEnded : m.automated || m.automatedDraft;
+  return judged ? refusalOf() : null;
+}
+
+/** The message source guard refusing a dispatch (a check_violation 'SOURCE_NO_AUTOMATED_CONTACT: ...' or 'SOURCE_UNCLASSIFIED: ...'; 0098, 0100, 0101). */
 function sourceGuardRefusal(err: unknown): DispatchDenyReason | null {
-  return isSourceGuardViolation(err) ? 'SOURCE_NO_AUTOMATED_CONTACT' : null;
+  return sourceGuardViolation(err);
 }
 
 /** The kind of touch a gate-allowed human send on this channel is (R-OWN-14; calls are dial.ts's 'call'). */

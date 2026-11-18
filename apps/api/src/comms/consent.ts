@@ -18,7 +18,7 @@ import { type Tx, hmacBytes, lockAddress, lockAddresses, lockContact, recordCons
 import { sql } from 'kysely';
 import { audit, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
-import { NO_AUTOMATED_CONTACT_STOP_REASON, SOURCE_NO_AUTOMATED_CONTACT, isSourceGuardViolation, noAutomatedContact, notResumedSentence } from '../leads/automatedContact.js';
+import { type SourceRefusal, noAutomatedContact, notResumedSentence, sourceGuardViolation, sourceRefusalSentence, sourceStopReason } from '../leads/automatedContact.js';
 import { systemActor } from '../worker/systemActor.js';
 import { hint } from './dispatch.js';
 import { verifySignedRef } from './render.js';
@@ -233,7 +233,7 @@ export async function liftSuppression(actor: UserActor, suppressionId: string, r
  * contact for leads from this source" only the conversation pause is lifted (a person's own replies were never held by
  * it); their paused plans stay paused (0098's guard would refuse them), and the answer counts them with the reason.
  */
-export async function resumeAutomation(actor: UserActor, contactId: string, deps: CommsDeps): Promise<{ resumedEnrollments: number; notResumed: { enrollments: number; code: typeof SOURCE_NO_AUTOMATED_CONTACT; sentence: string } | null }> {
+export async function resumeAutomation(actor: UserActor, contactId: string, deps: CommsDeps): Promise<{ resumedEnrollments: number; notResumed: { enrollments: number; code: SourceRefusal; sentence: string } | null }> {
   try {
     return await asUser(deps, actor, async (tx) => {
       if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
@@ -241,7 +241,9 @@ export async function resumeAutomation(actor: UserActor, contactId: string, deps
       const conv = await g.conversationOf(tx, contactId);
       if (!conv?.pausedAt) throw new AppError('AUTOMATION_NOT_PAUSED');
       if (conv.pauseReason === 'opt_out' || conv.pauseReason === 'wrong_number') throw new AppError('AUTOMATION_NOT_PAUSED', { reason: conv.pauseReason });
-      const marked = await noAutomatedContact(tx, contactId);
+      // R-LSRC-9 (0101): the same for an imported person whose source is not reviewed yet; the answer names that reason
+      const refused = await noAutomatedContact(tx, contactId);
+      const marked = refused !== null;
       const r = await auto.resumeAutomation(tx, contactId, actor.userId, { plans: !marked });
       await audit(tx, actor, {
         action: 'automation.resumed',
@@ -249,11 +251,13 @@ export async function resumeAutomation(actor: UserActor, contactId: string, deps
         changes: redactSnapshot({ enrollments: r.resumed, ...(marked ? { notResumed: r.notResumed } : {}) }, { entity: 'conversation' }),
         reason: marked ? 'HUMAN_RESUME_CONVERSATION_ONLY' : 'HUMAN_RESUME',
       });
-      return { resumedEnrollments: r.resumed, notResumed: marked && r.notResumed > 0 ? { enrollments: r.notResumed, code: SOURCE_NO_AUTOMATED_CONTACT, sentence: notResumedSentence(r.notResumed) } : null };
+      return { resumedEnrollments: r.resumed, notResumed: refused !== null && r.notResumed > 0 ? { enrollments: r.notResumed, code: refused, sentence: notResumedSentence(r.notResumed, refused) } : null };
     });
   } catch (e) {
-    // the source was marked between the check and the update: 0098's guard refused the plan (a clear 409, never a 500)
-    if (isSourceGuardViolation(e)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON });
+    // the source was marked (or an import committed) between the check and the update: the guard refused the plan (a
+    // clear 409 with the reason that applies, never a 500)
+    const guard = sourceGuardViolation(e);
+    if (guard !== null) throw new AppError(guard, { reason: sourceStopReason(guard), sentence: sourceRefusalSentence(guard) });
     throw e;
   }
 }

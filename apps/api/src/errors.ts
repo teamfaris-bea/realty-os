@@ -125,6 +125,7 @@ export const ERROR_STATUS = {
   ENROLLMENT_NOT_LIVE: 409, // the enrollment already ended
   ENROLLMENT_NOT_RESUMABLE: 409, // opt-out, wrong number or revoked approval pauses are not resumed here (details.pauseReason)
   SOURCE_NO_AUTOMATED_CONTACT: 409, // b18 review B18S-5: the person's lead source is marked "No automated contact for leads from this source"; no plan starts or resumes for them, even by hand (OQ-B18-S5); call, text or email them one to one (details.reason source_no_automated_contact). "Resume automation" answers 200 with notResumed instead (round 3 item 2), and this 409 only when the source was marked mid-request. Round 3 item 3: approving a draft a plan step or a module 26 trigger wrote for such a person answers this 409 too, with details.sentence (the draft is withdrawn and nothing is sent; OQ-B18-S6)
+  SOURCE_UNCLASSIFIED: 409, // R-LSRC-9 (owner decision 2026-11-14, 0101): the person came in from an import and their imported source has not been reviewed yet (an unmapped or ambiguous label, or no label and an unclassified no-label group), so nothing automatic goes to them until an Owner reviews it under Lead sources. Answered exactly where SOURCE_NO_AUTOMATED_CONTACT is (a plan by hand, a resume, approving a draft a plan or an alert wrote), with details.reason source_unclassified and details.sentence; a marked source wins when both apply. One-to-one calls, texts and emails still go
   SAVED_SEARCH_INVALID: 422, // the reviewed criteria are empty or invalid
   SAVED_SEARCH_STATE: 409, // wrong state for this saved-search command (details.status)
   SENDER_UNAVAILABLE: 409, // no sending number / email identity for this channel
@@ -398,6 +399,7 @@ export const ERROR_STATUS = {
   AI_ISA_FIRST_TOUCH_PENDING: 409, // the human first touch is not recorded yet
   AI_ISA_PERSON_DECLINED: 409, // a person block (opt-out, complaint, declined AI)
   AI_ISA_SOURCE_NO_AI_CARE: 409, // b18 item f / B18S-5: a lead source that sent the person is marked "No automated contact for leads from this source"
+  AI_ISA_SOURCE_UNCLASSIFIED: 409, // R-LSRC-9 (0101): the person came in from an import and their imported source has not been reviewed yet, so AI care does not start, continue or resume for them (an Owner reviews it under Lead sources)
   AI_ISA_HANDBACK_STALE: 409, // the handback is no longer current or its reply was queued
   AI_ISA_UNDO_EXPIRED: 409, // the 10-second undo window has passed
   AI_ISA_BOOKING_IN_PROGRESS: 409, // ISA-2b: the AI assistant is booking an agreed time; resume after it finishes

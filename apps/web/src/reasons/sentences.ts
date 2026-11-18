@@ -144,6 +144,8 @@ const BLOCKED: Record<string, string> = {
   TELEPHONY_LIVE_OFF: 'live texting and calling are off on this deployment',
   // b18 review B18S-5 (owner boundary 2026-11-14): the Owner's lead-source setting; an automated or bulk message never goes
   SOURCE_NO_AUTOMATED_CONTACT: 'their lead source is marked "No automated contact for leads from this source" (an Owner setting); call, text or email them one to one',
+  // R-LSRC-9 (owner decision 2026-11-14): an imported person whose source is not reviewed yet; never worded as the setting
+  SOURCE_UNCLASSIFIED: 'they came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources); call, text or email them one to one',
   // a dispatch guard's own refusal with no gate code for the same fact
   RECIPIENT_NOT_A_CONTACT_POINT: "the number or address isn't on their record, so their opt-outs couldn't be checked",
 };

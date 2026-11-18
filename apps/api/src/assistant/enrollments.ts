@@ -28,7 +28,7 @@ import { AppError } from '../errors.js';
 import { reachableForVersion } from '../stageAutomation/reach.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { NO_AUTOMATED_CONTACT_STOP_REASON, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
+import { type SourceRefusal, noAutomatedContact, sourceRefusalSentence, sourceStopReason, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
 import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
@@ -90,6 +90,11 @@ export async function migrateOne(tx: Tx, e: P.EnrollmentRow, to: P.VersionRow, f
   if (e.state === 'active') await enqueueStep(tx, e.id, now);
 }
 
+/** 409 SOURCE_NO_AUTOMATED_CONTACT or SOURCE_UNCLASSIFIED for a plan by hand or a resume: the reason and its own sentence. */
+function sourceRefusalError(why: SourceRefusal, playbookId: string): AppError {
+  return new AppError(why, { reason: sourceStopReason(why), sentence: sourceRefusalSentence(why), playbookId });
+}
+
 /**
  * The step runner (job playbook.step). Caller is the system actor; this takes the contact lock.
  * Spec correction (reported): takes the transaction, the clock and the deps explicitly; the BUILD_PLAN
@@ -101,18 +106,21 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
   await lockContact(tx, peek.contactId as ContactId);
   let e = (await P.enrollmentById(tx, enrollmentId, { lock: true }))!;
   if (e.state !== 'active') return { kind: 'noop', reason: 'NOT_ACTIVE' };
-  if (await noAutomatedContact(tx, e.contactId)) {
+  const refused = await noAutomatedContact(tx, e.contactId);
+  if (refused !== null) {
     // b18 review B18S-5: the person turned out to come from a source marked "No automated contact for leads from this
     // source" (the Owner turned it on, mapped an imported label to it, or the source sent them again): the plan stops,
     // and its unsent steps are canceled. Round 3 item 4: checked BEFORE the due check, so the step the sources routes
     // and the intake ask for stops the plan at once, not when its next step comes due (which may be days away).
+    // R-LSRC-9 (0101): the same for an imported person whose source is not reviewed (an import committed, a mapping
+    // was removed); the stop reason, the canceled steps' reason and the withdrawn drafts carry that reason.
     const pending = (await P.stepRunsOf(tx, e.id)).filter((r) => r.status === 'scheduled');
-    const canceled = await P.cancelStepMessages(tx, pending.map((r) => r.id), 'SOURCE_NO_AUTOMATED_CONTACT');
+    const canceled = await P.cancelStepMessages(tx, pending.map((r) => r.id), refused);
     for (const r of pending) if (r.messageId === null || canceled.includes(r.messageId)) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
     // round 3 item 3: the drafts an earlier step (or a trigger) wrote for them are withdrawn with the plan, cards closed
-    await withdrawAutomatedDrafts(tx, { contactId: e.contactId }, now);
-    await P.endEnrollment(tx, e.id, 'stopped', NO_AUTOMATED_CONTACT_STOP_REASON, now);
-    return { kind: 'stopped', reason: NO_AUTOMATED_CONTACT_STOP_REASON };
+    await withdrawAutomatedDrafts(tx, { contactId: e.contactId }, now, refused);
+    await P.endEnrollment(tx, e.id, 'stopped', sourceStopReason(refused), now);
+    return { kind: 'stopped', reason: sourceStopReason(refused) };
   }
   if (e.nextStepDueAt !== null && e.nextStepDueAt > now) return { kind: 'waiting', until: e.nextStepDueAt, reason: 'NOT_DUE' };
   const playbook = await P.playbookById(tx, e.playbookId);
@@ -272,7 +280,9 @@ export async function enrollContact(actor: UserActor, contactId: string, input: 
     // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact, so a person the source marked "No
     // automated contact for leads from this source" sent is not enrolled even by hand (OQ-B18-S5's conservative
     // default); refused before anything is written (0098's playbook_enrollments_source_guard refuses it too)
-    if (await noAutomatedContact(tx, contactId)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
+    // R-LSRC-9 (0101): an unclassified imported person is refused the same way, with its own code and sentence
+    const refused = await noAutomatedContact(tx, contactId);
+    if (refused !== null) throw sourceRefusalError(refused, pb.id);
     const v = await P.approvedVersionOf(tx, pb.id);
     // an agent playbook speaks for its agent: only for contacts that agent owns (dispatch re-checks)
     if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
@@ -358,7 +368,8 @@ export async function resumeEnrollment(actor: UserActor, enrollmentId: string, d
     if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
     if (!(await P.approvedVersionOf(tx, pb.id))) throw new AppError('PLAYBOOK_NOT_APPROVED');
     // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
-    if (await noAutomatedContact(tx, e.contactId)) throw new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, playbookId: pb.id });
+    const refused = await noAutomatedContact(tx, e.contactId);
+    if (refused !== null) throw sourceRefusalError(refused, pb.id);
     if (reason === 'client_reply') await resumeAutomation(tx, e.contactId, actor.userId);
     await P.resumeEnrollment(tx, e.id, actor.userId, now);
     await enqueueStep(tx, e.id, now);
@@ -389,8 +400,9 @@ export async function enrollOnDealClosedInTx(tx: Tx, deps: AssistantDeps, dealId
     const c = await contactCore(tx, contactId);
     // F2: a merged-away record keeps its deals (a merge moves none) but is never enrolled (decide.ts person_removed)
     if (!c || c.deleted || c.merged) continue;
-    // b18 review B18S-5: no post-closing plan for a person a source marked "No automated contact" sent
-    if (await noAutomatedContact(tx, contactId)) continue;
+    // b18 review B18S-5: no post-closing plan for a person a source marked "No automated contact" sent, nor (R-LSRC-9)
+    // for an imported person whose source is not reviewed yet
+    if ((await noAutomatedContact(tx, contactId)) !== null) continue;
     const pb = await P.playbookForContact(tx, 'post_closing', c.ownerUserId);
     if (!pb || (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId)) continue;
     const v = await P.approvedVersionOf(tx, pb.id);

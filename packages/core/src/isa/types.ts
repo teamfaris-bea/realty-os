@@ -70,6 +70,8 @@ export const ISA_PAUSE_REASONS = [
   'ending',
   // b18 item f / B18S-5 (owner 2026-11-14): a lead source that sent the person is marked "No automated contact for leads from this source"
   'source_no_ai_care',
+  // R-LSRC-9 (owner decision 2026-11-14, migration 0101): the person came in from an import whose source the Owner has not reviewed yet
+  'source_unclassified',
 ] as const;
 export type IsaPauseReason = (typeof ISA_PAUSE_REASONS)[number];
 

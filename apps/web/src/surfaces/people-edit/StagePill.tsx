@@ -25,6 +25,8 @@ const SKIP_WORDS: Record<string, string> = {
   ai_isa_active: "they're in the assistant's ISA care, and no plan starts while it lasts",
   // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact
   source_no_automated_contact: 'their lead source is marked "No automated contact for leads from this source"',
+  // R-LSRC-9 (owner decision 2026-11-14): an imported person whose source is not reviewed yet
+  source_unclassified: 'they came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources)',
 };
 
 /** The sentence after "Stage: Active." on the toast; '' when no plan is set for that stage. */

@@ -147,11 +147,12 @@ export const InviteResponse = z.object({
   alreadyInvited: z.number(),
   merged: z.number(),
   noAutomatedContact: z.number(),
+  sourceUnclassified: z.number(),
   text: z.string(),
   recipients: z.array(
     z.object({
       contactId: z.uuid(),
-      outcome: z.enum(['sent', 'opted_out', 'blocked', 'no_email', 'already_invited', 'merged', 'no_automated_contact']),
+      outcome: z.enum(['sent', 'opted_out', 'blocked', 'no_email', 'already_invited', 'merged', 'no_automated_contact', 'source_unclassified']),
       messageId: z.uuid().nullable(),
       // b7 sends/F5: a merged-away recipient names the record the person lives on now, only to a caller who sees it
       mergedInto: z.object({ contactId: z.uuid(), name: z.string() }).nullable().optional(),

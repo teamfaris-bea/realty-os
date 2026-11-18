@@ -10,7 +10,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { inviteViaApi } from '../admin/testing.js';
-import { postIntake } from '../leads/testing.js';
+import { importedPerson, postIntake } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type IsaWorld, assignmentOf, call, freshReauth, isaLead, isaWorld, runIsa, startCare } from './testing.js';
 
@@ -285,5 +285,66 @@ describe('B18S-1: "No AI care for leads from this source" covers an inquiry atta
       await setNoAiCare(w.owner, false, hillside);
       await setNoAiCare(w.owner, false, router);
     }
+  });
+});
+
+// R-LSRC-9 (owner decision 2026-11-14, migration 0101): AI care asks the same definer, so an imported person whose
+// source nobody has reviewed is refused exactly where a marked source's person is, under its own code
+// (AI_ISA_SOURCE_UNCLASSIFIED), pause reason (source_unclassified) and sentence. Never "the Owner turned this on".
+describe('R-LSRC-9 A2 A3: no AI care for an imported person whose source is not reviewed yet', () => {
+  const UNREVIEWED = /imported source has not been reviewed yet/;
+  const SETTING = /No automated contact for leads from this source|turned this on|Owner setting/;
+
+  it('R-LSRC-9 E729: the start is refused AI_ISA_SOURCE_UNCLASSIFIED and the panel says the imported source has not been reviewed yet; once the Owner maps the label to an unmarked source the start goes through', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    const { label } = await importedPerson(h, w.tenantId, w.owner.userId!, l.id);
+    const r = await startCare(agent, l.id);
+    expect([r.status, r.code]).toEqual([409, 'AI_ISA_SOURCE_UNCLASSIFIED']);
+    expect(await assignmentOf(h, l.id)).toBeNull();
+    const p = await panel(agent, l.id);
+    expect(p.body.canStart).toBe(false);
+    expect(p.body.startRefusal!.code).toBe('AI_ISA_SOURCE_UNCLASSIFIED');
+    expect(p.body.startRefusal!.sentence).toMatch(UNREVIEWED);
+    expect(p.body.startRefusal!.sentence).toMatch(/an Owner reviews it under Lead sources/);
+    expect(p.body.startRefusal!.sentence).not.toMatch(SETTING);
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label, leadSourceId: other })).status).toBe(200);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+  });
+
+  it('R-LSRC-9 E730: care running for a person who then turns out to be an unreviewed import pauses source_unclassified at its next turn with an honest note, cannot be resumed (409 AI_ISA_SOURCE_UNCLASSIFIED), and the database refuses the resume with the same code', async () => {
+    const agent = w.agents[0]!;
+    const l = await isaLead(h, agent);
+    expect((await startCare(agent, l.id)).status).toBe(200);
+    await runIsa(h, w.tenantId);
+    const a0 = (await assignmentOf(h, l.id))!;
+    expect(a0.paused_at).toBeNull();
+    await importedPerson(h, w.tenantId, w.owner.userId!, l.id);
+    await h.su.query(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at) VALUES ($1, 'realtime', 'ai_isa.turn', $2::jsonb, now())`,
+      [w.tenantId, JSON.stringify({ assignmentId: a0.id, trigger: 'sweep', epoch: a0.epoch })]);
+    await runIsa(h, w.tenantId);
+    const a = (await assignmentOf(h, l.id))!;
+    expect(a).toMatchObject({ ended_at: null, pause_reason: 'source_unclassified' });
+    expect(a.paused_at).not.toBeNull();
+    const note = (await h.su.query<{ title: string; body: string | null }>("SELECT title, body FROM notifications WHERE tenant_id = $1 AND user_id = $2 AND kind = 'ai_isa_paused' AND subject_id = $3 ORDER BY created_at DESC LIMIT 1", [w.tenantId, agent.userId, l.id])).rows[0]!;
+    expect(note.title).toMatch(/^AI care paused/);
+    expect(note.body).toMatch(UNREVIEWED);
+    expect(note.body).toMatch(/until an Owner reviews it under Lead sources/);
+    expect(note.body).not.toMatch(SETTING);
+    expect(note.body!.length).toBeLessThanOrEqual(240);
+    const p = await panel(agent, l.id);
+    expect(p.body.assignment!.pauseReason).toBe('source_unclassified');
+    expect(p.body.canResume).toBe(false);
+    const link = p.body.chain.find((x) => x.link === 11)!;
+    expect(link).toMatchObject({ effect: 'pause', code: 'AI_ISA_SOURCE_UNCLASSIFIED' });
+    expect(link.sentence).toMatch(UNREVIEWED);
+    expect(link.sentence).not.toMatch(SETTING);
+    const resume = await call(agent, 'POST', `/contacts/${l.id}/ai-isa/resume`, {});
+    expect([resume.status, resume.code]).toEqual([409, 'AI_ISA_SOURCE_UNCLASSIFIED']);
+    await expect(withTenantTx(actorOf(agent, 'agent'), (tx) => sql`UPDATE ai_isa_assignments SET paused_at = NULL, paused_by_kind = NULL, paused_by_user_id = NULL, pause_reason = NULL, epoch = epoch + 1
+      WHERE tenant_id = app.tenant_id() AND id = ${a.id}::uuid`.execute(tx), { db: h.database })).rejects.toThrow(/AI_ISA_SOURCE_UNCLASSIFIED/);
+    // a pause and an end still pass (the guard looks only at a start and a resume)
+    expect((await call(agent, 'POST', `/contacts/${l.id}/ai-isa/end`, {})).status).toBeLessThan(500);
   });
 });

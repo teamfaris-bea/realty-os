@@ -11,7 +11,9 @@
 //   - the person has no live (active or paused) enrollment: never a second one, never a silent replace;
 //   - the person can be reached: at least one channel the playbook uses is not opted out (core canContact,
 //     with the person's removed phones included, R-PAR-12);
-//   - no lead source marked "No automated contact for leads from this source" sent the person (b18 review B18S-5).
+//   - no lead source marked "No automated contact for leads from this source" sent the person (b18 review B18S-5), and
+//     the person is not an imported person whose source the Owner has not reviewed yet (R-LSRC-9; `sourceRefusal`, a
+//     required fact: anything but an explicit null skips the plan).
 // The playbook is chosen first (E172): the contact owner's own agent playbook for that stage wins, else the
 // team's. An agent playbook never covers another agent's contacts. When the owner's own playbook exists but
 // is not approved, that is the answer (skipped: plan_not_approved): the team plan does not start silently
@@ -31,6 +33,7 @@ export const SKIP_REASONS = [
   'cannot_be_reached', // opted out on every channel the plan uses (or do-not-contact)
   'ai_isa_active', // R-ISA-2 (D12 proposed; b12 review B12X-4): the person is under live AI care, so no plan starts
   'source_no_automated_contact', // b18 review B18S-5: a lead source marked "No automated contact for leads from this source" sent them
+  'source_unclassified', // R-LSRC-9 (0101): an import brought them in and the Owner has not reviewed that source yet
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 
@@ -63,8 +66,12 @@ export interface StageEntryFacts {
   reachable: boolean;
   /** R-ISA-2: the person (any record of them) has a live AI ISA assignment */
   aiIsaActive?: boolean;
-  /** b18 review B18S-5: a source marked "No automated contact for leads from this source" sent the person (any record, any inquiry) */
-  noAutomatedContact?: boolean;
+  /**
+   * b18 review B18S-5 and R-LSRC-9 (A8): why nothing automatic goes to the person, or null when automated contact is
+   * allowed (leads/automatedContact.ts noAutomatedContact). REQUIRED: a stage entry starts a plan, which is automated
+   * contact, so no caller can decide one without stating it; anything but an explicit null skips the plan.
+   */
+  sourceRefusal: 'SOURCE_NO_AUTOMATED_CONTACT' | 'SOURCE_UNCLASSIFIED' | null;
 }
 
 export type StageDecision =
@@ -90,7 +97,9 @@ export function decideStageEntry(f: StageEntryFacts): StageDecision {
   if (!f.changerSeesDetail) return skip('not_visible');
   if (playbook.approvedVersionId === null) return skip('plan_not_approved');
   if (f.aiIsaActive === true) return skip('ai_isa_active');
-  if (f.noAutomatedContact === true) return skip('source_no_automated_contact');
+  // A8: deny when absent. Only an explicit null lets the plan start; a caller that left the field out (an untyped
+  // caller, a stale build) skips for the conservative reason.
+  if (f.sourceRefusal !== null) return skip(f.sourceRefusal === 'SOURCE_UNCLASSIFIED' ? 'source_unclassified' : 'source_no_automated_contact');
   if (f.liveEnrollment) return skip('already_in_a_plan');
   if (!f.reachable) return skip('cannot_be_reached');
   return { kind: 'start', playbook, versionId: playbook.approvedVersionId };

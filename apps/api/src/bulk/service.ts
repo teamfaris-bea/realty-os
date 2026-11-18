@@ -13,7 +13,7 @@
 //
 // Job payloads hold only the action id (R-TEN-7). Counts and audits hold codes and numbers only.
 import type { IdGenerator, UserActor } from '@realty/core/foundation';
-import { SOURCE_NO_AUTOMATED_CONTACT, noAutomatedContact } from '../leads/automatedContact.js';
+import { noAutomatedContact } from '../leads/automatedContact.js';
 import { type BulkKind, type BulkKindFacts, bulkActionPreflight, bulkPreflight, isSendKind, isStage, tally } from '@realty/core/parity/bulk';
 import { type Database, type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -261,8 +261,10 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
       const r = facts ? bulkPreflight(input.kind, person, facts, run) : ({ ok: false, reason: 'NOT_VISIBLE' } as const);
       // b18 review B18S-5 (owner boundary 2026-11-14): a bulk enroll or bulk send is automated contact, so a person a
       // source marked "No automated contact for leads from this source" sent is left out and counted (run.ts again)
-      if (r.ok && (input.kind === 'enroll' || isSendKind(input.kind)) && (await noAutomatedContact(tx, cid))) {
-        skip(SOURCE_NO_AUTOMATED_CONTACT);
+      // R-LSRC-9 (0101): an imported person whose source is not reviewed is left out and counted under its own reason
+      const refused = r.ok && (input.kind === 'enroll' || isSendKind(input.kind)) ? await noAutomatedContact(tx, cid) : null;
+      if (refused !== null) {
+        skip(refused);
         continue;
       }
       if (r.ok && input.kind === 'enroll' && playbook?.scope === 'agent' && playbook.ownerUserId !== p?.ownerUserId) {

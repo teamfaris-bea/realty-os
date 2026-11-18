@@ -26,7 +26,7 @@ import { sql } from 'kysely';
 import { resolvedPolicy } from '../comms/gateInput.js';
 import { chatFanoutHmacs, consentRows, contactPoints, optOutFanoutPhoneHmacs, suppressionRows } from '../comms/repos/gate.js';
 import { chatRoutes } from '../channels/repos/webchat.js';
-import { NO_INSTANT_REPLY_SENTENCE, SOURCE_NO_AUTOMATED_CONTACT, noAutomatedContact, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
+import { noAutomatedContact, noInstantReplySentence, withdrawAutomatedDrafts } from '../leads/automatedContact.js';
 import { enqueueStep } from './enrollments.js';
 import { contactCore } from './repos/context.js';
 import * as P from './repos/playbooks.js';
@@ -56,11 +56,13 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
   if (!c || c.deleted) return { kind: 'noop', reason: 'CONTACT_MISSING' };
   // b18 review B18S-5 (owner boundary 2026-11-14): a lead the source marked "No automated contact for leads from this
   // source" sent gets no instant reply, by text, email or chat; the lead card says why (dispatch and 0098 back this)
-  if (await noAutomatedContact(tx, contactId)) {
+  // R-LSRC-9 (0101): the same for an imported person whose source the Owner has not reviewed yet, with its own reason
+  const refused = await noAutomatedContact(tx, contactId);
+  if (refused !== null) {
     // round 3 item 3: a draft a plan or a trigger wrote for them before the source sent them (again) does not outlive it
-    await withdrawAutomatedDrafts(tx, { contactId }, now);
-    await explainOnLeadCard(tx, contactId, SOURCE_NO_AUTOMATED_CONTACT, NO_INSTANT_REPLY_SENTENCE);
-    return { kind: 'not_sent', reason: SOURCE_NO_AUTOMATED_CONTACT, explanation: NO_INSTANT_REPLY_SENTENCE };
+    await withdrawAutomatedDrafts(tx, { contactId }, now, refused);
+    await explainOnLeadCard(tx, contactId, refused, noInstantReplySentence(refused));
+    return { kind: 'not_sent', reason: refused, explanation: noInstantReplySentence(refused) };
   }
   const pb = await P.teamPlaybookOfKind(tx, 'new_lead_response');
   const version = pb ? await P.approvedVersionOf(tx, pb.id) : null;

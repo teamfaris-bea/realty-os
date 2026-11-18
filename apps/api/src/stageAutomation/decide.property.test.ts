@@ -27,6 +27,7 @@ const factsArb: fc.Arbitrary<StageEntryFacts> = fc.record({
   candidates: fc.array(playbookArb, { maxLength: 4 }),
   liveEnrollment: fc.boolean(),
   reachable: fc.boolean(),
+  sourceRefusal: fc.constantFrom<StageEntryFacts['sourceRefusal']>(null, null, 'SOURCE_NO_AUTOMATED_CONTACT', 'SOURCE_UNCLASSIFIED'),
 });
 
 describe('R-PAR-16 E172 decideStageEntry (property)', () => {
@@ -36,7 +37,7 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
         const d = decideStageEntry(f);
         const chosen = choosePlaybook(f.candidates, f.contact.ownerUserId);
         const all = f.actorKind === 'user' && !f.protectedAudience && f.contact.exists && !f.contact.deleted && !f.contact.merged && f.contact.stage === f.toStage
-          && f.changerSeesDetail && chosen !== null && chosen.approvedVersionId !== null && !f.liveEnrollment && f.reachable;
+          && f.changerSeesDetail && chosen !== null && chosen.approvedVersionId !== null && !f.liveEnrollment && f.reachable && f.sourceRefusal === null;
         expect(d.kind === 'start').toBe(all);
         if (d.kind === 'start') expect(d.versionId).toBe(chosen!.approvedVersionId);
         if (chosen === null) expect(d.kind).toBe('none');
@@ -50,7 +51,7 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
     fc.assert(
       fc.property(factsArb, (f) => {
         const d = decideStageEntry(f);
-        if (f.actorKind !== 'user' || f.protectedAudience || f.liveEnrollment || !f.reachable) expect(d.kind).not.toBe('start');
+        if (f.actorKind !== 'user' || f.protectedAudience || f.liveEnrollment || !f.reachable || f.sourceRefusal !== null) expect(d.kind).not.toBe('start');
         if (d.kind === 'start') expect(d.playbook.approvedVersionId).not.toBeNull();
       }),
       { numRuns: 2000 },
@@ -76,7 +77,7 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
 
   it('E172 mutation guards: each single condition flipped from a start skips with its own reason', () => {
     const plan: StagePlaybook = { id: '00000000-0000-4000-8000-000000000001', name: 'Buyer plan', scope: 'team', ownerUserId: null, approvedVersionId: '00000000-0000-4000-8000-000000000002' };
-    const ok: StageEntryFacts = { actorKind: 'user', protectedAudience: false, toStage: 'active', contact: { exists: true, deleted: false, merged: false, stage: 'active', ownerUserId: 'u1' }, changerSeesDetail: true, candidates: [plan], liveEnrollment: false, reachable: true };
+    const ok: StageEntryFacts = { actorKind: 'user', protectedAudience: false, toStage: 'active', contact: { exists: true, deleted: false, merged: false, stage: 'active', ownerUserId: 'u1' }, changerSeesDetail: true, candidates: [plan], liveEnrollment: false, reachable: true, sourceRefusal: null };
     expect(decideStageEntry(ok)).toEqual({ kind: 'start', playbook: plan, versionId: plan.approvedVersionId });
     const cases: [Partial<StageEntryFacts>, string][] = [
       [{ actorKind: 'system' }, 'not_a_person_change'],
@@ -89,10 +90,34 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
       [{ candidates: [{ ...plan, approvedVersionId: null }] }, 'plan_not_approved'],
       [{ liveEnrollment: true }, 'already_in_a_plan'],
       [{ reachable: false }, 'cannot_be_reached'],
+      // b18 review B18S-5 and R-LSRC-9: each source refusal skips with its own reason, never the other's
+      [{ sourceRefusal: 'SOURCE_NO_AUTOMATED_CONTACT' }, 'source_no_automated_contact'],
+      [{ sourceRefusal: 'SOURCE_UNCLASSIFIED' }, 'source_unclassified'],
     ];
     for (const [patch, reason] of cases) expect(decideStageEntry({ ...ok, ...patch }), reason).toMatchObject({ kind: 'skip', reason });
     // an agent plan of another agent is no candidate at all
     expect(decideStageEntry({ ...ok, candidates: [{ ...plan, scope: 'agent', ownerUserId: 'u2' }] })).toEqual({ kind: 'none' });
+  });
+
+  it('R-LSRC-9 A8: the source restriction cannot be left out: the field is required by the type, and a caller that omits it anyway (untyped, or a stale build) starts nothing', () => {
+    const plan: StagePlaybook = { id: '00000000-0000-4000-8000-000000000001', name: 'Buyer plan', scope: 'team', ownerUserId: null, approvedVersionId: '00000000-0000-4000-8000-000000000002' };
+    const ok: StageEntryFacts = { actorKind: 'user', protectedAudience: false, toStage: 'active', contact: { exists: true, deleted: false, merged: false, stage: 'active', ownerUserId: 'u1' }, changerSeesDetail: true, candidates: [plan], liveEnrollment: false, reachable: true, sourceRefusal: null };
+    const { sourceRefusal: _left, ...without } = ok;
+    void _left;
+    // @ts-expect-error A8: `sourceRefusal` is a required fact of a stage-entry decision
+    const omitted: StageEntryFacts = without;
+    expect(decideStageEntry(omitted)).toMatchObject({ kind: 'skip', reason: 'source_no_automated_contact' });
+    expect(decideStageEntry({ ...ok, sourceRefusal: undefined as unknown as null })).toMatchObject({ kind: 'skip' });
+    expect(decideStageEntry(ok).kind).toBe('start');
+    // every caller of the decision passes it (the one production caller reads it from noAutomatedContact, twice)
+    const callers = readdirSync(fileURLToPath(new URL('..', import.meta.url)), { recursive: true, encoding: 'utf8' })
+      .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .map((f) => ({ f, text: readFileSync(fileURLToPath(new URL(`../${f}`, import.meta.url)), 'utf8') }))
+      .filter((x) => /decideStageEntry\(\{/.test(x.text));
+    expect(callers.map((c) => c.f.replace(/\\/g, '/'))).toEqual(['stageAutomation/reconcile.ts']);
+    const calls = callers[0]!.text.match(/decideStageEntry\(\{[^\n]*\}\)/g) ?? [];
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c).toMatch(/\bsourceRefusal\b/);
   });
 
   it('R-PAR-16 outcomeOf says only names from the closed set (or nothing)', () => {

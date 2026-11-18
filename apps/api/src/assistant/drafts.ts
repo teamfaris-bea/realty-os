@@ -33,7 +33,7 @@ import { dealOrAppointmentContext } from '../comms/repos/contacts.js';
 import { conversationOf, tenantFacts } from '../comms/repos/gate.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
-import { AUTOMATED_DRAFT_REFUSAL, AUTOMATED_DRAFT_WITHDRAWN_EARLIER, NO_AUTOMATED_CONTACT_STOP_REASON, isAutomatedDraft, noAutomatedContact, withdrawAutomatedDrafts, withdrawnForSource } from '../leads/automatedContact.js';
+import { type SourceRefusal, automatedDraftRefusalSentence, automatedDraftWithdrawnEarlierSentence, isAutomatedDraft, noAutomatedContact, sourceStopReason, withdrawAutomatedDrafts, withdrawnForSource } from '../leads/automatedContact.js';
 import { senderSignature } from '../templates/repos/signature.js';
 import { isListingSellerUpdate, sendSellerUpdate } from '../sellerUpdates/service.js';
 import * as A from './repos/actions.js';
@@ -108,9 +108,15 @@ async function messageByKey(tx: Tx, key: string): Promise<{ id: string; status: 
 
 const approvalKey = (actionId: string) => `assistant-approve:${actionId}`;
 
-/** 409 SOURCE_NO_AUTOMATED_CONTACT for a draft automation wrote (b18 round 3 item 3): why, and that nothing was sent. */
-function automatedDraftRefusal(covered: boolean): AppError {
-  return new AppError('SOURCE_NO_AUTOMATED_CONTACT', { reason: NO_AUTOMATED_CONTACT_STOP_REASON, sentence: covered ? AUTOMATED_DRAFT_REFUSAL : AUTOMATED_DRAFT_WITHDRAWN_EARLIER });
+/**
+ * 409 for a draft automation wrote (b18 round 3 item 3; R-LSRC-9): why, and that nothing was sent. `now` is the reason
+ * the person is refused for now (SOURCE_NO_AUTOMATED_CONTACT or SOURCE_UNCLASSIFIED), which is the code; when the
+ * person is no longer refused, the draft stays withdrawn and the code and sentence are those of the reason it was
+ * withdrawn for (`then`).
+ */
+function automatedDraftRefusal(now: SourceRefusal | null, then: SourceRefusal): AppError {
+  const why = now ?? then;
+  return new AppError(why, { reason: sourceStopReason(why), sentence: now !== null ? automatedDraftRefusalSentence(now) : automatedDraftWithdrawnEarlierSentence(then) });
 }
 
 /** POST /assistant/actions/:id/approve */
@@ -127,7 +133,7 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     return { actionId: r.actionId, status: r.status, result: r.result, messageId: r.messageId, decision: null };
   }
   type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'home_value'; hv: HomeValueDraftBlock } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned }
-    | { kind: 'source_withdrawn'; covered: boolean } | { kind: 'source_covered'; contactId: string };
+    | { kind: 'source_withdrawn'; now: SourceRefusal | null; then: SourceRefusal } | { kind: 'source_covered'; contactId: string };
   const out: Out = await asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
     if (!peek || peek.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
@@ -137,9 +143,11 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     const a = (await A.actionById(tx, actionId, { lock: true }))!;
     // b18 round 3 item 3: a draft a plan step or a trigger wrote, for a person whose source is marked: withdrawn before
     // (the reason, never "the lead's owner changed"), or pending now (withdrawn below, by the system, and refused)
+    // R-LSRC-9 (0101): the same for an imported person whose source the Owner has not reviewed yet, under its own code
     if (a.contactId && isAutomatedDraft(a)) {
-      if (a.status === 'invalidated' && withdrawnForSource(a.payload)) return { kind: 'source_withdrawn', covered: await noAutomatedContact(tx, a.contactId) };
-      if (a.status === 'proposed' && (await noAutomatedContact(tx, a.contactId))) return { kind: 'source_covered', contactId: a.contactId };
+      const then = a.status === 'invalidated' ? withdrawnForSource(a.payload) : null;
+      if (then !== null) return { kind: 'source_withdrawn', now: await noAutomatedContact(tx, a.contactId), then };
+      if (a.status === 'proposed' && (await noAutomatedContact(tx, a.contactId)) !== null) return { kind: 'source_covered', contactId: a.contactId };
     }
     if (a.status === 'invalidated') return { kind: 'invalidated' };
     if (a.status !== 'proposed') {
@@ -248,18 +256,19 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     return { kind: 'send', plan: { kind: 'send', sendActionId, messageKey: approvalKey(sendActionId), channel: draft.channel, subject: draft.subject, body: draft.body, pinnedInboundSeq: a.pinnedInboundSeq ?? 0, contactId: a.contactId } };
   });
   if (out.kind === 'done') return out.result;
-  if (out.kind === 'source_withdrawn') throw automatedDraftRefusal(out.covered);
+  if (out.kind === 'source_withdrawn') throw automatedDraftRefusal(out.now, out.then);
   if (out.kind === 'source_covered') {
     // the system withdraws every pending draft of that kind for the person (the trigger runs they wait on are the
     // system's to write), under the contact lock and only while the setting still covers them
     const contactId = out.contactId;
     const still = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => {
       await lockContact(tx, contactId as ContactId);
-      if (!(await noAutomatedContact(tx, contactId))) return false;
-      await withdrawAutomatedDrafts(tx, { contactId }, now);
-      return true;
+      const refused = await noAutomatedContact(tx, contactId);
+      if (refused === null) return null;
+      await withdrawAutomatedDrafts(tx, { contactId }, now, refused);
+      return refused;
     });
-    if (still) throw automatedDraftRefusal(true);
+    if (still !== null) throw automatedDraftRefusal(still, still);
     // the Owner turned the setting off between the two transactions: the tap is judged again, once, as any other
     if (!o.retried) return approveAction(actor, actionId, input, deps, { retried: true });
     throw new AppError('ACTION_NOT_PENDING', { status: 'proposed' });

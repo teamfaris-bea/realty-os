@@ -291,3 +291,35 @@ export async function importedUnassigned(h: ApiHarness, tenantId: string, o: { f
 }
 
 export { TEST_ORIGIN };
+
+/**
+ * Fixture (owner decision 2026-11-14, R-LSRC-9): `contactId` came in an import. Writes, as the migration owner, one
+ * import (or adds to `batchId`'s) and one COMMITTED contacts record that targets the person, with `label` (null: the
+ * file had no source label for them). Nothing here maps or classifies anything: the person reads as unclassified until
+ * the Owner maps the label (PUT /lead-sources/import-labels { label, leadSourceId }) or classifies the import's no-label
+ * group ({ unlabeledImportId, leadSourceId }).
+ */
+export async function importedPerson(h: ApiHarness, tenantId: string, createdByUserId: string, contactId: string, o: { label?: string | null; batchId?: string; outcome?: string } = {}): Promise<{ batchId: string; label: string | null; recordId: string }> {
+  let batchId = o.batchId ?? null;
+  let stageId: string;
+  if (batchId === null) {
+    batchId = randomUUID();
+    stageId = randomUUID();
+    await h.su.query(
+      `INSERT INTO import_batches (tenant_id, id, source, status, source_snapshot_sha256, source_snapshot_at, created_by_user_id)
+       VALUES ($1, $2, 'csv', 'dry_run', repeat('a', 64), now(), $3)`,
+      [tenantId, batchId, createdByUserId],
+    );
+    await h.su.query(`INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1, $2, $3, 'contacts', 1, 'pending')`, [tenantId, stageId, batchId]);
+  } else {
+    stageId = (await h.su.query<{ id: string }>(`SELECT id FROM import_stages WHERE tenant_id = $1 AND batch_id = $2 AND category = 'contacts'`, [tenantId, batchId])).rows[0]!.id;
+  }
+  const label = o.label === undefined ? `Unreviewed label ${randomUUID().slice(0, 8)} (test)` : o.label;
+  const recordId = randomUUID();
+  await h.su.query(
+    `INSERT INTO import_records (tenant_id, id, stage_id, source_ref, raw_purged_at, normalized, outcome, target_table, target_id)
+     VALUES ($1, $2, $3, $4, now(), $5::jsonb, $6, 'contacts', $7)`,
+    [tenantId, recordId, stageId, `fixture.csv#row=${recordId}`, JSON.stringify({ category: 'contacts', leadSourceLabel: label }), o.outcome ?? 'imported', contactId],
+  );
+  return { batchId, label, recordId };
+}

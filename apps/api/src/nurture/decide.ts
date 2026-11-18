@@ -15,10 +15,10 @@ import type { DowngradeReason, EvidenceRef, PlaybookContent, TriggerKind } from 
 import { TRIGGER_KINDS } from '@realty/core/assistant';
 import type { Instant } from '@realty/core/foundation';
 import { type DraftReason, type Firing, type FiringRef, SKIP_REASON_TEXT, type SkipReason } from '@realty/core/nurture';
-import { NO_AUTOMATED_CONTACT_SKIP_TEXT } from '../leads/automatedContact.js';
+import { NO_AUTOMATED_CONTACT_SKIP_TEXT, SOURCE_UNCLASSIFIED_SKIP_TEXT } from '../leads/automatedContact.js';
 
 /** Skips only the API can see (stored in trigger_ref.skip with a visible sentence, never silent). */
-export type ApiSkipReason = 'CONTACT_REMOVED' | 'STEP_REMOVED' | 'NOT_AVAILABLE_YET' | 'NO_LONGER_FOLLOWED' | 'ANNIVERSARY_ALREADY_SENT' | 'NOT_QUEUED' | 'DATE_COMPLETED' | 'NOT_OUR_CLIENT' | 'AI_ISA_ACTIVE' | 'SOURCE_NO_AUTOMATED_CONTACT';
+export type ApiSkipReason = 'CONTACT_REMOVED' | 'STEP_REMOVED' | 'NOT_AVAILABLE_YET' | 'NO_LONGER_FOLLOWED' | 'ANNIVERSARY_ALREADY_SENT' | 'NOT_QUEUED' | 'DATE_COMPLETED' | 'NOT_OUR_CLIENT' | 'AI_ISA_ACTIVE' | 'SOURCE_NO_AUTOMATED_CONTACT' | 'SOURCE_UNCLASSIFIED';
 export type RunSkipReason = SkipReason | ApiSkipReason;
 
 export const API_SKIP_TEXT: Readonly<Record<ApiSkipReason, string>> = {
@@ -27,6 +27,8 @@ export const API_SKIP_TEXT: Readonly<Record<ApiSkipReason, string>> = {
   AI_ISA_ACTIVE: 'This person was under AI care, so this alert was not sent.',
   // b18 review B18S-5 (owner boundary 2026-11-14): a trigger message is automated contact
   SOURCE_NO_AUTOMATED_CONTACT: NO_AUTOMATED_CONTACT_SKIP_TEXT,
+  // R-LSRC-9 (owner decision 2026-11-14, 0101): an imported person whose source the Owner has not reviewed yet
+  SOURCE_UNCLASSIFIED: SOURCE_UNCLASSIFIED_SKIP_TEXT,
   STEP_REMOVED: 'The approved playbook no longer has this alert.',
   NOT_AVAILABLE_YET: 'This kind of alert is not available yet.',
   NO_LONGER_FOLLOWED: 'The contact no longer follows this home.',
