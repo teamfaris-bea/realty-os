@@ -28,7 +28,8 @@ function batch(stages: ImportStage[]): ImportBatch {
   } as ImportBatch;
 }
 
-const unmapped: ImportLabelView = { label: LABEL, people: 2, leadSourceId: null, leadSourceName: null, noAutomatedContact: false, sentence: `"${LABEL}" (2 people): not mapped to a lead source.` };
+// the API's own sentence for an unmapped label since R-LSRC-9 (apps/api leads/importLabels.ts importLabelSentence)
+const unmapped: ImportLabelView = { label: LABEL, people: 2, leadSourceId: null, leadSourceName: null, noAutomatedContact: false, sentence: `"${LABEL}" (2 people): not reviewed yet. Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.` };
 const mapped: ImportLabelView = {
   label: LABEL,
   people: 2,
@@ -91,7 +92,7 @@ describe('E728 imported source labels on the import page and the lead sources pa
 
   it('E728: afterwards, the lead sources page lists every imported label in the CRM, and the Owner maps one there', async () => {
     const f = sourcesFake(overview([source({ id: MARKED, name: 'Partner referrals (test)', noAiCare: true, noAiCareSentence: 'on' })]));
-    let labels = [{ ...unmapped, label: 'From a file (test)', people: 1, sentence: '"From a file (test)" (1 person): not mapped to a lead source.' }];
+    let labels = [{ ...unmapped, label: 'From a file (test)', people: 1, sentence: '"From a file (test)" (1 person): not reviewed yet. Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.' }];
     f.on('GET /lead-sources/import-labels', () => ({ status: 200, body: { labels, canChange: true } }));
     f.on('PUT /lead-sources/import-labels', () => {
       labels = [{ ...mapped, label: 'From a file (test)', people: 1, sentence: '"From a file (test)" (1 person): mapped to Partner referrals (test), which has "No automated contact for leads from this source" on, so nothing automatic reaches them.' }];
