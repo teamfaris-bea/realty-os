@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { approvedPlaybook, enrollmentRow, smsStep } from '../assistant/testing.js';
+import { approvedPlaybook, enrollmentRow, runJobs, smsStep } from '../assistant/testing.js';
 import type { TestClient } from '../auth/testHarness.js';
 import { type CommsWorld, commsWorld, ownedContact, randomPhone } from '../comms/testing.js';
 import { type ImportsHarness, call, csvBase64, dryRunStage, freshReauth, fullStage, importsHarness, writtenBulkPhone } from '../imports/testing.js';
@@ -34,6 +34,7 @@ let marked: { id: string; name: string };
 let batchId: string;
 let fay: string;
 let fayPlan: string;
+let planId: string;
 
 const h = () => ih.h;
 /** U+1F3E0: one character, two UTF-16 units. */
@@ -85,9 +86,10 @@ beforeAll(async () => {
       smsStep({ key: 'second', category: 'nurture_step', intent: 'check_in', purpose: 'marketing', template: 'Hi {{first_name}}, checking in again.', slots: ['first_name'], anchor: 'previous_step', offsetSeconds: 86_400 }),
     ],
   });
+  planId = plan.playbookId;
   const fayPhone = randomPhone();
   fay = (await ownedContact(agent, { phone: fayPhone, firstName: 'Fay' })).id;
-  const e = await call<{ enrollment: { id: string } }>(agent, 'POST', `/contacts/${fay}/enrollments`, { playbookId: plan.playbookId });
+  const e = await call<{ enrollment: { id: string } }>(agent, 'POST', `/contacts/${fay}/enrollments`, { playbookId: planId });
   expect(e.status).toBe(201);
   fayPlan = e.body.enrollment.id;
   // the file: five new people and Fay again (matched by her phone)
@@ -266,22 +268,31 @@ describe('R-LSRC-10 M2 M3: the Owner confirms, maps, re-maps and un-maps; the pe
     expect(await refusalOf(cy)).toBeNull();
     expect(await refusalOf(fay)).toBeNull();
     const firstChange = mapped.body.label.changedAt!;
+    // reviewed and open: Cy gets an owner, who starts a plan for them
+    expect((await call(w.owner, 'POST', `/leads/${cy}/reassign`, { commandId: randomUUID(), toUserId: agent.userId })).status).toBe(200);
+    const cyPlan = await call<{ enrollment: { id: string } }>(agent, 'POST', `/contacts/${cy}/enrollments`, { playbookId: planId });
+    expect(cyPlan.status).toBe(201);
 
     const moved = await put(w.owner, { label: WALK_IN, leadSourceId: marked.id });
     expect(moved.body.label).toMatchObject({ state: 'mapped', inReview: false, leadSourceId: marked.id, leadSourceName: marked.name, noAutomatedContact: true });
-    expect(moved.body.label.sentence).toBe(`"${WALK_IN}" (2 people): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.`);
+    expect(moved.body.label.sentence).toBe(`"${WALK_IN}" (2 people): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.`);
+    // the people the import COMMITTED under the label follow it: Cy is the marked source's person and their running plan
+    // is asked to stop, and stops
     expect(await refusalOf(cy)).toBe(SOURCE_NO_AUTOMATED_CONTACT);
-    // a MARKED source also covers a person the import only matched under this label (0099's reading, kept; OQ-B18-I4):
-    // Fay is refused for that reason and her running plan is asked to stop
-    expect(await refusalOf(fay)).toBe(SOURCE_NO_AUTOMATED_CONTACT);
     expect(moved.body.stopping).toBe(1);
-    expect(await listRow(WALK_IN)).toMatchObject({ state: 'mapped', leadSourceId: marked.id, noAutomatedContact: true });
+    await runJobs(h(), w.tenantId, ['playbook.step', 'comms.dispatch']);
+    expect(await enrollmentRow(h(), cyPlan.body.enrollment.id)).toMatchObject({ state: 'stopped', stop_reason: 'source_no_automated_contact' });
+    // Fay's row in the file only MATCHED her and still waits for review: that is no import (0103, E755). The row says
+    // 2 people and 2 are covered: she is refused nothing and her plan runs on
+    expect(await refusalOf(fay)).toBeNull();
+    expect((await enrollmentRow(h(), fayPlan)).state).toBe('active');
+    expect(await listRow(WALK_IN)).toMatchObject({ state: 'mapped', leadSourceId: marked.id, noAutomatedContact: true, people: 2 });
 
     const off = await put(w.owner, { label: WALK_IN, leadSourceId: null });
     expect(off.body.label).toMatchObject({ state: 'in_review', inReview: true, leadSourceId: null, leadSourceName: null, noAutomatedContact: false, changedBy: { userId: w.owner.userId } });
     expect(Date.parse(off.body.label.changedAt!)).toBeGreaterThanOrEqual(Date.parse(firstChange));
     expect(await refusalOf(cy)).toBe(SOURCE_UNCLASSIFIED);
-    expect(await refusalOf(fay)).toBeNull(); // only matched: an unreviewed label never blocks her
+    expect(await refusalOf(fay)).toBeNull(); // only matched: no mapping of this label, marked or not, ever blocks her
     expect(await listRow(WALK_IN)).toMatchObject({ state: 'in_review', inReview: true, leadSourceId: null, people: 2 });
 
     const back = await put(w.owner, { label: WALK_IN, leadSourceId: open.id });
@@ -304,6 +315,7 @@ describe('R-LSRC-10 M2 M3: the Owner confirms, maps, re-maps and un-maps; the pe
       expect(Object.keys(a.changes)).toEqual(expect.arrayContaining(['aiCarePausingCount', 'plansStoppingCount', 'draftsWithdrawnCount', 'labelSha256']));
     }
     // what each change asked to stop is counted in its audit row: only the move to the marked source met a running plan
+    // (Cy's; Fay's, a person the file only matched, is never asked)
     expect(rows.map((a) => [to(a, 'plansStoppingCount'), to(a, 'aiCarePausingCount'), to(a, 'draftsWithdrawnCount')])).toEqual([[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 0, 0]]);
   }, 300_000);
 

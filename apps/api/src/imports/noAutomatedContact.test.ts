@@ -19,7 +19,7 @@ import { type CommsWorld, commsWorld, messageRow, ownedContact, randomPhone, sen
 import { NO_AUTOMATED_CONTACT_LABEL, SOURCE_NO_AUTOMATED_CONTACT } from '../leads/automatedContact.js';
 import { changeStage, decisionsOf, enrollmentsOf, setStage } from '../stageAutomation/testing.js';
 import { systemActor } from '../worker/systemActor.js';
-import { type ImportsHarness, batchOf, call, csvBase64, freshReauth, fullStage, importsHarness, startFub, writtenBulkPhone } from './testing.js';
+import { type ImportsHarness, approve, batchOf, call, commitStage, csvBase64, dryRunStage, freshReauth, fullStage, importsHarness, records, startFub, verify, writtenBulkPhone } from './testing.js';
 
 let ih: ImportsHarness;
 let w: CommsWorld;
@@ -113,9 +113,11 @@ async function noAutomatedContactFor(by: TestClient, contactId: string): Promise
 }
 
 describe('R-LSRC-8 E728: imported people are covered once the Owner maps their imported source label to a marked source (b18 round 3 item 1)', () => {
-  it('E728 FUB, mapped at import time: the preview lists the labels and which are marked; after the import every automated path is refused for those people (a person already here whom the import matched too), a person from another label is not covered, and a one-to-one text still goes', async () => {
+  it('E728 E755 FUB, mapped at import time: the preview lists the labels and which are marked; after the import every automated path is refused for the people it COMMITTED under the label (a person it created, and a person already here once a reviewer attached her row to her); a person already here whose row was left waiting is not covered (a match is not an import), nor is a person from another label; a one-to-one text still goes', async () => {
     const existingPhone = randomPhone();
     const before = await ownedContact(agent, { phone: existingPhone, firstName: 'Ana' });
+    const waitingPhone = randomPhone();
+    const waiting = await ownedContact(agent, { phone: waitingPhone, firstName: 'Ivy' });
     const person = (id: number, firstName: string, source: string, phone: string, lastName = 'Imported') => ({
       id,
       created: '2025-01-01T10:00:00Z',
@@ -132,7 +134,7 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     const key = `fub-nac-${randomUUID().slice(0, 8)}`;
     ih.fub.add(key, {
       users: [{ id: 11, name: 'Alex Agent' }],
-      people: [person(4001, 'Rae', PARTNER_LABEL, writtenBulkPhone(4001)), person(4002, 'Ana', PARTNER_LABEL, existingPhone, 'Doe'), person(4003, 'Zed', 'Open house (test)', writtenBulkPhone(4003))],
+      people: [person(4001, 'Rae', PARTNER_LABEL, writtenBulkPhone(4001)), person(4002, 'Ana', PARTNER_LABEL, existingPhone, 'Doe'), person(4003, 'Zed', 'Open house (test)', writtenBulkPhone(4003)), person(4004, 'Ivy', PARTNER_LABEL, waitingPhone, 'Doe')],
       notes: [],
       textMessages: [],
       emails: [],
@@ -146,10 +148,10 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     expect(p0.status).toBe(200);
     expect(p0.body.sourceLabels.map((l) => [l.label, l.people, l.leadSourceId, l.noAutomatedContact])).toEqual([
       ['Open house (test)', 1, null, false],
-      [PARTNER_LABEL, 2, null, false],
+      [PARTNER_LABEL, 3, null, false],
     ]);
     // R-LSRC-9 (owner decision 2026-11-14): an unmapped label is in review, and the row says what that means
-    expect(p0.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!.sentence).toBe(`"${PARTNER_LABEL}" (2 people): not reviewed yet. Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.`);
+    expect(p0.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!.sentence).toBe(`"${PARTNER_LABEL}" (3 people): not reviewed yet. Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.`);
     expect(p0.body.sourceLabels.map((l) => l.inReview)).toEqual([true, true]);
 
     // only the Owner maps a label (the Admin who runs the import gets 404, and the database refuses them too)
@@ -163,23 +165,37 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     const p1 = await call<{ sourceLabels: LabelRow[] }>(w.owner, 'GET', `/imports/${b.id}/parity`);
     const row = p1.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!;
     expect([row.leadSourceId, row.noAutomatedContact]).toEqual([marked.id, true]);
-    expect(row.sentence).toBe(`"${PARTNER_LABEL}" (2 people): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.`);
+    expect(row.sentence).toBe(`"${PARTNER_LABEL}" (3 people): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.`);
     expect(p1.body.sourceLabels.find((l) => l.label === 'Open house (test)')!.sentence).toBe(`"Open house (test)" (1 person): mapped to ${open.name}.`);
 
-    await fullStage(ih, w.owner, b.id, 'contacts');
+    // the dry run matched Ana and Ivy, who were already here with an owner: their rows wait for a person's review. A
+    // match is a preview, not an import (0103): neither is covered by the marked source yet
+    const d = await dryRunStage(ih, w.owner, b.id, 'contacts');
+    const waitingRows = (await records(w.owner, b.id, 'contacts')).filter((r) => r.dryRunOutcome === 'needs_review');
+    expect(waitingRows.map((r) => r.matchContactId).sort()).toEqual([before.id, waiting.id].sort());
+    expect([await definer(before.id), await definer(waiting.id)]).toEqual([false, false]);
+    // the reviewer attaches Ana's row to her; Ivy's row is left waiting
+    expect((await call(w.owner, 'POST', `/imports/${b.id}/records/${waitingRows.find((r) => r.matchContactId === before.id)!.id}/review`, { decision: 'merge', mergeIntoContactId: before.id })).status).toBe(200);
+    expect((await approve(w.owner, b.id, 'contacts', d.dryRunSha256 as string)).status).toBe(200);
+    expect((await commitStage(ih, w.owner, b.id, 'contacts')).status).toBe('committed');
+    expect((await verify(w.owner, b.id, 'contacts')).res.status).toBe(200);
     await fullStage(ih, w.owner, b.id, 'ownership');
     const rae = await contactByName(b.id, 'Rae');
     const zed = await contactByName(b.id, 'Zed');
-    // Ana was already here: the import matched her by phone and created nobody
-    expect((await h().su.query('SELECT 1 FROM contacts WHERE import_batch_id = $1 AND first_name = $2', [b.id, 'Ana'])).rows).toEqual([]);
+    // Ana and Ivy were already here: the import matched them by phone and created nobody
+    expect((await h().su.query('SELECT 1 FROM contacts WHERE import_batch_id = $1 AND first_name = ANY ($2)', [b.id, ['Ana', 'Ivy']])).rows).toEqual([]);
     expect((await h().su.query<{ original_source_detail: Record<string, unknown> }>('SELECT original_source_detail FROM contacts WHERE id = $1', [rae])).rows[0]!.original_source_detail).toMatchObject({ import_source: PARTNER_LABEL, import_system: 'fub' });
 
     // the summary lists them too
     const rep = await call<{ sourceLabels: LabelRow[] }>(w.owner, 'GET', `/imports/${b.id}/report`);
-    expect(rep.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)).toMatchObject({ people: 2, leadSourceId: marked.id, noAutomatedContact: true });
+    expect(rep.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)).toMatchObject({ people: 3, committedPeople: 2, leadSourceId: marked.id, noAutomatedContact: true });
 
     await noAutomatedContactFor(agent, rae);
+    // Ana: the commit attached the partner's record to her, so she is the marked source's person from then on
     await noAutomatedContactFor(agent, before.id);
+    // Ivy: her row still waits. The import committed nothing for her, so nothing is refused: a person enrols her by hand
+    expect(await definer(waiting.id)).toBe(false);
+    expect((await call(agent, 'POST', `/contacts/${waiting.id}/enrollments`, { playbookId: plan.id })).status).toBe(201);
     // a person whose label is mapped to a source without the setting is not covered: a plan starts on the stage entry
     expect(await definer(zed)).toBe(false);
     expect((await changeStage(agent, zed, 'active')).body.automation).toEqual({ started: plan.name });

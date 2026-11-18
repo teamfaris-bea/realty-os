@@ -84,11 +84,11 @@ export function reviewSentence(r: Pick<ImportLabelView, 'label' | 'unlabeledImpo
   if (r.unlabeledImportId) {
     const who = `No source label in ${where} (${people(r.people)})`;
     if (r.state !== 'mapped') return `${who}: not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`;
-    return r.noAutomatedContact ? `${who}: counted as ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches them.` : `${who}: counted as ${r.leadSourceName}.`;
+    return r.noAutomatedContact ? `${who}: counted as ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches the people imported without a label.` : `${who}: counted as ${r.leadSourceName}.`;
   }
   const who = `"${r.label}" (${people(r.people)})`;
   const inReview = 'Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.';
-  if (r.state === 'mapped') return r.noAutomatedContact ? `${who}: mapped to ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches them.` : `${who}: mapped to ${r.leadSourceName}.`;
+  if (r.state === 'mapped') return r.noAutomatedContact ? `${who}: mapped to ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches the people imported with it.` : `${who}: mapped to ${r.leadSourceName}.`;
   if (r.state === 'suggested' && r.suggestion) {
     const n = r.suggestion.leadSourceName;
     return `${who}: not reviewed yet. It reads the same as the lead source ${n}, or a label already mapped to it, apart from capital letters and spaces around it, so ${n} is suggested. Nothing is mapped until the Owner confirms it${r.suggestion.noAutomatedContact ? ` (${n} has "${SETTING}" on)` : ''}, and nothing automatic goes to the people imported with it until then.`;

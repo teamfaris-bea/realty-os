@@ -162,7 +162,7 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
     expect(await refusalOf(c.id)).toBe(SOURCE_UNCLASSIFIED);
     const toMarked = await mapLabel(label, marked.id);
     expect(toMarked.body.label).toMatchObject({ leadSourceId: marked.id, noAutomatedContact: true, inReview: false });
-    expect(toMarked.body.label.sentence).toBe(`"${label}" (1 person): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.`);
+    expect(toMarked.body.label.sentence).toBe(`"${label}" (1 person): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.`);
     expect(await refusalOf(c.id)).toBe(SOURCE_NO_AUTOMATED_CONTACT);
     expect((await enroll(c.id)).code).toBe(SOURCE_NO_AUTOMATED_CONTACT);
     // a wrong pick is undone by moving the label: the people follow the current mapping

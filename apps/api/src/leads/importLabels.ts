@@ -103,12 +103,17 @@ type Reading =
   | { state: 'ambiguous'; held: boolean }
   | { state: 'in_review' };
 
-/** The plain sentence of one label: who it labels, which source it means, and whether that source is marked. */
+/**
+ * The plain sentence of one label: who it labels, which source it means, and whether that source is marked. A mapping
+ * covers the people an import COMMITTED with the label (0103), so the sentence speaks of "the people imported with it":
+ * true of the CRM-wide list's count and of an import's own row, whose count is the file's people (some of whom may not
+ * be imported yet, or only matched someone already here).
+ */
 export function importLabelSentence(label: string, people: number, r: Reading): string {
   const who = `"${label}" (${peopleWords(people)})`;
   switch (r.state) {
     case 'mapped':
-      return r.m.noAutomatedContact ? `${who}: mapped to ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.` : `${who}: mapped to ${r.m.name}.`;
+      return r.m.noAutomatedContact ? `${who}: mapped to ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.` : `${who}: mapped to ${r.m.name}.`;
     case 'suggested':
       return `${who}: not reviewed yet. It reads the same as the lead source ${r.suggested.name}, or a label already mapped to it, apart from capital letters and spaces around it, so ${r.suggested.name} is suggested. Nothing is mapped until the Owner confirms it${
         r.suggested.noAutomatedContact ? ` (${r.suggested.name} has "${NO_AUTOMATED_CONTACT_LABEL}" on)` : ''
@@ -133,7 +138,7 @@ export function unlabeledSentence(people: number, r: Reading, kind: ImportKind |
       ? `${who}: more than one lead source holds these people, so they are not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`
       : `${who}: not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`;
   }
-  if (r.m.noAutomatedContact) return `${who}: counted as ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches them.`;
+  if (r.m.noAutomatedContact) return `${who}: counted as ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported without a label.`;
   return `${who}: counted as ${r.m.name}.`;
 }
 
@@ -383,8 +388,9 @@ export async function stageLabels(tx: Tx, importId: string, stageId: string): Pr
  * record, so a mapping change never reads the team's whole import history to answer.
  */
 export async function labelRowOf(tx: Tx, label: string): Promise<ImportLabelRow> {
-  // app.import_source_people (0101): the people the label's records targeted or matched, each once, through the index;
-  // the committed ones are the people this row counts
+  // app.import_source_people (0101): the people the label's records targeted or matched, each once, through the index.
+  // Only the committed ones (imported or merged) are this label's people: the ones this row counts and the ones a
+  // mapping covers (0103)
   const r = await sql<{ people: string }>`SELECT count(*) FILTER (WHERE p.committed) AS people FROM app.import_source_people(app.tenant_id(), ${label}::text, NULL::uuid) p`.execute(tx);
   const people = Number(r.rows[0]?.people ?? 0);
   return labelRow(label, { people, committedPeople: people }, await sourceCatalog(tx), (await provenance(tx, { label })).byLabel.get(label) ?? null);
