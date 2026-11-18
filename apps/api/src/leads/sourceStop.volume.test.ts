@@ -123,7 +123,7 @@ const othersStillRunning = async () =>
 let bulkBefore: Date;
 const mine: string[] = [];
 
-describe('R-LSRC-10 M4: stopping a marked source\'s automation is bounded by that source\'s people (8,000 other people in a running plan, 3,000 other pending drafts)', () => {
+describe('R-LSRC-10 E757 M4: stopping a marked source\'s automation is bounded by that source\'s people (8,000 other people in a running plan, 3,000 other pending drafts)', () => {
   it('mapping a 10-person label to a marked source asks its 3 running plans to stop and withdraws its draft, inside the stated time, without asking about anybody else\'s plan or draft; turning the setting on for a source that sent 12 people four ways does the same for them', async () => {
     bulkBefore = (await h.su.query<{ t: Date }>('SELECT now() AS t')).rows[0]!.t;
     // the small label: 10 people of one import, reviewed (so plans may run); 3 in a running plan, 1 with a pending draft
