@@ -166,6 +166,20 @@ export async function tenantLabels(tx: Tx): Promise<ImportLabelRow[]> {
 }
 
 /**
+ * One label's row, for the Owner's mapping answer (leads/sources.ts setImportSource): the same people count and words
+ * as its row of `tenantLabels`, read through app.import_source_people and import_records_contact_label (0101), so a
+ * mapping change never reads the tenant's whole import history to answer.
+ */
+export async function labelRowOf(tx: Tx, label: string): Promise<ImportLabelRow> {
+  // app.import_source_people (0101): the people the label's records targeted or matched, each once, through the index
+  const r = await sql<{ people: string }>`SELECT count(*) AS people FROM app.import_source_people(app.tenant_id(), ${label}::text, NULL::uuid)`.execute(tx);
+  const held = await sql<{ id: string; name: string; no_ai_care: boolean }>`
+    SELECT s.id, s.name, s.no_ai_care FROM lead_sources s WHERE s.tenant_id = app.tenant_id() AND ${label}::text = ANY (s.import_labels) ORDER BY s.created_at, s.id`.execute(tx);
+  const mapped = mappingsOf(held.rows.map((x) => ({ key: label, id: x.id, name: x.name, marked: x.no_ai_care })));
+  return labelRows(new Map([[label, Number(r.rows[0]?.people ?? 0)]]), mapped)[0]!;
+}
+
+/**
  * R-LSRC-9: the no-label group of every import that COMMITTED people with no source label (one row per import, newest
  * first), or of one import. These are the people who stay unclassified until the Owner classifies that group. Not yet
  * on a route: the review list (GET /lead-sources/import-labels and the import's review step) adds these rows.

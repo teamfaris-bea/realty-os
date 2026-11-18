@@ -41,8 +41,16 @@
 --     state ('dispatching', 'sent', 'delivered', 'dispatch_unknown') for a covered person is refused. On UPDATE it still
 --     looks only at the move to 'dispatching' (a later status reconciliation of a message already sent is never refused).
 --   * stage_automation_decisions.reason and ai_isa_assignments.pause_reason gain 'source_unclassified'.
---   * import_records_committed_label: an index on the committed contacts records by label, so a mapping change finds
---     one label's people without reading the tenant's whole import history.
+--   * import_records_contact_label: an index on the contacts import records by label, so a mapping change finds one
+--     label's people (to stop what is running, and to count them in its answer) without reading the tenant's whole
+--     import history.
+--   * app.import_source_people(tenant, label, import) (SECURITY DEFINER, new; owner app_definer, pinned path, explicit
+--     tenant check): the people one imported label, or one import's no-label group, brought in (each contact id once,
+--     with whether a COMMITTED record targets it). It exists only so that this lookup can use the index above: under
+--     row-level security app_user's own query may not use an index condition built from non-leakproof functions
+--     (left, ->>), so it would read every import record of the tenant. It answers only a caller who may read
+--     import_records anyway (app.is_tenant_wide(): Owner, Admin, system), and nobody else and no other tenant: it
+--     discloses nothing row-level security hides.
 --
 --   EXISTING DATA. This migration changes no plan, message, draft, AI care or import row. From the moment it is
 --   applied, every already-imported person whose label is not already Owner-mapped (and every one imported with no
@@ -50,7 +58,8 @@
 --   plans, live AI care and pending drafts are NOT touched here: a plan stops when its next step job runs (the step
 --   runner asks before anything else), AI care pauses at its next turn (chain link 11), a draft's approval is refused,
 --   and the API stops them in bounded work when the Owner next maps a label or an import commits
---   (apps/api/src/leads/sources.ts). No table, policy or retention change; app_user gains only EXECUTE on the new definer.
+--   (apps/api/src/leads/sources.ts). No table, policy or retention change; app_user gains only EXECUTE on the two new
+--   definers.
 
 ALTER TABLE lead_sources ADD COLUMN import_unlabeled_batches uuid[] NOT NULL DEFAULT '{}'
   CHECK (cardinality(import_unlabeled_batches) <= 200 AND array_position(import_unlabeled_batches, NULL) IS NULL);
@@ -77,10 +86,11 @@ DROP TRIGGER lead_sources_import_labels_guard ON lead_sources;
 CREATE TRIGGER lead_sources_import_labels_guard BEFORE INSERT OR UPDATE OF import_labels, import_unlabeled_batches ON lead_sources
   FOR EACH ROW EXECUTE FUNCTION app.lead_sources_import_labels_guard();
 
--- One label's committed people, for the API's bounded stop when a mapping changes (leads/sources.ts). The first 200
--- characters keep every index entry small whatever a writer stores; the query re-checks the whole label.
-CREATE INDEX import_records_committed_label ON import_records (tenant_id, (left(COALESCE(normalized ->> 'leadSourceLabel', ''), 200)))
-  WHERE target_table = 'contacts' AND outcome IN ('imported', 'merged') AND (normalized ->> 'category') = 'contacts';
+-- One label's people, for the API's bounded work when a mapping changes (leads/sourceStop.ts: the committed ones, to
+-- stop what is running; leads/importLabels.ts: the count in the answer). The first 200 characters keep every index
+-- entry small whatever a writer stores; each query re-checks the whole label.
+CREATE INDEX import_records_contact_label ON import_records (tenant_id, (left(COALESCE(normalized ->> 'leadSourceLabel', ''), 200)))
+  WHERE (normalized ->> 'category') = 'contacts';
 
 CREATE OR REPLACE FUNCTION app.person_from_lead_source(p_tenant uuid, p_contact uuid, p_source uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
@@ -135,6 +145,31 @@ $$;
 ALTER FUNCTION app.person_source_refusal(uuid, uuid) OWNER TO app_definer;
 REVOKE ALL ON FUNCTION app.person_source_refusal(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.person_source_refusal(uuid, uuid) TO app_user;
+
+CREATE FUNCTION app.import_source_people(p_tenant uuid, p_label text, p_batch uuid) RETURNS TABLE (contact_id uuid, committed boolean)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+  WITH recs AS (
+    -- one label, compared whole, through import_records_contact_label
+    SELECT r.target_table, r.target_id, r.outcome, r.match_contact_id FROM public.import_records r
+     WHERE p_label IS NOT NULL AND r.tenant_id = p_tenant AND (r.normalized ->> 'category') = 'contacts'
+       AND left(COALESCE(r.normalized ->> 'leadSourceLabel', ''), 200) = left(p_label, 200)
+       AND COALESCE(r.normalized ->> 'leadSourceLabel', '') = p_label
+    UNION ALL
+    -- one import's records with no label, through the import's contacts stage
+    SELECT r.target_table, r.target_id, r.outcome, r.match_contact_id
+      FROM public.import_stages st JOIN public.import_records r ON r.tenant_id = st.tenant_id AND r.stage_id = st.id
+     WHERE p_batch IS NOT NULL AND st.tenant_id = p_tenant AND st.batch_id = p_batch AND st.category = 'contacts'
+       AND (r.normalized ->> 'category') = 'contacts' AND btrim(COALESCE(r.normalized ->> 'leadSourceLabel', '')) = '')
+  SELECT x.id, bool_or(x.committed)
+    FROM recs CROSS JOIN LATERAL (VALUES (CASE WHEN recs.target_table = 'contacts' THEN recs.target_id END,
+                                          recs.target_table = 'contacts' AND recs.outcome IN ('imported', 'merged')),
+                                         (recs.match_contact_id, false)) AS x(id, committed)
+   WHERE COALESCE(p_tenant = app.tenant_id(), false) AND (SELECT app.is_tenant_wide()) AND x.id IS NOT NULL
+   GROUP BY x.id
+$$;
+ALTER FUNCTION app.import_source_people(uuid, text, uuid) OWNER TO app_definer;
+REVOKE ALL ON FUNCTION app.import_source_people(uuid, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.import_source_people(uuid, text, uuid) TO app_user;
 
 CREATE OR REPLACE FUNCTION app.person_no_ai_care_source(p_tenant uuid, p_contact uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
@@ -243,13 +278,14 @@ ALTER TABLE ai_isa_assignments ADD CONSTRAINT ai_isa_assignments_pause_reason_ch
   'call','chat','synced_mail','media','pack_withdrawn','ai_off','approval_revoked','policy_updated','reinquiry','possible_listing','check_this',
   'taking_over','ending','source_no_ai_care','source_unclassified'));
 
--- Self-check: the three definers are owned by app_definer with their path pinned, executable by app_user and not by
+-- Self-check: the four definers are owned by app_definer with their path pinned, executable by app_user and not by
 -- PUBLIC; the five guards are invokers that pin their path and still sit on their triggers; the messages trigger fires
 -- on INSERT; no source holds a no-label group yet.
 DO $$
 DECLARE f text; p record;
 BEGIN
-  FOREACH f IN ARRAY ARRAY['app.person_from_lead_source(uuid,uuid,uuid)', 'app.person_source_refusal(uuid,uuid)', 'app.person_no_ai_care_source(uuid,uuid)'] LOOP
+  FOREACH f IN ARRAY ARRAY['app.person_from_lead_source(uuid,uuid,uuid)', 'app.person_source_refusal(uuid,uuid)', 'app.person_no_ai_care_source(uuid,uuid)',
+                           'app.import_source_people(uuid,text,uuid)'] LOOP
     SELECT r.rolname AS owner, x.prosecdef AS definer, x.proconfig AS config, x.proacl AS acl INTO p
       FROM pg_proc x JOIN pg_roles r ON r.oid = x.proowner WHERE x.oid = f::regprocedure;
     IF p.owner <> 'app_definer' OR NOT p.definer OR NOT ('search_path=pg_catalog, public' = ANY (p.config)) THEN

@@ -33,7 +33,7 @@ import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
 import { noAutomatedContactSentence, withdrawAutomatedDrafts } from './automatedContact.js';
-import { type ImportLabelRow, labelRows, tenantLabels, unlabeledGroups, unlabeledMappings, unlabeledRow } from './importLabels.js';
+import { type ImportLabelRow, labelRowOf, tenantLabels, unlabeledGroups, unlabeledMappings, unlabeledRow } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
 import { NOTHING_STOPPED as NOTHING, type Stopped, askCareForATurn, stopAutomatedContactForPeople } from './sourceStop.js';
 import { AiCareBody, AiCareResponse, ImportLabelBody, ImportLabelResponse, ImportLabelsResponse, OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
@@ -203,7 +203,7 @@ export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourc
     });
   }
   const row = byLabel
-    ? ((await tenantLabels(tx)).find((r) => r.label === key.label) ?? labelRows(new Map([[key.label, 0]]), new Map())[0]!)
+    ? await labelRowOf(tx, key.label) // this label only, through its index: never the tenant's whole import history
     : ((await unlabeledGroups(tx, { importId: key.unlabeledImportId }))[0] ?? unlabeledRow(key.unlabeledImportId, 0, (await unlabeledMappings(tx)).get(key.unlabeledImportId) ?? null));
   return { label: row, ...safe };
 }

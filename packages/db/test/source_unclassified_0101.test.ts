@@ -245,6 +245,31 @@ describe('R-LSRC-9 A1: who is unclassified (app.person_source_refusal, 0101)', (
     expect(await refusal(p)).toBe('SOURCE_UNCLASSIFIED');
   });
 
+  it('R-TEN-2 R-PERM-5: app.import_source_people lists one label\'s or one import\'s no-label people (each once, with whether a committed record targets them) to a tenant-wide caller of its own tenant only: an agent, another tenant and a wrong tenant argument get no row', async () => {
+    const { batchId, stageId } = await importBatch();
+    const [a, b, c, d] = [await person(), await person(), await person(), await person()];
+    await record(stageId, a, { label: 'People label (0101 test)' });
+    await record(stageId, a, { label: 'People label (0101 test)', outcome: 'duplicate', target: null, match: a });
+    await record(stageId, b, { label: 'People label (0101 test)', outcome: 'needs_review', target: null, match: b }); // only matched
+    await record(stageId, c, { label: 'People label (0101 test) and more' }); // another label that begins the same
+    await record(stageId, d, { label: null });
+    const people = (actor: Parameters<typeof withTenantTx>[0], tenant: string, label: string | null, batch: string | null) =>
+      withTenantTx(actor, async (tx) => (await sql<{ contact_id: string; committed: boolean }>`SELECT contact_id, committed FROM app.import_source_people(${tenant}::uuid, ${label}::text, ${batch}::uuid) ORDER BY contact_id`.execute(tx)).rows, { db: h.app });
+    const sorted = (rows: { contact_id: string; committed: boolean }[]) => [...rows].sort((x, y) => (x.contact_id < y.contact_id ? -1 : 1));
+    for (const actor of [w.owner.actor, w.system()]) {
+      expect(await people(actor, w.tenantId, 'People label (0101 test)', null)).toEqual(sorted([{ contact_id: a, committed: true }, { contact_id: b, committed: false }]));
+      expect(await people(actor, w.tenantId, null, batchId)).toEqual([{ contact_id: d, committed: true }]);
+      expect(await people(actor, w.tenantId, null, null)).toEqual([]);
+    }
+    // not tenant-wide: an agent reads no import record under row-level security, and learns none here
+    expect(await people(w.agents[0]!.actor, w.tenantId, 'People label (0101 test)', null)).toEqual([]);
+    expect(await people(w.agents[0]!.actor, w.tenantId, null, batchId)).toEqual([]);
+    // another tenant, asking for this tenant or for its own with this tenant's keys
+    expect(await people(other.owner.actor, w.tenantId, 'People label (0101 test)', null)).toEqual([]);
+    expect(await people(other.owner.actor, other.tenantId, 'People label (0101 test)', null)).toEqual([]);
+    expect(await people(other.owner.actor, other.tenantId, null, batchId)).toEqual([]);
+  });
+
   it('only the Owner, as themselves, classifies a no-label group (the same guard as a label)', async () => {
     const { batchId } = await importBatch();
     const s = await source('Owner only (0101 test)');

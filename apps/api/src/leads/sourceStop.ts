@@ -41,8 +41,8 @@ export type PeopleScope = { label: string } | { unlabeledImportId: string } | { 
  * runner stops it before any due check) and the pending drafts a plan step or a trigger wrote are withdrawn here, with
  * the reason that applies. A person who is not refused (classified to an unmarked source) is left alone.
  *
- * Bounded work, no lock: one statement finds the scope's people through an index (import_records_committed_label, or
- * the import's stage), follows a merged-away record to its person, and joins straight to the rows there are to stop;
+ * Bounded work, no lock: one statement finds the scope's people through an index (app.import_source_people over
+ * import_records_contact_label, or the import's stage), follows a merged-away record to its person, and joins straight to the rows there are to stop;
  * the definer is asked once per person who HAS something to stop, never per person of the label and never over the
  * tenant. It takes no contact lock and no advisory lock (an opt-out, a pause, a stop or an inbound call for one of
  * these people never waits on this transaction, except on the very draft rows it withdraws). Paused plans stay paused
@@ -50,15 +50,13 @@ export type PeopleScope = { label: string } | { unlabeledImportId: string } | { 
  */
 export async function stopAutomatedContactForPeople(tx: Tx, scope: PeopleScope, now: Instant): Promise<Stopped> {
   if ('contactIds' in scope && scope.contactIds.length === 0) return NOTHING_STOPPED;
-  const committed = sql`r.tenant_id = app.tenant_id() AND r.target_table = 'contacts' AND r.outcome IN ('imported', 'merged') AND (r.normalized ->> 'category') = 'contacts'`;
+  // a label's or a no-label group's COMMITTED people come from app.import_source_people (0101): a definer, so the lookup
+  // may use import_records_contact_label (under row-level security the caller's own query could not), answering only
+  // the tenant-wide caller who may read import_records anyway
   const targets = 'label' in scope
-    ? sql`SELECT r.target_id AS id FROM import_records r
-           WHERE ${committed} AND left(COALESCE(r.normalized ->> 'leadSourceLabel', ''), 200) = left(${scope.label}::text, 200)
-             AND COALESCE(r.normalized ->> 'leadSourceLabel', '') = ${scope.label}::text`
+    ? sql`SELECT p.contact_id AS id FROM app.import_source_people(app.tenant_id(), ${scope.label}::text, NULL::uuid) p WHERE p.committed`
     : 'unlabeledImportId' in scope
-      ? sql`SELECT r.target_id AS id FROM import_records r JOIN import_stages st ON st.tenant_id = r.tenant_id AND st.id = r.stage_id
-             WHERE ${committed} AND st.batch_id = ${scope.unlabeledImportId}::uuid AND st.category = 'contacts'
-               AND btrim(COALESCE(r.normalized ->> 'leadSourceLabel', '')) = ''`
+      ? sql`SELECT p.contact_id AS id FROM app.import_source_people(app.tenant_id(), NULL::text, ${scope.unlabeledImportId}::uuid) p WHERE p.committed`
       : sql`SELECT unnest(${[...scope.contactIds]}::uuid[]) AS id`;
   const r = await sql<{ kind: 'care' | 'plan' | 'draft'; id: string | null; epoch: number | null; contact_id: string; why: string }>`
     WITH t AS MATERIALIZED (${targets}),
