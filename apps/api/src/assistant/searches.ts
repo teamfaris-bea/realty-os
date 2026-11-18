@@ -30,6 +30,7 @@ import { audit } from '../audit.js';
 import { queueOutboundInTx } from '../comms/index.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
+import { noAutomatedContact } from '../leads/automatedContact.js';
 import * as A from './repos/actions.js';
 import { type ContactCore, contactCore, identityFacts } from './repos/context.js';
 import { firstInThread } from './steps.js';
@@ -434,7 +435,10 @@ function alertLines(s: SearchRow, listings: readonly { row: RawListing; mls: Dis
  * (instant: at once; daily / weekly). Queued as `search_alert` marketing from the system; the send-time
  * gate decides (opt-out / unsubscribe, suppression, brokerage name, autonomy switch, pause). A search of a
  * deleted or merged-away record sends nothing (F1: a merge moves no saved search; the person lives on the
- * survivor, and a merged-away record is never a send target).
+ * survivor, and a merged-away record is never a send target). A person nothing automatic may go to (a marked source's
+ * person, or an imported person whose source is not reviewed yet: leads/automatedContact.ts) is skipped before anything
+ * is queued or marked, so nothing is recorded as alerted that was not sent; once the Owner reviews the source, the
+ * homes still on the market are alerted then (R-LSRC-10 M7).
  */
 export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: string, now: Instant, o: { searchId?: string; limit?: number }): Promise<number> {
   // the frequency window is applied in the query, so searches that are not due yet never fill the batch
@@ -450,6 +454,10 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
        AND EXISTS (SELECT 1 FROM saved_search_matches m JOIN listings l ON l.tenant_id = m.tenant_id AND l.id = m.listing_id
                     WHERE m.tenant_id = s.tenant_id AND m.search_id = s.id AND m.alerted_message_id IS NULL AND ${mlsEligibleSql(e)})
        AND EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = s.tenant_id AND c.id = s.contact_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL)
+       -- R-LSRC-10 M7 (R-LSRC-8, R-LSRC-9): nothing automatic goes to a marked source's person or to an imported person whose
+       -- source is not reviewed yet. They are left out HERE, so their searches never fill the batch and nothing of theirs
+       -- is queued or marked (the same definer every automated path asks)
+       AND app.person_source_refusal(s.tenant_id, s.contact_id) IS NULL
        -- R-ISA-2/R-ISA-17 (D12 proposed; b12 review B12X-4): an AI-proposed search sends no alert while its person is under live AI care
        AND NOT (s.origin = 'ai_isa' AND EXISTS (SELECT 1 FROM ai_isa_assignments a WHERE a.tenant_id = s.tenant_id AND a.ended_at IS NULL
                                                 AND a.contact_id = ANY (app.contact_person_ids(s.tenant_id, s.contact_id))))
@@ -472,6 +480,9 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
     if (m.rows.length === 0) continue;
     const c = await contactCore(tx, s.contactId);
     if (!c || c.deleted || c.merged) continue; // re-read under the contact lock: a merge may have committed since
+    // R-LSRC-10 M7: asked again under the contact lock, BEFORE anything is queued or marked: a person covered since the
+    // batch was read gets no alert, and no match of theirs is recorded as alerted (dispatch would refuse the message)
+    if ((await noAutomatedContact(tx, c.id)) !== null) continue;
     const identity = await identityFacts(tx, { scope: c.ownerUserId ? 'agent' : 'team', agentUserId: c.ownerUserId });
     const first = await firstInThread(tx, c.id);
     const lines = [`Hi ${c.firstName?.trim() || 'there'},`, alertLines(s, homes), signOffFor(identity), identity.brokerageLegalName];

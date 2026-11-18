@@ -304,6 +304,9 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   if (verdict.outcome === 'deny') {
     const blocked = await insertBlockedDecision(tx, { ids: c.deps.ids, intent, evaluated, verdict, actorUserId, messageId: m.id, now, extraDeny: extra });
     await msgs.markBlocked(tx, m.id, blocked.id, blocked.reasons[0] ?? 'DENIED');
+    // R-LSRC-10 M7: a saved-search alert refused for the person's source was not sent, so its homes are not recorded as
+    // alerted (assistant/searches.ts skips such a person before queueing; this is the alert queued just before)
+    if (sourceDenied !== null && m.actionCategory === 'search_alert') await msgs.releaseAlertMatches(tx, m.id);
     if (isaMsg) await emitSendResultInTx(tx, m.id, 'blocked');
     if (m.playbookStepRunId) {
       const u = stepRunAfterGate({ outcome: 'deny', reasons: blocked.reasons as never });

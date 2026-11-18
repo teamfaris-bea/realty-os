@@ -205,6 +205,25 @@ export async function markBlocked(tx: Tx, id: string, decisionId: string, reason
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
 }
 
+/**
+ * R-LSRC-10 M7: a saved-search alert that dispatch refused because nothing automatic may go to its person (a marked
+ * source, or an imported source not reviewed yet) was never sent, so its homes are not "alerted": the matches that
+ * point at it are released and the search's last-alert time goes back to its last alert that still stands. Only for
+ * that refusal: a covered person's searches are left out of the alert sender's batch, so nothing re-queues them until
+ * the Owner reviews the source. Runs in dispatch TX1, under the contact lock dispatch holds.
+ */
+export async function releaseAlertMatches(tx: Tx, messageId: string): Promise<void> {
+  const r = await sql<{ search_id: string }>`
+    UPDATE saved_search_matches SET alerted_message_id = NULL WHERE tenant_id = app.tenant_id() AND alerted_message_id = ${messageId} RETURNING search_id`.execute(tx);
+  const searchIds = [...new Set(r.rows.map((x) => x.search_id))];
+  if (searchIds.length === 0) return;
+  await sql`
+    UPDATE saved_searches ss SET last_alerted_at = (
+      SELECT max(m.created_at) FROM saved_search_matches x JOIN messages m ON m.tenant_id = x.tenant_id AND m.id = x.alerted_message_id
+       WHERE x.tenant_id = ss.tenant_id AND x.search_id = ss.id)
+     WHERE ss.tenant_id = app.tenant_id() AND ss.id = ANY (${searchIds}::uuid[])`.execute(tx);
+}
+
 export async function markCanceled(tx: Tx, id: string, reason: string, decisionId: string | null): Promise<void> {
   await sql`
     UPDATE messages SET status = 'canceled', status_reason = ${reason}, gate_decision_id = COALESCE(${decisionId}, gate_decision_id)
