@@ -125,6 +125,96 @@ describe('R-IMPORT-4: resumable commit in chunks', () => {
   });
 });
 
+describe('R-LSRC-10 M4: a transient condition never becomes a rejected record', () => {
+  /**
+   * Test seam, in this file's own throwaway database: the n-th contact inserted for `tenantId` fails ONCE with
+   * `sqlstate`, as the server itself would report a deadlock, a canceled statement or a lock it could not take. A
+   * sequence counts the inserts (it does not roll back with the failed transaction, so the retry goes through).
+   */
+  async function failOnce(tenantId: string, n: number, sqlstate: string): Promise<void> {
+    await q('DROP TRIGGER IF EXISTS test_transient ON contacts');
+    await q('DROP SEQUENCE IF EXISTS public.test_transient_seq');
+    await q('CREATE SEQUENCE public.test_transient_seq');
+    await q('GRANT USAGE ON SEQUENCE public.test_transient_seq TO PUBLIC');
+    await q(`CREATE OR REPLACE FUNCTION public.test_transient() RETURNS trigger LANGUAGE plpgsql AS $f$
+      BEGIN
+        IF NEW.tenant_id = '${tenantId}'::uuid AND nextval('public.test_transient_seq') = ${n} THEN
+          RAISE EXCEPTION 'a condition of the moment (test)' USING ERRCODE = '${sqlstate}';
+        END IF;
+        RETURN NEW;
+      END $f$`);
+    await q('CREATE TRIGGER test_transient BEFORE INSERT ON contacts FOR EACH ROW EXECUTE FUNCTION public.test_transient()');
+  }
+  const outcomes = async (stageId: string) => (await q<{ outcome: string; n: number }>('SELECT outcome, count(*)::int AS n FROM import_records WHERE stage_id = $1 GROUP BY outcome ORDER BY outcome', [stageId])).map((r) => [r.outcome, r.n]);
+  const failed = async (stageId: string) => q("SELECT source_ref, issues FROM import_records WHERE stage_id = $1 AND issues @> '[{\"code\":\"COMMIT_FAILED\"}]'::jsonb", [stageId]);
+
+  it('E745: a deadlock while a record is applied runs the chunk again (the worker\'s own transaction retry): every person is imported, nobody is rejected', async () => {
+    const w = await importWorld(ih);
+    const b = await csvBatch(w, 6, 400);
+    const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
+    expect((await approve(w.admin, b.id, 'contacts', d.dryRunSha256 as string)).status).toBe(200);
+    await failOnce(w.tenantId, 3, '40P01');
+    try {
+      const s = await commitStage(ih, w.admin, b.id, 'contacts');
+      expect(s.status).toBe('committed');
+      expect(s.counts).toMatchObject({ source: 6, imported: 6, rejected: 0 });
+      expect(await outcomes(d.id)).toEqual([['imported', 6]]);
+      expect(await failed(d.id)).toEqual([]);
+      expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM contacts WHERE tenant_id = $1', [w.tenantId]))[0]!.n).toBe(6);
+      // the seam fired: the third insert failed once and the chunk went round again
+      expect(Number((await q<{ last_value: string }>('SELECT last_value FROM public.test_transient_seq'))[0]!.last_value)).toBeGreaterThanOrEqual(9);
+    } finally {
+      await q('DROP TRIGGER IF EXISTS test_transient ON contacts');
+    }
+  });
+
+  it.each([
+    ['a canceled or timed-out statement', '57014'],
+    ['a lock that could not be had', '55P03'],
+    ['a lost connection', '08006'],
+    ['a server out of resources', '53300'],
+  ])('E745: %s (%s) fails the chunk as a whole and keeps nothing of it; the next run of the job imports every person, and no record is ever marked failed', async (_what, sqlstate) => {
+    const w = await importWorld(ih);
+    const b = await csvBatch(w, 5, 500);
+    const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
+    expect((await approve(w.admin, b.id, 'contacts', d.dryRunSha256 as string)).status).toBe(200);
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/stages/contacts/commit`)).status).toBe(202);
+    await failOnce(w.tenantId, 2, sqlstate);
+    try {
+      await expect(runCommit(ih.deps, w.tenantId, d.id)).rejects.toMatchObject({ code: sqlstate });
+      // nothing of the failed chunk was kept, and nothing was recorded against any record
+      expect(await outcomes(d.id)).toEqual([['will_import', 5]]);
+      expect(await failed(d.id)).toEqual([]);
+      expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM contacts WHERE tenant_id = $1', [w.tenantId]))[0]!.n).toBe(0);
+      expect(stageOf(await batchOf(w.admin, b.id), 'contacts').status).toBe('committing');
+      // the job runs again (the worker retries a failed job): everyone is imported
+      expect(await runCommit(ih.deps, w.tenantId, d.id)).toBe('done');
+      expect(await outcomes(d.id)).toEqual([['imported', 5]]);
+      expect(await failed(d.id)).toEqual([]);
+      expect(stageOf(await batchOf(w.admin, b.id), 'contacts').status).toBe('committed');
+    } finally {
+      await q('DROP TRIGGER IF EXISTS test_transient ON contacts');
+      await ih.drain();
+    }
+  });
+
+  it('E745: an error of the record itself still rejects only that record (COMMIT_FAILED) and the rest commit', async () => {
+    const w = await importWorld(ih);
+    const b = await csvBatch(w, 4, 600);
+    const d = await dryRunStage(ih, w.admin, b.id, 'contacts');
+    expect((await approve(w.admin, b.id, 'contacts', d.dryRunSha256 as string)).status).toBe(200);
+    await failOnce(w.tenantId, 2, '23514'); // a check violation: a fact about that row, not a condition of the moment
+    try {
+      const s = await commitStage(ih, w.admin, b.id, 'contacts');
+      expect(s.status).toBe('committed');
+      expect(await outcomes(d.id)).toEqual([['imported', 3], ['rejected', 1]]);
+      expect(await failed(d.id)).toHaveLength(1);
+    } finally {
+      await q('DROP TRIGGER IF EXISTS test_transient ON contacts');
+    }
+  });
+});
+
 describe('concurrency', () => {
   it('R-IMPORT-4: two Admins tap Commit at the same moment: exactly one commit starts', async () => {
     const w = await importWorld(ih);

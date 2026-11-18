@@ -24,6 +24,8 @@ const BIG = 'Big label (volume test)';
 const SMALL = 'Small label (volume test)';
 const BIG_PEOPLE = 60_000;
 const BUDGET_MS = 5000;
+/** The stated time for the CRM-wide review list at this volume (about 150 ms on an idle machine). */
+const LIST_BUDGET_MS = 5000;
 const planned: { contactId: string; enrollmentId: string }[] = [];
 
 beforeAll(async () => {
@@ -136,5 +138,40 @@ describe('R-LSRC-9 A4: a mapping change is bounded work at volume (60,000 people
     expect(last.ms).toBeLessThan(BUDGET_MS);
     await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
     for (const p of planned) expect(await enrollmentRow(h, p.enrollmentId)).toMatchObject({ state: 'stopped', stop_reason: 'source_unclassified' });
+  }, 300_000);
+
+  it('R-LSRC-10 M4 E745: at the same volume (60,030 imported people) confirming a suggestion is bounded work too, and the CRM-wide review list answers inside its stated time with every count right', async () => {
+    // ten more people under a label that reads exactly like a lead source's name
+    await freshReauth(h, w.owner);
+    const suggested = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Suggested Label (volume test)', kind: 'referral' })).body.source.id;
+    const LABEL = ' suggested label (volume TEST)';
+    let batchId: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const c = await ownedContact(agent);
+      batchId = (await importedPerson(h, w.tenantId, w.owner.userId!, c.id, { label: LABEL, ...(batchId ? { batchId } : {}) })).batchId;
+    }
+    const before = await rowsRead();
+    await freshReauth(h, w.owner);
+    const t0 = Date.now();
+    const ok = await call<Answer & { label: { state: string } }>(w.owner, 'POST', '/lead-sources/import-labels/confirm', { label: LABEL, leadSourceId: suggested });
+    const confirmMs = Date.now() - t0;
+    expect([ok.status, ok.body.label.state, ok.body.label.people, ok.body.label.leadSourceId]).toEqual([200, 'mapped', 10, suggested]);
+    const read = (await rowsRead()) - before;
+    expect(read).toBeGreaterThan(0);
+    expect(read).toBeLessThan(2000);
+    expect(confirmMs).toBeLessThan(BUDGET_MS);
+
+    // the list is a read of every label with its people: one pass over the team's committed contacts records (60,030),
+    // never the 100,000 records of other categories, inside a stated time
+    const t1 = Date.now();
+    const list = await call<{ labels: { label: string; people: number; committedPeople: number; state: string; inReview: boolean }[] }>(w.owner, 'GET', '/lead-sources/import-labels');
+    const listMs = Date.now() - t1;
+    expect(list.status).toBe(200);
+    const row = (label: string) => list.body.labels.find((l) => l.label === label);
+    expect(row(BIG)).toMatchObject({ people: BIG_PEOPLE, committedPeople: BIG_PEOPLE, state: 'in_review', inReview: true });
+    expect(row(SMALL)).toMatchObject({ people: 20, state: 'in_review' });
+    expect(row(LABEL)).toMatchObject({ people: 10, state: 'mapped', inReview: false });
+    console.info('R-LSRC-10 review at volume (ms)', { confirm: confirmMs, 'rows of import_records read by the confirmation': read, 'list of every label': listMs });
+    expect(listMs).toBeLessThan(LIST_BUDGET_MS);
   }, 300_000);
 });
