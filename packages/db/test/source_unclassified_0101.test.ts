@@ -258,3 +258,64 @@ describe('R-LSRC-9 A1: who is unclassified (app.person_source_refusal, 0101)', (
     expect((await h.su.query<{ b: string[] }>('SELECT import_unlabeled_batches AS b FROM lead_sources WHERE id = $1', [s])).rows[0]!.b).toEqual([batchId]);
   });
 });
+
+// A6: the source guards return when the tenant context is missing or another tenant's (unchanged since 0098). That is
+// safe only if no application path writes these rows that way. The evidence, read from the catalog of a fully migrated
+// database: app_user cannot bypass row-level security, and FORCE row-level security refuses every row when it has no
+// tenant context; the two roles that do bypass it (app_definer, app_retention) cannot log in and act only through the
+// SECURITY DEFINER functions they own, and no such function inserts into or updates messages, playbook_enrollments,
+// calls or ai_isa_assignments; app_definer holds no INSERT or UPDATE on them at all, app_retention no INSERT. What is
+// left is the migration owner (migrations, fixtures, the demo seed), which is not an application path.
+describe('R-LSRC-9 A6: no role that bypasses row-level security can make the activating write without a tenant context', () => {
+  const GUARDED = ['messages', 'playbook_enrollments', 'calls', 'ai_isa_assignments'] as const;
+
+  it('app_user never bypasses row-level security, the guarded tables force it, and with no tenant context app_user reads and writes none of their rows', async () => {
+    // (app_user logs in here only because the test harness connects as it; the two bypassing roles never can)
+    const roles = (await h.su.query<{ rolname: string; rolbypassrls: boolean; rolsuper: boolean; login: boolean | null }>("SELECT rolname, rolbypassrls, rolsuper, CASE WHEN rolname = 'app_user' THEN NULL ELSE rolcanlogin END AS login FROM pg_roles WHERE rolname IN ('app_user','app_definer','app_retention') ORDER BY rolname")).rows;
+    expect(roles).toEqual([
+      { rolname: 'app_definer', rolbypassrls: true, rolsuper: false, login: false },
+      { rolname: 'app_retention', rolbypassrls: true, rolsuper: false, login: false },
+      { rolname: 'app_user', rolbypassrls: false, rolsuper: false, login: null },
+    ]);
+    const forced = (await h.su.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>('SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnamespace = $1::regnamespace AND relname = ANY ($2) ORDER BY relname', ['public', [...GUARDED]])).rows;
+    expect(forced).toEqual([...GUARDED].sort().map((relname) => ({ relname, relrowsecurity: true, relforcerowsecurity: true })));
+    // app_user with no tenant context: every row is invisible, so no UPDATE reaches one (and an INSERT fails its policy)
+    const c = await h.su.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL ROLE app_user');
+      for (const t of GUARDED) expect((await c.query(`SELECT count(*)::int AS n FROM public.${t}`)).rows[0].n, t).toBe(0);
+      expect((await c.query("UPDATE public.playbook_enrollments SET state = 'active'")).rowCount).toBe(0);
+      expect((await c.query("UPDATE public.messages SET status = 'dispatching', dispatched_at = now() WHERE status = 'queued'")).rowCount).toBe(0);
+      expect((await c.query("UPDATE public.calls SET handled_by = 'assistant'")).rowCount).toBe(0);
+    } finally {
+      await c.query('ROLLBACK');
+      c.release();
+    }
+  });
+
+  it('the bypassing roles hold no way to make an activating write: app_definer has no INSERT or UPDATE on the guarded tables, app_retention no INSERT, and no SECURITY DEFINER function owned by a bypassing role inserts into or updates them', async () => {
+    const privs = (await h.su.query<{ role: string; t: string; ins: boolean; upd: boolean; col: boolean }>(
+      `SELECT r.role, t.t,
+              has_table_privilege(r.role, 'public.' || t.t, 'INSERT') AS ins,
+              has_table_privilege(r.role, 'public.' || t.t, 'UPDATE') AS upd,
+              has_any_column_privilege(r.role, 'public.' || t.t, 'INSERT, UPDATE') AS col
+         FROM unnest(ARRAY['app_definer','app_retention']) AS r(role) CROSS JOIN unnest($1::text[]) AS t(t) ORDER BY 1, 2`,
+      [[...GUARDED]],
+    )).rows;
+    for (const p of privs.filter((x) => x.role === 'app_definer')) expect(p, `${p.role} ${p.t}`).toMatchObject({ ins: false, upd: false, col: false });
+    for (const p of privs.filter((x) => x.role === 'app_retention')) expect(p.ins, `${p.role} ${p.t}`).toBe(false);
+    // app_retention may UPDATE (purges): only through the functions it owns. None of the definers a bypassing role
+    // owns writes these tables at all (checked on the installed function bodies, not on migration text).
+    const writers = (await h.su.query<{ fn: string; owner: string }>(
+      `SELECT p.oid::regprocedure::text AS fn, r.rolname AS owner
+         FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.prosecdef AND (r.rolbypassrls OR r.rolsuper) AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND regexp_replace(p.prosrc, '--[^\\n]*', '', 'g') ~* '(insert\\s+into|update)\\s+(only\\s+)?(public\\.)?(messages|playbook_enrollments|calls|ai_isa_assignments)\\M'
+        ORDER BY 1`,
+    )).rows;
+    expect(writers).toEqual([]);
+    const definers = (await h.su.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.prosecdef AND r.rolname IN ('app_definer','app_retention')")).rows[0]!.n;
+    expect(definers).toBeGreaterThan(100); // the scan read the real catalog of definers
+  });
+});
