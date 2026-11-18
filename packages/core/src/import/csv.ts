@@ -20,7 +20,7 @@
 import { normalizeEmail, normalizePhone } from '../foundation/index.js';
 import type { Channel } from '../compliance/index.js';
 import { normalizeZip } from '../ownership/index.js';
-import { type TextEncoding, decodeText, lineField, safeKey } from './text.js';
+import { type TextEncoding, decodeText, lineField, safeKey, sourceLabel } from './text.js';
 import type {
   ContactStage,
   ContactType,
@@ -627,7 +627,8 @@ export function normalizeCsvRow(
     addresses.push({ kind: 'home', line1, line2, city, region, postalCode, country: normalizeCountry(text('country', 100)) });
   }
 
-  const leadSourceLabel = text('lead_source', 500);
+  // R-LSRC-9 M1: the label exactly as the cell holds it (never tidied or cut); the display copy under "Source" is tidied
+  const leadSourceLabel = sourceLabel(single.get('lead_source') ?? null, 'lead_source', issues);
   if (leadSourceLabel !== null) putImportedField(importedFields, 'Source', leadSourceLabel, issues);
   const externalId = text('external_id', 200);
 

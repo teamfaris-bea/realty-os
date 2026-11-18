@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { type Instant, instantFromIso } from '../foundation/index.js';
 import type { Channel } from '../compliance/index.js';
 import { collectEmails, collectPhones, collectTags, finish, mapStage, putImportedField } from './csv.js';
-import { cleanBody, lineField } from './text.js';
+import { cleanBody, lineField, sourceLabel } from './text.js';
 import type {
   Category,
   FubConsentFields,
@@ -292,6 +292,11 @@ function mapContact(person: FubPerson): RecordOutcome<NormalizedContact> {
   const named = [firstName, lastName].filter((x): x is string => x !== null).join(' ');
   const displayName = (named !== '' ? named : null) ?? name ?? emails[0]?.email ?? phones[0]?.e164 ?? null;
   if (displayName === null) return rejected(sourceRef, [...issues, { code: 'NO_IDENTITY', severity: 'error' }]);
+  // R-LSRC-9 M1: the label exactly as Follow Up Boss holds it (never tidied or cut). Only what makes it unstorable
+  // counts here: a formula-looking source is already flagged on its display copy ("FUB source")
+  const labelIssues: Issue[] = [];
+  const leadSourceLabel = sourceLabel(person.source, 'source', labelIssues);
+  issues.push(...labelIssues.filter((i) => i.code === 'SOURCE_LABEL_UNREADABLE'));
   if (named === '' && name === null) issues.push({ code: 'NAME_MISSING', severity: 'info' });
   const createdAt = parseTime(person.created, 'created', issues);
 
@@ -310,7 +315,7 @@ function mapContact(person: FubPerson): RecordOutcome<NormalizedContact> {
     addresses,
     tags,
     importedFields: { ...importedFields },
-    leadSourceLabel: person.source ? lineField(person.source, 'source', 500, []) : null,
+    leadSourceLabel,
     createdAt,
     ...(stageLabel !== null ? { stageLabel } : {}),
     ...(Object.keys(customFields).length > 0 ? { customFields: { ...customFields } } : {}),

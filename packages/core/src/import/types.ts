@@ -57,6 +57,8 @@ export type IssueCode =
   | 'TAG_READ_AS_OPT_OUT'
   // record level
   | 'NO_IDENTITY'
+  /** the person's source label cannot be stored exactly as written (R-LSRC-9 M1: it is never altered or cut to fit) */
+  | 'SOURCE_LABEL_UNREADABLE'
   | 'RECORD_MALFORMED'
   | 'SOURCE_REF_DUPLICATE'
   | 'BODY_EMPTY'

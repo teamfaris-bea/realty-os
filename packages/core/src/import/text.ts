@@ -146,6 +146,40 @@ export function lineField(raw: string | null | undefined, field: string, max: nu
   return v;
 }
 
+/**
+ * The longest source label an import keeps (UTF-16 units; the CSV parser's own cell bound, MAX_CSV_FIELD_CHARS). A label
+ * is never cut to fit: a longer one rejects its record (`sourceLabel`).
+ */
+export const SOURCE_LABEL_MAX = 32_768;
+
+/** Half of a surrogate pair on its own: not a character, and not storable as UTF-8. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * R-LSRC-9 M1 (owner decision 2026-11-14, point 3): a person's source label EXACTLY as the file or the other system gave
+ * it. Not trimmed, not re-cased, not normalized, not cut: the string that comes back is the string that went in, so two
+ * labels that differ in any character are two labels and nobody infers that one means another. This is the one function
+ * both normalizers store the label through (csv.ts, fub.ts); the API stores and compares what it returns
+ * (import_records.normalized.leadSourceLabel, contacts.original_source_detail.import_source, lead_sources.import_labels).
+ *
+ * `null` means the person has NO label: nothing was given, or only whitespace. They belong to their import's no-label
+ * group, which the Owner classifies as one row.
+ *
+ * A label that cannot be stored exactly is never altered to fit: one holding U+0000 or half of a surrogate pair (the
+ * database cannot keep either), or one longer than SOURCE_LABEL_MAX, rejects its record (SOURCE_LABEL_UNREADABLE, a
+ * record-level error; a rejected record is no import evidence and blocks nobody). A formula-looking label is flagged for
+ * review like any other cell (`field`), and kept as written.
+ */
+export function sourceLabel(raw: string | null | undefined, field: string, issues: Issue[]): string | null {
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  if (raw.length > SOURCE_LABEL_MAX || raw.includes('\u0000') || LONE_SURROGATE.test(raw)) {
+    issues.push({ code: 'SOURCE_LABEL_UNREADABLE', severity: 'error' });
+    return null;
+  }
+  if (looksLikeFormula(raw.trim())) issues.push({ code: 'FORMULA_PREFIX', severity: 'review', field });
+  return raw;
+}
+
 /** Keys that must never become object members (imported_fields comes from untrusted headers). */
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 

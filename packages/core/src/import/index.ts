@@ -97,7 +97,7 @@ export {
   notImportedLines,
   optOutPreview,
 } from './report.js';
-export { type TextEncoding, decodeText, csvSafeCell, looksLikeFormula, nameKey, addressHint } from './text.js';
+export { type TextEncoding, decodeText, csvSafeCell, looksLikeFormula, nameKey, addressHint, SOURCE_LABEL_MAX, sourceLabel } from './text.js';
 export {
   CONTACT_TAG_LIMIT,
   CUSTOM_FIELD_LIMIT,

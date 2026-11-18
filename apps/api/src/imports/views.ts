@@ -28,6 +28,7 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   EXTRA_CELLS: 'The row has more cells than the header; the extra cells were ignored.',
   TAG_READ_AS_OPT_OUT: 'A tag reads like an opt-out, so it is treated as one.',
   NO_IDENTITY: 'No name, valid phone or valid email: nothing to import.',
+  SOURCE_LABEL_UNREADABLE: 'The source of this person cannot be kept exactly as written (it holds a character that cannot be stored, or is longer than 32,768 characters), so the person was not imported. Correct the source where it came from, then import again.',
   RECORD_MALFORMED: 'The record could not be read.',
   SOURCE_REF_DUPLICATE: 'The same record appears twice in the source; the second copy was left out.',
   BODY_EMPTY: 'Empty text: nothing to import.',
