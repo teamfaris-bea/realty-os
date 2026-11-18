@@ -175,7 +175,9 @@ describe('synced Gmail in the thread', () => {
   });
 
   it('with more pages (nextBefore), "since" is the oldest copy shown and older Gmail is said to stay in Gmail', async () => {
-    const shownOldest = '2026-11-01T12:00:00.000Z';
+    // coverage renders a local calendar date: noon on Nov 1 in the test's own timezone, as the Oct 12 fixture above
+    // (the instant 2026-11-01T12:00Z is already Nov 2 at UTC+14)
+    const shownOldest = new Date(2026, 10, 1, 12).toISOString();
     agentApp(fake([mail({ internalAt: shownOldest })], [{ address: 'jane@example.test', since: '2026-08-01T00:00:00.000Z' }], shownOldest), `/contacts/${IDS.jane}/thread`);
     await convo();
     expect(await screen.findByText('Showing Gmail with jane@example.test since Nov 1, 2026; other mail stays in Gmail.')).toBeVisible();

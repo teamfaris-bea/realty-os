@@ -49,7 +49,7 @@ beforeAll(async () => {
   await mlsVolumeFixture(h, w.tenantId, conn);
   await h.su.query(
     `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed)
-     SELECT $1, gen_random_uuid(), 'mls', 'B' || i, 'active', i || ' Other St', 'City1', 'CA', (94000 + i % ${ZIPS})::text, 40000000, 3, $2, timestamptz '2026-11-01', 'B Brokerage (test)', true
+     SELECT $1, gen_random_uuid(), 'mls', 'B' || i, 'active', i || ' Other St', 'City1', 'CA', (94000 + i % ${ZIPS})::text, 40000000, 3, $2, timestamptz '2026-11-01T00:00:00Z', 'B Brokerage (test)', true
        FROM generate_series(1, 100) i`,
     [other.tenantId, otherConn],
   );
