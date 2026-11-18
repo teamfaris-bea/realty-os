@@ -22,7 +22,18 @@ export interface ImportLabelView {
   leadSourceName: string | null;
   noAutomatedContact: boolean;
   sentence: string;
+  /**
+   * R-LSRC-9, R-LSRC-10: set on the row of one import's people who came in with NO source label (`label` is then '').
+   * That row is mapped by this id, never by a label: the server refuses an empty label.
+   */
+  unlabeledImportId?: string | null;
 }
+
+/** The field label of the no-label row's choice (it has no label to quote). */
+export const NO_LABEL_FIELD = 'Lead source for the people imported with no source label';
+/** What the server is asked to map: a label, or one import's no-label group. */
+export const mappingKey = (r: Pick<ImportLabelView, 'label' | 'unlabeledImportId'>): { label: string } | { unlabeledImportId: string } =>
+  r.unlabeledImportId ? { unlabeledImportId: r.unlabeledImportId } : { label: r.label };
 
 export const IMPORT_LABELS_KEY = ['lead-sources', 'import-labels'] as const;
 export const OWNER_MAPS_LABELS = 'Only the Owner maps an imported source label to a lead source.';
@@ -34,9 +45,9 @@ export function ImportLabelList({ rows, onChanged, empty }: { rows: readonly Imp
   const owner = session?.tenant?.role === 'owner';
   const sources = useOverview(owner).data?.sources ?? [];
   const [status, announce] = useAnnounce(8000);
-  const a = useAction<{ label: string; leadSourceId: string | null }, { label: ImportLabelView; pausing: number; stopping: number; withdrawn?: number }>('PUT', { invalidate: [[...IMPORT_LABELS_KEY], ...SOURCE_KEYS] });
-  const choose = async (label: string, id: string) => {
-    const r = await a.run('/lead-sources/import-labels', { label, leadSourceId: id === NOT_MAPPED ? null : id });
+  const a = useAction<({ label: string } | { unlabeledImportId: string }) & { leadSourceId: string | null }, { label: ImportLabelView; pausing: number; stopping: number; withdrawn?: number }>('PUT', { invalidate: [[...IMPORT_LABELS_KEY], ...SOURCE_KEYS] });
+  const choose = async (row: ImportLabelView, id: string) => {
+    const r = await a.run('/lead-sources/import-labels', { ...mappingKey(row), leadSourceId: id === NOT_MAPPED ? null : id });
     if (!r.ok) return;
     onChanged();
     announce(`${r.data.label.sentence}${madeSafeWords(r.data)}`);
@@ -47,10 +58,10 @@ export function ImportLabelList({ rows, onChanged, empty }: { rows: readonly Imp
       <StatusLine text={status} />
       <ul className="flex flex-col gap-3">
         {rows.map((r) => (
-          <li key={r.label} className="flex flex-col gap-2">
+          <li key={r.unlabeledImportId ? `import:${r.unlabeledImportId}` : `label:${r.label}`} className="flex flex-col gap-2">
             <p className="text-[15px] text-ink">{r.sentence}</p>
             {owner ? (
-              <SelectField label={`Lead source for "${r.label}"`} value={r.leadSourceId ?? NOT_MAPPED} disabled={a.pending} onChange={(e) => void choose(r.label, e.target.value)}>
+              <SelectField label={r.unlabeledImportId ? NO_LABEL_FIELD : `Lead source for "${r.label}"`} value={r.leadSourceId ?? NOT_MAPPED} disabled={a.pending} onChange={(e) => void choose(r, e.target.value)}>
                 <option value={NOT_MAPPED}>Not mapped</option>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id}>

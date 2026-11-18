@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, leadAdminApp } from '../admin/lib/testing.js';
 import type { ImportBatch, ImportCategory, ImportStage } from '../admin/lib/types.js';
-import { OWNER_MAPS_LABELS, type ImportLabelView } from '../lead-sources/ImportLabels.js';
+import { NO_LABEL_FIELD, OWNER_MAPS_LABELS, type ImportLabelView } from '../lead-sources/ImportLabels.js';
 import { overview, source, sourcesApp, sourcesFake } from '../lead-sources/testing.js';
 import type { ParityResponse } from './lib.js';
 
@@ -107,5 +107,28 @@ describe('E728 imported source labels on the import page and the lead sources pa
     // b18 round 3 items 3 and 4: one plan reads as one plan, and the drafts withdrawn are counted
     expect(await screen.findByText(/ 1 plan running for its leads will stop\. 2 drafts a plan or an alert wrote for them were withdrawn\.$/)).toBeInTheDocument();
     await waitFor(() => expect(within(within(section).getByRole('list')).getByText(/mapped to Partner referrals \(test\), which has/)).toBeInTheDocument());
+  });
+  it('R-LSRC-10 E744: the people imported with no source label are their own row, and the Owner\'s choice for it asks the server by the import, never with an empty label (which the server refuses)', async () => {
+    const noLabel: ImportLabelView = { label: '', unlabeledImportId: BID, people: 4, leadSourceId: null, leadSourceName: null, noAutomatedContact: false, sentence: 'No source label in this import (4 people): not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.' };
+    const counted: ImportLabelView = { ...noLabel, leadSourceId: MARKED, leadSourceName: 'Partner referrals (test)', noAutomatedContact: true, sentence: 'No source label in this import (4 people): counted as Partner referrals (test), which has "No automated contact for leads from this source" on, so nothing automatic reaches them.' };
+    let labels = [unmapped, noLabel];
+    const f = fake(batch([stage('contacts', 'pending')]), labels);
+    f.on(`GET /imports/${BID}/parity`, () => ({ status: 200, body: parity(labels) }));
+    f.on('PUT /lead-sources/import-labels', () => {
+      labels = [unmapped, counted];
+      return { status: 200, body: { label: counted, pausing: 0, stopping: 0 } };
+    });
+    leadAdminApp(f, `/imports/${BID}`, 'owner', { reauthenticatedAt: new Date().toISOString() });
+    const u = userEvent.setup();
+    const section = await screen.findByRole('region', { name: 'Lead sources in this import' });
+    expect(within(section).getByText(noLabel.sentence)).toBeInTheDocument();
+    // two rows, two choices, each named for what it maps
+    expect(await within(section).findByLabelText(`Lead source for "${LABEL}"`)).toBeInTheDocument();
+    const pick = await within(section).findByLabelText(NO_LABEL_FIELD);
+    await within(section).findAllByRole('option', { name: 'Partner referrals (test) (no automated contact)' });
+    await u.selectOptions(pick, MARKED);
+    await waitFor(() => expect(f.callsTo('PUT /lead-sources/import-labels')).toHaveLength(1));
+    expect(f.callsTo('PUT /lead-sources/import-labels')[0]!.body).toEqual({ unlabeledImportId: BID, leadSourceId: MARKED });
+    await waitFor(() => expect(within(section).getByText(counted.sentence)).toBeInTheDocument());
   });
 });
