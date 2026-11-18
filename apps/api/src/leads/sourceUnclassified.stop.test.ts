@@ -140,6 +140,21 @@ describe('R-LSRC-9 A4: a mapping change makes the people\'s state follow it at o
     expect(au.changes).not.toHaveProperty('toLeadSourceId'); // removed: no source holds it now
   });
 
+  it('R-LSRC-9 E735 (A5): for people already imported before the rule (a plan and a draft still there, a label nobody ever mapped), the Owner\'s next act on that label stops what is still running, though no mapping changes; the audit names the team, not a source', async () => {
+    const a = await running(); // the plan and its draft exist; then the fixture makes them an already-imported person
+    const label = (await importedPerson(h(), w.tenantId, w.owner.userId!, a.c.id, { label: `Old label ${randomUUID().slice(0, 6)} (test)` })).label!;
+    expect(await refusalOf(a.c.id)).toBe(SOURCE_UNCLASSIFIED); // the refusals already hold
+    expect((await enrollmentRow(h(), a.enrollmentId)).state).toBe('active'); // nothing has stopped it yet
+    const r = await mapLabel(label, null); // "not mapped" confirmed: nothing to remove
+    expect([r.status, r.body.stopping, r.body.withdrawn]).toEqual([200, 1, 1]);
+    expect(r.body.label).toMatchObject({ label, inReview: true, leadSourceId: null });
+    await runJobs(h(), w.tenantId, ['playbook.step', 'comms.dispatch']);
+    expect(await enrollmentRow(h(), a.enrollmentId)).toMatchObject({ state: 'stopped', stop_reason: 'source_unclassified' });
+    const au = (await h().su.query<{ entity_type: string; entity_id: string; changes: Record<string, { to: unknown }> }>("SELECT entity_type, entity_id, changes FROM audit_log WHERE tenant_id = $1 AND reason = 'LEAD_SOURCE_IMPORT_LABEL_UNMAPPED' ORDER BY seq DESC LIMIT 1", [w.tenantId])).rows[0]!;
+    expect([au.entity_type, au.entity_id]).toEqual(['tenant', w.tenantId]);
+    expect(au.changes).toMatchObject({ plansStoppingCount: { to: 1 }, draftsWithdrawnCount: { to: 1 } });
+  });
+
   it('R-LSRC-9 E733: marked to unmarked and back: a label mapped to a marked source refuses its people for THAT reason; moved to an unmarked source the refusal lifts and the list says so; moved back it is refused again', async () => {
     const c = await ownedContact(agent);
     const label = (await importedPerson(h(), w.tenantId, w.owner.userId!, c.id, { label: `Moved label ${randomUUID().slice(0, 6)} (test)` })).label!;

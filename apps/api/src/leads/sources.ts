@@ -188,7 +188,9 @@ export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourc
   if (from.length > 0 || added || safe.pausing + safe.stopping + safe.withdrawn > 0) {
     await audit(tx, actor, {
       action: 'routing.changed',
-      entity: { type: 'lead_source', id: target?.id ?? from[0]?.id ?? leadSourceId ?? (byLabel ? actor.tenantId : key.unlabeledImportId) },
+      // the source it was mapped to or taken from; when no source is involved (a removal that only stopped what was
+      // still running for a group nobody had mapped), the import, or the team
+      entity: target ?? from[0] ? { type: 'lead_source', id: (target ?? from[0]!).id } : byLabel ? { type: 'tenant', id: actor.tenantId } : { type: 'import_batch', id: key.unlabeledImportId },
       changes: redactSnapshot({
         fromLeadSourceIds: from.map((s) => s.id),
         toLeadSourceId: target?.id ?? null,
