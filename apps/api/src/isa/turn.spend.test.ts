@@ -1,4 +1,9 @@
 // Synthetic PostgreSQL and FakeIsaAi only; spend counts calls, not messages.
+import { withTenantTx } from '@realty/db';
+import { sql } from 'kysely';
+import { systemActor } from '../worker/systemActor.js';
+import { assignmentById } from './repo.js';
+import { lockModelBudget, reserveModelCall } from './spend.js';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms } from '../comms/testing.js';
@@ -100,4 +105,25 @@ it('R-ISA-20: two people racing for the final team call make only one provider c
   expect(results.filter((r) => r.kind === 'retry')).toHaveLength(1);
   expect(w.ai.calls.length).toBe(before + 1);
   expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_runs WHERE tenant_id = $1 AND purpose = 'ai_isa_turn'`, [w.tenantId])).rows[0]!.n).toBe(1000);
+});
+
+
+it('R-ISA-4 R-ISA-20: reserving a replay never resurrects a terminal turn or erases its decision', async () => {
+  const { w, a } = await ready();
+  await withTenantTx(systemActor(w.tenantId as never, 'assistant'), async (tx) => {
+    await lockModelBudget(tx);
+    const assignment = (await assignmentById(tx, a.id))!;
+    const turn = (await sql<{ id: string }>`SELECT id FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} ORDER BY seq DESC LIMIT 1`.execute(tx)).rows[0]!;
+    await sql`UPDATE ai_isa_turns SET status = 'no_reply', decision = '{"code":"REPLAY_SENTINEL"}'::jsonb WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx);
+    expect(await reserveModelCall(tx, depsFromPlatform(h.app.platform), assignment, turn.id, false)).toHaveProperty('runId');
+    expect((await sql`SELECT status, decision FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx)).rows)
+      .toEqual([{ status: 'no_reply', decision: { code: 'REPLAY_SENTINEL' } }]);
+    await sql`INSERT INTO ai_runs (tenant_id,id,purpose,model,prompt_template_key,prompt_version,input_refs,status)
+      SELECT app.tenant_id(),gen_random_uuid(),'ai_isa_turn','fake-isa-1','synthetic','test',
+        ${JSON.stringify({ assignmentId: a.id })}::jsonb,'succeeded' FROM generate_series(1,12)`.execute(tx);
+    expect(await reserveModelCall(tx, depsFromPlatform(h.app.platform), assignment, turn.id, false))
+      .toEqual({ kind: 'done', code: 'DISCARDED' });
+    expect((await sql`SELECT status, decision FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND id = ${turn.id}`.execute(tx)).rows)
+      .toEqual([{ status: 'no_reply', decision: { code: 'REPLAY_SENTINEL' } }]);
+  }, { db: h.database });
 });
