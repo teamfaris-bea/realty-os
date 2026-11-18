@@ -16,7 +16,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { IdGenerator, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import type { InquiryFacts, RoutingPreview, SkipReason } from '@realty/core/ownership';
 import { matchRule, previewRouting } from '@realty/core/ownership';
-import { type Database, type Tx, enqueueJob, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, lockAddresses, withTenantTx } from '@realty/db';
+import { type Database, type Tx, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, lockAddresses, withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';

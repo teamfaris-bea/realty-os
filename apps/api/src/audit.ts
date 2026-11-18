@@ -139,6 +139,7 @@ const PLAIN_EXACT = new Set([
   'is_lead',
   'is_primary',
   'resolved_by', // priority_feed_items: 'user' | 'condition' (0011)
+  'import_unlabeled_batches', // lead_sources (0101): import ids only (the imports whose no-label people are this source's), never text
 ]);
 
 /** Structural suffixes that never hold free text (ids, instants, counts, digests), checked after secrets. */
