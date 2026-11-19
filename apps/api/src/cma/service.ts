@@ -223,6 +223,10 @@ function engine(input: Parameters<typeof runEngine>[0]): CmaResult {
  * this run read under RLS (V1-B lists only the closest not-used sales, so its result does not name them all), and
  * (lane V2-B, additive) the candidates offered, sorted by identity, and the tier reads the engine was given: what
  * cma/pipeline.ts hashes into a value run's inputsSha256.
+ *
+ * `o.context: false` (VERIFY E7): an automated value (cma/pipeline.ts) never shows or stores the market context, so it
+ * skips that read; the result then holds no context listings and a sentence saying they were not looked up. The value,
+ * the comps and the inputs hash never depend on the context. An agent's CMA (the default) always reads it (E360).
  */
 export async function run(
   tx: Tx,
@@ -231,6 +235,7 @@ export async function run(
   valuationDate: string,
   include: readonly string[],
   exclude: readonly string[],
+  o: { context?: boolean } = {},
 ): Promise<{ result: StoredResult; offered: ReadonlySet<string>; candidates: CmaCandidate[]; tierReads: { tier: CmaTier | 'rate_pool'; limitReached: boolean }[] }> {
   const connectionIds = conns.used.map((u) => u.conn.id);
   const subject = engineSubject(s);
@@ -285,10 +290,14 @@ export async function run(
     const x = read.reads.find((y) => y.tier === t);
     return { tier: ENGINE_TIER[t], ran: x !== undefined, rows: x?.rows ?? 0, limitReached: x?.limitReached ?? false };
   });
-  const context = await contextListings(tx, conns, s);
+  const context = o.context === false ? contextNotRead() : await contextListings(tx, conns, s);
   const sorted = [...candidates].sort((a, b) => (a.ref.identity < b.ref.identity ? -1 : a.ref.identity > b.ref.identity ? 1 : 0));
   return { result: { ...result, listings, reads, recordsLeftOut, connectionIds, ...context }, offered, candidates: sorted, tierReads };
 }
+
+/** What a run that skips the market-context read holds in its place (VERIFY E7): nothing, and a sentence that says so. */
+export const CONTEXT_NOT_READ_SENTENCE = 'Active and pending listings nearby are not looked up for an automated value.';
+const contextNotRead = (): { context: ContextListing[]; contextSentence: string } => ({ context: [], contextSentence: CONTEXT_NOT_READ_SENTENCE });
 
 /** Actives and pendings near the subject: support only, never comps (core competingSet with no price band). */
 async function contextListings(tx: Tx, conns: CmaConnections, s: ResolvedSubject): Promise<{ context: ContextListing[]; contextSentence: string }> {
