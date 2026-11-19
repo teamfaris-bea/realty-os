@@ -60,6 +60,7 @@ export {
   type FollowUpPersonFacts,
   type FollowUpTodayEntry,
   isFollowUpItemType,
+  LOGGED_AHEAD_MS,
   NO_CONVERSATION_YET,
   SNIPPET_MAX,
   classifyCandidate,

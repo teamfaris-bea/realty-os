@@ -72,7 +72,7 @@ async function axeViolations(page: Page): Promise<string[]> {
   });
 }
 
-test('an agent’s day: every benchmark job within its tap target', async ({ page }) => {
+test('an agent’s day: every benchmark job within its tap target. Call → outcome and Text → Send are 2 taps each to a saved result; from a follow-up card a 3rd tap returns to Today, and every tap is counted', async ({ page }) => {
   test.setTimeout(180_000);
   const offer = await stack.fixture<{ id: string; state: string }>('/offer', { name: 'Priya Shah' });
   expect(offer.state).toBe('offered');
@@ -98,20 +98,31 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   // "call anyway" anywhere.
   const priyaNow = feedCard(page, 'Priya Shah');
   await expect(priyaNow.getByRole('button', { name: 'Call' })).toBeVisible({ timeout: 15_000 });
-  await priyaNow.getByRole('button', { name: 'Call' }).click();
+  // b19 Today fix 7 (L15): EVERY tap of the flow is counted, the one that dismisses the stage step included
+  const dial = { taps: 0 };
+  await tap(page, priyaNow.getByRole('button', { name: 'Call' }), dial);
   const priyaCall = page.getByRole('dialog', { name: 'Call Priya Shah' });
   await expect(priyaCall.getByText("Your phone will ring first. Answer it and you're connected to Priya.")).toBeVisible({ timeout: 15_000 });
   await expect(priyaCall.getByRole('button', { name: 'Call anyway' })).toHaveCount(0);
-  await priyaCall.getByRole('button', { name: 'No answer' }).click();
+  await tap(page, priyaCall.getByRole('button', { name: 'No answer' }), dial);
+  // the outcome is saved by its own tap: Call → outcome = 2 taps to a logged call
+  expect(dial.taps, 'Call → outcome').toBe(2);
   // b19 warm follow-up (R-TODAY-7): from a follow-up card on Today the outcome's tap goes on to the stage step in the
   // same sheet, as on the person's page; its first line says what was saved (no toast says it over that line). A lead
   // reassigned during the call has no stage step: the toast says the outcome became a task for the new owner.
   const priyaStep = page.getByRole('dialog', { name: 'Stage for Priya Shah' });
   await expect(priyaStep.getByRole('status').getByText('No answer logged').or(toast(page).getByText(/saved as a task for the new owner/))).toBeVisible();
-  if (await priyaStep.isVisible()) await priyaStep.getByRole('button', { name: 'Close' }).click();
+  if (await priyaStep.isVisible()) {
+    // back on Today: one more tap (Close here; the step's own button when the agent confirms the stage) = 3
+    await tap(page, priyaStep.getByRole('button', { name: 'Close' }), dial);
+    expect(dial.taps, 'Call → outcome → back on Today').toBe(3);
+  }
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
-  // text a lead: Text → the assistant's draft is prefilled → Send = 2 taps
+  // text a lead: Text → the assistant's draft is prefilled → Send = 2 taps to a SENT text.
+  // b19 Today fix 7 (L15): from a follow-up card the same sheet then goes on to the stage step, and being back on Today
+  // takes a third tap (Close, or the step's one button). That tap used to be a click outside the counter; it is counted
+  // now and the budget is stated as it is: 2 taps to send, 3 to be back on Today.
   const text = { taps: 0 };
   const janeCard = feedCard(page, 'Jane Doe');
   await tap(page, janeCard.getByRole('button', { name: 'Text' }), text);
@@ -125,9 +136,10 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   // the same sheet goes on to the stage step, whose first line says what the send did (where the toast said it before)
   const janeStep = page.getByRole('dialog', { name: 'Stage for Jane Doe' });
   await expect(janeStep.getByTestId('stage-step-saved')).toHaveText(/^(Sent to Jane\.|Sending to Jane\.|Sends .+)$/, { timeout: 15_000 });
-  expect(text.taps).toBe(2);
-  await janeStep.getByRole('button', { name: /^(Close|Done)$/ }).first().click();
+  expect(text.taps, 'Text → Send: the text is sent').toBe(2);
+  await tap(page, janeStep.getByRole('button', { name: /^(Close|Done)$/ }).first(), text);
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(text.taps, 'Text → Send → back on Today').toBe(3);
 
   // approve an assistant draft: 1 tap on its card (Approvals is a tab / sidebar entry away)
   if (isPhone(page)) await page.getByRole('navigation', { name: 'Main tabs' }).getByRole('link', { name: 'Approvals' }).tap();

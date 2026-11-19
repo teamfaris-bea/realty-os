@@ -20,6 +20,7 @@ import { useContact } from '../contact/useContact.js';
 import { LogSheet } from '../notes/LogSheet.js';
 import type { OnePassOptions } from '../people-edit/StageStep.js';
 import { TextSheet } from '../people-edit/TextSheet.js';
+import { afterClose, revealRowAboveToast } from './lib/followUp.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
 
 type Who = { id: string; name: string };
@@ -44,6 +45,8 @@ export function OnePassProvider({ children }: { children: ReactNode }) {
     setOpen(null);
     // what the feed says about the person changed (the last touch, the next step): read it again
     void qc.invalidateQueries({ queryKey: ['feed'] });
+    // L16: once focus is back on the row's button, the row is scrolled clear of the toast that says the result
+    afterClose(revealRowAboveToast);
   }, [qc]);
   const value = useMemo<OnePass>(() => ({ log: (contact, o = {}) => setOpen({ kind: 'log', contact, o }), text: (contact, o = {}) => setOpen({ kind: 'text', contact, o }) }), []);
   return (

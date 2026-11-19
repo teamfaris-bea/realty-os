@@ -84,6 +84,11 @@ export function peopleMessage(e: unknown): string {
 export interface ToastSpec {
   text: string;
   undo?: () => void;
+  /**
+   * What the Undo button says, when "Undo" alone would promise more than it does (L16): a toast that says several
+   * results ("Call logged. Stage: Connected. Follow-up saved …") names the one its button takes back ("Undo stage change").
+   */
+  undoLabel?: string;
   /** one more thing the toast offers (R-STG-5: "Stop" for a plan an undo leaves running); `name` is its full spoken name */
   action?: { label: string; name?: string; run: () => void };
 }
@@ -124,7 +129,7 @@ function OwnToast({ children }: { children: ReactNode }) {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const show = useCallback((t: ToastSpec) => {
-    const offers = [t.undo ? 'Undo' : null, t.action ? t.action.label : null].filter(Boolean);
+    const offers = [t.undo ? (t.undoLabel ?? 'Undo') : null, t.action ? t.action.label : null].filter(Boolean);
     announce(offers.length === 0 ? t.text : `${t.text.replace(/\.$/, '')}. ${offers.join(' and ')} ${offers.length === 1 ? 'is' : 'are'} available.`);
     setToast(t);
     if (timer.current) clearTimeout(timer.current);
@@ -153,7 +158,7 @@ function OwnToast({ children }: { children: ReactNode }) {
                   u?.();
                 }}
               >
-                Undo
+                {toast.undoLabel ?? 'Undo'}
               </button>
             ) : null}
             {toast.action ? (

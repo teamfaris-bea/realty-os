@@ -266,7 +266,9 @@ describe('M7 (R-TODAY-15): a due promise is never hidden behind another task', (
     open(withPlan(feed([], [promiseCard(), followCard]), [row]));
     const r = within(await group()).getByRole('article', { name: 'Dana Reyes' });
     const l = within(r).getByTestId('follow-up-lines');
-    expect(within(l).getByText('You promised this; 1 h overdue')).toBeInTheDocument();
+    // (L16: the row is headed "You promised this"; its Due line says only when)
+    expect(within(l).getByText('1 h overdue')).toBeInTheDocument();
+    expect(within(r).getAllByText(/You promised this/)).toHaveLength(1);
     expect(within(l).getByText('Also due: Follow up with Dana')).toBeInTheDocument();
     expect(within(l).getByText(/^Send lender intro, overdue since /)).toBeInTheDocument();
     // shown once: the row stands for both tasks' cards

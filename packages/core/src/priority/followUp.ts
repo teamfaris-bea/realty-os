@@ -145,11 +145,20 @@ const CALL_RANG: ReadonlySet<string> = new Set(['completed', 'no_answer', 'busy'
 export type CandidateClass = 'human' | 'automatic' | 'imported' | 'none';
 
 /**
+ * How far ahead of now a logged activity may be dated and still be shown (R-TODAY-20): the log route's own allowance
+ * (parity/people ACTIVITY_MAX_AHEAD_MS; a test holds the two equal).
+ */
+export const LOGGED_AHEAD_MS = 5 * MINUTE_MS;
+
+/**
  * What one row is, for "what was last discussed". Everything not positively known to be a person's own contact is
  * not one: the default is 'none'.
  */
 export function classifyCandidate(c: ContactCandidate, now: Instant): CandidateClass {
-  if (!(c.at <= now)) return 'none';
+  // R-TODAY-20: a LOGGED activity may be dated a little ahead (the log route accepts it: the agent's clock can run
+  // ahead of the server's). It is shown at once, not hidden until its time passes. Nothing else is ever ahead of now.
+  const ahead = c.source === 'note' && c.noteSource === 'logged_activity' && c.activity !== null ? LOGGED_AHEAD_MS : 0;
+  if (!(c.at <= now + ahead)) return 'none';
   switch (c.source) {
     case 'message': {
       if (c.imported || c.initiator === 'import') return 'imported';

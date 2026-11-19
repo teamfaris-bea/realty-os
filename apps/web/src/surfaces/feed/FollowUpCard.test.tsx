@@ -50,7 +50,8 @@ describe('R-TODAY-1: a follow-up card on Today', () => {
     open(promiseCard());
     const l = await lines();
     const row = (term: string) => within(l).getByText(term).closest('div')!;
-    expect(within(row('Due')).getByText('You promised this; due in 3 h')).toBeInTheDocument();
+    // (b19 Today fix 7, L16: the card is already headed "You promised this", so the Due line says only when)
+    expect(row('Due')).toHaveTextContent(/^Due\s*Due in 3 h$/);
     expect(row('Last')).toHaveTextContent(/^Last\s*Call \w+, talked 6 min$/);
     expect(row('Next')).toHaveTextContent(/^Next\s*Send lender intro, today 11:00 PM$/);
     // the stage, with the team's own label, beside the kind of card
@@ -60,7 +61,8 @@ describe('R-TODAY-1: a follow-up card on Today', () => {
     // the kind of card is still its own element, found by its exact words
     expect(within(await screen.findByRole('article', { name: 'Dana Reyes' })).getByText('You promised this')).toBeInTheDocument();
     // the reason is said once, not also as the old loose line under the name
-    expect(screen.getAllByText('You promised this; due in 3 h')).toHaveLength(1);
+    expect(screen.getAllByText('Due in 3 h')).toHaveLength(1);
+    expect(screen.getAllByText(/You promised this/)).toHaveLength(1);
   });
 
   it('R-TODAY-2: only an automatic text: "No conversation yet." and the automatic text as its own line, never as the Last line', async () => {
@@ -83,7 +85,8 @@ describe('R-TODAY-1: a follow-up card on Today', () => {
   it('R-TODAY-4: a logged outside call reads "Logged by you: called from your phone, …", never as a call the system placed', async () => {
     open(promiseCard({ lastTouch: { kind: 'call', at: at(1), byName: 'Ava Agent', byMe: true, direction: 'outbound', outcome: 'left a voicemail', snippet: null, reported: true } }));
     const l = await lines();
-    expect(within(l).getByText(/^Logged by you: called from your phone, left a voicemail \(yesterday 2:10 PM\)$/)).toBeInTheDocument();
+    // (b19 Today fix 7, L12: and it says "not verified", as the notes list and the timeline do)
+    expect(within(l).getByText(/^Logged by you: called from your phone, left a voicemail · not verified \(yesterday 2:10 PM\)$/)).toBeInTheDocument();
   });
 
   it('an overdue promise is said as overdue, in words (not by colour alone)', async () => {

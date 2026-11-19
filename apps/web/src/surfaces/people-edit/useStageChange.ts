@@ -13,6 +13,9 @@ import { type ActionResult, usePersonAction, useToast } from './hooks.js';
 import { hasNextPanel, showNextPanel } from './NextPanel.js';
 import { type EnrollmentChange, type StageResponse, UNDO_REFUSED, automationWords, joinWords, stoppedWords, undoneText } from './stageFlow.js';
 
+/** The Undo of a toast that says more than the stage change: it takes back the stage change only, and says so (L16). */
+export const UNDO_STAGE = 'Undo stage change';
+
 /** The stage toast's way to the page's "What happens next" panel. */
 export const SEE_NEXT = 'See what happens next';
 
@@ -63,7 +66,8 @@ export function useStageChange(contactId: string, labelOf: (key: string) => stri
       toast({
         text: joinWords([o.lead, `Stage: ${data.stage.label}`, plan, o.also]),
         // without the event's id an undo could not be told from a new change (which may start a plan): not offered
-        ...(eventId && prev !== undefined && prev !== o.to ? { undo: () => void undo(prev, eventId) } : {}),
+        // L16: beside other results (the log, the follow-up) the button says which one it takes back
+        ...(eventId && prev !== undefined && prev !== o.to ? { undo: () => void undo(prev, eventId), ...(o.lead || o.also ? { undoLabel: UNDO_STAGE } : {}) } : {}),
         // M5 (E778): what the change did stays on the page's panel; one tap brings it into view (on a page that has it)
         ...(hasNextPanel() ? { action: { label: SEE_NEXT, run: () => void showNextPanel() } } : {}),
       });

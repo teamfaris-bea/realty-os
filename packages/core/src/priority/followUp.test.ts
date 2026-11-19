@@ -2,9 +2,11 @@
 // Table tests of the pure selection: the last HUMAN contact, the automatic line, the next promise.
 import { describe, expect, it } from 'vitest';
 import { DAY_MS, HOUR_MS, MINUTE_MS, at, zone } from '../foundation/index.js';
+import { ACTIVITY_MAX_AHEAD_MS } from '../parity/people/index.js';
 import {
   type ContactCandidate,
   FOLLOW_UP_ITEM_TYPES,
+  LOGGED_AHEAD_MS,
   NO_CONVERSATION_YET,
   type PromiseTask,
   SNIPPET_MAX,
@@ -322,5 +324,27 @@ describe('R-TODAY-19: the zone of an all-day task', () => {
     // due Thursday in Auckland: by Thursday 10:00 in New York (Friday 4:00 AM in Auckland) its day is over
     const r = selectNextPromise([{ ...allDay('Pacific/Auckland'), dueAt: at('2026-11-18T11:00:00Z') }], NOW, NY)!;
     expect(r).toMatchObject({ dueZone: 'Pacific/Auckland', deadline: at('2026-11-19T11:00:00Z'), overdue: true });
+  });
+});
+
+// b19 Today fix 7 (L17; R-TODAY-20): the log route accepts an activity dated up to 5 minutes ahead (the agent's clock
+// may run ahead of the server's). Such a log used to be ignored until its time passed: the row said nothing had
+// happened. It is shown at once.
+describe('L17 (R-TODAY-20): a log dated up to 5 minutes ahead is shown immediately', () => {
+  const loggedAt = (ms: number) => note({ id: 'ahead', at: (NOW + ms) as typeof NOW, noteSource: 'logged_activity', activity: { kind: 'call', direction: 'outbound', outcome: 'connected' }, bodyIsDefault: true });
+  it('the slack is the log route’s own', () => {
+    expect(LOGGED_AHEAD_MS).toBe(ACTIVITY_MAX_AHEAD_MS);
+  });
+  it('a logged call dated 4 minutes ahead is the last touch and the latest contact now', () => {
+    const r = selectLastContact([loggedAt(4 * MINUTE_MS), call({ at: ago(3 * DAY_MS) })], NOW);
+    expect(r.lastTouch).toMatchObject({ kind: 'call', reported: true, outcome: 'talked', at: NOW + 4 * MINUTE_MS });
+    expect(r.lastContactAt).toBe(NOW + 4 * MINUTE_MS);
+  });
+  it('exactly 5 minutes ahead counts; a moment more does not (the route would have refused it)', () => {
+    expect(classifyCandidate(loggedAt(5 * MINUTE_MS), NOW)).toBe('human');
+    expect(classifyCandidate(loggedAt(5 * MINUTE_MS + 1), NOW)).toBe('none');
+  });
+  it('only a LOGGED activity has the slack: a message, a call the system placed, a note or an appointment dated ahead is still not a contact', () => {
+    for (const c of [msg({ at: (NOW + MINUTE_MS) as typeof NOW }), call({ at: (NOW + MINUTE_MS) as typeof NOW }), note({ at: (NOW + MINUTE_MS) as typeof NOW }), appt({ at: (NOW + MINUTE_MS) as typeof NOW })]) expect(classifyCandidate(c, NOW)).toBe('none');
   });
 });

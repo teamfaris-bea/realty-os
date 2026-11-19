@@ -222,19 +222,35 @@ describe('R-TODAY-6: who is never in it', () => {
 });
 
 describe('R-TODAY-6: reading the plan creates nothing', () => {
-  it('no message, no draft, no task, no enrolment and no job is written by GET /feed, however many people are due', async () => {
+  // (b19 Today fix 7, L13: this test passed only after the tests above had made somebody due, and did not count
+  // notifications, deliveries or jobs. It now makes its own world, and counts every table a read could reach.)
+  it('no message, draft, task, enrolment, note, call, notification, delivery, job, stage event or audit row is written by GET /feed, however many people are due and however far it looks', async () => {
+    const w3 = await commsWorld(h, { agents: 1 });
+    const agent = w3.agents[0]!;
+    const warm = await contactOf(agent, { firstName: 'Quiet' });
+    await quiet(warm.id, 'connected', 12);
+    const promised = await contactOf(agent, { firstName: 'Promised' });
+    await task(agent, promised.id, 'Send lender intro', { kind: 'promise' });
+    // the feed is materialized by its first read (cards for the due task): that write is the feed's own, made before the counts
+    expect((await planOf(agent)).people.map((p) => p.contact!.id).sort()).toEqual([warm.id, promised.id].sort());
     const counts = async () =>
       (
-        await h.su.query<{ m: string; aa: string; t: string; e: string; n: string; c: string }>(
-          `SELECT (SELECT count(*) FROM messages WHERE tenant_id = $1) AS m, (SELECT count(*) FROM assistant_actions WHERE tenant_id = $1) AS aa,
-                  (SELECT count(*) FROM tasks WHERE tenant_id = $1) AS t, (SELECT count(*) FROM playbook_enrollments WHERE tenant_id = $1) AS e,
-                  (SELECT count(*) FROM notes WHERE tenant_id = $1) AS n, (SELECT count(*) FROM calls WHERE tenant_id = $1) AS c`,
-          [w.tenantId],
+        await h.su.query<Record<string, string>>(
+          `SELECT (SELECT count(*) FROM messages WHERE tenant_id = $1) AS messages, (SELECT count(*) FROM assistant_actions WHERE tenant_id = $1) AS assistant_actions,
+                  (SELECT count(*) FROM tasks WHERE tenant_id = $1) AS tasks, (SELECT count(*) FROM playbook_enrollments WHERE tenant_id = $1) AS playbook_enrollments,
+                  (SELECT count(*) FROM notes WHERE tenant_id = $1) AS notes, (SELECT count(*) FROM calls WHERE tenant_id = $1) AS calls,
+                  (SELECT count(*) FROM notifications WHERE tenant_id = $1) AS notifications, (SELECT count(*) FROM notification_deliveries WHERE tenant_id = $1) AS notification_deliveries,
+                  (SELECT count(*) FROM jobs WHERE tenant_id = $1) AS jobs, (SELECT count(*) FROM contact_stage_events WHERE tenant_id = $1) AS contact_stage_events,
+                  (SELECT count(*) FROM audit_log WHERE tenant_id = $1) AS audit_log,
+                  (SELECT max(last_human_touch_at)::text FROM contacts WHERE tenant_id = $1) AS last_touch`,
+          [w3.tenantId],
         )
       ).rows[0];
     const before = await counts();
-    expect((await planOf(a)).people.length).toBeGreaterThan(0);
-    await planOf(a);
+    expect(Object.keys(before!)).toHaveLength(12);
+    expect((await planOf(agent)).people).toHaveLength(2);
+    expect((await call(agent, 'GET', '/feed?followUpDepth=10')).status).toBe(200);
+    expect((await call(agent, 'GET', '/activities/recent-people')).status).toBe(200);
     expect(await counts()).toEqual(before);
   });
 });

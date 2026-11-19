@@ -11,6 +11,8 @@ import type { FeedCard, LastAutomaticView, LastTouchView, NextPromiseView } from
 
 export const NO_CONVERSATION_YET = 'No conversation yet.';
 export const NO_NEXT_STEP = 'No next step set.';
+/** Said of everything the agent logged from outside the app, wherever it is shown (the card, the notes list, the timeline). */
+export const NOT_VERIFIED = 'not verified';
 
 const DAY = 86_400_000;
 const startOfDay = (t: number) => {
@@ -130,9 +132,12 @@ const VERB: Record<string, { mine: string; theirs: string }> = {
  */
 export function lastTouchLine(t: LastTouchView | null | undefined, nowMs: number, importedAt?: string | null): string {
   if (!t) return importedAt ? `No conversation yet in Realty OS. Earlier history was imported (latest entry ${whenWords(importedAt, nowMs)}).` : NO_CONVERSATION_YET;
-  if (t.reported) return `${loggedWords(t)} (${whenWords(t.at, nowMs, { time: true })})${quoted(t.snippet)}`;
+  // L12: the agent's own report says "not verified" here too, in the words the notes list and the timeline use
+  if (t.reported) return `${loggedWords(t)} · ${NOT_VERIFIED} (${whenWords(t.at, nowMs, { time: true })})${quoted(t.snippet)}`;
   const v = VERB[t.kind] ?? VERB.note!;
-  const head = t.direction === 'inbound' ? `${v.theirs} ${whenWords(t.at, nowMs)}` : `${v.mine} ${whenWords(t.at, nowMs)}${!t.byMe && t.byName ? ` by ${t.byName}` : ''}`;
+  // L16: what a teammate did never reads as the viewer's own: it names them, or says "a teammate" when the viewer
+  // cannot see the name
+  const head = t.direction === 'inbound' ? `${v.theirs} ${whenWords(t.at, nowMs)}` : `${v.mine} ${whenWords(t.at, nowMs)}${t.byMe ? '' : ` by ${t.byName ?? 'a teammate'}`}`;
   return `${head}${t.outcome ? `, ${t.outcome}` : ''}${quoted(t.snippet)}`;
 }
 
@@ -195,4 +200,52 @@ export function nextPromiseLine(p: NextPromiseView | null | undefined, nowMs: nu
   // R-TODAY-19: an all-day task is a day in its own zone; a timed task is an instant, said in the viewer's own time
   const when = p.dueAllDay ? allDayWords(p.dueAt, p.dueZone, nowMs) : whenWords(p.dueAt, nowMs, { time: true });
   return `${p.text}, ${p.overdue ? `overdue since ${when}` : when}`;
+}
+
+const PROMISED = 'You promised this';
+
+/**
+ * The card's Due line: its first reason. A promise card is already headed "You promised this", so its Due line says
+ * only when ("10 min overdue", "Due in 3 h") instead of repeating the label (L16).
+ */
+export function dueLine(c: Pick<FeedCard, 'itemType' | 'why'>): string {
+  const first = c.why?.[0] ?? '';
+  if (c.itemType !== 'promise_due' || !first.startsWith(`${PROMISED}; `)) return first;
+  const rest = first.slice(PROMISED.length + 2);
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+/** The space kept between a row and the toast above which it is scrolled. */
+const TOAST_GAP = 12;
+
+/**
+ * How far to scroll down so a row ends above the toast that covers it (L16): 0 when no toast is showing or the row
+ * is already clear; never so far that the row's top goes under the page header.
+ */
+export function scrollToClear(row: { top: number; bottom: number }, toast: { top: number; bottom: number }, headerBottom: number): number {
+  if (toast.bottom - toast.top <= 0) return 0;
+  const need = row.bottom - toast.top + TOAST_GAP;
+  if (need <= TOAST_GAP && row.bottom <= toast.top) return 0;
+  return Math.max(0, Math.min(need, row.top - headerBottom));
+}
+
+/**
+ * After a one-pass sheet closes: the row it was opened from (focus is back on its button) is scrolled clear of the
+ * page's toast, so what the toast says and the row it is about are both readable.
+ */
+export function revealRowAboveToast(): void {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return;
+  const row = document.activeElement?.closest('article');
+  const stack = document.querySelector('[data-testid="people-toast"]');
+  if (!row || !stack || typeof window.scrollBy !== 'function') return;
+  const header = document.querySelector('header');
+  const headerBottom = header && getComputedStyle(header).position === 'sticky' ? header.getBoundingClientRect().bottom : 0;
+  const by = scrollToClear(row.getBoundingClientRect(), stack.getBoundingClientRect(), headerBottom);
+  if (by > 0) window.scrollBy({ top: by });
+}
+
+/** Runs `fn` once the closing sheet has left the page and focus is back on what opened it (two frames; at once where there are none). */
+export function afterClose(fn: () => void): void {
+  if (typeof requestAnimationFrame !== 'function') return void setTimeout(fn, 0);
+  requestAnimationFrame(() => requestAnimationFrame(fn));
 }

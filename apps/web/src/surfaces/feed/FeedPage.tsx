@@ -23,7 +23,7 @@ import { ReachabilityBatch } from '../../reasons/index.js';
 import { ActionButton, LogButton } from './ActionButton.js';
 import { OnePassProvider } from './OnePass.js';
 import { AgentSheetsProvider, useAgentSheets } from './lib/AgentSheets.js';
-import { automaticLine, lastLine, nextPromiseLine } from './lib/followUp.js';
+import { automaticLine, dueLine, lastLine, nextPromiseLine } from './lib/followUp.js';
 import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } from './lib/format.js';
 import { useMutate, useNow } from './lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
@@ -384,7 +384,7 @@ export function FollowUpLines({ card, now }: { card: FeedCard; now: number }) {
     <dl data-testid="follow-up-lines" className="flex flex-col gap-1 text-[15px] leading-[22px] text-ink">
       <div className={line}>
         <dt className={term}>Due</dt>
-        <dd className={said}>{card.why?.[0]}</dd>
+        <dd className={said}>{dueLine(card)}</dd>
       </div>
       {/* R-TODAY-15: the person's other due tasks, in one line under the reason the row leads with */}
       {also ? (

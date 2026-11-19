@@ -177,7 +177,9 @@ const stageEvents = (id: string) => stack.sql<{ to_stage: string }>('SELECT to_s
 test('J11.1 Today: a person with a promise due shows why they are due, what was last discussed and the promise, once', async ({ page }, info) => {
   await openToday(page);
   await expect(row(page, dana)).toBeVisible({ timeout: 20_000 });
-  await expect(line(page, dana, 'Due')).toHaveText(/^You promised this; \d+ min overdue$/);
+  // (fix 7, L16: the row is headed "You promised this", so its Due line says only when)
+  await expect(line(page, dana, 'Due')).toHaveText(/^\d+ min overdue$/);
+  await expect(row(page, dana).getByText(/You promised this/)).toHaveCount(1);
   await expect(line(page, dana, 'Last')).toHaveText(new RegExp(`^Note today \\d{1,2}:\\d{2}\\s[AP]M: “${NOTE.replace(/[.]/g, '\\.')}”$`));
   await expect(line(page, dana, 'Next')).toHaveText(new RegExp(`^${PROMISE}, overdue since today \\d{1,2}:\\d{2}\\s[AP]M$`));
   await expect(row(page, dana).getByTestId('card-stage')).toHaveText('New lead');
@@ -234,7 +236,17 @@ test('J11.2 a call made outside the app, from the row: Log → "Left voicemail" 
   // still Today, and the row says the new last touch as the agent's own report, with the new stage
   await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe('/');
-  await expect(line(page, dana, 'Last')).toHaveText(/^Logged by you: called from your phone, left a voicemail \(today \d{1,2}:\d{2}\s[AP]M\)$/, { timeout: 20_000 });
+  // (fix 7, L12: the card says "not verified", as the notes list and the timeline do)
+  await expect(line(page, dana, 'Last')).toHaveText(/^Logged by you: called from your phone, left a voicemail · not verified \(today \d{1,2}:\d{2}\s[AP]M\)$/, { timeout: 20_000 });
+  // fix 7, L16: the toast says four results; its one Undo takes back the stage change and says so
+  await expect(peopleToast(page).getByRole('button', { name: 'Undo stage change', exact: true })).toBeVisible();
+  // … and the toast does not cover the row of the person just logged: the row's lines end above it
+  if (isPhone(page)) {
+    const pill = (await peopleToast(page).locator('> div').boundingBox())!;
+    const said = (await lines(page, dana).boundingBox())!;
+    expect(said.y + said.height, `the row's lines (bottom ${Math.round(said.y + said.height)}) end above the toast (top ${Math.round(pill.y)})`).toBeLessThanOrEqual(pill.y);
+    expect(said.y, 'and are still on screen under the header').toBeGreaterThanOrEqual(0);
+  }
   await expect(row(page, dana).getByTestId('card-stage')).toHaveText('Trying to reach');
   // the promise is still theirs to keep: it stays the next thing, and the row stays
   await expect(line(page, dana, 'Next')).toHaveText(new RegExp(`^${PROMISE}, overdue since today`));
@@ -494,4 +506,36 @@ test('J11.7 M3: a follow-up that is not due yet is never closed: the footer says
   await tap(page, save);
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
   await expect.poll(async () => (await tasksOf(uma.id)).map((t) => [t.kind, t.status]), { timeout: 15_000 }).toEqual([['follow_up', 'open'], ['follow_up', 'open']]);
+});
+
+test('J11.8 L16: the toast never covers the row of the person just logged: a row at the bottom of the screen is scrolled clear of it', async ({ page }) => {
+  // a person with a promise due (the row stays after the log), opened from the very bottom of the screen
+  const vida = await stack.fixture<Person>('/j11/person', { as: 'a.agent0', first: 'Vida', last: 'Brennan' });
+  const t = await must(stack.api<{ task: { id: string } }>('a.agent0', 'POST', '/tasks', { title: 'Send the survey', contactId: vida.id, dueAt: new Date(Date.now() + 3_600_000).toISOString() }), 'task');
+  await stack.fixture('/j11/promise', { taskId: t.task.id, overdueMinutes: 1 });
+  await openToday(page);
+  const r = row(page, vida);
+  await expect(r).toBeVisible({ timeout: 20_000 });
+  const vp = page.viewportSize()!;
+  // the row's lines end at the bottom edge of the screen, where the toast will be
+  const before = (await lines(page, vida).boundingBox())!;
+  await page.evaluate((dy) => window.scrollBy(0, dy), before.y + before.height - (vp.height - 150));
+  await tap(page, r.getByRole('button', { name: `Log for ${vida.name}` }));
+  const sheet = page.getByRole('dialog', { name: `Log for ${vida.name}` });
+  await tap(page, sheet.getByRole('button', { name: 'Left voicemail', exact: true }));
+  const save = sheet.getByTestId('log-save');
+  await expect(save).toBeEnabled({ timeout: 15_000 });
+  await tap(page, save);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  const pill = peopleToast(page).locator('> div');
+  await expect(pill).toBeVisible({ timeout: 15_000 });
+  await expect(line(page, vida, 'Last')).toHaveText(/^Logged by you: called from your phone, left a voicemail · not verified/, { timeout: 20_000 });
+  await expect
+    .poll(async () => {
+      const toast = await pill.boundingBox();
+      const said = await lines(page, vida).boundingBox();
+      // (the toast is gone after 8 s: the row is then clear of it by definition)
+      return toast === null || said === null ? true : said.y + said.height <= toast.y && said.y >= 0;
+    }, { timeout: 5_000, message: 'the row’s lines end above the toast, and are still on screen' })
+    .toBe(true);
 });

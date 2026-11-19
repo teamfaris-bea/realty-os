@@ -28,6 +28,7 @@ import { detailsKey } from '../../people-edit/api.js';
 import { ToastProvider, useToastSlot } from '../../people-edit/hooks.js';
 import { type OnePassOptions, StageStep } from '../../people-edit/StageStep.js';
 import type { SuggestedStage } from '../../people-edit/stageFlow.js';
+import { afterClose, revealRowAboveToast } from './followUp.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
 import { AGENT_ERROR_MESSAGES } from './messages.js';
 import { useMutate } from './hooks.js';
@@ -89,7 +90,11 @@ export function AgentSheetsProvider({ children, stageStep = false }: { children:
   const qc = useQueryClient();
   const close = () => {
     // a one-pass sheet changed what the feed says about the person (the last touch, the next step): read it again
-    if (open?.kind === 'call' && open.onePass) void qc.invalidateQueries({ queryKey: ['feed'] });
+    if (open?.kind === 'call' && open.onePass) {
+      void qc.invalidateQueries({ queryKey: ['feed'] });
+      // L16: the row the sheet was opened from is scrolled clear of the toast that says the result
+      afterClose(revealRowAboveToast);
+    }
     setOpen(null);
   };
   return (

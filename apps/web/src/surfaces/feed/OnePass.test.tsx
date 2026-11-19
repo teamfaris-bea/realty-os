@@ -193,7 +193,10 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(fake.callsTo(`PATCH /tasks/${OLD_TASK}`).map((c) => c.body)).toEqual([{ status: 'done' }]);
     // (the toast also carries its Undo button, so the sentence is matched up to its end, not the element's)
-    await waitFor(() => expect(toastText()).toMatch(/^Call logged \(left voicemail\)\. Stage: Trying to reach\. Follow-up saved for .+ 9:00 AM\. Marked done: “Follow up with Dana”(Undo)?$/));
+    await waitFor(() => expect(toastText()).toMatch(/^Call logged \(left voicemail\)\. Stage: Trying to reach\. Follow-up saved for .+ 9:00 AM\. Marked done: “Follow up with Dana”(Undo stage change)?$/));
+    // (L16: the toast says four results; its Undo takes back one of them and says which)
+    expect(within(screen.getByTestId('people-toast')).getByRole('button', { name: 'Undo stage change' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('people-toast')).queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
   it('E853: … and a promise the card is about is left open', async () => {
@@ -216,6 +219,20 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
     const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([], [plain]) }).on('GET /reachability', { status: 200, body: { contacts: [reachability(IDS.jane)] } });
     agentApp(fake);
     const c = await theCard();
-    expect(within(c).queryByRole('button', { name: /^Log a call or conversation/ })).toBeNull();
+    // (b19 Today fix 7, L14: this looked for the button's OLD name, so it could never fail. The card's Log button is
+    // named "Log for <name>"; the header's own entry, "Log a call or conversation", is outside the card.)
+    expect(within(c).queryByRole('button', { name: /^Log\b/ })).toBeNull();
+    expect(within(c).queryByRole('button', { name: 'Log for Dana Reyes' })).toBeNull();
+    // … and the same card AS a follow-up card has it, so the assertion above can fail
+    expect(screen.getByRole('button', { name: 'Log a call or conversation' })).toBeInTheDocument();
+    // Text goes to the conversation, not to a sheet on this page
+    await userEvent.setup().click(within(c).getByRole('button', { name: 'Text' }));
+    expect(screen.queryByRole('dialog', { name: 'Text Dana Reyes' })).toBeNull();
+  });
+
+  it('L14: … and the very same card with the follow-up lines does have the Log button (the check above is not vacuous)', async () => {
+    const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([], [followCard()]) }).on('GET /reachability', { status: 200, body: { contacts: [reachability(IDS.jane)] } });
+    agentApp(fake);
+    expect(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' })).toBeInTheDocument();
   });
 });

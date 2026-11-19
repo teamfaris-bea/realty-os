@@ -1,7 +1,7 @@
 // R-TODAY-1 / R-TODAY-4 (web): the words of a follow-up card's "Last" and "Next" lines, and of a logged outside
 // call wherever it is shown. Written against local dates, so they hold under any TZ the suite runs in.
 import { describe, expect, it } from 'vitest';
-import { NO_CONVERSATION_YET, allDayWords, automaticLine, lastLine, lastTouchLine, loggedWords, nextPromiseLine, whenWords } from './followUp.js';
+import { NOT_VERIFIED, NO_CONVERSATION_YET, allDayWords, automaticLine, dueLine, lastLine, lastTouchLine, loggedWords, nextPromiseLine, scrollToClear, whenWords } from './followUp.js';
 import type { LastTouchView, NextPromiseView } from './types.js';
 
 // Thursday Nov 19 2026, 10:00 local
@@ -60,7 +60,7 @@ describe('the Last line', () => {
 
 describe('R-TODAY-4: a logged outside call is labelled as the agent’s own report', () => {
   it('the brief’s line: "Logged by you: called from your phone, left a voicemail (Wed 2:10 PM)"', () => {
-    expect(lastTouchLine(touch({ reported: true, outcome: 'left a voicemail', at: local(18) }), new Date(2026, 10, 20, 10).getTime())).toBe('Logged by you: called from your phone, left a voicemail (Wed 2:10 PM)');
+    expect(lastTouchLine(touch({ reported: true, outcome: 'left a voicemail', at: local(18) }), new Date(2026, 10, 20, 10).getTime())).toBe('Logged by you: called from your phone, left a voicemail · not verified (Wed 2:10 PM)');
   });
   const LOGGED: [string, Parameters<typeof loggedWords>[0], string][] = [
     ['my outbound call', { kind: 'call', direction: 'outbound', outcome: 'talked', byName: 'Avery Brooks', byMe: true }, 'Logged by you: called from your phone, talked'],
@@ -76,7 +76,7 @@ describe('R-TODAY-4: a logged outside call is labelled as the agent’s own repo
   });
   it('every logged line starts with "Logged by": none can read as a call the system placed', () => {
     for (const [, a] of LOGGED) expect(loggedWords(a)).toMatch(/^Logged by /);
-    expect(lastTouchLine(touch({ reported: true, snippet: 'Will try Friday.' }), NOW)).toBe('Logged by you: called from your phone, talked 6 min (Tue 2:10 PM): “Will try Friday.”');
+    expect(lastTouchLine(touch({ reported: true, snippet: 'Will try Friday.' }), NOW)).toBe('Logged by you: called from your phone, talked 6 min · not verified (Tue 2:10 PM): “Will try Friday.”');
   });
 });
 
@@ -126,7 +126,7 @@ describe('R-TODAY-14: lastLine, the Last line of the truth table', () => {
     ['bulk only', 'Connected: no conversation yet', { quiet: q('never', null) }, null, 'No conversation yet.'],
     ['an undelivered attempt', 'Connected, but the last text was not delivered', { quiet: q('undelivered', D10, { kind: 'text', at: D10, what: 'undelivered' }) }, 'No conversation is recorded. The last text (Nov 10) was not delivered.', 'No conversation is recorded. The last text (Nov 10) was not delivered.'],
     ['a failed dial', 'Connected, but the last call did not connect', { quiet: q('failed_dial', D10, { kind: 'call', at: D10, what: 'failed_dial' }) }, 'No conversation is recorded. The last call (Nov 10) did not connect.', 'No conversation is recorded. The last call (Nov 10) did not connect.'],
-    ['a logged outside call', 'Connected: no conversation for 9 days', { quiet: q('contact', D10), lastTouch: logged }, 'Logged by you: called from your phone, talked (Nov 10, 2:10 PM)', 'Logged by you: called from your phone, talked (Nov 10, 2:10 PM)'],
+    ['a logged outside call', 'Connected: no conversation for 9 days', { quiet: q('contact', D10), lastTouch: logged }, 'Logged by you: called from your phone, talked · not verified (Nov 10, 2:10 PM)', 'Logged by you: called from your phone, talked · not verified (Nov 10, 2:10 PM)'],
     ['a verified call', 'Connected: no conversation for 9 days', { quiet: q('contact', D10), lastTouch: call }, 'Call Nov 10, talked 6 min', 'Call Nov 10, talked 6 min'],
     ['their reply', 'Connected: no conversation for 8 days', { quiet: q('contact', local(11)), lastTouch: reply }, 'They texted Nov 11: “Can we see it Saturday?”', 'They texted Nov 11: “Can we see it Saturday?”'],
     ['imported only', 'Connected: only imported history, the latest 40 days ago', { quiet: q('imported', local(1)), importedHistoryAt: local(1) }, 'Imported history only (latest entry Nov 1). No conversation in Realty OS yet.', 'Imported history only (latest entry Nov 1). No conversation in Realty OS yet.'],
@@ -199,5 +199,53 @@ describe('M10 (R-TODAY-19): an all-day task is said in its own zone', () => {
   });
   it('a timed task is still said in the viewer’s own time, with its time', () => {
     expect(nextPromiseLine({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt: local(19, 17, 0), dueAllDay: false, dueZone: null, overdue: false }, NOW)).toBe('Send lender intro, today 5:00 PM');
+  });
+});
+
+// b19 Today fix 7 (L12, L16)
+describe('L12 (R-TODAY-4): a logged outside call says "not verified" on Today’s card, as the notes list and the timeline do', () => {
+  it('every reported last touch carries it, in the same words everywhere', () => {
+    expect(NOT_VERIFIED).toBe('not verified');
+    for (const kind of ['call', 'text', 'email'] as const) for (const direction of ['outbound', 'inbound'] as const) expect(lastTouchLine(touch({ kind, direction, reported: true, outcome: null }), NOW)).toMatch(/ · not verified \(Tue 2:10 PM\)$/);
+    expect(lastTouchLine(touch({ reported: true, byMe: false, byName: 'Sam Lee', outcome: 'talked' }), NOW)).toBe('Logged by Sam Lee: called from their phone, talked · not verified (Tue 2:10 PM)');
+  });
+  it('a call the system placed or a message it sent never says it', () => {
+    expect(lastTouchLine(touch(), NOW)).not.toMatch(/not verified/);
+    expect(lastTouchLine(touch({ kind: 'text', outcome: null, snippet: 'See you Saturday.' }), NOW)).not.toMatch(/not verified/);
+  });
+});
+
+describe('L16 (R-TODAY-21): a teammate’s call never reads as the viewer’s own', () => {
+  it('W4: a teammate’s call whose name the viewer cannot see says "by a teammate"; the viewer’s own says nobody', () => {
+    expect(lastTouchLine(touch({ byMe: false, byName: null }), NOW)).toBe('Call Tue by a teammate, talked 6 min');
+    expect(lastTouchLine(touch({ byMe: false, byName: 'Sam Lee' }), NOW)).toBe('Call Tue by Sam Lee, talked 6 min');
+    expect(lastTouchLine(touch({ byMe: true }), NOW)).toBe('Call Tue, talked 6 min');
+    expect(lastTouchLine(touch({ kind: 'note', direction: null, outcome: null, byMe: false, byName: null, snippet: 'Updated the address.' }), NOW)).toBe('Note Tue by a teammate: “Updated the address.”');
+    // what the client did is theirs, whoever is named
+    expect(lastTouchLine(touch({ kind: 'text', direction: 'inbound', byMe: false, byName: null, outcome: null }), NOW)).toBe('They texted Tue');
+  });
+});
+
+describe('L16 (R-TODAY-21): the Due line does not repeat the card’s own label', () => {
+  it('"You promised this" is the card’s label, so the Due line says only when', () => {
+    expect(dueLine({ itemType: 'promise_due', why: ['You promised this; 10 min overdue'] })).toBe('10 min overdue');
+    expect(dueLine({ itemType: 'promise_due', why: ['You promised this; due in 3 h'] })).toBe('Due in 3 h');
+    // any other card says its reason whole
+    expect(dueLine({ itemType: 'task_due', why: ['Overdue by 2 h'] })).toBe('Overdue by 2 h');
+    expect(dueLine({ itemType: 'warm_follow_up', why: ['Connected: no conversation for 9 days'] })).toBe('Connected: no conversation for 9 days');
+    expect(dueLine({ itemType: 'task_due', why: [] })).toBe('');
+  });
+});
+
+describe('L16 (R-TODAY-21): the toast never covers the row of the person just logged', () => {
+  it('scrollToClear: how far to scroll so the row ends above the toast, never pushing its top under the header', () => {
+    // the row's bottom (620) is under the toast's top (560): scroll 60 + the gap
+    expect(scrollToClear({ top: 300, bottom: 620 }, { top: 560, bottom: 640 }, 52)).toBe(72);
+    // already clear: nothing
+    expect(scrollToClear({ top: 100, bottom: 400 }, { top: 560, bottom: 640 }, 52)).toBe(0);
+    // no toast on screen: nothing
+    expect(scrollToClear({ top: 300, bottom: 620 }, { top: 560, bottom: 560 }, 52)).toBe(0);
+    // a row taller than the space: its top stops under the header (never scrolled out of sight)
+    expect(scrollToClear({ top: 80, bottom: 620 }, { top: 560, bottom: 640 }, 52)).toBe(28);
   });
 });

@@ -19,6 +19,7 @@ import { defaultActivityBody, mentionTokens, renderMentions, stageLabel } from '
 import {
   type ContactCandidate,
   FOLLOW_UP_TODAY_CAP,
+  LOGGED_AHEAD_MS,
   type FollowUpPersonFacts,
   type FollowUpTodayEntry,
   type GateSummary,
@@ -250,7 +251,8 @@ export function followUpHistorySql(ids: readonly string[], nowIso: string) {
                                   'activityOutcome', n.activity_outcome, 'body', left(n.body, ${BODY_READ})) AS facts
           FROM notes n
          WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND NOT n.imported AND n.source = 'logged_activity'
-           AND n.activity_at <= ${nowIso}::timestamptz
+           -- R-TODAY-20: a log the route accepted a few minutes ahead (a fast clock) is shown at once
+           AND n.activity_at <= ${nowIso}::timestamptz + make_interval(secs => ${LOGGED_AHEAD_MS / 1000})
          ORDER BY n.activity_at DESC, n.id DESC LIMIT 1) x
       UNION ALL
       SELECT p.id, 'appointment', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (

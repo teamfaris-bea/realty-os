@@ -298,7 +298,8 @@ describe('the stage step after an outcome', () => {
     const toast = screen.getByTestId('people-toast');
     expect(toast.textContent).toMatch(/^Stage: Trying to reach\. Buyer plan started\. Follow-up saved for .+9:00 AM/);
     // Undo names the stored event and goes back to the stage the sheet knew the person was in
-    await u.click(within(toast).getByRole('button', { name: 'Undo' }));
+    // (b19 Today fix 7, L16: beside the follow-up it says what it undoes: the stage change, nothing else)
+    await u.click(within(toast).getByRole('button', { name: 'Undo stage change' }));
     await waitFor(() => expect(stagePosts(fake)).toHaveLength(3));
     expect(stagePosts(fake)[2]!.body).toEqual({ stage: 'new', undoOf: EV });
   });
@@ -314,7 +315,7 @@ describe('the stage step after an outcome', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     const toast = screen.getByTestId('people-toast');
     expect(await within(toast).findByText('Stage: Trying to reach')).toBeInTheDocument();
-    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(within(toast).queryByRole('button', { name: /^Undo/ })).toBeNull();
   });
 
   it('"Pick a date" shows a date and time field; with Keep the button is "Keep New lead", the footer names the task it adds, and only the task is made', async () => {
