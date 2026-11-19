@@ -172,6 +172,9 @@ describe('a message whose delivery could not be confirmed (R-STG-4)', () => {
   const smsTo = (phone: string) => h.providers.telephony.sms.filter((m) => m.to === phone);
   // never "sent", "delivered", "not delivered", "retried" or "resent": only that it could not be confirmed
   const NEVER = /\bwas sent\b|\bdelivered\b|\bretried\b|\bresent\b|\bdid not send\b|\bnot sent\b/i;
+  // the standard the thread and the compose notice are held to (apps/web reasons/unconfirmedDelivery.test.ts, E753)
+  const CLAIMS_NOT_DELIVERED = /Not delivered|Not sent|didn't send|did not send|wasn't sent|was not sent|Nothing reached|refused it|went out\b|no record/i;
+  const CHECK_FIRST = /[Cc]heck .*before (you send|sending) (it )?again/;
 
   it('R-STG-4 E768 the plan\'s last text was handed to the carrier and no answer came: the status says delivery could not be confirmed, in its own field; it is not "next", not sent and not sent again', async () => {
     // a plan whose text went out normally has nothing to say here
@@ -195,6 +198,8 @@ describe('a message whose delivery could not be confirmed (R-STG-4)', () => {
     expect(s.deliveryUnconfirmed).toEqual({ channel: 'sms', at: expect.any(String), checking: true, sentence: expect.stringMatching(/could not be confirmed/i) });
     expect(s.deliveryUnconfirmed!.sentence).toMatch(/may have reached them/i);
     expect(s.deliveryUnconfirmed!.sentence).not.toMatch(NEVER);
+    expect(s.deliveryUnconfirmed!.sentence).not.toMatch(CLAIMS_NOT_DELIVERED);
+    expect(s.deliveryUnconfirmed!.sentence).toMatch(CHECK_FIRST);
     // the text is with the carrier: it is not the "next" step (that would promise a send), and nothing later is promised yet
     expect(s.next).toBeNull();
     const other = (await status(agent, fine.id)).body.plan!;
@@ -209,6 +214,8 @@ describe('a message whose delivery could not be confirmed (R-STG-4)', () => {
     expect(s.deliveryUnconfirmed).toEqual({ channel: 'sms', at: expect.any(String), checking: false, sentence: expect.stringMatching(/could not be confirmed/i) });
     expect(s.deliveryUnconfirmed!.sentence).toMatch(/may have reached them/i);
     expect(s.deliveryUnconfirmed!.sentence).not.toMatch(NEVER);
+    expect(s.deliveryUnconfirmed!.sentence).not.toMatch(CLAIMS_NOT_DELIVERED);
+    expect(s.deliveryUnconfirmed!.sentence).toMatch(CHECK_FIRST);
     // the plan goes on to its next step; the unconfirmed text is not sent a second time by anything here
     expect(s.next).toMatchObject({ kind: 'message', channel: 'email' });
     await stepNow(h, w.tenantId, e!.id);

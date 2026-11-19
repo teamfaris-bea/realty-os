@@ -95,7 +95,8 @@ export function stoppedSentence(code: string): string {
  */
 export function deliveryUnconfirmedSentence(channel: string, checking: boolean): string {
   const what = channel === 'email' ? 'email' : 'text';
+  // the words E753's three surfaces use: could not be confirmed, may have reached them, check before sending again
   return checking
-    ? `Delivery of the plan's last ${what} could not be confirmed yet. It may have reached them. We are still checking, and it is not submitted a second time.`
-    : `Delivery of the plan's last ${what} could not be confirmed. It may have reached them. It was not submitted a second time: check with them before you write the same thing yourself.`;
+    ? `Delivery of the plan's last ${what} could not be confirmed yet: it may have reached them. We're still checking, and the plan does not submit it a second time. Check with them before sending it again yourself.`
+    : `Delivery of the plan's last ${what} could not be confirmed: it may have reached them. The plan did not submit it a second time. Check with them before sending it again yourself.`;
 }
