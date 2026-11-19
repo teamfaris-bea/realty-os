@@ -64,7 +64,7 @@ describe('StagePill: the lock says what reaches the lead (R-PAR-14, owner decisi
   });
 });
 
-describe('StagePill: the picker teaches what each stage means (R-STG-1)', () => {
+describe('E796: StagePill: the picker teaches what each stage means (R-STG-1)', () => {
   it('each of the eight stages shows its label, its one-line definition and its "does not mean" line', async () => {
     const { u } = mount('none', detailsFixture(C, 'attempting'));
     await u.click(screen.getByRole('button', { name: 'Stage: Trying to reach. Change stage' }));

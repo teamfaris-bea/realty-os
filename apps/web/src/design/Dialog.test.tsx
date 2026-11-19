@@ -87,7 +87,7 @@ describe('Dialog', () => {
 // b19: on a phone the on-screen keyboard covers the bottom of the layout viewport, where a bottom sheet's footer is.
 // The dialog's frame follows window.visualViewport (the part of the page actually visible), so the footer and its
 // primary button stay above the keyboard. jsdom has no visualViewport: the tests stand one in.
-describe('Dialog and the on-screen keyboard (window.visualViewport)', () => {
+describe('E793: Dialog and the on-screen keyboard (window.visualViewport)', () => {
   type Listener = () => void;
   function fakeViewport(init: { height: number; offsetTop: number; scale?: number }) {
     const listeners = new Map<string, Set<Listener>>();

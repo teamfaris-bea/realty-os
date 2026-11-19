@@ -476,7 +476,7 @@ test('J10.7: a double tap on the one button that saves the log, the follow-up an
   expect(await enrollments(ivy.id)).toHaveLength(0);
 });
 
-test('J10.8: a 24-character team label at 320 px wide: the pill, the picker, the stage step and its button show it whole; nothing truncates or scrolls sideways', async ({ page }, info) => {
+test('J10.8 (E796): a 24-character team label at 320 px wide: the pill, the picker, the stage step and its button show it whole; nothing truncates or scrolls sideways', async ({ page }, info) => {
   test.setTimeout(180_000);
   expect(LONG_LABEL).toHaveLength(24);
   // the desktop project has no touch screen, and at 320 px its layout is the phone's: a click on both projects
@@ -555,7 +555,7 @@ test('J10.8: a 24-character team label at 320 px wide: the pill, the picker, the
 const logButton = (page: Page) => (isPhone(page) ? page.getByTestId('person-phone-bar').getByRole('button', { name: 'Log', exact: true }) : page.getByRole('button', { name: 'Log', exact: true }));
 const loggedNotes = (contactId: string) => stack.sql("SELECT 1 FROM notes WHERE contact_id = $1 AND source = 'logged_activity'", [contactId]);
 
-test('J10.9 (M6): Log → outcome → "Save and change to Trying to reach" = 3 taps from the bar to a saved log and a confirmed stage, every tap counted; the step is in the Log sheet and nothing that matters is under the fold', async ({ page }, info) => {
+test('J10.9 (M6, E775, E776): Log → outcome → "Save and change to Trying to reach" = 3 taps from the bar to a saved log and a confirmed stage, every tap counted; the step is in the Log sheet and nothing that matters is under the fold', async ({ page }, info) => {
   test.setTimeout(180_000);
   const noor = await assignedLead('Noor', suffix(info));
   const before = (await stageEvents(noor.id)).length;
@@ -594,7 +594,7 @@ test('J10.9 (M6): Log → outcome → "Save and change to Trying to reach" = 3 t
   expect((await stageEvents(noor.id)).slice(before).map((e) => e.to_stage)).toEqual(['attempting']);
 });
 
-test('J10.10 (M6): the stage change fails after the log saved: the sheet says what was saved and what was not, the button stays enabled, and the retry makes no second note', async ({ page }, info) => {
+test('J10.10 (M6, E775): the stage change fails after the log saved: the sheet says what was saved and what was not, the button stays enabled, and the retry makes no second note', async ({ page }, info) => {
   test.setTimeout(180_000);
   const remy = await assignedLead('Remy', suffix(info));
   const before = (await stageEvents(remy.id)).length;
@@ -632,7 +632,7 @@ test('J10.10 (M6): the stage change fails after the log saved: the sheet says wh
   expect((await stageEvents(remy.id)).slice(before).map((e) => e.to_stage)).toEqual(['attempting']);
 });
 
-test('J10.11 (M3): Text opens the text sheet on the person\'s page from the pill\'s "Reach them first", the header and the phone bar, never the conversation page; a sent text suggests "Trying to reach" and the agent confirms: Text → Send → confirm = 3 taps', async ({ page }, info) => {
+test('J10.11 (M3, E777): Text opens the text sheet on the person\'s page from the pill\'s "Reach them first", the header and the phone bar, never the conversation page; a sent text suggests "Trying to reach" and the agent confirms: Text → Send → confirm = 3 taps', async ({ page }, info) => {
   test.setTimeout(180_000);
   const tess = await assignedLead('Tess', suffix(info));
   const before = (await stageEvents(tess.id)).length;

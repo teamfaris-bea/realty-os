@@ -82,7 +82,7 @@ const stagePosts = (fake: FakeFetch) => fake.callsTo(`POST /contacts/${C}/stage`
 const toast = () => screen.getByTestId('people-toast');
 const primary = (s: HTMLElement) => within(s).getByTestId('log-save');
 
-describe('M6: Log → outcome → one button saves the log and confirms the stage', () => {
+describe('M6 (E775): Log → outcome → one button saves the log and confirms the stage', () => {
   it('choosing an outcome reveals the stage step in place (same sheet, the suggestion from core\'s table, preselected); ONE button saves the log and the stage: 2 taps in the sheet, 3 with the bar\'s Log', async () => {
     const { fake, notes, onClose, n, tap } = mount();
     const s = await sheet();

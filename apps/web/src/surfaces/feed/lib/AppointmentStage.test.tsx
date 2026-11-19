@@ -50,7 +50,7 @@ function mount(outcome: unknown) {
   return { fake, u: userEvent.setup() };
 }
 
-describe('the appointment outcome sheet and the stage step (R-STG-2)', () => {
+describe('E797: the appointment outcome sheet and the stage step (R-STG-2)', () => {
   it('Signed: the outcome is saved by its tap, then the same sheet suggests "Active client" with why and what it will start; the agent confirms', async () => {
     const { fake, u } = mount({ appointment, suggestedStage: SIGNED });
     await u.click(screen.getByRole('button', { name: 'Log outcome' }));

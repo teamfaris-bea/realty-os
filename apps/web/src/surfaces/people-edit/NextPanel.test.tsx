@@ -75,7 +75,7 @@ function mount(o: { status?: PlaybookStatus; tasks?: TaskView[]; ai?: ReturnType
 }
 const row = (name: string) => within(screen.getByRole('region', { name: 'What happens next' })).getByRole('group', { name });
 
-describe('R-STG-4 the "What happens next" panel', () => {
+describe('R-STG-4 E795 the "What happens next" panel', () => {
   it('three rows always render, each saying plainly when there is nothing: no task, no plan running, AI follow-up not on', async () => {
     mount();
     expect(screen.getByRole('heading', { level: 2, name: 'What happens next' })).toBeInTheDocument();

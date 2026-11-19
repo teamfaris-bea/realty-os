@@ -65,7 +65,7 @@ const at = (d: Date) => formatDateTime(d.toISOString());
 /** every date and time the screen shows, as formatDateTime writes them ("Fri, Nov 20, 9:00 AM") */
 const datesOnScreen = () => [...document.body.textContent!.matchAll(/[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M/g)].map((m) => m[0]);
 
-describe('M1: the follow-up the screen names is the one the server stored', () => {
+describe('M1 (E773, E774): the follow-up the screen names is the one the server stored', () => {
   it('the task is saved, the stage change then fails: the sheet says "Follow-up saved for <the server\'s date>", the chips are locked, and it never says "No follow-up task." while one is stored', async () => {
     const { tasks, onClose, u } = mount({ stage: (n) => (n === 1 ? 'network-error' : null) });
     const s = await ready();

@@ -90,7 +90,7 @@ describe('the stage step after an outcome', () => {
     expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Trying to reach')).toBeInTheDocument();
   });
 
-  it('M4: top to bottom the sheet reads what was logged, the suggested stage, "Keep", "Another stage…", ONE effect line with the running plan and Stop directly under it, the follow-up chips, then the one primary button; Close is in the header', async () => {
+  it('M4 (E776): top to bottom the sheet reads what was logged, the suggested stage, "Keep", "Another stage…", ONE effect line with the running plan and Stop directly under it, the follow-up chips, then the one primary button; Close is in the header', async () => {
     const E = '01900000-0000-7000-8000-0000000e0009';
     const { onClose, u } = mount({
       details: detailsFixture(C, 'attempting'),

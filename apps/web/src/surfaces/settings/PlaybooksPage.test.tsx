@@ -319,7 +319,7 @@ describe('b7 ui/F2: trigger playbooks are read-only here (R-AST-4)', () => {
 // R-STG owner decision (19 Nov): an Owner or Admin may create a team-wide stage plan from this page. The API already
 // takes `scope` on POST /playbooks and authorizes a team playbook for Owner/Admin only (assistant/routes.ts), so the
 // page offers the choice exactly to them, and only for the plans that are personal by default (stage plans).
-describe('Start a playbook: "For the whole team" (Owner and Admin only)', () => {
+describe('E798: Start a playbook: "For the whole team" (Owner and Admin only)', () => {
   const list = () => new FakeFetch().on('GET /playbooks', { status: 200, body: { playbooks: [] } });
   const created = (scope: 'team' | 'agent') => ({ status: 201, body: { playbook: playbook({ id: 'pb9', scope, ownerUserId: scope === 'team' ? null : ID.me }) } });
 

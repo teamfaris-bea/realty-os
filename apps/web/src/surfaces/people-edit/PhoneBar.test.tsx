@@ -42,7 +42,7 @@ function mount(o: { reach?: ReturnType<typeof reachability>; contact?: ReturnTyp
 }
 const bar = () => screen.getByTestId('person-phone-bar');
 
-describe('the phone working bar', () => {
+describe('E794: the phone working bar', () => {
   it('five targets in thumb order: Call, Text, Log, Next, Note; each at least the 44 px tap size; each does its one thing', async () => {
     const { on, u } = mount();
     const buttons = within(bar()).getAllByRole('button');
