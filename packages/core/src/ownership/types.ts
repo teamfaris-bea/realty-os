@@ -111,6 +111,12 @@ export type OwnershipCommand =
   | { kind: 'assign' | 'reassign'; toUserId: UserId; reason: OwnershipReasonCode; note?: string }
   | { kind: 'isa_handoff'; toUserId: UserId; note: string }
   | { kind: 'timer'; deadline: TimerDeadline; fence: TimerFence }
+  /**
+   * b19 R-TEAMQ-20 (review fix M1): the system asks whether a WAIVED auto-release must come back (the source is no
+   * longer covered now, or the lead's own owner is no longer an active member). It never moves a lead itself: it
+   * stores a new release deadline (`sla_restored`) and the ordinary `auto_release` timer decides at that time.
+   */
+  | { kind: 'release_recheck' }
   | { kind: 'touch'; via: TouchVia; refId: string; at: Instant }
   | { kind: 'reinquiry'; inquiryId: string }
   | { kind: 'close'; reason: CloseReason }
@@ -130,7 +136,7 @@ export type OwnershipCommandKind = OwnershipCommand['kind'];
 export const OWNERSHIP_EVENT_TYPES = [
   'created', 'imported', 'offered', 'offer_accepted', 'offer_declined', 'offer_expired', 'offer_rescinded',
   'claimed', 'assigned', 'reassigned', 'released', 'sent_to_pond', 'auto_released', 'reinquiry',
-  'first_touch_recorded', 'first_touch_breached', 'sla_waived', 'inactivity_warned', 'inactivity_released',
+  'first_touch_recorded', 'first_touch_breached', 'sla_waived', 'sla_restored', 'inactivity_warned', 'inactivity_released',
   'closed', 'reopened', 'merged_away', 'merged_in',
 ] as const;
 export type OwnershipEventType = (typeof OWNERSHIP_EVENT_TYPES)[number];
@@ -175,6 +181,8 @@ export interface OwnershipEventPayload {
   newPeriod?: boolean;
   /** sla_waived: which deadline of the period was waived (its releaseDueAt is then null). */
   waived?: 'auto_release';
+  /** sla_restored (b19 R-TEAMQ-20): which waived deadline of the period is back (its releaseDueAt is the new deadline). */
+  restored?: 'auto_release';
   [k: string]: unknown;
 }
 
@@ -422,11 +430,15 @@ export interface DecisionContext {
    */
   backupAccessLive?: boolean;
   /**
-   * `auto_release` timer only (b19 R-TEAMQ-13): the lead's source is COVERED now (its coverage switch is on and its
-   * named owner and backup are both active members). The lead's source is the source of the person's latest
-   * inquiry, else the one they first came from. db reads it under the contact lock; unknown reads as not covered.
+   * `auto_release` timer and `release_recheck` (b19 R-TEAMQ-13, R-TEAMQ-20): the lead's auto-release is WAIVED now:
+   * its source is covered now (core coveredNow: the switch on, its named owner and backup both active members) AND
+   * the lead's own owner is an active member (core autoReleaseWaivedNow). The lead's source is the source of the
+   * person's latest inquiry, else the one they first came from. db reads it under the contact lock; unknown reads as
+   * not waived for the timer (the tenant setting decides) and as "leave it alone" for the re-check.
    */
-  sourceCovered?: boolean;
+  autoReleaseWaived?: boolean;
+  /** `release_recheck` only (b19 R-TEAMQ-20): the current ownership period holds a waiver of its auto-release. */
+  releaseWaivedInPeriod?: boolean;
   /** Offeree's memberships.consecutive_missed_offers before this command (R-OWN-12). */
   offereeMissedOffers?: number;
   people?: PeopleFacts;

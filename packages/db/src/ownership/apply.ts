@@ -51,7 +51,8 @@ import {
   loadMember,
   loadPond,
   loadRoutingSnapshot,
-  loadSourceCovered,
+  loadAutoReleaseWaived,
+  loadReleaseWaivedInPeriod,
   loadCommandFacts,
   lockMemberships,
   myTeamMemberIds,
@@ -300,8 +301,16 @@ async function buildContext(
       if (opts.deactivation) ctx.deactivation = opts.deactivation;
       break;
     case 'timer':
-      // b19 R-TEAMQ-13: a covered source's lead is not auto-released; read when the timer fires, for that timer only
-      if (cmd.deadline === 'auto_release' && state?.state === 'owned') ctx.sourceCovered = await loadSourceCovered(tx, contactId);
+      // b19 R-TEAMQ-13, R-TEAMQ-20: a covered source's lead with an active owner is not auto-released; read when the
+      // timer fires, for that timer only
+      if (cmd.deadline === 'auto_release' && state?.state === 'owned') ctx.autoReleaseWaived = await loadAutoReleaseWaived(tx, contactId);
+      break;
+    case 'release_recheck':
+      // b19 R-TEAMQ-20: is the waiver of this period's auto-release still good?
+      if (state?.state === 'owned' && state.periodSeq !== null && state.firstTouchAt === null && state.releaseDueAt === null) {
+        ctx.releaseWaivedInPeriod = await loadReleaseWaivedInPeriod(tx, contactId, state.periodSeq);
+        if (ctx.releaseWaivedInPeriod) ctx.autoReleaseWaived = await loadAutoReleaseWaived(tx, contactId);
+      }
       break;
     default:
       break;

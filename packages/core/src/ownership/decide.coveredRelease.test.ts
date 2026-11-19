@@ -16,7 +16,7 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
     const l = ownedLead(U.a);
     const fence = releaseFence(l);
     const before = l.p;
-    const d = l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), sourceCovered: true });
+    const d = l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), autoReleaseWaived: true });
     expect(eventsOf(d)).toHaveLength(1);
     expect(eventsOf(d)[0]).toMatchObject({ type: 'sla_waived', fromState: 'owned', toState: 'owned', ownerUserId: U.a, prevOwnerUserId: U.a, reasonCode: 'AUTO_RELEASE_OFF_COVERED_SOURCE', actorKind: 'timer', payload: { releaseDueAt: null } });
     expect(l.p).toMatchObject({ state: 'owned', ownerUserId: U.a, pondId: null, releaseDueAt: null, periodSeq: before.periodSeq, ownedAt: before.ownedAt, firstTouchDueAt: before.firstTouchDueAt, firstTouchAt: null });
@@ -30,26 +30,26 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
     // breach first (the usual order: 15 minutes, then 30)
     const a = ownedLead(U.a);
     const rel = releaseFence(a);
-    const breach = a.run({ kind: 'timer', deadline: 'first_touch_breach', fence: breachFence(a) }, { now: a.p.firstTouchDueAt as Instant, actor: systemActor('timer'), sourceCovered: true });
+    const breach = a.run({ kind: 'timer', deadline: 'first_touch_breach', fence: breachFence(a) }, { now: a.p.firstTouchDueAt as Instant, actor: systemActor('timer'), autoReleaseWaived: true });
     expect(eventsOf(breach)[0]).toMatchObject({ type: 'first_touch_breached' });
     expect(notifies(breach).map((n) => [n.userId, n.notification.kind, n.notification.priority])).toEqual([[U.a, 'first_touch_due', 'critical'], [U.tl, 'first_touch_escalation', 'high']]);
-    a.run({ kind: 'timer', deadline: 'auto_release', fence: rel }, { now: rel.dueAt, actor: systemActor('timer'), sourceCovered: true });
+    a.run({ kind: 'timer', deadline: 'auto_release', fence: rel }, { now: rel.dueAt, actor: systemActor('timer'), autoReleaseWaived: true });
     expect(a.p).toMatchObject({ state: 'owned', ownerUserId: U.a, releaseDueAt: null });
     expect(a.p.firstTouchBreachedAt).not.toBeNull();
     // the release timer wakes first (a late breach job): the breach still fires afterwards, on the same period
     const b = ownedLead(U.b);
     const bf = breachFence(b);
-    b.run({ kind: 'timer', deadline: 'auto_release', fence: releaseFence(b) }, { now: b.p.releaseDueAt as Instant, actor: systemActor('timer'), sourceCovered: true });
-    const late = b.run({ kind: 'timer', deadline: 'first_touch_breach', fence: bf }, { now: plusMs(bf.dueAt, 60 * 60_000), actor: systemActor('timer'), sourceCovered: true });
+    b.run({ kind: 'timer', deadline: 'auto_release', fence: releaseFence(b) }, { now: b.p.releaseDueAt as Instant, actor: systemActor('timer'), autoReleaseWaived: true });
+    const late = b.run({ kind: 'timer', deadline: 'first_touch_breach', fence: bf }, { now: plusMs(bf.dueAt, 60 * 60_000), actor: systemActor('timer'), autoReleaseWaived: true });
     expect(eventsOf(late)[0]).toMatchObject({ type: 'first_touch_breached', toState: 'owned', ownerUserId: U.b });
     expect(notifies(late).map((n) => n.userId)).toEqual([U.b, U.tl]);
   });
 
   it('R-TEAMQ-13 E844: not covered, or unknown: the tenant setting decides exactly as before (released to the default pond)', () => {
-    for (const sourceCovered of [false, undefined]) {
+    for (const autoReleaseWaived of [false, undefined]) {
       const l = ownedLead(U.a);
       const fence = releaseFence(l);
-      const d = l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), ...(sourceCovered === undefined ? {} : { sourceCovered }) });
+      const d = l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), ...(autoReleaseWaived === undefined ? {} : { autoReleaseWaived }) });
       expect(eventsOf(d)[0]).toMatchObject({ type: 'auto_released', toState: 'in_pond', pondId: DEFAULT_POND, reasonCode: 'FIRST_TOUCH_MISSED' });
     }
     // and a tenant with the auto-release turned off schedules none, covered or not (unchanged)
@@ -59,11 +59,11 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
   it('R-TEAMQ-13 E845: the waived timer delivered again, or the sweeper asking again, is a no-op: the cleared deadline no longer matches any fence', () => {
     const l = ownedLead(U.a);
     const fence = releaseFence(l);
-    l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), sourceCovered: true });
+    l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), autoReleaseWaived: true });
     const seq = l.p.seq;
     // the same fence under a new command id (the sweeper's re-issue derives the same id; a different one must also do nothing)
     for (const covered of [true, false]) {
-      const again = decide(l.p, { kind: 'timer', deadline: 'auto_release', fence }, ctx({ now: plusMs(fence.dueAt, 60_000), actor: systemActor('timer'), sourceCovered: covered }));
+      const again = decide(l.p, { kind: 'timer', deadline: 'auto_release', fence }, ctx({ now: plusMs(fence.dueAt, 60_000), actor: systemActor('timer'), autoReleaseWaived: covered }));
       expect(again).toMatchObject({ ok: true, events: [], effects: [] });
     }
     expect(l.p.seq).toBe(seq);
@@ -76,7 +76,7 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
   it('R-TEAMQ-13: an early wake of a covered lead\'s release timer still waits for the stored deadline (nothing is waived early)', () => {
     const l = ownedLead(U.a);
     const fence = releaseFence(l);
-    const early = decide(l.p, { kind: 'timer', deadline: 'auto_release', fence }, ctx({ now: plusMs(fence.dueAt, -5000), actor: systemActor('timer'), sourceCovered: true }));
+    const early = decide(l.p, { kind: 'timer', deadline: 'auto_release', fence }, ctx({ now: plusMs(fence.dueAt, -5000), actor: systemActor('timer'), autoReleaseWaived: true }));
     expect(early.ok && early.events).toEqual([]);
     expect(early.effects.map((e) => e.kind)).toEqual(['enqueueTimer']);
   });

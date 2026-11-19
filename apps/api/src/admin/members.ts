@@ -31,6 +31,7 @@ import { z } from 'zod';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { newOpaqueToken } from '../auth/tokens.js';
 import { AppError } from '../errors.js';
+import { queueReleaseRecheck } from '../leads/releaseRecheck.js';
 import { authorize } from '../rbac.js';
 import { actorOf, adminTx, iso, platformOf, recheck } from './common.js';
 import * as repo from './repos/members.js';
@@ -229,6 +230,9 @@ async function register(app: FastifyInstance): Promise<void> {
           }
           await audit(tx, actor, { action, entity, changes: redactDiff(before, after, { entity: 'membership' }) });
         }
+        // b19 R-TEAMQ-20: a member who stops being active may hold leads whose auto-release was waived, or be the
+        // named owner or backup of a covered source: those waivers are re-checked (it moves no lead itself)
+        if (m.status === 'active' && newStatus !== 'active') await queueReleaseRecheck(tx, platformOf(req).ids);
         const fresh = await repo.getMember(tx, userId);
         if (!fresh) throw new AppError('NOT_FOUND');
         return fresh;

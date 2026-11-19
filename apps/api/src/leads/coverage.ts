@@ -9,8 +9,9 @@
 // sourceCoverage). Suspending or deactivating a named member writes nothing here and cannot fail because of it: the
 // read then flags the source and says it is not covered, and the person stays named. Nothing in this file moves a
 // lead, alerts anyone or sends anything: what coverage changes is decided where it is used (the auto-release in
-// core/ownership decide.ts, the minute-three backup alert in leads/backupAlert.ts).
-import { type LeadSourceId, type PondId, type UserActor, type UserId, canOwnLeads } from '@realty/core/foundation';
+// core/ownership decide.ts, the minute-three backup alert in leads/backupAlert.ts). Switching coverage OFF queues one
+// re-check of the releases that were waived while it was on (leads/releaseRecheck.ts, R-TEAMQ-20).
+import { type IdGenerator, type LeadSourceId, type PondId, type UserActor, type UserId, canOwnLeads } from '@realty/core/foundation';
 import { type CoverageMember, type SourceRouting, sourceCoverage, sourceRouting } from '@realty/core/ownership';
 import { type Tx, loadRules, loadTenantFacts } from '@realty/db';
 import type { FastifyInstance } from 'fastify';
@@ -19,7 +20,8 @@ import { z } from 'zod';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
-import { leadsTx } from './common.js';
+import { leadsTx, platformOf } from './common.js';
+import { queueReleaseRecheck } from './releaseRecheck.js';
 import * as repo from './repos/coverage.js';
 import { CoverageBody, CoverageResponse, type CoverageView } from './sourcesSchemas.js';
 
@@ -75,7 +77,7 @@ async function checkNamed(tx: Tx, path: '/ownerUserId' | '/backupUserId', userId
 }
 
 /** PUT /lead-sources/:id/coverage: the whole coverage of a source, as the Owner or Admin set it. */
-export async function setCoverage(tx: Tx, actor: UserActor, sourceId: string, b: z.infer<typeof CoverageBody>): Promise<CoverageViewT> {
+export async function setCoverage(tx: Tx, actor: UserActor, ids: IdGenerator, sourceId: string, b: z.infer<typeof CoverageBody>): Promise<CoverageViewT> {
   const was = await repo.lockStoredCoverage(tx, sourceId);
   if (!was) throw new AppError('NOT_FOUND');
   // R-TEAMQ-10: covered is on only while an owner and a backup are both named (the database holds the same rule)
@@ -90,6 +92,9 @@ export async function setCoverage(tx: Tx, actor: UserActor, sourceId: string, b:
     await repo.writeCoverage(tx, sourceId, next);
     // ids, two switches: nothing of a person beyond their id (R-AUDIT-4); only the fields that changed
     await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id: sourceId }, changes: redactDiff({ ...was }, { ...next }, { entity: 'lead_source' }), reason: 'LEAD_SOURCE_COVERAGE_CHANGED' });
+    // R-TEAMQ-20: coverage switched off: releases waived for this source's leads apply again from this moment
+    // (leads/releaseRecheck.ts decides per lead; it moves no lead itself)
+    if (was.covered && !next.covered) await queueReleaseRecheck(tx, ids);
   }
   return coverageOf(tx, sourceId);
 }
@@ -102,6 +107,6 @@ export async function registerCoverageRoutes(app: FastifyInstance): Promise<void
     leadsTx(req, async (tx) => ({ coverage: await coverageOf(tx, req.params.id) })),
   );
   r.put('/lead-sources/:id/coverage', { ...routing, schema: { params: Params, body: CoverageBody, response: { 200: CoverageResponse } } }, async (req) =>
-    leadsTx(req, async (tx, _now, actor) => ({ coverage: await setCoverage(tx, actor, req.params.id, req.body) })),
+    leadsTx(req, async (tx, _now, actor) => ({ coverage: await setCoverage(tx, actor, platformOf(req).ids, req.params.id, req.body) })),
   );
 }

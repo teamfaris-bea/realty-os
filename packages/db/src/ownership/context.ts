@@ -16,6 +16,7 @@ import {
   type RotationCursor,
   type RoutingSnapshot,
   type RuleFacts,
+  autoReleaseWaivedNow,
   matchRule,
   offeredInCurrentSequence,
   parseRoutingMatch,
@@ -264,15 +265,17 @@ export async function loadDealOpen(tx: Tx, contactId: ContactId): Promise<boolea
 }
 
 /**
- * b19 R-TEAMQ-13: whether the lead's source is COVERED now: its coverage switch is on and its named owner and backup
- * are both active members (core sourceCoverage's rule). The lead's source is the source of the person's latest
- * inquiry that is not an ignored duplicate (lead_inquiries_contact_idx), else the source they first came from; a
- * person with neither (typed in, imported with no source) is not covered. Read by the `auto_release` timer only, as
- * the system actor, under the contact lock.
+ * b19 R-TEAMQ-13, R-TEAMQ-20 (review fix M1): whether the lead's auto-release is WAIVED now (core
+ * autoReleaseWaivedNow): its source is covered now (the coverage switch on, its named owner and backup both active
+ * members) AND the lead's own owner is an active member: a lead held by a suspended or deactivating member is
+ * released as on an uncovered source. The lead's source is the source of the person's latest inquiry that is not an
+ * ignored duplicate (lead_inquiries_contact_idx), else the source they first came from; a person with neither (typed
+ * in, imported with no source) is never waived. Read by the `auto_release` timer and by `release_recheck`, as the
+ * system actor, under the contact lock.
  */
-export async function loadSourceCovered(tx: Tx, contactId: ContactId): Promise<boolean> {
-  const r = await sql<{ covered: boolean | null }>`
-    SELECT (s.covered AND om.status = 'active' AND bm.status = 'active') AS covered
+export async function loadAutoReleaseWaived(tx: Tx, contactId: ContactId): Promise<boolean> {
+  const r = await sql<{ setting: boolean; owner_status: MembershipStatus | null; backup_status: MembershipStatus | null; lead_owner_status: MembershipStatus | null }>`
+    SELECT s.covered AS setting, om.status AS owner_status, bm.status AS backup_status, lm.status AS lead_owner_status
       FROM contacts c
       JOIN lead_sources s ON s.tenant_id = c.tenant_id AND s.id = COALESCE(
              (SELECT i.lead_source_id FROM lead_inquiries i
@@ -281,8 +284,24 @@ export async function loadSourceCovered(tx: Tx, contactId: ContactId): Promise<b
              c.original_lead_source_id)
       LEFT JOIN memberships om ON om.tenant_id = s.tenant_id AND om.user_id = s.owner_user_id
       LEFT JOIN memberships bm ON bm.tenant_id = s.tenant_id AND bm.user_id = s.backup_user_id
+      LEFT JOIN memberships lm ON lm.tenant_id = c.tenant_id AND lm.user_id = c.owner_user_id
      WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}`.execute(tx);
-  return r.rows[0]?.covered === true;
+  const row = r.rows[0];
+  if (!row) return false;
+  return autoReleaseWaivedNow({ setting: row.setting, ownerStatus: row.owner_status, backupStatus: row.backup_status, leadOwnerStatus: row.lead_owner_status });
+}
+
+/**
+ * b19 R-TEAMQ-20: whether the ownership period that starts at ledger seq `periodSeq` holds a waiver of its
+ * auto-release (an `sla_waived` event with payload.waived = 'auto_release'; the ledger's primary key). Read by
+ * `release_recheck` only, as the system actor, under the contact lock.
+ */
+export async function loadReleaseWaivedInPeriod(tx: Tx, contactId: ContactId, periodSeq: number): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM lead_ownership_events e
+                    WHERE e.tenant_id = app.tenant_id() AND e.contact_id = ${contactId} AND e.seq >= ${periodSeq}
+                      AND e.type = 'sla_waived' AND e.payload->>'waived' = 'auto_release') AS x`.execute(tx);
+  return r.rows[0]?.x === true;
 }
 
 /**

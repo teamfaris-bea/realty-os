@@ -10,8 +10,9 @@
 //   ownership period:               starts when an event enters `owned`, changes the owner, or carries
 //                                   payload.newPeriod; it sets owned_at, first-touch due (deadline_at)
 //                                   and release due (payload.releaseDueAt); in-period events keep them
-//   release due, waived:            `sla_waived` inside a period sets release due from its payload (null: the
-//                                   auto-release was waived for a covered source, R-TEAMQ-13); nothing else changes
+//   release due, waived / restored: `sla_waived` and `sla_restored` inside a period set release due from their payload
+//                                   (null: the auto-release was waived for a covered source, R-TEAMQ-13; an instant:
+//                                   the waiver ended and the release is due then, R-TEAMQ-20); nothing else changes
 //   first touch / breach:           first_touch_recorded / first_touch_breached (occurred_at)
 //   route due:                      payload.routeDueAt on events into `unassigned`
 //   closed reason:                  payload.closedReason on events into `closed`
@@ -91,7 +92,7 @@ export function applyEvent(prev: OwnershipProjection | null, e: OwnershipEvent):
           ? e.occurredAt
           : (prev?.firstTouchBreachedAt ?? null)
       : null,
-    releaseDueAt: owned ? (period || e.type === 'sla_waived' ? payloadInstant(e.payload.releaseDueAt, 'releaseDueAt') : (prev?.releaseDueAt ?? null)) : null,
+    releaseDueAt: owned ? (period || e.type === 'sla_waived' || e.type === 'sla_restored' ? payloadInstant(e.payload.releaseDueAt, 'releaseDueAt') : (prev?.releaseDueAt ?? null)) : null,
     periodSeq: owned ? (period ? e.seq : (prev as OwnershipProjection).periodSeq) : null,
     routeDueAt: to === 'unassigned' ? payloadInstant(e.payload.routeDueAt, 'routeDueAt') : null,
     closedReason: to === 'closed' ? payloadCloseReason(e.payload.closedReason) : null,

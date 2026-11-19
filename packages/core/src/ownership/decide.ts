@@ -21,6 +21,7 @@ import {
   type Instant,
   type PondId,
   type UserId,
+  addBusinessDuration,
   addLocalDays,
   canOwnLeads,
   plusMs,
@@ -474,6 +475,8 @@ export function decide(state: OwnershipProjection | null, cmd: OwnershipCommand,
       return decideHandoff(state, cmd, ctx);
     case 'timer':
       return decideTimer(state, cmd, ctx);
+    case 'release_recheck':
+      return decideReleaseRecheck(state, cmd, ctx);
     case 'touch':
       return decideTouch(state, cmd, ctx);
     case 'reinquiry':
@@ -744,18 +747,22 @@ function decideTimer(state: OwnershipProjection, cmd: Cmd<'timer'>, ctx: Decisio
       if (!inPeriod || state.releaseDueAt !== fence.dueAt || state.firstTouchAt !== null) return noop(state);
       if (now < fence.dueAt) return noop(state, [rescheduleTimer(ctx.contactId, cmd.deadline, fence, fence.dueAt, now)]);
       // Precedence of the auto-release, decided here when the timer fires (b19 R-TEAMQ-13; owner decision 3 of
-      // 2026-11-19, for the pilot):
+      // 2026-11-19, for the pilot; R-TEAMQ-20, review fix M1):
       //   1. a first touch already recorded, a stale period or a stale deadline: nothing to release (above);
-      //   2. the lead's source is COVERED now (ctx.sourceCovered: the switch on, its owner and its backup both
-      //      active): the auto-release does NOT fire, whatever the tenant's first_touch_release_seconds says. The
-      //      lead stays with its owner; the stored release deadline is cleared by a ledgered `sla_waived` event (so
-      //      the sweeper stops asking and no screen promises a return to the pond); nobody is notified by this.
-      //      The first-touch breach is a separate timer on the same period and still fires and alerts as before,
-      //      and the source's backup is alerted at minute three (apps/api leads/backupAlert.ts);
-      //   3. otherwise the tenant setting decides, exactly as before: the lead goes to the default pond.
-      // Coverage is read at this moment, not when the period started: a source covered since then is honoured, and
-      // one that stopped being covered (switched off, or its owner or backup suspended) releases as before.
-      if (ctx.sourceCovered === true) {
+      //   2. the release is WAIVED now (ctx.autoReleaseWaived: the lead's source is covered now, its switch on and its
+      //      named owner and backup both active, AND the lead's own owner is an active member): the auto-release does
+      //      NOT fire, whatever the tenant's first_touch_release_seconds says. The lead stays with its owner; the
+      //      stored release deadline is cleared by a ledgered `sla_waived` event (so the sweeper stops asking and no
+      //      screen promises a return to the pond); nobody is notified by this. The first-touch breach is a separate
+      //      timer on the same period and still fires and alerts as before, and the source's backup is alerted at
+      //      minute three (apps/api leads/backupAlert.ts). The waiver is not final: `release_recheck` below brings the
+      //      release back when its reason is gone;
+      //   3. otherwise the tenant setting decides, exactly as before: the lead goes to the default pond. This includes
+      //      a covered source's lead whose owner is suspended or being deactivated: nobody is there to make the first
+      //      touch, so it is released as on an uncovered source, and the pond arrival tells the team leads (R-TEAMQ-12).
+      // Read at this moment, not when the period started: a source covered since then is honoured, and one that
+      // stopped being covered (switched off, or its owner or backup suspended) releases as before.
+      if (ctx.autoReleaseWaived === true) {
         const w = new Builder(state, ctx.contactId, ctx);
         w.emit('sla_waived', 'owned', { reasonCode: 'AUTO_RELEASE_OFF_COVERED_SOURCE', payload: { waived: 'auto_release', releaseDueAt: null } });
         return accepted(w, null);
@@ -798,6 +805,40 @@ function decideTimer(state: OwnershipProjection, cmd: Cmd<'timer'>, ctx: Decisio
       return accepted(b, null);
     }
   }
+}
+
+/**
+ * b19 R-TEAMQ-20 (review fix M1): the waiver of the auto-release is re-evaluated, not one-shot. Asked by the system
+ * when a source's coverage or a member's status changes (apps/api leads/releaseRecheck.ts), for a lead that is owned,
+ * has had no first touch, and whose release was waived in this ownership period (its stored release deadline is null):
+ *   - the waiver still holds (ctx.autoReleaseWaived): nothing happens;
+ *   - it no longer holds: the release applies again FROM THIS MOMENT. A ledgered `sla_restored` event stores a new
+ *     release deadline, the tenant's release window (first_touch_release_seconds of staffed time, the settings in
+ *     force now) counted from now, and the ordinary `auto_release` timer is enqueued for it. That timer decides again
+ *     when it fires (covered again by then: waived again; else released to the default pond, where the pond arrival
+ *     alerts the team leads). The stored deadline is what the sweeper reads (app.due_work), so a lost timer job is
+ *     re-issued like any other.
+ * It never changes the owner itself and notifies nobody. Unknown facts (either flag absent) leave the lead alone.
+ */
+function decideReleaseRecheck(state: OwnershipProjection, cmd: Cmd<'release_recheck'>, ctx: DecisionContext): Decision {
+  if (!isSystem(ctx.actor, 'timer', 'worker')) return rejection(state, cmd, ctx, 'NOT_FOUND');
+  if (state.state !== 'owned' || state.periodSeq === null || state.firstTouchAt !== null || state.releaseDueAt !== null) return noop(state);
+  if (ctx.releaseWaivedInPeriod !== true || ctx.autoReleaseWaived !== false) return noop(state);
+  const window = ctx.settings.firstTouchReleaseSeconds;
+  if (window === null) return noop(state); // the tenant turned the auto-release off since: there is none to bring back
+  const due = addBusinessDuration(ctx.now, window, ctx.calendar);
+  const b = new Builder(state, ctx.contactId, ctx);
+  b.emit('sla_restored', 'owned', { reasonCode: 'AUTO_RELEASE_BACK_ON', payload: { restored: 'auto_release', releaseDueAt: due } });
+  // the period's release timer at the NEW deadline, under the period's own key (the first one's job has finished):
+  // the key the sweeper derives and the one a first touch cancels
+  b.effect({
+    kind: 'enqueueTimer',
+    jobKind: 'ownership.auto_release',
+    runAt: due,
+    dedupeKey: releaseTimerKey(ctx.contactId, state.periodSeq),
+    fence: { contactId: ctx.contactId, deadline: 'auto_release', periodSeq: state.periodSeq, dueAt: due },
+  });
+  return accepted(b, null);
 }
 
 function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: DecisionContext): Decision {

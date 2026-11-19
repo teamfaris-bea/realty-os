@@ -60,6 +60,24 @@ export interface SourceCoverage {
   warnings: CoverageWarning[];
 }
 
+/**
+ * R-TEAMQ-20: the ONE definition of "covered now" for a lead source: its coverage switch is on (which needs an owner
+ * and a backup both named) AND its named owner and its named backup are both active members. The coverage card
+ * (sourceCoverage below), the auto-release (autoReleaseWaivedNow) and the minute-three alert all read this.
+ */
+export function coveredNow(f: { setting: boolean; ownerStatus: MembershipStatus | null; backupStatus: MembershipStatus | null }): boolean {
+  return f.setting && f.ownerStatus === 'active' && f.backupStatus === 'active';
+}
+
+/**
+ * R-TEAMQ-13, R-TEAMQ-20 (review fix M1): whether a LEAD's auto-release is waived now: its source is covered now AND
+ * the lead's own owner is an active member. A lead held by a suspended or deactivating member is released as on an
+ * uncovered source: the source's cover does not make up for nobody being there to make the first touch.
+ */
+export function autoReleaseWaivedNow(f: { setting: boolean; ownerStatus: MembershipStatus | null; backupStatus: MembershipStatus | null; leadOwnerStatus: MembershipStatus | null }): boolean {
+  return coveredNow(f) && f.leadOwnerStatus === 'active';
+}
+
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -114,7 +132,7 @@ export function sourceCoverage(f: SourceCoverageFacts): SourceCoverage {
   const { owner, backup } = f;
   const ownerOut = owner !== null && owner.status !== 'active';
   const backupOut = backup !== null && backup.status !== 'active';
-  const covered = f.coveredSetting && owner !== null && backup !== null && !ownerOut && !backupOut;
+  const covered = coveredNow({ setting: f.coveredSetting, ownerStatus: owner?.status ?? null, backupStatus: backup?.status ?? null });
   const warnings: CoverageWarning[] = [];
   if (owner === null) warnings.push({ code: 'NO_OWNER', sentence: 'No owner is named for this source.' });
   if (backup === null) warnings.push({ code: 'NO_BACKUP', sentence: 'No backup is named for this source.' });
