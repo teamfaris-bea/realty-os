@@ -131,7 +131,7 @@ export interface InThisImport {
  * carries, how many were imported or attached and get no automated contact, how many were already in the CRM and are
  * not imported from this file (the mapping does not cover them; while the contacts are not imported yet, "unless their
  * row is attached"), and how many others are simply not imported. `because` is how the source comes to cover them;
- * `this` names the mapping in the not-covered clause.
+ * `thisMapping` is what the not-covered clause calls it ("this mapping" of a label; "this" of a no-label group).
  */
 function inThisImportSentence(head: string, people: number, f: InThisImport, because: string, thisMapping: string): string {
   // a Follow Up Boss account is "this import"; a CSV or an export is a file
