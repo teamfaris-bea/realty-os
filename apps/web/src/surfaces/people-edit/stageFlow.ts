@@ -92,6 +92,23 @@ export function useStagePreview(contactId: string, to: string | null) {
   });
 }
 
+/** Asked again every 15 s only while the last stage change is still being decided (R-STG-4); otherwise never polled. */
+export function statusPollMs(s: PlaybookStatus | undefined): number | false {
+  return s?.lastStageChange?.pending ? 15_000 : false;
+}
+
+/** The person's automated plan, what it does next and what the last stage change did. */
+export function usePlaybookStatus(contactId: string) {
+  const api = useApi();
+  return useQuery<PlaybookStatus, ApiError>({
+    queryKey: playbookStatusKey(contactId),
+    queryFn: ({ signal }) => api.get<PlaybookStatus>(`/contacts/${contactId}/playbook-status`, { signal }),
+    refetchInterval: (q) => statusPollMs(q.state.data),
+    staleTime: 0,
+    retry: false,
+  });
+}
+
 // ---- words ----------------------------------------------------------------------------------------------------------
 
 export const NEVER_STOPS = 'Changing the stage does not stop a running plan.';
@@ -171,4 +188,50 @@ export function automationText(a: StageAutomation): string {
   if (!a) return '';
   if ('started' in a) return `Started ${a.started}`;
   return `${a.plan} didn't start: ${SKIP_WORDS[a.skipped] ?? 'it could not start'}`;
+}
+
+// ---- the panel's words (R-STG-4) --------------------------------------------------------------------------------------
+
+export const NONE_RUNNING = 'None running';
+export const CHECKING = 'Checking…';
+
+const STATE_WORD: Record<NonNullable<PlaybookStatus['plan']>['state'], string> = { active: 'Running', paused: 'Paused', stopped: 'Stopped', completed: 'Finished' };
+export function planStateWord(state: NonNullable<PlaybookStatus['plan']>['state']): string {
+  return STATE_WORD[state];
+}
+
+/** "Next: text, Thu 9:00 AM" for a running plan with a step due; a running plan with none says so; otherwise null. */
+export function nextStepText(plan: NonNullable<PlaybookStatus['plan']>, now: number = Date.now()): string | null {
+  if (plan.state !== 'active') return null;
+  return plan.next ? `Next: ${channelWord(plan.next.channel)}, ${whenWords(plan.next.dueAt, now)}` : 'No message is due from it right now.';
+}
+
+/**
+ * Where the row's plan came from, or what the last stage change did about a plan. "Checking…" while the change is
+ * still being decided (never "started", never "nothing happened"); the server's own sentence when a plan did not
+ * start; "Started when you moved them to Active client" only when the stored decision says started. Null: nothing
+ * to say (the last change named no plan and no plan is shown).
+ */
+export function originLine(s: PlaybookStatus, labelOf: (key: string) => string, viewerUserId: string | null | undefined): string | null {
+  const c = s.lastStageChange;
+  if (c?.pending) return CHECKING;
+  if (c?.decision?.outcome === 'skipped') return c.decision.sentence;
+  const p = s.plan;
+  if (!p) return null;
+  const who = p.startedBy.userId !== null && p.startedBy.userId === viewerUserId ? 'you' : p.startedBy.displayName;
+  switch (p.startedBy.how) {
+    case 'stage_change':
+      // the stage it started on is the last change's only when that change's decision started this plan
+      return c?.decision?.outcome === 'started' && c.decision.plan === p.name ? `Started when ${who ?? 'someone'} moved them to ${labelOf(c.to)}` : `Started by a stage change${who ? ` ${who === 'you' ? 'you' : who} made` : ''}`;
+    case 'user':
+      return `Started by ${who ?? 'someone on the team'}`;
+    case 'new_lead':
+      return 'Started when they came in as a new lead';
+    case 'deal_closed':
+      return 'Started when their deal closed';
+    case 'bulk':
+      return `Started in a bulk action${who ? ` by ${who}` : ''}`;
+    default:
+      return null;
+  }
 }

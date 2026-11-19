@@ -1,7 +1,9 @@
 // The person-page sections module 58 adds through contact/sections.ts (PARITY_PLAN §5):
 // - the stage pill under the name, and on a phone a sticky Note · Log bar (Note → Save = 2 taps, Log →
 //   outcome → Save = 3 taps); on desktop an always-visible note box (type → ⌘↵ = 1) and a Log button;
-// - Notes, Details and Plan (add task / appointment).
+// - buyer or seller and texting permission as their own chips beside the stage (R-STG-1);
+// - Notes, Details and "What happens next" (R-STG-4: the next task with Add follow-up / Add appointment, the
+//   automated playbook's status, and AI follow-up).
 import { type ReactNode, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -13,7 +15,8 @@ import { NoteComposer } from '../notes/NoteComposer.js';
 import { NotesList } from '../notes/NotesSection.js';
 import { useDetails } from './api.js';
 import { DetailsSection } from './DetailsSection.js';
-import { PlanSection } from './PlanSection.js';
+import { NextPanel, PersonChips } from './NextPanel.js';
+import { AppointmentDialog, TaskDialog } from './PlanSection.js';
 import { StagePill } from './StagePill.js';
 import { ToastProvider, useIsDesktop } from './hooks.js';
 
@@ -40,7 +43,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
   const desktop = useIsDesktop();
   const navigate = useNavigate();
   const { call } = useAgentSheets();
-  const [sheet, setSheet] = useState<'note' | 'log' | null>(null);
+  const [sheet, setSheet] = useState<'note' | 'log' | 'task' | 'appointment' | null>(null);
   // b13 review F3-ui: the AI care bar (aiCare/Person.tsx) stacks above this one by its height (PERSON_BAR_VAR)
   const stickyRef = useStickyBottom<HTMLDivElement>({ stackVar: PERSON_BAR_VAR });
   if (d.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
@@ -50,6 +53,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-2">
         <StagePill contactId={contact.id} name={contact.displayName} details={details} onCall={() => call({ id: contact.id, name: contact.displayName })} onText={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} onReplyChat={() => navigate(`/contacts/${contact.id}/thread?compose=web_chat`)} />
+        <PersonChips contact={contact} />
         {desktop ? (
           <Button variant="secondary" onClick={() => setSheet('log')}>
             Log
@@ -70,9 +74,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
         <DetailsSection contact={contact} details={details} />
       </Section>
 
-      <Section title="Plan">
-        <PlanSection contactId={contact.id} name={contact.displayName} />
-      </Section>
+      <NextPanel contact={contact} onAddTask={() => setSheet('task')} onAddAppointment={() => setSheet('appointment')} />
 
       {/* the page's end clears the sticky Note · Log bar: a spacer at the end of <main>, not mid-page */}
       {!desktop && typeof document !== 'undefined' && document.querySelector('main') ? createPortal(<div aria-hidden="true" data-sticky-spacer className="h-16" />, document.querySelector('main')!) : null}
@@ -91,6 +93,8 @@ function Inner({ contact }: { contact: ContactFullView }) {
           <NoteComposer contactId={contact.id} contactName={contact.displayName} canShare={details.canManageCollaborators} autoFocus onSaved={() => setSheet(null)} />
         </Dialog>
       ) : null}
+      {sheet === 'task' ? <TaskDialog contactId={contact.id} name={contact.displayName} onClose={() => setSheet(null)} /> : null}
+      {sheet === 'appointment' ? <AppointmentDialog contactId={contact.id} name={contact.displayName} onClose={() => setSheet(null)} /> : null}
       {sheet === 'log' ? <LogSheet contactId={contact.id} contactName={contact.displayName} onClose={() => setSheet(null)} /> : null}
     </div>
   );

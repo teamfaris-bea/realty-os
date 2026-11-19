@@ -258,7 +258,7 @@ test('add a task and an appointment from the person’s page', async ({ page }) 
   test.setTimeout(120_000);
   await signIn(page);
   await openContact(page, ben.id, 'Ben Doe');
-  await page.getByRole('button', { name: 'Add task' }).click();
+  await page.getByRole('button', { name: 'Add follow-up' }).click();
   await page.getByRole('dialog').getByLabel('What').fill(`Send comps (${isPhone(page) ? 'p' : 'd'})`);
   await page.getByRole('dialog').getByRole('button', { name: 'Add task' }).click();
   await expect(peopleToast(page).getByText('Task added')).toBeVisible();

@@ -232,7 +232,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
         </AiLabelsProvider>
       </Section>
 
-      <Section title="Tasks">
+      <Section title="Tasks" id="tasks">
         <ContactTasks contactId={contact.id} />
       </Section>
 

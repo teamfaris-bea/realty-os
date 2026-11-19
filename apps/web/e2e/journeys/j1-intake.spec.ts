@@ -103,7 +103,7 @@ test('J1: a webhook lead is offered, accepted on this device, answered within it
   // 6. a follow-up task from the person's page
   await page.goto(`${stack.webUrl}/contacts/${contactId}`);
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: 15_000 });
-  const add = page.getByRole('button', { name: 'Add task' });
+  const add = page.getByRole('button', { name: 'Add follow-up' });
   await add.scrollIntoViewIfNeeded();
   await tap(page, add);
   const dialog = page.getByRole('dialog', { name: `Task for ${name}` });

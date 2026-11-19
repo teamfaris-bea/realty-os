@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, pondCard, reachability, stopReason } from '../feed/lib/testing.js';
+import { detailsFixture } from '../people-edit/testing.js';
 
 const user = () => userEvent.setup();
 
@@ -222,6 +223,32 @@ describe('Contact: full view', () => {
     expect(within(tags).getByRole('button', { name: 'Tag Buyer, show everyone with it' })).toBeInTheDocument();
     expect(await within(tags).findByRole('button', { name: 'Tag Buyer, remove' })).toBeInTheDocument();
     expect(within(tags).getByRole('button', { name: 'Add a tag' })).toBeInTheDocument();
+  });
+
+  it('R-STG-4: the person\'s page has "What happens next" where "Plan" was (next task, automated playbook, AI follow-up), the existing dialogs open from it, and buyer/seller and texting are chips beside the stage', async () => {
+    const c = fullContact();
+    const fake = fullFake(c)
+      .on(`GET /contacts/${c.id}/details`, { status: 200, body: { details: detailsFixture(c.id, 'attempting') } })
+      .on(`GET /contacts/${c.id}/reachability`, { status: 200, body: { reachability: reachability(c.id) } })
+      .on(`GET /contacts/${c.id}/playbook-status`, { status: 200, body: { plan: null, lastStageChange: null } });
+    agentApp(fake, `/contacts/${c.id}`);
+    const next = await screen.findByRole('region', { name: 'What happens next' });
+    expect(screen.queryByRole('heading', { level: 2, name: 'Plan' })).toBeNull();
+    for (const row of ['Your next task', 'Automated playbook', 'AI follow-up']) expect(within(next).getByRole('group', { name: row })).toBeInTheDocument();
+    expect(await within(next).findByText('None running')).toBeInTheDocument();
+    // beside the stage pill: two separate facts, neither inside the stage's own words
+    const pill = await screen.findByRole('button', { name: 'Stage: Trying to reach. Change stage' });
+    const chips = within(pill.parentElement!).getByRole('list', { name: 'About Jane Doe' });
+    expect(within(chips).getByText('Buyer')).toBeInTheDocument();
+    expect(await within(chips).findByText('Texting OK')).toBeInTheDocument();
+    expect(pill).toHaveTextContent(/^Trying to reach/);
+    // the existing dialogs, opened from the panel
+    await user().click(within(next).getByRole('button', { name: 'Add follow-up' }));
+    const taskDialog = await screen.findByRole('dialog', { name: 'Task for Jane Doe' });
+    expect(within(taskDialog).getByLabelText('What')).toHaveValue('Follow up with Jane');
+    await user().click(within(taskDialog).getByRole('button', { name: 'Cancel' }));
+    await user().click(within(next).getByRole('button', { name: 'Add appointment' }));
+    expect(await screen.findByRole('dialog', { name: 'Appointment with Jane Doe' })).toBeInTheDocument();
   });
 
   it('an invisible or missing contact reads as not available, the same either way', async () => {
