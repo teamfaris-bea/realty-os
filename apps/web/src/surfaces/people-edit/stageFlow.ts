@@ -252,7 +252,11 @@ export function originLine(s: PlaybookStatus, labelOf: (key: string) => string, 
 
 // ---- undo (R-STG-5) ---------------------------------------------------------------------------------------------------
 
-/** Said when the server refuses an undo (STAGE_UNDO_INVALID): nothing was changed. */
+/**
+ * Said when the server refuses an undo (STAGE_UNDO_INVALID): nothing was changed. The server refuses when the change
+ * is no longer the person's latest, and (E779) when it is someone else's change, is itself an undo, or is more than
+ * 15 minutes old. From the toast (8 seconds, on the changer's own screen) only the first can be the reason.
+ */
 export const UNDO_REFUSED = 'Not undone: the stage has changed again since, so there is nothing to take back.';
 
 /**

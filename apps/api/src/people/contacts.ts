@@ -4,7 +4,9 @@
 //                                        relationships, removed points, row version     contact.view_detail
 //   PATCH /contacts/:id                  names, type, intent, timezone, stage, pond summary (row_version)  contact.edit
 //   POST  /contacts/:id/stage            one stage change; `undoOf` marks the undo of the last one, which never
-//                                        starts a plan; the same stage again answers what is stored (R-STG-5)  contact.edit
+//                                        starts a plan; the same stage again answers what is stored (R-STG-5).
+//                                        An undo is only an undo (E779): the caller's own change, not itself an
+//                                        undo, at most 15 minutes old; anything else is 409 STAGE_UNDO_INVALID  contact.edit
 //   GET   /contacts/:id/stage/preview    what that change would start, not start or leave running (R-STG-3)  contact.edit
 //   GET   /stage-labels                  the eight stages with the tenant's labels and what each means (R-STG-1)  session (members)
 //   PUT   /stage-labels                  Owner/Admin                                      settings.stage_labels
@@ -33,9 +35,15 @@ import * as repo from './repos/people.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
 import { stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
-import { latestStageEvent, ownLatestStageEvent } from '../stageAutomation/repos.js';
+import { latestStageEvent, ownLatestStageEvent, stageEvent } from '../stageAutomation/repos.js';
 import { previewStageEntry, runningPlan } from '../stageAutomation/preview.js';
 import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
+
+/**
+ * How long a stage change can be undone (E779). The history definer applies the same window by the database clock
+ * (migration 0105: interval '15 minutes'); the two are one rule, and undo.test.ts holds both to it.
+ */
+export const UNDO_WINDOW_MS = 15 * 60_000;
 
 export function stageFactsOf(r: repo.EditRow): StageFacts {
   return {
@@ -171,7 +179,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
     { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, body: S.StageBody, response: { 200: S.StageResponse } } },
     async (req) => {
       const { stage, undoOf } = req.body;
-      const out = await peopleTx(req, async (tx, _now, actor) => {
+      const out = await peopleTx(req, async (tx, now, actor) => {
         const id = req.params.id;
         const before = await repo.editRow(tx, id);
         if (!before) throw new AppError('NOT_FOUND');
@@ -180,15 +188,34 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
         // R-STG-5: the same stage again (a double tap, a refresh, a retry of this very request). Nothing is written:
         // the answer names the event that put the person in this stage, and the decision stored for it.
         const repeat = (row: repo.EditRow, ev: typeof latest) => {
-          // a repeated undo must be the undo it says it is; any other undoOf with the stage unchanged is refused
-          if (undoOf !== undefined && ev?.undoOfEventId !== undoOf) throw new AppError('STAGE_UNDO_INVALID');
+          // a repeated undo must be the undo it says it is, by the person who made it (E779); any other undoOf with
+          // the stage unchanged is refused
+          if (undoOf !== undefined && !(ev !== null && ev.undoOfEventId === undoOf && ev.actorKind === 'user' && ev.actorUserId === actor.userId)) throw new AppError('STAGE_UNDO_INVALID');
           return { stage: stageInfo(row, actor, labels), previousStage: row.stage, rowVersion: row.row_version, eventId: ev !== null && ev.toStage === row.stage ? ev.id : null, changed: false };
         };
         if (stage === before.stage) return repeat(before, latest);
         // R-STG-5: an undo names this person's MOST RECENT stage change and goes back to the stage that change came
         // from. Anything else (another person's or team's event, an older one, an unknown one, another stage) is
         // refused before anything is written. The history definer checks the same again (migration 0105).
-        if (undoOf !== undefined && !(latest !== null && latest.id === undoOf && latest.toStage === before.stage && latest.fromStage === stage)) throw new AppError('STAGE_UNDO_INVALID');
+        // E779, an undo is only an undo: the event is the caller's OWN change (nobody "undoes" a teammate's), it is
+        // not itself an undo (an undo cannot be undone: that "redo" would enter a stage and skip its plan while the
+        // preview promised it), and it is at most UNDO_WINDOW_MS old. The same move without undoOf is an ordinary
+        // stage change, decided as one.
+        if (
+          undoOf !== undefined &&
+          !(
+            latest !== null &&
+            latest.id === undoOf &&
+            latest.toStage === before.stage &&
+            latest.fromStage === stage &&
+            latest.actorKind === 'user' &&
+            latest.actorUserId === actor.userId &&
+            latest.undoOfEventId === null &&
+            now - latest.occurredAt <= UNDO_WINDOW_MS
+          )
+        ) {
+          throw new AppError('STAGE_UNDO_INVALID');
+        }
         const rv = req.body.rowVersion ?? before.row_version;
         if (rv !== before.row_version) throw new AppError('STALE_CONTACT', { rowVersion: before.row_version });
         changeStageCheck(before, actor, stage);
@@ -206,6 +233,10 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
         }
         await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id }, changes: redactDiff({ stage: before.stage }, { stage }, { entity: 'contacts' }), ...(undoOf !== undefined ? { reason: 'STAGE_UNDO' } : {}) });
         const eventId = await ownLatestStageEvent(tx, id, before.stage, stage); // parity 67
+        // E779: what this request took for an undo must be stored as one. If the definer did not keep the mark (its own
+        // check of the same rules, by the database clock a moment later), nothing is changed: the whole transaction
+        // rolls back, so an "undo" is never recorded as an ordinary change that could start a plan.
+        if (undoOf !== undefined && (eventId === null || (await stageEvent(tx, eventId))?.undoOfEventId !== undoOf)) throw new AppError('STAGE_UNDO_INVALID');
         const after = (await repo.editRow(tx, id))!;
         return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version, eventId, changed: true };
       });

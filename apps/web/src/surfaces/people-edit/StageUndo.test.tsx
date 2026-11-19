@@ -72,6 +72,22 @@ describe('R-STG-5 undo of a stage change', () => {
     expect(await within(toast).findByText('Stopped Buyer plan.')).toBeInTheDocument();
   });
 
+  it('L1 (E779): an undo cannot be undone, so the undo\'s own toast offers no Undo, with or without a plan left running', async () => {
+    const { fake, u } = mount({ undo: undone({ stillRunning: null }) });
+    const toast = await changeThenUndo(u);
+    expect(await within(toast).findByText('Stage back to Trying to reach.')).toBeInTheDocument();
+    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+    // exactly one request carried undoOf, and it named the change, never the undo's own event
+    expect(fake.callsTo(`POST /contacts/${C}/stage`).filter((c) => (c.body as { undoOf?: string }).undoOf !== undefined).map((c) => c.body)).toEqual([{ stage: 'attempting', undoOf: EV }]);
+  });
+
+  it('L1 (E779): with a plan left running the undo\'s toast offers Stop and still no Undo', async () => {
+    const { u } = mount({ undo: undone(), stop: 'ok' });
+    const toast = await changeThenUndo(u);
+    await within(toast).findByRole('button', { name: 'Stop Buyer plan' });
+    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
   it('no Stop on the toast for a viewer the server would refuse; the sentence is the same', async () => {
     const { u } = mount({ undo: undone({ stillRunning: { enrollmentId: E, plan: 'Buyer plan', canStop: false } }) });
     const toast = await changeThenUndo(u);

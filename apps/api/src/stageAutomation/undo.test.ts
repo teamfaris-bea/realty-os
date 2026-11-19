@@ -236,16 +236,118 @@ describe('undoOf must be this person\'s most recent stage change (R-STG-5)', () 
     expect(sys).toBeNull();
   });
 
-  it('R-STG-5 anyone who may change the stage may undo the latest change (a Team Lead undoing the agent\'s); the stage rule and the permission still apply', async () => {
+  it('R-STG-5 the stage rule and the permission still apply to an undo: an agent who does not see the person gets 404, with or without undoOf', async () => {
     const c = await newContact(agent);
     const change = await post(agent, c, { stage: 'active' });
-    const undo = await post(tl, c, { stage: 'new', undoOf: change.body.eventId });
-    expect(undo.status).toBe(200);
-    expect(undo.body.stillRunning).toMatchObject({ plan: 'Buyer plan', canStop: true });
-    // an agent who does not see the person gets 404, with or without undoOf
+    expect(change.status).toBe(200);
     const latest = (await eventsOf(c)).at(-1)!.id;
-    expect((await post(agent2, c, { stage: 'active', undoOf: latest })).status).toBe(404);
-    expect(await stageOf(c)).toBe('new');
+    expect((await post(agent2, c, { stage: 'new', undoOf: latest })).status).toBe(404);
+    expect((await post(agent2, c, { stage: 'new' })).status).toBe(404);
+    expect(await stageOf(c)).toBe('active');
+  });
+});
+
+// b19 fix pass L1: an undo is only an undo. The mark makes a plan NOT start, so it is kept for exactly one thing: the
+// person who made a stage change taking that change back, soon after. Anything else is an ordinary stage change (which
+// the preview describes truthfully and which may start a plan), never one that carries the mark.
+describe('L1 (E779): an undo is only an undo', () => {
+  /** Backdates one stage event (the history is append-only: the superuser's session skips its triggers for this one statement). */
+  const backdate = (eventId: string, minutes: number) =>
+    h.su.query(`BEGIN; SET LOCAL session_replication_role = replica; UPDATE contact_stage_events SET occurred_at = occurred_at - interval '${Number(minutes)} minutes' WHERE id = '${eventId.replace(/[^0-9a-f-]/gi, '')}'; COMMIT;`);
+  const snapshot = async (c: string) => ({ stage: await stageOf(c), events: await eventsOf(c), decisions: await decisionsOf(h, c), enrollments: await enrollmentsOf(h, c) });
+
+  it('L1 E779 an undo cannot itself be undone: a "redo" that names the undo\'s event is refused STAGE_UNDO_INVALID and changes nothing; the same move as an ordinary change is decided as one (the plan starts, as its preview says)', async () => {
+    const c = await newContact(agent);
+    // new -> connected, then an ordinary move into the stage whose plan is the Buyer plan... is NOT made: the redo is what would enter it
+    const into = await post(agent, c, { stage: 'connected' });
+    const undo = await post(agent, c, { stage: 'new', undoOf: into.body.eventId });
+    expect(undo.status).toBe(200);
+    const undoEvent = (await eventsOf(c)).at(-1)!;
+    expect(undoEvent).toMatchObject({ from_stage: 'connected', to_stage: 'new', undo_of_event_id: into.body.eventId });
+    const before = await snapshot(c);
+    const redo = await post(agent, c, { stage: 'connected', undoOf: undoEvent.id });
+    expect(redo.status).toBe(409);
+    expect(redo.code).toBe('STAGE_UNDO_INVALID');
+    expect(await snapshot(c)).toEqual(before);
+    // a plan-carrying stage: the "redo" must never be a way into it that skips the plan
+    const c2 = await newContact(agent);
+    const first = await post(agent, c2, { stage: 'active' });
+    expect(first.body.automation).toEqual({ started: 'Buyer plan' });
+    expect((await call(agent, 'POST', `/enrollments/${(await enrollmentsOf(h, c2))[0]!.id}/stop`, {})).status).toBe(200);
+    const back = await post(agent, c2, { stage: 'new', undoOf: first.body.eventId });
+    expect(back.status).toBe(200);
+    const backEvent = (await eventsOf(c2)).at(-1)!;
+    const preview = await call<{ starts: { plan: string } | null }>(agent, 'GET', `/contacts/${c2}/stage/preview?to=active`);
+    expect(preview.body.starts).toMatchObject({ plan: 'Buyer plan' });
+    expect((await post(agent, c2, { stage: 'active', undoOf: backEvent.id })).code).toBe('STAGE_UNDO_INVALID');
+    expect(await stageOf(c2)).toBe('new');
+    // the ordinary change does what the preview said: the plan starts
+    const again = await post(agent, c2, { stage: 'active' });
+    expect(again.status).toBe(200);
+    expect(again.body.automation).toEqual({ started: 'Buyer plan' });
+  });
+
+  it('L1 E779 only the person who made the change can undo it: a Team Lead naming the agent\'s event is refused and nothing changes; the agent\'s own undo works; the Team Lead can still change the stage as an ordinary change', async () => {
+    const c = await newContact(agent);
+    const change = await post(agent, c, { stage: 'active' });
+    expect(change.status).toBe(200);
+    const before = await snapshot(c);
+    const byLead = await post(tl, c, { stage: 'new', undoOf: change.body.eventId });
+    expect(byLead.status).toBe(409);
+    expect(byLead.code).toBe('STAGE_UNDO_INVALID');
+    expect(await snapshot(c)).toEqual(before);
+    const own = await post(agent, c, { stage: 'new', undoOf: change.body.eventId });
+    expect(own.status).toBe(200);
+    expect(own.body.stillRunning).toMatchObject({ plan: 'Buyer plan', canStop: true });
+    // a second person repeating that undo is not "their" undo either
+    expect((await post(tl, c, { stage: 'new', undoOf: change.body.eventId })).code).toBe('STAGE_UNDO_INVALID');
+    // and the Team Lead's ordinary change is an ordinary change (no mark)
+    const lead = await post(tl, c, { stage: 'connected' });
+    expect(lead.status).toBe(200);
+    expect((await eventsOf(c)).at(-1)).toMatchObject({ to_stage: 'connected', undo_of_event_id: null });
+  });
+
+  it('L1 E779 an undo is offered for 15 minutes: at 14 minutes it works, after 15 it is refused and nothing changes', async () => {
+    const fresh = await newContact(agent);
+    const a = await post(agent, fresh, { stage: 'connected' });
+    await backdate(a.body.eventId!, 14);
+    expect((await post(agent, fresh, { stage: 'new', undoOf: a.body.eventId })).status).toBe(200);
+
+    const stale = await newContact(agent);
+    const b = await post(agent, stale, { stage: 'connected' });
+    await backdate(b.body.eventId!, 16);
+    const before = await snapshot(stale);
+    const late = await post(agent, stale, { stage: 'new', undoOf: b.body.eventId });
+    expect(late.status).toBe(409);
+    expect(late.code).toBe('STAGE_UNDO_INVALID');
+    expect(await snapshot(stale)).toEqual(before);
+    // the same move without undoOf is an ordinary stage change
+    expect((await post(agent, stale, { stage: 'new' })).status).toBe(200);
+    expect((await eventsOf(stale)).at(-1)).toMatchObject({ to_stage: 'new', undo_of_event_id: null });
+  });
+
+  it('L1 E779 the database keeps the mark only for the same three reasons: never for an undo\'s own event, another user\'s event, or one older than 15 minutes', async () => {
+    const mark = async (by: TestClient, c: string, to: string, undoOf: string) =>
+      withTenantTx(by.actor(), async (tx) => {
+        await sql`SELECT set_config('app.stage_undo_of', ${undoOf}, true)`.execute(tx);
+        await sql`UPDATE contacts SET stage = ${to} WHERE tenant_id = app.tenant_id() AND id = ${c}`.execute(tx);
+        return (await sql<{ u: string | null }>`SELECT undo_of_event_id AS u FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND contact_id = ${c} ORDER BY occurred_at DESC, id DESC LIMIT 1`.execute(tx)).rows[0]!.u;
+      }, { db: h.database });
+    // another user's event (the Team Lead reverses the agent's change, naming it)
+    const c1 = await newContact(agent);
+    const e1 = (await post(agent, c1, { stage: 'connected' })).body.eventId!;
+    expect(await mark(tl, c1, 'new', e1)).toBeNull();
+    // an event older than 15 minutes
+    const c2 = await newContact(agent);
+    const e2 = (await post(agent, c2, { stage: 'connected' })).body.eventId!;
+    await backdate(e2, 16);
+    expect(await mark(agent, c2, 'new', e2)).toBeNull();
+    // an undo's own event
+    const c3 = await newContact(agent);
+    const e3 = (await post(agent, c3, { stage: 'connected' })).body.eventId!;
+    expect(await mark(agent, c3, 'new', e3)).toBe(e3);
+    const undoEvent = (await eventsOf(c3)).at(-1)!.id;
+    expect(await mark(agent, c3, 'connected', undoEvent)).toBeNull();
   });
 });
 

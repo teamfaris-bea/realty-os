@@ -20,12 +20,19 @@
 --       - a user is making the change (never the system, an import or support);
 --       - the value is a uuid naming a stage event of THIS contact in THIS tenant (the lookup is by tenant_id and
 --         contact_id of the row being updated, so another person's or another tenant's event never matches);
---       - that event is the contact's MOST RECENT stage event; and
---       - the change really reverses it: it goes from the event's to_stage back to its from_stage.
---     So the mark cannot be forged onto an arbitrary stage change by setting the variable: at most a true reversal of
---     the latest change is called an undo, which is what it is. The mark only ever makes a plan NOT start. It grants
---     nothing: who may change the stage (RLS, app.contacts_stage_guard) is unchanged, and the definer reads only the
---     history of the row it is already writing for.
+--       - that event is the contact's MOST RECENT stage event;
+--       - the change really reverses it: it goes from the event's to_stage back to its from_stage; and
+--       - an undo is only an undo (b19 fix pass L1, E779): the event was made by THIS user (a member never "undoes"
+--         someone else's change), it is not itself an undo (an undo cannot be undone: that "redo" would enter a stage
+--         and skip its plan), and it is at most 15 minutes old by the database clock (the API's UNDO_WINDOW_MS,
+--         apps/api people/contacts.ts: an undo takes back what was just done, it is not a way to move someone into a
+--         stage later without its plan).
+--     So the mark cannot be forged onto an arbitrary stage change by setting the variable: at most the changer's own
+--     prompt reversal of the latest change is called an undo, which is what it is. The mark only ever makes a plan NOT
+--     start. It grants nothing: who may change the stage (RLS, app.contacts_stage_guard) is unchanged, and the definer
+--     reads only the history of the row it is already writing for. The API refuses each of these before the update
+--     (409 STAGE_UNDO_INVALID, nothing changes) and, after it, checks that the event it wrote carries the mark, so a
+--     request the API took for an undo is never stored as an ordinary change.
 --   * stage_automation_decisions.reason gains 'undo' (the closed set of apps/api stageAutomation/decide.ts SKIP_REASONS).
 --   No new table, policy, grant or definer.
 --
@@ -34,7 +41,7 @@
 
 ALTER TABLE contact_stage_events ADD COLUMN undo_of_event_id uuid;
 COMMENT ON COLUMN contact_stage_events.undo_of_event_id IS
-  'b19 0105: the stage event this change undoes (NULL: an ordinary change). Written only by app.contacts_stage_history, and only for a user''s true reversal of the contact''s most recent stage event. A stage entry marked as an undo never starts a plan (R-STG-5).';
+  'b19 0105: the stage event this change undoes (NULL: an ordinary change). Written only by app.contacts_stage_history, and only for a user''s true reversal of the contact''s most recent stage event, when that event is their own, is not itself an undo and is at most 15 minutes old. A stage entry marked as an undo never starts a plan (R-STG-5).';
 
 -- 0041's statement, verbatim except the marked 0105 lines.
 CREATE OR REPLACE FUNCTION app.contacts_stage_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
@@ -53,13 +60,17 @@ BEGIN
        AND b.created_by_user_id = uid;
   END IF;
   -- 0105: the API names the stage event this change undoes (app.stage_undo_of); kept only when a user is making the
-  -- change, the event is this contact's most recent stage event, and this change reverses it; else NULL
+  -- change, the event is this contact's most recent stage event, this change reverses it, and the event is that
+  -- user's own, is not itself an undo and is at most 15 minutes old (an undo is only an undo); else NULL
   IF uid IS NOT NULL AND undo ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
     SELECT l.id INTO uoid
-      FROM (SELECT e.id, e.from_stage, e.to_stage FROM public.contact_stage_events e
+      FROM (SELECT e.id, e.from_stage, e.to_stage, e.actor_kind, e.actor_user_id, e.undo_of_event_id, e.occurred_at
+              FROM public.contact_stage_events e
              WHERE e.tenant_id = NEW.tenant_id AND e.contact_id = NEW.id
              ORDER BY e.occurred_at DESC, e.id DESC LIMIT 1) l
-     WHERE l.id = undo::uuid AND l.to_stage = OLD.stage AND l.from_stage = NEW.stage;
+     WHERE l.id = undo::uuid AND l.to_stage = OLD.stage AND l.from_stage = NEW.stage
+       AND l.actor_kind = 'user' AND l.actor_user_id = uid AND l.undo_of_event_id IS NULL
+       AND l.occurred_at >= clock_timestamp() - interval '15 minutes';
   END IF;
   INSERT INTO public.contact_stage_events (tenant_id, id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, bulk_action_id, undo_of_event_id)   -- 0041: bulk_action_id; 0105: undo_of_event_id
   VALUES (NEW.tenant_id, gen_random_uuid(), NEW.id, OLD.stage, NEW.stage, ak, uid, bid, uoid);
