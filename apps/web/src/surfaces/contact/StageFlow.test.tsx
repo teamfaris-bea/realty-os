@@ -362,3 +362,24 @@ describe('M5 (E778): after a confirmed change on a phone the result is in view w
     expect(scrolled).toEqual([screen.getByRole('region', { name: 'What happens next' })]);
   });
 });
+
+describe('L8 (E788): a toast never sits on the working bar', () => {
+  it('both toasts (the stage toast and the older announce toast) are in ONE stack, placed above every bottom bar by the bars\' measured height, not by an assumed 76 px', async () => {
+    // the lead moved during the call: the announce toast says so (the stage toast shows after a stage change)
+    const fake = page().on(`POST /calls/${IDS.call}/outcome`, { status: 200, body: { callId: IDS.call, outcome: 'no_answer', recordedAs: 'task_for_current_owner', suggestedStage: null } });
+    agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    await u.click(await within(await bar()).findByRole('button', { name: 'Call Jane Doe' }));
+    await u.click(await within(await screen.findByRole('dialog', { name: 'Call Jane Doe' })).findByRole('button', { name: 'No answer' }));
+    await waitFor(() => expect(screen.getByTestId('toast')).toHaveTextContent('Jane was reassigned during the call'));
+    const stack = screen.getByTestId('toast-stack');
+    expect(stack).toContainElement(screen.getByTestId('toast'));
+    expect(stack).toContainElement(screen.getByTestId('people-toast'));
+    expect(screen.getAllByTestId('toast-stack')).toHaveLength(1);
+    // above the tab bar, the safe area and the SUM of the bottom bars as measured (design/Sticky.tsx), plus a gap
+    expect(stack.className).toContain('bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--sticky-bottom-h,0px)+12px)]');
+    expect(stack.className).not.toMatch(/76px/);
+    // the announce toast is seen here and heard through the live region: still hidden from assistive tech, once
+    expect(screen.getByTestId('toast')).toHaveAttribute('aria-hidden', 'true');
+  });
+});

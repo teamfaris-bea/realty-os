@@ -18,12 +18,13 @@
 // the call sheet closes after the outcome as it always did. An outcome that was saved as a task for a new owner (the
 // lead moved during the call) has no stage step: the caller no longer works that person.
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
 import { detailsKey } from '../../people-edit/api.js';
-import { ToastProvider } from '../../people-edit/hooks.js';
+import { ToastProvider, useToastSlot } from '../../people-edit/hooks.js';
 import { StageStep } from '../../people-edit/StageStep.js';
 import type { SuggestedStage } from '../../people-edit/stageFlow.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
@@ -86,15 +87,28 @@ export function AgentSheetsProvider({ children, stageStep = false }: { children:
     <ToastProvider>
     <Ctx.Provider value={value}>
       {children}
-      {/* seen here, heard through announce(): aria-hidden so a screen reader does not meet it twice */}
-      <div aria-hidden="true" data-testid="toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+12px)] z-50 flex justify-center px-4 md:bottom-6">
-        {toast ? <p className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{toast}</p> : null}
-      </div>
+      <AnnounceToast text={toast} />
       {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} stageStep={stageStep} /> : null}
       {open?.kind === 'appointment' ? <AppointmentSheet appointmentId={open.appointmentId} label={open.label} onClose={close} announce={announce} /> : null}
     </Ctx.Provider>
     </ToastProvider>
   );
+}
+
+/**
+ * The announce toast: seen here, heard through announce() (aria-hidden, so a screen reader does not meet it twice).
+ * It is drawn inside the page's one stack of toasts (people-edit/hooks.tsx; E788), so it sits above every bottom bar
+ * (it used to sit on the person page's working bar) and above or below the stage toast, never over it.
+ */
+function AnnounceToast({ text }: { text: string | null }) {
+  const slot = useToastSlot();
+  const el = (
+    <div aria-hidden="true" data-testid="toast" className="flex w-full justify-center">
+      {text ? <p className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{text}</p> : null}
+    </div>
+  );
+  // before the stack is on the page (the first render) the toast is empty, and is kept in the tree where it is
+  return slot ? createPortal(el, slot) : el;
 }
 
 /** A visible way out of a sheet (Escape and the backdrop close it too): a phone has no Escape key. */

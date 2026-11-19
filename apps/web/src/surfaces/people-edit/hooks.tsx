@@ -88,6 +88,21 @@ export interface ToastSpec {
   action?: { label: string; name?: string; run: () => void };
 }
 const ToastCtx = createContext<(t: ToastSpec) => void>(() => undefined);
+/**
+ * The page's ONE stack of toasts (E788): a place inside it for another toast of the page (the agent sheets' announce
+ * toast), so two toasts shown at once sit one above the other, and both sit above every bottom bar. Null: no stack.
+ */
+const ToastSlotCtx = createContext<HTMLElement | null>(null);
+export function useToastSlot(): HTMLElement | null {
+  return useContext(ToastSlotCtx);
+}
+
+/**
+ * Where the stack sits: above the tab bar, the home-indicator safe area and the bottom bars of the page as they
+ * MEASURE (design/Sticky.tsx publishes their sum: the person's working bar, taller when it carries a reason line, and
+ * the AI care bar above it), plus a gap. It used to assume a 76 px bar and sat on a taller one.
+ */
+export const TOAST_STACK_POS = 'bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--sticky-bottom-h,0px)+12px)] md:bottom-6';
 /** True inside a ToastProvider: one nested inside another shares its toast instead of drawing a second one. */
 const InToastCtx = createContext(false);
 
@@ -106,6 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 function OwnToast({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastSpec | null>(null);
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const show = useCallback((t: ToastSpec) => {
     const offers = [t.undo ? 'Undo' : null, t.action ? t.action.label : null].filter(Boolean);
@@ -117,8 +133,12 @@ function OwnToast({ children }: { children: ReactNode }) {
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   return (
     <ToastCtx.Provider value={show}>
-      <InToastCtx.Provider value={true}>{children}</InToastCtx.Provider>
-      <div data-testid="people-toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+76px)] z-50 flex justify-center px-4 md:bottom-6">
+      <InToastCtx.Provider value={true}>
+        <ToastSlotCtx.Provider value={slot}>{children}</ToastSlotCtx.Provider>
+      </InToastCtx.Provider>
+      <div data-testid="toast-stack" className={`pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center gap-2 px-4 ${TOAST_STACK_POS}`}>
+        <div ref={setSlot} className="flex w-full flex-col items-center empty:hidden" />
+      <div data-testid="people-toast" className="flex w-full justify-center">
         {toast ? (
           <div className="pointer-events-auto flex max-w-md flex-wrap items-center justify-end gap-x-3 rounded-xl bg-ink px-4 py-2 text-[15px] font-medium text-surface shadow-lg">
             <span className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere]">{toast.text}</span>
@@ -151,6 +171,7 @@ function OwnToast({ children }: { children: ReactNode }) {
             ) : null}
           </div>
         ) : null}
+      </div>
       </div>
     </ToastCtx.Provider>
   );

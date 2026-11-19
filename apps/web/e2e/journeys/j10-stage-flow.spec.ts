@@ -376,6 +376,15 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   await tap(page, s.getByRole('button', { name: 'Change to Connected' }));
   // L5: the toast, the preview and the panel word the decision with the server's one sentence (will not / did not)
   await expect(peopleToast(page).getByText(`Stage: Connected. ${why.replace('will not start', 'did not start').replace(/\.$/, '')}`)).toBeVisible({ timeout: 15_000 });
+  if (isPhone(page)) {
+    // L8: this person's working bar carries a reason line ("Text is off: Texted STOP on …"), so it is taller than a
+    // plain bar; the toast sits wholly above it, never on its buttons
+    const bar = (await page.getByTestId('person-phone-bar').boundingBox())!;
+    const pill = (await peopleToast(page).locator('> div').boundingBox())!;
+    expect(bar.height, 'the bar with a reason line is taller than the plain 61 px bar').toBeGreaterThan(70);
+    expect(pill.y + pill.height, `the toast (bottom ${Math.round(pill.y + pill.height)}) is above the bar (top ${Math.round(bar.y)})`).toBeLessThanOrEqual(bar.y);
+    await expect(peopleToast(page).getByRole('button', { name: 'Undo' })).toBeInViewport({ ratio: 1 });
+  }
   const row = playbookRow(page);
   await expect(row.getByText('None running')).toBeVisible({ timeout: 15_000 });
   await expect(row.getByText(`${PLAN} did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.`)).toBeVisible();
