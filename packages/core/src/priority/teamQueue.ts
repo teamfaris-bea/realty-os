@@ -5,7 +5,9 @@
 //
 //   new_lead             an inbound inquiry of the last 14 days whose person has had no human attempt since it
 //                        arrived, whoever holds the lead (owned, on offer, in a pond, unassigned). Counted from
-//                        ARRIVAL, in wall-clock and in staffed time. An automated reply never clears it.
+//                        ARRIVAL, in wall-clock and in staffed time. An automated reply never clears it. A person
+//                        ANSWERING the lead's own call is not an attempt either (R-TEAMQ-22): the row stays, and
+//                        says that a person answered and that nobody has called back, texted or emailed since.
 //   unanswered_reply     the person wrote or called and no person answered (the feed's own answersClient)
 //   due_promise          an open promise past its deadline (the feed's taskDeadline)
 //   overdue_follow_up    any other open task about a person past its deadline
@@ -53,7 +55,8 @@ export const TEAM_QUEUE_APPOINTMENT_WINDOW_MS = 30 * DAY_MS;
 export const TEAM_QUEUE_GROUP_CAP = 25;
 
 export const TEAM_QUEUE_GROUP_WORDS: Readonly<Record<TeamQueueGroupKey, { label: string; empty: string }>> = {
-  new_lead: { label: 'New leads nobody has tried yet', empty: 'Nobody is waiting on a first call.' },
+  // R-TEAMQ-22: true of every row, also one whose own call a person answered (nobody has called them, texted or emailed)
+  new_lead: { label: 'New leads nobody has called, texted or emailed yet', empty: 'Nobody is waiting on a first call.' },
   unanswered_reply: { label: 'Replies nobody has answered', empty: 'Every reply has an answer from a person.' },
   due_promise: { label: 'Promises past due', empty: 'No promise is past due.' },
   overdue_follow_up: { label: 'Follow-ups past due', empty: 'No follow-up is past due.' },
@@ -171,6 +174,12 @@ export interface QueueInquiryFacts {
   /** The first automated (assistant or system) message sent to the person after the arrival; never an attempt. */
   automatedReplyAt: Instant | null;
   /**
+   * R-TEAMQ-22 (review fix M4): when a PERSON answered the lead's own inbound call at or after the arrival, or the
+   * call that itself created this inquiry (matched by the inquiry's own reference). Never an attempt: nobody reached
+   * out. Absent or null: no such call.
+   */
+  answeredCallAt?: Instant | null;
+  /**
    * b19 R-TEAMQ-18: this inquiry's minute-three backup decision, when it alerted someone or found nobody to alert
    * (lead_backup_alerts): when, the alerted member's name, and whether they are the source's backup or the team lead
    * alerted in their place. Absent or null: no alert (not a covered source, not due yet, or not needed).
@@ -240,6 +249,8 @@ export interface TeamQueueRow {
    * job found nobody to alert, and the line says so. null: no alert.
    */
   backupAlert: { at: Instant; alerted: boolean; line: string } | null;
+  /** new_lead only (R-TEAMQ-22): when a person answered the lead's own call since the arrival (the why line says so); else null */
+  answeredCallAt: Instant | null;
   subject: { kind: 'inquiry'; id: LeadInquiryId } | { kind: 'message' | 'call'; id: string } | { kind: 'task'; id: TaskId } | { kind: 'appointment'; id: AppointmentId };
 }
 
@@ -254,6 +265,8 @@ export interface TeamQueueGroup {
   more: number;
   /** new_lead only (b19 R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
   backupAlerted: number | null;
+  /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
+  answeredCalls: number | null;
 }
 
 export interface TeamQueue {
@@ -323,6 +336,14 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
     // the automatic reply said is the first one after the FIRST unanswered arrival
     const auto = list.map((q) => q.automatedReplyAt).filter((a): a is Instant => a !== null && a >= first.arrivedAt).sort((a, b) => a - b)[0] ?? null;
     // R-TEAMQ-18: the latest backup alert among the person's waiting inquiries
+    // R-TEAMQ-22: the first call a person answered since the first waiting arrival
+    const answered = list.map((q) => q.answeredCallAt ?? null).filter((a): a is Instant => a !== null).sort((a, b) => a - b)[0] ?? null;
+    const answeredWhen = answered === null ? '' : localDateOf(answered, i.calendar.zone) === localDateOf(now, i.calendar.zone) ? `at ${clockTime(answered, i.calendar)}` : ago(now, answered);
+    // true words for both kinds of row; an answered row says its automatic reply only when one went out
+    const tried =
+      answered === null
+        ? `Nobody has called, texted or emailed yet. ${automatedSentence(now, auto, i.calendar)}`
+        : `A person answered their call ${answeredWhen}. Nobody has called back, texted or emailed since.${auto === null ? '' : ` ${automatedSentence(now, auto, i.calendar)}`}`;
     const alert = list.map((q) => q.backupAlert ?? null).filter((a): a is NonNullable<QueueInquiryFacts['backupAlert']> => a !== null).sort((a, b) => b.at - a.at)[0] ?? null;
     rows.push({
       group: 'new_lead',
@@ -331,12 +352,13 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
       sourceName: first.sourceName,
       holder: latest.holder,
       ownerLabel: holderLabel(latest.holder),
-      why: `Arrived ${ago(now, first.arrivedAt)} from ${from}${offHours}.${again} ${holderSentence(latest.holder)} Nobody has called, texted or emailed yet. ${automatedSentence(now, auto, i.calendar)}`,
+      why: `Arrived ${ago(now, first.arrivedAt)} from ${from}${offHours}.${again} ${holderSentence(latest.holder)} ${tried}`,
       since: first.arrivedAt,
       waitingSeconds: m.wallSeconds,
       staffedSeconds: m.staffedSeconds,
       offHours: m.offHours,
       backupAlert: alert === null ? null : { at: alert.at, alerted: alert.outcome === 'alerted', line: backupAlertLine(now, alert, i.calendar) },
+      answeredCallAt: answered,
       subject: { kind: 'inquiry', id: first.inquiryId },
     });
   }
@@ -378,6 +400,7 @@ function replyRows(i: TeamQueueInputs): TeamQueueRow[] {
       staffedSeconds: null,
       offHours: false,
       backupAlert: null,
+      answeredCallAt: null,
       subject: { kind: missed ? 'call' : 'message', id: latest.id },
     });
   }
@@ -408,6 +431,7 @@ function taskRows(i: TeamQueueInputs, promise: boolean): TeamQueueRow[] {
       staffedSeconds: null,
       offHours: false,
       backupAlert: null,
+      answeredCallAt: null,
       subject: { kind: 'task', id: t.taskId },
     });
   }
@@ -436,6 +460,7 @@ function appointmentRows(i: TeamQueueInputs): TeamQueueRow[] {
       staffedSeconds: null,
       offHours: false,
       backupAlert: null,
+      answeredCallAt: null,
       subject: { kind: 'appointment', id: a.appointmentId },
     });
   }
@@ -456,7 +481,8 @@ export function buildTeamQueue(i: TeamQueueInputs): TeamQueue {
     groups: TEAM_QUEUE_GROUPS.map((key) => {
       const rows = all[key].sort(byWaiting);
       const backupAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true).length : null;
-      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted };
+      const answeredCalls = key === 'new_lead' ? rows.filter((r) => r.answeredCallAt !== null).length : null;
+      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted, answeredCalls };
     }),
   };
 }

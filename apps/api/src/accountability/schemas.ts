@@ -163,6 +163,8 @@ export const TeamQueueRowSchema = z.object({
   offHours: z.boolean(),
   /** new leads only (R-TEAMQ-18): the backup alert of this person's latest alerted inquiry, as its own line */
   backupAlert: z.object({ at: z.string(), alerted: z.boolean(), line: z.string().min(1) }).nullable(),
+  /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived; else null */
+  answeredCallAt: z.string().nullable(),
 });
 export const TeamQueueResponse = z.object({
   groups: z.array(
@@ -176,6 +178,8 @@ export const TeamQueueResponse = z.object({
       atLeast: z.boolean(),
       /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
       backupAlerted: count.nullable(),
+      /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
+      answeredCalls: count.nullable(),
     }),
   ),
   staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
@@ -202,6 +206,9 @@ export const ResponseInquirySchema = z.object({
     by: Person.nullable(),
     role: z.enum(['owner', 'backup', 'collaborator', 'other']),
   }).nullable(),
+  /** R-TEAMQ-22: attempted, else answered_call (a person answered the lead's own call; never an attempt), else waiting */
+  state: z.enum(['attempted', 'answered_call', 'waiting']),
+  answeredCall: Waited.extend({ at: z.string(), by: Person.nullable() }).nullable(),
   waiting: Waited.nullable(),
   automatedReplyAt: z.string().nullable(),
   /** R-TEAMQ-18: the inquiry's minute-three backup alert (null: nobody was alerted) */
@@ -214,6 +221,8 @@ const ResponseRollupSchema = z.object({
   attempted: count,
   within5: count,
   within15: count,
+  /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call (attempted + answeredCalls + waiting = inquiries) */
+  answeredCalls: count,
   waiting: count,
   automatedReplies: count,
   /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first attempted by the alerted person */

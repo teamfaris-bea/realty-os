@@ -68,6 +68,35 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
     ]);
   });
 
+  it('R-TEAMQ-22 E882 (review fix M4): a person ANSWERED the lead\'s own call: the row says so, in the owner\'s words, and never "nobody has called, texted or emailed yet"; it stays in the group until a person calls back, texts or emails', () => {
+    // NOW is 10:00 AM: arrived 6 minutes ago, the call was answered at 9:56
+    const answered = inq({ arrivedAt: t(-min(6)), holder: { kind: 'owner', userId: user(2), name: 'Jordan P.' }, answeredCallAt: t(-min(4)) });
+    const g = group(inputs({ inquiries: [answered] }), 'new_lead');
+    expect(g.rows.map((r) => r.why)).toEqual(['Arrived 6 min ago from Website form. Owned by Jordan P. A person answered their call at 9:56 AM. Nobody has called back, texted or emailed since.']);
+    expect(g.rows[0]!.answeredCallAt).toBe(t(-min(4)));
+    expect(g.rows[0]!.why).not.toMatch(/Nobody has called, texted or emailed yet/);
+    // an automatic reply that went out is still said, apart
+    expect(whys(inputs({ inquiries: [{ ...answered, automatedReplyAt: t(-min(5)) }] }), 'new_lead')[0]).toBe(
+      'Arrived 6 min ago from Website form. Owned by Jordan P. A person answered their call at 9:56 AM. Nobody has called back, texted or emailed since. An automatic reply went out at 9:55 AM.',
+    );
+    // answered on another day: how long ago
+    expect(whys(inputs({ inquiries: [inq({ arrivedAt: t(-hours(27)), answeredCallAt: t(-hours(26)) })] }), 'new_lead')[0]).toMatch(/A person answered their call 26 h ago\. Nobody has called back, texted or emailed since\.$/);
+    // a row with no answered call keeps its words and carries null
+    const plain = group(inputs({ inquiries: [inq()] }), 'new_lead').rows[0]!;
+    expect(plain.answeredCallAt).toBeNull();
+    expect(plain.why).toMatch(/Nobody has called, texted or emailed yet\./);
+    // the group's label is true of both kinds of row; the group says how many of its rows a person answered
+    expect(g.label).toBe('New leads nobody has called, texted or emailed yet');
+    const both = group(inputs({ inquiries: [answered, inq({ inquiryId: inquiry(2), contactId: contact(2) })] }), 'new_lead');
+    expect([both.answeredCalls, both.total]).toEqual([1, 2]);
+    // a person's call back (a human attempt at or after the arrival) still takes the lead out of the queue
+    expect(group(inputs({ inquiries: [{ ...answered, humanAttemptAt: t(-min(1)) }] }), 'new_lead').rows).toEqual([]);
+    // two inquiries of one person: the first answered call since the FIRST waiting arrival is the one said
+    const twice = group(inputs({ inquiries: [inq({ arrivedAt: t(-min(40)), answeredCallAt: t(-min(30)) }), inq({ inquiryId: inquiry(2), arrivedAt: t(-min(10)), answeredCallAt: null })] }), 'new_lead');
+    expect(twice.rows[0]!.why).toMatch(/A person answered their call at 9:30 AM\./);
+    expect(buildTeamQueue(inputs()).groups.filter((x) => x.key !== 'new_lead').map((x) => x.answeredCalls)).toEqual([null, null, null, null]);
+  });
+
   const holders: [string, QueueHolder, string, string][] = [
     ['owned', AVA, 'Owned by Ava Agent.', 'Ava Agent'],
     ['on offer', OFFER, 'On offer to Jordan P.', 'No owner yet: on offer to Jordan P.'],

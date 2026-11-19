@@ -80,6 +80,7 @@ export {
   type AttemptKind,
   type ResponseInquiryFacts,
   type MeasuredInquiry,
+  type ResponseState,
   type ResponseRollup,
   type SourceResponseRollup,
   measureInquiry,

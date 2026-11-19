@@ -7,7 +7,8 @@
 // reply, due promise, overdue follow-up, appointment needing an outcome), each row saying why it is here, who has
 // it or "no owner yet" (on offer to whom, in which pond, or unassigned), and for how long, counted from ARRIVAL. A
 // new-lead row also says when its backup was alerted and who that was (b19 step 2, R-TEAMQ-18), and the group counts
-// those rows over all its rows.
+// those rows over all its rows. A lead whose own call a person ANSWERED says so (R-TEAMQ-22): it is not an attempt, so
+// the row stays until a person calls back, texts or emails, but it never reads "nobody has called, texted or emailed".
 //
 // READ-ONLY: this module only reads, in one transaction as the caller, so row-level security and the team scope of
 // repos/teamQueue.ts decide which people exist for them. It writes nothing, enqueues no job, sends no message and
@@ -71,6 +72,8 @@ export interface TeamQueueRowView {
    * line ("Backup alerted at 2:06 PM: Sam T.", the time in the team's zone). `alerted` false: nobody could be alerted.
    */
   backupAlert: { at: string; alerted: boolean; line: string } | null;
+  /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived (the why line says so); else null */
+  answeredCallAt: string | null;
 }
 
 export interface TeamQueueGroupView {
@@ -84,6 +87,8 @@ export interface TeamQueueGroupView {
   atLeast: boolean;
   /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
   backupAlerted: number | null;
+  /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
+  answeredCalls: number | null;
 }
 
 export interface TeamQueueView {
@@ -160,6 +165,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
       holder,
       humanAttemptAt: null, // the read keeps only inquiries with no human attempt at or after the arrival
       automatedReplyAt: q.automated_at === null ? null : ms(q.automated_at),
+      answeredCallAt: q.answered_call_at === null ? null : ms(q.answered_call_at),
       backupAlert: q.backup_alert_at === null || q.backup_alert_outcome === null ? null : { at: ms(q.backup_alert_at), outcome: q.backup_alert_outcome, name: q.backup_alert_name, recipient: q.backup_alert_recipient, reason: q.backup_alert_reason, count: q.backup_alert_count ?? 1 },
     });
   }
@@ -212,11 +218,13 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
         staffedSeconds: r.staffedSeconds,
         offHours: r.offHours,
         backupAlert: r.backupAlert === null ? null : { at: iso(r.backupAlert.at), alerted: r.backupAlert.alerted, line: r.backupAlert.line },
+        answeredCallAt: r.answeredCallAt === null ? null : iso(r.answeredCallAt),
       })),
       total: g.total,
       more: g.more,
       atLeast: capped[g.key],
       backupAlerted: g.backupAlerted,
+      answeredCalls: g.answeredCalls,
     })),
     staffedHours: { open: hours.open, close: hours.close, zone: hours.zone },
     windows: {

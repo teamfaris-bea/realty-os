@@ -7,7 +7,8 @@
 // that by ANYONE (the scoreboard's touch), who made it and in what role to the lead at that moment, the time from
 // arrival in staffed and in wall-clock time, and whether an automated reply went out (shown apart, never counted).
 // Rolled up by lead source: inquiries, with a human attempt, within 5 and 15 staffed minutes, the median and 90th
-// percentile (never on a small sample), and still waiting. Every count travels with its denominator (R-ACC-4).
+// percentile (never on a small sample), those whose own call a person ANSWERED (R-TEAMQ-22: its own state, never an
+// attempt and never "no attempt"), and still waiting. Every count travels with its denominator (R-ACC-4).
 // b19 step 2 (R-TEAMQ-18): an inquiry whose minute-three backup alert was raised says when and to whom; each roll-up
 // counts "backup alerted" over its inquiries and "first attempt by the backup" over those alerted.
 //
@@ -30,6 +31,7 @@ import {
   RESPONSE_WITHIN_SECONDS,
   type ResponseInquiryFacts,
   type ResponseRollup,
+  type ResponseState,
   rollUpResponses,
 } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
@@ -53,7 +55,11 @@ export interface ResponseInquiryView {
   offHours: boolean;
   countedFrom: string;
   attempt: { at: string; kind: AttemptKind; by: { userId: string; name: string | null } | null; role: AttemptRole; wallSeconds: number; staffedSeconds: number } | null;
-  /** no human attempt yet: how long it has waited */
+  /** R-TEAMQ-22: `attempted`, else `answered_call` (a person answered the lead's own call; never an attempt), else `waiting` */
+  state: ResponseState;
+  /** R-TEAMQ-22: the first call of the lead a person answered since the arrival: when, by whom, how long after the arrival (null: none) */
+  answeredCall: { at: string; by: { userId: string; name: string | null } | null; wallSeconds: number; staffedSeconds: number } | null;
+  /** nobody has tried and nobody answered a call of theirs: how long it has waited */
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   /** when an automated reply went out after the arrival (null: none). Never an attempt. */
   automatedReplyAt: string | null;
@@ -105,6 +111,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
   const facts: ResponseInquiryFacts[] = open.map((r) => {
     if (r.attempt_by !== null) attemptNames.set(r.attempt_by, r.attempt_by_name);
     if (r.backup_alert_user !== null) attemptNames.set(r.backup_alert_user, r.backup_alert_name);
+    if (r.answered_call_by !== null) attemptNames.set(r.answered_call_by, r.answered_call_by_name);
     return {
       inquiryId: r.id as never,
       contactId: r.contact_id as ContactId,
@@ -113,6 +120,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
       arrivedAt: ms(r.arrived_at),
       firstAttempt: r.attempt_at === null ? null : { at: ms(r.attempt_at), kind: kindOf(r), byUserId: r.attempt_by as UserId | null, role: roleOf(r) },
       automatedReplyAt: r.automated_at === null ? null : ms(r.automated_at),
+      answeredCall: r.answered_call_at === null ? null : { at: ms(r.answered_call_at), byUserId: r.answered_call_by as UserId | null },
       backupAlert: r.backup_alert_at === null || r.backup_alert_user === null || r.backup_alert_recipient === null ? null : { at: ms(r.backup_alert_at), byUserId: r.backup_alert_user as UserId, recipient: r.backup_alert_recipient },
     };
   });
@@ -137,6 +145,11 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
             wallSeconds: m.attempt.wallSeconds,
             staffedSeconds: m.attempt.staffedSeconds,
           },
+    state: m.state,
+    answeredCall:
+      m.answeredCall === null
+        ? null
+        : { at: iso(m.answeredCall.at), by: m.answeredCall.byUserId === null ? null : { userId: m.answeredCall.byUserId, name: attemptNames.get(m.answeredCall.byUserId) ?? null }, wallSeconds: m.answeredCall.wallSeconds, staffedSeconds: m.answeredCall.staffedSeconds },
     waiting: m.waiting,
     automatedReplyAt: m.automatedReplyAt === null ? null : iso(m.automatedReplyAt),
     backupAlert: m.backupAlert === null ? null : { at: iso(m.backupAlert.at), to: { userId: m.backupAlert.byUserId, name: attemptNames.get(m.backupAlert.byUserId) ?? null }, recipient: m.backupAlert.recipient },

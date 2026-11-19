@@ -11,14 +11,16 @@
 //     `backup` when this inquiry's minute-three alert had gone to them before the attempt (lead_backup_alerts, b19
 //     R-TEAMQ-18: read through its own policy, so a caller sees it exactly when they see the inquiry),
 //     `collaborator` when contact_collaborators held them then, else `other`;
-//   - the first automated message that went out after the arrival (reported apart, never an attempt).
+//   - the first automated message that went out after the arrival (reported apart, never an attempt);
+//   - the first inbound call of the lead a PERSON answered since the arrival, or the call that is the inquiry itself
+//     (R-TEAMQ-22: its own state, never an attempt).
 // Indexes: see the header of repos/teamQueue.ts (inquiries by source and time; a person's messages and calls;
 // the ledger's primary key; imports by loe_type_time_idx; an inquiry's backup alert by lead_backup_alerts_inquiry_once).
 import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { iso } from '../common.js';
-import { ARRIVAL, AUTOMATED_MESSAGE, HOLDER_COLUMNS, HOLDER_JOINS, HUMAN_CALL, HUMAN_MESSAGE, type HolderColumns, TEAM_SCOPE } from './teamQueue.js';
+import { ANSWERED_CALL, ANSWERED_FOR_INQUIRY, ARRIVAL, AUTOMATED_MESSAGE, HOLDER_COLUMNS, HOLDER_JOINS, HUMAN_CALL, HUMAN_MESSAGE, type HolderColumns, TEAM_SCOPE } from './teamQueue.js';
 
 /** Inquiries one report reads at most (the newest); a period that holds more says so (`truncated`). */
 export const RESPONSE_READ_CAP = 5000;
@@ -46,16 +48,20 @@ export interface InquiryResponseRow extends HolderColumns {
   backup_alert_name: string | null;
   backup_alert_recipient: 'backup' | 'team_lead' | 'admins' | null;
   automated_at: Date | null;
+  /** R-TEAMQ-22: the first inbound call of the lead a person answered since the arrival (or the call that is this inquiry), and who answered */
+  answered_call_at: Date | null;
+  answered_call_by: string | null;
+  answered_call_by_name: string | null;
 }
 
 /** The inquiries of [from, to), newest first, at most `cap` + 1 (the extra row says the cap was reached). */
 export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: number): Promise<InquiryResponseRow[]> {
   const r = await sql<InquiryResponseRow>`
     WITH inq AS (
-      SELECT i.id, i.contact_id, i.arrived_at, s.id AS source_id, s.name AS source_name
+      SELECT i.id, i.contact_id, i.external_id, i.arrived_at, s.id AS source_id, s.name AS source_name
         FROM lead_sources s
         CROSS JOIN LATERAL (
-          SELECT i.id, i.contact_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
+          SELECT i.id, i.contact_id, i.external_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
            WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id
              AND ${ARRIVAL} >= ${iso(from)}::timestamptz AND ${ARRIVAL} < ${iso(to)}::timestamptz
              AND i.outcome <> 'duplicate_ignored'
@@ -73,7 +79,8 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
            COALESCE(ba.alerted_user_id = h.by_user AND h.at >= ba.decided_at, false) AS backup_then,
            ba.decided_at AS backup_alert_at, ba.alerted_user_id AS backup_alert_user, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
            (SELECT min(m.dispatched_at) FROM messages m
-             WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at
+             WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
+           ac.answered_at AS answered_call_at, ac.agent_user_id AS answered_call_by, acu.display_name AS answered_call_by_name
       FROM inq i
       JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = i.contact_id
       ${HOLDER_JOINS}
@@ -88,6 +95,12 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
             ORDER BY k.started_at ASC LIMIT 1)) x
          ORDER BY x.at ASC LIMIT 1) h ON true
       LEFT JOIN users hu ON hu.id = h.by_user
+      -- R-TEAMQ-22: the first call of theirs a person answered (never an attempt; its own state)
+      LEFT JOIN LATERAL (
+        SELECT k.answered_at, k.agent_user_id FROM calls k
+         WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND ${ANSWERED_CALL} AND ${ANSWERED_FOR_INQUIRY}
+         ORDER BY k.answered_at ASC LIMIT 1) ac ON true
+      LEFT JOIN users acu ON acu.id = ac.agent_user_id
       LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = c.tenant_id AND ba.inquiry_id = i.id AND ba.outcome = 'alerted'
       LEFT JOIN users bau ON bau.id = ba.alerted_user_id
      WHERE c.deleted_at IS NULL AND ${TEAM_SCOPE}

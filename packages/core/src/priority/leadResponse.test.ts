@@ -57,6 +57,36 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
     expect([m.within5, m.within15, m.automatedReplyAt]).toEqual([false, false, t(-min(29))]);
   });
 
+  it('R-TEAMQ-22 E883 (review fix M4): a person answered the lead\'s own call: its own state, never a human attempt and never "no attempt": not waiting, not within 5 minutes', () => {
+    const m = measureInquiry(inq({ arrivedAt: t(-min(30)), answeredCall: { at: t(-min(29)), byUserId: user(2) } }), NOW, CAL);
+    expect(m.attempt).toBeNull();
+    expect(m.waiting).toBeNull();
+    expect(m.answeredCall).toEqual({ at: t(-min(29)), byUserId: user(2), wallSeconds: 60, staffedSeconds: 60 });
+    expect([m.state, m.within5, m.within15]).toEqual(['answered_call', false, false]);
+    // the inquiry's own call started a moment before it reached the team: never a negative wait
+    expect(measureInquiry(inq({ arrivedAt: t(-min(30)), answeredCall: { at: (t(-min(30)) - 400) as never, byUserId: null } }), NOW, CAL).answeredCall).toMatchObject({ wallSeconds: 0, staffedSeconds: 0 });
+    // with a human attempt as well (a call back), the attempt is the measure and the answered call is still shown
+    const both = measureInquiry(tried(600, { arrivedAt: t(-min(30)), answeredCall: { at: t(-min(29)), byUserId: user(2) } }), NOW, CAL);
+    expect([both.state, both.attempt?.staffedSeconds, both.within5, both.within15, both.waiting]).toEqual(['attempted', 600, false, true, null]);
+    expect(both.answeredCall).not.toBeNull();
+    expect(measureInquiry(inq({ arrivedAt: t(-min(30)) }), NOW, CAL)).toMatchObject({ state: 'waiting', answeredCall: null });
+    expect(measureInquiry(tried(10), NOW, CAL)).toMatchObject({ state: 'attempted', answeredCall: null });
+  });
+
+  it('R-TEAMQ-22 E883: the roll-up counts answered calls apart: attempted + answered calls + waiting = inquiries; they are listed after the ones still waiting', () => {
+    const list = [
+      tried(100, { inquiryId: inquiry(901) }),
+      inq({ inquiryId: inquiry(902), arrivedAt: t(-min(50)), answeredCall: { at: t(-min(49)), byUserId: user(2) } }),
+      inq({ inquiryId: inquiry(903), arrivedAt: t(-min(20)) }),
+      tried(2000, { inquiryId: inquiry(904) }),
+      tried(100, { inquiryId: inquiry(905), answeredCall: { at: t(-hours(2)), byUserId: null } }),
+    ];
+    const r = rollUpResponses(list, NOW, CAL);
+    expect(r.totals).toMatchObject({ inquiries: 5, attempted: 3, answeredCalls: 1, waiting: 1, within5: 2, sample: 3 });
+    expect(r.totals.attempted + r.totals.answeredCalls + r.totals.waiting).toBe(r.totals.inquiries);
+    expect(r.sources[0]!.notWithin5.map((m) => [m.inquiryId, m.state])).toEqual([[inquiry(903), 'waiting'], [inquiry(902), 'answered_call'], [inquiry(904), 'attempted']]);
+  });
+
   it('R-TEAMQ-7 E829: an off-hours arrival is counted from opening and marked: a call three minutes after opening is within 5 minutes', () => {
     const night = at('2026-11-10T07:00:00Z'); // 02:00 New York; opens 08:00 (13:00Z)
     const m = measureInquiry(inq({ arrivedAt: night, firstAttempt: { at: at('2026-11-10T13:03:00Z'), kind: 'text', byUserId: user(1), role: 'owner' } }), NOW, CAL);

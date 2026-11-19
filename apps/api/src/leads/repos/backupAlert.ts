@@ -7,7 +7,7 @@ import type { MembershipStatus } from '@realty/core/ownership';
 import type { AlertFallbackReason, AlertRecipient } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { ARRIVAL, HUMAN_CALL, HUMAN_MESSAGE } from '../../accountability/repos/teamQueue.js';
+import { ANSWERED_CALL, ANSWERED_FOR_INQUIRY, ARRIVAL, HUMAN_CALL, HUMAN_MESSAGE } from '../../accountability/repos/teamQueue.js';
 
 export interface AlertInquiryRow {
   id: string;
@@ -86,11 +86,16 @@ export async function humanAttemptSince(tx: Tx, contactId: string, since: Date):
   return r.rows[0]?.x === true;
 }
 
-/** Whether a person answered the lead's own call at or after `since` (they have spoken: nobody needs alerting). */
-export async function answeredCallSince(tx: Tx, contactId: string, since: Date): Promise<boolean> {
+/**
+ * Whether a person answered the lead's own call since the inquiry arrived, or the call that IS the inquiry (they have
+ * spoken: nobody needs alerting). The queue's and the report's own predicate (R-TEAMQ-22: ANSWERED_CALL and
+ * ANSWERED_FOR_INQUIRY, which matches the call that created a call-in inquiry by the inquiry's own reference).
+ */
+export async function answeredCallSince(tx: Tx, contactId: string, inquiryId: string): Promise<boolean> {
   const r = await sql<{ x: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = app.tenant_id() AND k.contact_id = ${contactId}::uuid AND k.direction = 'inbound' AND NOT k.imported
-                     AND k.answered_at IS NOT NULL AND k.handled_by = 'human' AND k.started_at >= ${since.toISOString()}::timestamptz) AS x`.execute(tx);
+    SELECT EXISTS (SELECT 1 FROM (SELECT i.external_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i WHERE i.tenant_id = app.tenant_id() AND i.id = ${inquiryId}::uuid) i
+                     JOIN calls k ON k.tenant_id = app.tenant_id() AND k.contact_id = ${contactId}::uuid
+                    WHERE ${ANSWERED_CALL} AND ${ANSWERED_FOR_INQUIRY}) AS x`.execute(tx);
   return r.rows[0]?.x === true;
 }
 

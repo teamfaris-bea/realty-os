@@ -163,6 +163,8 @@ export interface TeamQueueRow {
    * alerted at 2:06 PM: Sam T.", the time in the team's zone); `alerted` false: nobody could be alerted
    */
   backupAlert?: { at: string; alerted: boolean; line: string } | null;
+  /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived (the why line says so) */
+  answeredCallAt?: string | null;
 }
 
 export interface TeamQueueGroup {
@@ -176,6 +178,8 @@ export interface TeamQueueGroup {
   atLeast: boolean;
   /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
   backupAlerted?: number | null;
+  /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
+  answeredCalls?: number | null;
 }
 
 export interface TeamQueueResponse {
@@ -203,6 +207,12 @@ export function queueWait(key: TeamQueueGroupKey, r: Pick<TeamQueueRow, 'waiting
 export function queueBackupLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 'backupAlerted'>): string | null {
   if (g.backupAlerted === undefined || g.backupAlerted === null || g.backupAlerted <= 0) return null;
   return `Backup alerted for ${g.backupAlerted} of ${queueCount(g)}.`;
+}
+
+/** "A person answered the call of 1 of 5; nobody has called back, texted or emailed." (R-TEAMQ-22; null when no row's call was answered) */
+export function queueAnsweredLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 'answeredCalls'>): string | null {
+  if (g.answeredCalls === undefined || g.answeredCalls === null || g.answeredCalls <= 0) return null;
+  return `A person answered the call of ${g.answeredCalls} of ${queueCount(g)}; nobody has called back, texted or emailed.`;
 }
 
 /** "Showing the 25 waiting longest. 7 more are not shown." (null when everything is shown) */
@@ -238,6 +248,10 @@ export interface ResponseInquiry {
   offHours: boolean;
   countedFrom: string;
   attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
+  /** R-TEAMQ-22: a person answered the lead's own call since it arrived (never an attempt): when, by whom, how long after the arrival */
+  answeredCall?: { at: string; by: { userId: string; name: string | null } | null; wallSeconds: number; staffedSeconds: number } | null;
+  /** R-TEAMQ-22: attempted, else answered_call, else waiting */
+  state?: 'attempted' | 'answered_call' | 'waiting';
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   automatedReplyAt: string | null;
   /** b19 step 2 (R-TEAMQ-18): the inquiry's minute-three backup alert: when, to whom, and whether to the backup or to the team lead in their place */
@@ -251,6 +265,8 @@ export interface ResponseRollup {
   attempted: number;
   within5: number;
   within15: number;
+  /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call */
+  answeredCalls?: number;
   waiting: number;
   automatedReplies: number;
   /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first tried by the alerted person */
@@ -302,6 +318,8 @@ export function responseLines(r: ResponseRollup, rules: ResponseRules): { label:
     { label: 'With a human attempt', text: of(r.attempted) },
     { label: `Within ${minutes(rules.within5Seconds)} minutes`, text: of(r.within5) },
     { label: `Within ${minutes(rules.within15Seconds)} minutes`, text: of(r.within15) },
+    // R-TEAMQ-22: its own state: never an attempt, never "still waiting"
+    ...(r.answeredCalls === undefined ? [] : [{ label: 'A person answered their call', text: `${of(r.answeredCalls)}, not counted as an attempt: nobody has called back, texted or emailed` }]),
     { label: 'Still waiting', text: of(r.waiting) },
     { label: 'Median to the first attempt', text: percentileLine(r.medianStaffedSeconds, r.sample, rules.medianMinSample) },
     { label: '90th percentile', text: percentileLine(r.p90StaffedSeconds, r.sample, rules.p90MinSample) },
@@ -329,6 +347,11 @@ function backupAlertSentence(i: ResponseInquiry): string {
 export function responseInquiryLine(i: ResponseInquiry): string {
   const auto = i.automatedReplyAt ? ` An automatic reply went out ${formatStamp(i.automatedReplyAt)}; it is not counted.` : ' No automatic reply went out.';
   const alert = backupAlertSentence(i);
+  const answered = i.answeredCall ? `A person${i.answeredCall.by?.name ? `, ${i.answeredCall.by.name},` : ''} answered their call ${formatStamp(i.answeredCall.at)}.` : '';
+  if (i.attempt === null && i.answeredCall) {
+    // R-TEAMQ-22: never "no person has tried", never an attempt
+    return `${answered} Nobody has called back, texted or emailed since. It is not counted as an attempt.${alert}${auto}`;
+  }
   if (i.attempt === null) {
     const w = i.waiting ?? { wallSeconds: 0, staffedSeconds: 0 };
     const off = i.offHours ? ` (${formatAge(w.staffedSeconds)} of staffed time: it arrived outside staffed hours and is counted from opening)` : '';
@@ -336,7 +359,7 @@ export function responseInquiryLine(i: ResponseInquiry): string {
   }
   const a = i.attempt;
   const off = i.offHours ? ` It arrived outside staffed hours, so it is counted from opening (${formatAge(a.wallSeconds)} on the clock).` : '';
-  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${off}${alert}${auto}`;
+  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${off}${answered === '' ? '' : ` ${answered}`}${alert}${auto}`;
 }
 
 /** The lines under the report: imports and closed people apart, and the rules of the measure. */

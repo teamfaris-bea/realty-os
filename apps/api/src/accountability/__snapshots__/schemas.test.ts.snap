@@ -495,6 +495,66 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "answeredCall": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "by": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": [
+                                "string",
+                                "null",
+                              ],
+                            },
+                            "userId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "userId",
+                            "name",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "staffedSeconds": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    "wallSeconds": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                  },
+                  "required": [
+                    "wallSeconds",
+                    "staffedSeconds",
+                    "at",
+                    "by",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "arrivedAt": {
               "type": "string",
             },
@@ -674,6 +734,14 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                 "null",
               ],
             },
+            "state": {
+              "enum": [
+                "attempted",
+                "answered_call",
+                "waiting",
+              ],
+              "type": "string",
+            },
             "waiting": {
               "anyOf": [
                 {
@@ -717,6 +785,8 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "offHours",
             "countedFrom",
             "attempt",
+            "state",
+            "answeredCall",
             "waiting",
             "automatedReplyAt",
             "backupAlert",
@@ -804,6 +874,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "answeredCalls": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
             "attempted": {
               "maximum": 9007199254740991,
               "minimum": 0,
@@ -845,6 +920,66 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "items": {
                 "additionalProperties": false,
                 "properties": {
+                  "answeredCall": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                          },
+                          "by": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "name": {
+                                    "type": [
+                                      "string",
+                                      "null",
+                                    ],
+                                  },
+                                  "userId": {
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                    "type": "string",
+                                  },
+                                },
+                                "required": [
+                                  "userId",
+                                  "name",
+                                ],
+                                "type": "object",
+                              },
+                              {
+                                "type": "null",
+                              },
+                            ],
+                          },
+                          "staffedSeconds": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer",
+                          },
+                          "wallSeconds": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer",
+                          },
+                        },
+                        "required": [
+                          "wallSeconds",
+                          "staffedSeconds",
+                          "at",
+                          "by",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
                   "arrivedAt": {
                     "type": "string",
                   },
@@ -1024,6 +1159,14 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                       "null",
                     ],
                   },
+                  "state": {
+                    "enum": [
+                      "attempted",
+                      "answered_call",
+                      "waiting",
+                    ],
+                    "type": "string",
+                  },
                   "waiting": {
                     "anyOf": [
                       {
@@ -1067,6 +1210,8 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                   "offHours",
                   "countedFrom",
                   "attempt",
+                  "state",
+                  "answeredCall",
                   "waiting",
                   "automatedReplyAt",
                   "backupAlert",
@@ -1131,6 +1276,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "attempted",
             "within5",
             "within15",
+            "answeredCalls",
             "waiting",
             "automatedReplies",
             "backupAlerted",
@@ -1170,6 +1316,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
       "totals": {
         "additionalProperties": false,
         "properties": {
+          "answeredCalls": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
           "attempted": {
             "maximum": 9007199254740991,
             "minimum": 0,
@@ -1245,6 +1396,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
           "attempted",
           "within5",
           "within15",
+          "answeredCalls",
           "waiting",
           "automatedReplies",
           "backupAlerted",
@@ -2158,6 +2310,18 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "answeredCalls": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "atLeast": {
               "type": "boolean",
             },
@@ -2198,6 +2362,12 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "items": {
                 "additionalProperties": false,
                 "properties": {
+                  "answeredCallAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
                   "backupAlert": {
                     "anyOf": [
                       {
@@ -2348,6 +2518,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                   "staffedSeconds",
                   "offHours",
                   "backupAlert",
+                  "answeredCallAt",
                 ],
                 "type": "object",
               },
@@ -2368,6 +2539,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "more",
             "atLeast",
             "backupAlerted",
+            "answeredCalls",
           ],
           "type": "object",
         },

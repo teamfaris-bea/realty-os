@@ -29,7 +29,8 @@
 //                                (migration 0109), one range scan per lead source (LATERAL), capped
 //   a person's human messages    messages_contact_idx (tenant_id, contact_id, occurred_at DESC), its
 //                                (tenant_id, contact_id) prefix; dispatched_at is filtered
-//   a person's human calls       calls_contact_idx (tenant_id, contact_id, started_at DESC)
+//   a person's human calls       calls_contact_idx (tenant_id, contact_id, started_at DESC); the same index serves
+//                                the answered inbound calls of R-TEAMQ-22 (its (tenant_id, contact_id) prefix)
 //   a person's automated reply   messages_caps_idx (tenant_id, contact_id, channel, dispatched_at)
 //                                WHERE direction = 'outbound' AND initiator IN ('assistant','system')
 //   people who wrote lately      contacts_list_activity_idx (tenant_id, GREATEST(last_human_touch_at,
@@ -74,6 +75,19 @@ export const HUMAN_MESSAGE: RawBuilder<unknown> = sql`(m.direction = 'outbound' 
         AND m.dispatched_at IS NOT NULL AND m.bulk_action_id IS NULL AND m.marketing_piece_id IS NULL)`;
 /** The scoreboard's human call, for a calls row aliased `k` (0053). */
 export const HUMAN_CALL: RawBuilder<unknown> = sql`(k.direction = 'outbound' AND k.initiator = 'human' AND NOT k.imported)`;
+/**
+ * R-TEAMQ-22 (review fix M4): an inbound call a PERSON answered, for a calls row aliased `k`. Never an attempt: the
+ * lead reached the team, nobody reached out. The queue, the report and the backup alert job read it as its own state.
+ */
+export const ANSWERED_CALL: RawBuilder<unknown> = sql`(k.direction = 'inbound' AND NOT k.imported AND k.answered_at IS NOT NULL AND k.handled_by = 'human')`;
+/**
+ * R-TEAMQ-22: the answered call belongs to the inquiry aliased `i` (which exposes `arrived_at` and `external_id`): it
+ * started at or after the arrival, or it IS the inquiry: the call that created a call-in inquiry on a tracked number
+ * starts a moment before the inquiry reaches the team, so it is matched by the inquiry's own reference
+ * (comms/inbound.ts writes external_id 'tracking:call:' + the provider's call reference).
+ */
+export const ANSWERED_FOR_INQUIRY: RawBuilder<unknown> = sql`(k.started_at >= i.arrived_at OR i.external_id = 'tracking:call:' || k.provider_call_ref)`;
+
 /** An automated message that went out, for a messages row aliased `m`. Never an attempt. */
 export const AUTOMATED_MESSAGE: RawBuilder<unknown> = sql`(m.direction = 'outbound' AND m.initiator IN ('assistant','system')
         AND m.dispatched_at IS NOT NULL AND m.status IN ('sent','delivered'))`;
@@ -123,6 +137,8 @@ export interface WaitingInquiryRow extends HolderColumns {
   arrived_at: Date;
   source_name: string;
   automated_at: Date | null;
+  /** R-TEAMQ-22: when a person answered the lead's own call since the arrival (or the call that is this inquiry); null: none */
+  answered_call_at: Date | null;
   /** b19 R-TEAMQ-18: this inquiry's backup decision when it alerted someone or found nobody to alert (else null) */
   backup_alert_at: Date | null;
   backup_alert_outcome: 'alerted' | 'no_recipient' | null;
@@ -143,11 +159,13 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
     SELECT i.id, i.contact_id, i.arrived_at, s.name AS source_name, ${HOLDER_COLUMNS},
            (SELECT min(m.dispatched_at) FROM messages m
              WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
+           (SELECT min(k.answered_at) FROM calls k
+             WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${ANSWERED_CALL} AND ${ANSWERED_FOR_INQUIRY}) AS answered_call_at,
            ba.decided_at AS backup_alert_at, ba.outcome AS backup_alert_outcome, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
            ba.fallback_reason AS backup_alert_reason, ba.alerted_count AS backup_alert_count
       FROM lead_sources s
       CROSS JOIN LATERAL (
-        SELECT i.id, i.contact_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
+        SELECT i.id, i.contact_id, i.external_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
          WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id
            AND ${ARRIVAL} > ${iso(since)}::timestamptz AND ${ARRIVAL} <= ${iso(now)}::timestamptz
            AND i.outcome <> 'duplicate_ignored'

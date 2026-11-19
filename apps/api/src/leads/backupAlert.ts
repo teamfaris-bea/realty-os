@@ -12,7 +12,8 @@
 //   source_not_covered   the source's coverage was switched off in between
 //   human_attempt        a person has called, texted, emailed or replied in chat since the arrival: exactly the team
 //                        work queue's predicate (step 1). An automated reply never counts.
-//   answered_call        a person answered the lead's own call since the arrival
+//   answered_call        a person answered the lead's own call since the arrival, or the call that is the inquiry
+//                        itself (R-TEAMQ-22: matched by the inquiry's own reference)
 //   alerted              otherwise someone OTHER than the person holding the lead is alerted (core
 //                        backupAlertRecipients; owner decision 2; R-TEAMQ-21, review fix M2), by the existing
 //                        critical notification path (in-app, push, and a text to the member's verified alert phone):
@@ -117,7 +118,7 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   // the source stopped being covered in between: nothing happens (R-TEAMQ-14)
   if (!q.covered || q.backup_user_id === null) return record('source_not_covered');
   if (await repo.humanAttemptSince(tx, person.id, q.arrived_at)) return record('human_attempt');
-  if (await repo.answeredCallSince(tx, person.id, q.arrived_at)) return record('answered_call');
+  if (await repo.answeredCallSince(tx, person.id, inquiryId)) return record('answered_call');
 
   // owner decision 2 and R-TEAMQ-21: the named backup; when absent, suspended or the person HOLDING the lead, the
   // team lead of whoever has it; with no team lead to tell, the team's Owners and Admins. Never the holder themself.

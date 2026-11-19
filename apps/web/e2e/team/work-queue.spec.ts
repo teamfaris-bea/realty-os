@@ -64,7 +64,7 @@ test('a Team Lead sees who is waiting on a first call: the pond lead, the lead o
   const region = queue(page);
   await expect(region).toBeVisible();
   // the new-lead group is open with its three rows; the count says three
-  await expect(region.getByRole('group', { name: 'New leads nobody has tried yet: 3' })).toBeVisible();
+  await expect(region.getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 3' })).toBeVisible();
 
   const pond = rowOf(page, 'Pilar Pondsworth');
   await expect(pond).toBeVisible();
@@ -94,7 +94,7 @@ test('a Team Lead sees who is waiting on a first call: the pond lead, the lead o
   await expect(page.getByRole('radio', { name: 'Handled' })).toBeVisible();
 
   // collapsing and opening the group
-  const toggle = region.getByRole('button', { name: /New leads nobody has tried yet/ });
+  const toggle = region.getByRole('button', { name: /New leads nobody has called, texted or emailed yet/ });
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await expect(pond).toHaveCount(0);
@@ -172,7 +172,7 @@ test('a covered source\'s lead nobody tried: the row says the backup was alerted
   await signIn(page);
   await page.goto(`${stack.webUrl}/team`);
   const region = queue(page);
-  await expect(region.getByRole('group', { name: 'New leads nobody has tried yet: 4' })).toBeVisible();
+  await expect(region.getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 4' })).toBeVisible();
   const row = rowOf(page, 'Bao Backupneeded');
   await expect(row).toBeVisible();
   await expect(row.getByText(/^Backup alerted at \d{1,2}:\d\d [AP]M: Kim P\.$/)).toBeVisible();

@@ -40,7 +40,7 @@ describe('Team work queue', () => {
     const region = await loaded();
     const groups = within(region).getAllByRole('group');
     expect(groups.map((g) => g.getAttribute('aria-label'))).toEqual([
-      'New leads nobody has tried yet: 2',
+      'New leads nobody has called, texted or emailed yet: 2',
       'Replies nobody has answered: 1',
       'Promises past due: 0',
       'Follow-ups past due: 0',
@@ -85,7 +85,7 @@ describe('Team work queue', () => {
       '/team',
     );
     const region = await loaded();
-    const newLeads = within(region).getByRole('group', { name: 'New leads nobody has tried yet: 1' });
+    const newLeads = within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 1' });
     const promises = within(region).getByRole('group', { name: 'Promises past due: 1' });
     const toggle = (g: HTMLElement) => within(g).getByRole('button');
     expect(toggle(newLeads)).toHaveAttribute('aria-expanded', 'true');
@@ -104,14 +104,14 @@ describe('Team work queue', () => {
   it('R-TEAMQ-1 E826: a capped group says how many it shows and how many more there are, and "at least" when the read was capped', async () => {
     leadAdminApp(fake(workQueue({ new_lead: [row()] }, { new_lead: { total: 32, more: 31 } })), '/team');
     const region = await loaded();
-    expect(within(region).getByRole('group', { name: 'New leads nobody has tried yet: 32' })).toBeInTheDocument();
+    expect(within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 32' })).toBeInTheDocument();
     expect(within(region).getByText('Showing the 1 waiting longest. 31 more are not shown.')).toBeInTheDocument();
   });
 
   it('R-TEAMQ-1 E826: "at least" is said when the server read reached its cap', async () => {
     leadAdminApp(fake(workQueue({ new_lead: [row()] }, { new_lead: { total: 500, more: 499, atLeast: true } })), '/team');
     const region = await loaded();
-    expect(within(region).getByRole('group', { name: 'New leads nobody has tried yet: at least 500' })).toBeInTheDocument();
+    expect(within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: at least 500' })).toBeInTheDocument();
     expect(within(region).getByText('Showing the 1 waiting longest. At least 499 more are not shown.')).toBeInTheDocument();
   });
 
@@ -160,12 +160,30 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     const plain = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' }, backupAlert: null });
     leadAdminApp(fake(workQueue({ new_lead: [alerted, plain] }, { new_lead: { backupAlerted: 1 } })), '/team');
     const region = await loaded();
-    const group = within(region).getByRole('group', { name: 'New leads nobody has tried yet: 2' });
+    const group = within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 2' });
     expect(within(group).getByText('Backup alerted for 1 of 2.')).toBeInTheDocument();
     const quinn = within(group).getByRole('link', { name: 'Quinn Harbor' }).closest('li')!;
     expect(within(quinn).getByText('Backup alerted at 2:06 PM: Sam T.')).toBeInTheDocument();
     const opal = within(group).getByRole('link', { name: 'Opal Reyes' }).closest('li')!;
     expect(within(opal).queryByText(/Backup alerted/)).toBeNull();
+  });
+
+  it('R-TEAMQ-22 E882: a row whose call a person answered shows the server\'s true words, and the group says how many of its rows that is, with its total', async () => {
+    const answered = row({ why: 'Arrived 6 min ago from Website form. Owned by Jordan P. A person answered their call at 2:04 PM. Nobody has called back, texted or emailed since.', answeredCallAt: new Date(Date.now() - 4 * 60_000).toISOString() });
+    const plain = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' }, answeredCallAt: null });
+    leadAdminApp(fake(workQueue({ new_lead: [answered, plain] }, { new_lead: { answeredCalls: 1 } })), '/team');
+    const region = await loaded();
+    const group = within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 2' });
+    expect(within(group).getByText('A person answered the call of 1 of 2; nobody has called back, texted or emailed.')).toBeInTheDocument();
+    const quinn = within(group).getByRole('link', { name: 'Quinn Harbor' }).closest('li')!;
+    expect(within(quinn).getByText(/A person answered their call at 2:04 PM\. Nobody has called back, texted or emailed since\./)).toBeInTheDocument();
+    expect(within(quinn).queryByText(/Nobody has called, texted or emailed yet/)).toBeNull();
+  });
+
+  it('R-TEAMQ-22: with no answered call, or a server that sends no such field, the group says nothing about answered calls', async () => {
+    leadAdminApp(fake(workQueue({ new_lead: [row()] }, { new_lead: { answeredCalls: 0 } })), '/team');
+    const region = await loaded();
+    expect(within(region).queryByText(/A person answered the call of/)).toBeNull();
   });
 
   it('R-TEAMQ-18 E857: "nobody could be alerted" is shown as the server wrote it and is not counted as alerted; with no alert at all the group says nothing about backups', async () => {

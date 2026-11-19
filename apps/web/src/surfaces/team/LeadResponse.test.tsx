@@ -116,6 +116,20 @@ describe('Lead response report', () => {
     expect(within(web).getByText('4 not within 5 minutes. 2 more are not listed.')).toBeInTheDocument();
   });
 
+  it('R-TEAMQ-22 E883: an inquiry whose own call a person answered is its own state: never "no person has tried", never an attempt; the source counts it apart with its denominator', async () => {
+    const answered = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000e8', state: 'answered_call', waiting: null, automatedReplyAt: null, answeredCall: { at: '2026-11-09T18:02:00.000Z', by: { userId: ID.ben, name: 'Ben Agent' }, wallSeconds: 120, staffedSeconds: 120 } });
+    const r = report();
+    r.sources[0] = { ...r.sources[0]!, answeredCalls: 1, waiting: 1, notWithin5: [answered], notWithin5More: 0 };
+    leadAdminApp(fake(r), '/team/scoreboard', 'team_lead');
+    const region = await section();
+    const web = (await within(region).findByRole('heading', { level: 3, name: 'Website form' })).closest('li')!;
+    const rowEl = within(within(web).getByRole('list', { name: 'Not within 5 minutes, Website form' })).getAllByRole('listitem')[0]!;
+    expect(rowEl).toHaveTextContent(/^Nia Night.*A person, Ben Agent, answered their call .*\. Nobody has called back, texted or emailed since\. It is not counted as an attempt\. No automatic reply went out\./);
+    expect(rowEl).not.toHaveTextContent(/No person has tried yet|First tried after/);
+    expect(within(web).getByText('A person answered their call')).toBeInTheDocument();
+    expect(within(web).getByText(`1 of ${r.sources[0]!.inquiries}, not counted as an attempt: nobody has called back, texted or emailed`)).toBeInTheDocument();
+  });
+
   it('R-TEAMQ-7 E829: an off-hours arrival says it is counted from opening, with the wall-clock time beside it', async () => {
     const offHours = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, offHours: true, countedFrom: '2026-11-09T16:00:00.000Z', arrivedAt: '2026-11-09T10:00:00.000Z', attempt: { at: '2026-11-09T16:20:00.000Z', kind: 'text', by: { userId: ID.ava, name: 'Ava Agent' }, role: 'owner', wallSeconds: 22_800, staffedSeconds: 1200 }, waiting: null, automatedReplyAt: null });
     leadAdminApp(fake(report({ sources: [{ sourceId: SRC.web, sourceName: 'Website form', ...rollup(), notWithin5: [offHours], notWithin5More: 0 }] })), '/team/scoreboard', 'team_lead');

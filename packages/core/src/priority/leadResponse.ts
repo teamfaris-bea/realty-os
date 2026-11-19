@@ -3,7 +3,8 @@
 // Response time measured from the moment a lead ARRIVES (the one arrival instant, arrival.ts), not from when an agent
 // accepted it: per inbound inquiry, the first HUMAN attempt after the arrival by ANYONE (the scoreboard's touch),
 // who made it and in what role to the lead at that moment, in wall-clock and in staffed time. An automated reply
-// is reported apart and is never an attempt. Rolled up by lead source with every denominator.
+// is reported apart and is never an attempt. A person ANSWERING the lead's own call is its own state (R-TEAMQ-22):
+// never an attempt, never "no attempt". Rolled up by lead source with every denominator.
 //
 // "Within 5 minutes" is STAFFED time from the arrival to the first human attempt, at most 300 seconds; an arrival
 // outside staffed hours counts from the next opening and is marked. The denominator is every inquiry of the
@@ -44,19 +45,33 @@ export interface ResponseInquiryFacts {
   /** the first automated message sent to the person after the arrival; never an attempt */
   automatedReplyAt: Instant | null;
   /**
+   * R-TEAMQ-22 (review fix M4): the first inbound call of the lead a PERSON answered at or after the arrival, or the
+   * call that itself created this inquiry; by whom. Its own state: never a human attempt, never "no attempt".
+   */
+  answeredCall?: { at: Instant; byUserId: UserId | null } | null;
+  /**
    * b19 R-TEAMQ-18: this inquiry's minute-three backup alert, when one was raised: when, to whom, and whether to the
    * source's backup or to the team lead alerted in their place. Absent or null: nobody was alerted.
    */
   backupAlert?: { at: Instant; byUserId: UserId; recipient: AlertRecipient } | null;
 }
 
-export interface MeasuredInquiry extends Omit<ResponseInquiryFacts, 'firstAttempt' | 'backupAlert'> {
+/**
+ * Where an inquiry stands (R-TEAMQ-22): `attempted` a person called, texted, emailed or replied in chat; else
+ * `answered_call` a person answered the lead's own call and nobody has reached out since; else `waiting`.
+ */
+export type ResponseState = 'attempted' | 'answered_call' | 'waiting';
+
+export interface MeasuredInquiry extends Omit<ResponseInquiryFacts, 'firstAttempt' | 'backupAlert' | 'answeredCall'> {
   backupAlert: NonNullable<ResponseInquiryFacts['backupAlert']> | null;
+  state: ResponseState;
+  /** the answered call, with the time from the arrival to the answer (0 for the inquiry's own call); null: none */
+  answeredCall: (NonNullable<ResponseInquiryFacts['answeredCall']> & { wallSeconds: number; staffedSeconds: number }) | null;
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
   offHours: boolean;
   countedFrom: Instant;
   attempt: (NonNullable<ResponseInquiryFacts['firstAttempt']> & { wallSeconds: number; staffedSeconds: number }) | null;
-  /** no human attempt yet: how long it has waited as of `now` */
+  /** nobody has tried and nobody answered a call of theirs: how long it has waited as of `now` */
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   within5: boolean;
   within15: boolean;
@@ -69,7 +84,9 @@ export interface ResponseRollup {
   attempted: number;
   within5: number;
   within15: number;
-  /** no human attempt yet (attempted + waiting = inquiries) */
+  /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call (never counted as an attempt) */
+  answeredCalls: number;
+  /** no human attempt and no answered call (attempted + answeredCalls + waiting = inquiries) */
   waiting: number;
   /** with an automated reply (shown apart; never counted as an attempt) */
   automatedReplies: number;
@@ -95,16 +112,21 @@ export interface SourceResponseRollup extends ResponseRollup {
 
 /** One inquiry measured from its arrival: to its first human attempt, or to `now` while it waits. */
 export function measureInquiry(f: ResponseInquiryFacts, now: Instant, calendar: BusinessCalendar): MeasuredInquiry {
-  const { firstAttempt, backupAlert, ...rest } = f;
+  const { firstAttempt, backupAlert, answeredCall, ...rest } = f;
   const m = measureFromArrival(f.arrivedAt, firstAttempt?.at ?? now, calendar);
   const attempt = firstAttempt === null ? null : { ...firstAttempt, wallSeconds: m.wallSeconds, staffedSeconds: m.staffedSeconds };
+  const a = answeredCall ?? null;
+  const toAnswer = a === null ? null : measureFromArrival(f.arrivedAt, a.at, calendar);
+  const state: ResponseState = attempt !== null ? 'attempted' : a !== null ? 'answered_call' : 'waiting';
   return {
     ...rest,
     backupAlert: backupAlert ?? null,
+    state,
+    answeredCall: a === null || toAnswer === null ? null : { ...a, wallSeconds: toAnswer.wallSeconds, staffedSeconds: toAnswer.staffedSeconds },
     offHours: m.offHours,
     countedFrom: m.countedFrom,
     attempt,
-    waiting: attempt === null ? { wallSeconds: m.wallSeconds, staffedSeconds: m.staffedSeconds } : null,
+    waiting: state === 'waiting' ? { wallSeconds: m.wallSeconds, staffedSeconds: m.staffedSeconds } : null,
     within5: attempt !== null && attempt.staffedSeconds <= RESPONSE_WITHIN_SECONDS[0],
     within15: attempt !== null && attempt.staffedSeconds <= RESPONSE_WITHIN_SECONDS[1],
   };
@@ -128,7 +150,8 @@ function rollup(list: readonly MeasuredInquiry[]): ResponseRollup {
     attempted: staffed.length,
     within5: list.filter((m) => m.within5).length,
     within15: list.filter((m) => m.within15).length,
-    waiting: list.length - staffed.length,
+    answeredCalls: list.filter((m) => m.state === 'answered_call').length,
+    waiting: list.filter((m) => m.state === 'waiting').length,
     automatedReplies: list.filter((m) => m.automatedReplyAt !== null).length,
     backupAlerted: list.filter((m) => m.backupAlert !== null).length,
     byBackup: list.filter((m) => m.backupAlert !== null && m.attempt?.role === 'backup').length,
@@ -140,10 +163,12 @@ function rollup(list: readonly MeasuredInquiry[]): ResponseRollup {
 
 const byId = (a: MeasuredInquiry, b: MeasuredInquiry): number => (a.inquiryId < b.inquiryId ? -1 : a.inquiryId > b.inquiryId ? 1 : 0);
 
-/** Still waiting first (the longest wait first), then the slowest attempts. */
+const STATE_ORDER: Record<ResponseState, number> = { waiting: 0, answered_call: 1, attempted: 2 };
+
+/** Still waiting first (the longest wait first), then the ones whose call a person answered, then the slowest attempts. */
 function slowestFirst(a: MeasuredInquiry, b: MeasuredInquiry): number {
-  if ((a.attempt === null) !== (b.attempt === null)) return a.attempt === null ? -1 : 1;
-  if (a.waiting !== null && b.waiting !== null) return a.arrivedAt - b.arrivedAt || byId(a, b);
+  if (a.state !== b.state) return STATE_ORDER[a.state] - STATE_ORDER[b.state];
+  if (a.state !== 'attempted') return a.arrivedAt - b.arrivedAt || byId(a, b);
   return (b.attempt?.staffedSeconds ?? 0) - (a.attempt?.staffedSeconds ?? 0) || a.arrivedAt - b.arrivedAt || byId(a, b);
 }
 

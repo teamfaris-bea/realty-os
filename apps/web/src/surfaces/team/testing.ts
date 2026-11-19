@@ -5,7 +5,7 @@ export const QUEUE_PATH = 'GET /team/queue';
 
 /** The server's group words (core TEAM_QUEUE_GROUP_WORDS), as GET /team/queue returns them. */
 export const QUEUE_WORDS: Record<TeamQueueGroupKey, [label: string, empty: string]> = {
-  new_lead: ['New leads nobody has tried yet', 'Nobody is waiting on a first call.'],
+  new_lead: ['New leads nobody has called, texted or emailed yet', 'Nobody is waiting on a first call.'],
   unanswered_reply: ['Replies nobody has answered', 'Every reply has an answer from a person.'],
   due_promise: ['Promises past due', 'No promise is past due.'],
   overdue_follow_up: ['Follow-ups past due', 'No follow-up is past due.'],
