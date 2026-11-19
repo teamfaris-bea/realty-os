@@ -256,6 +256,63 @@ describe('Seller update card (module 38)', () => {
     expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ valueRemoved: true, recipientIds: [SAM] });
   });
 
+  it('E797 R-CMA-10: Send is off while the removal of the value range is still saving (the PATCH unanswered); once it is saved Send is on again and carries valueRemoved', async () => {
+    let answer!: () => void;
+    const unanswered = new Promise<void>((r) => { answer = r; });
+    const u = update({ recommendation: REC, sections: [...update().sections, valueSection()] });
+    const fake = app(u, (f) => f
+      .on(`PATCH /seller-updates/${UPDATE}`, async (c) => { await unanswered; return { status: 200, body: { update: { ...u, ...(c.body as object) } } }; })
+      .on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'sent', messageId: 'm1', recipients: [{ contactId: SAM, messageId: 'm1', result: 'sent' }] } }));
+    const c = await card();
+    const value = within(c).getByRole('group', { name: 'Home value' });
+    const sendBtn = within(c).getByRole('button', { name: 'Send to Sam Ortiz' });
+    expect(sendBtn).toBeEnabled();
+    await user().click(within(value).getByRole('button', { name: 'Remove the value range' }));
+    await waitFor(() => expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1));
+    // the save is on its way: the seller would still get the value range, so nothing can be sent yet
+    expect(sendBtn).toBeDisabled();
+    expect(within(c).getByText('Saving your change. Send is back in a moment.')).toBeInTheDocument();
+    await user().click(sendBtn);
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(0);
+    answer();
+    expect(await within(value).findByText('Removed: the seller will not see the value range.')).toBeInTheDocument();
+    await waitFor(() => expect(sendBtn).toBeEnabled());
+    expect(within(c).queryByText('Saving your change. Send is back in a moment.')).toBeNull();
+    await user().click(sendBtn);
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ valueRemoved: true, recipientIds: [SAM] });
+  });
+
+  it('E797: Send is off while a removed feedback item is still saving, and back on when it is saved', async () => {
+    let answer!: () => void;
+    const unanswered = new Promise<void>((r) => { answer = r; });
+    const u = update({ recommendation: REC });
+    const fake = app(u, (f) => f.on(`PATCH /seller-updates/${UPDATE}`, async (c) => { await unanswered; return { status: 200, body: { update: { ...u, ...(c.body as object) } } }; }));
+    const c = await card();
+    const sendBtn = within(c).getByRole('button', { name: 'Send to Sam Ortiz' });
+    expect(sendBtn).toBeEnabled();
+    await user().click(within(c).getAllByRole('button', { name: /^Remove/ })[0]!);
+    await waitFor(() => expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1));
+    expect(sendBtn).toBeDisabled();
+    answer();
+    await waitFor(() => expect(sendBtn).toBeEnabled());
+  });
+
+  it('E797: typing the recommendation and going straight to Send still sends in one tap (the save on leaving the box does not switch Send off: the send carries the recommendation itself)', async () => {
+    let answer!: () => void;
+    const unanswered = new Promise<void>((r) => { answer = r; });
+    const u = update();
+    const fake = app(u, (f) => f
+      .on(`PATCH /seller-updates/${UPDATE}`, async (c) => { await unanswered; return { status: 200, body: { update: { ...u, ...(c.body as object) } } }; })
+      .on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'sent', messageId: 'm1', recipients: [{ contactId: SAM, messageId: 'm1', result: 'sent' }] } }));
+    const c = await card();
+    await user().type(within(c).getByLabelText('Your recommendation (required)'), REC);
+    await user().click(within(c).getByRole('button', { name: 'Send to Sam Ortiz' }));
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ recommendation: REC, recipientIds: [SAM] });
+    answer();
+  });
+
   it('E631: a removed value range can be put back, and a send then leaves the choice to the saved update', async () => {
     const fake = app(update({ recommendation: REC, valueRemoved: true, sections: [...update().sections, valueSection()] }));
     const c = await card();

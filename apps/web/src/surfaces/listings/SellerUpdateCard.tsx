@@ -15,6 +15,10 @@
 //   - Stale data says so and offers one tap to refresh the update; Send stays off until then.
 //   - The value range (lane V2-B, E631) can be removed before sending and put back, by whoever can send the update
 //     (the API's own rule: the listing agent's own unsent draft). A refused removal says why and changes nothing.
+//   - E797: Send is off while a tap that changes what the seller gets is still saving (the value range, a feedback
+//     item): until the save is answered the saved update still holds the old choice. The recommendation's own save on
+//     leaving the box does not switch Send off (leaving the box is how the agent gets to Send, and the send carries
+//     the recommendation itself).
 // No confidence, no page views and no email opens appear anywhere.
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import type { QueryKey } from '@tanstack/react-query';
@@ -223,7 +227,10 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
   useEffect(() => setValueRemoved(update.valueRemoved ?? false), [update.valueRemoved]);
   const [valueError, setValueError] = useState<string | null>(null);
   const keys: QueryKey[] = [...invalidate, ['feed'], ['inbox']];
+  // the removal of a feedback item (a tap): Send waits for it (E797)
   const patch = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
+  // the recommendation as typed, saved when the agent leaves the box: its own request, which Send does not wait for
+  const patchText = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
   // its own request, so a refusal is shown at the control and not as a recommendation error
   const patchValue = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
   const reassemble = useMutate<Record<string, unknown>>('POST', { invalidate: keys });
@@ -253,7 +260,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
 
   const save = async () => {
     if (!update.canSend || text.trim() === savedText.trim()) return;
-    const r = await patch.run(`/seller-updates/${update.id}`, { recommendation: text });
+    const r = await patchText.run(`/seller-updates/${update.id}`, { recommendation: text });
     if (r.ok) setSavedText(text);
   };
   const toggle = async (feedbackId: string, exclude: boolean) => {
@@ -274,12 +281,17 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
     const r = await reassemble.run(`/seller-updates/${update.id}/reassemble`);
     if (!r.ok) setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
   };
+  // E797: a tap that changes what the seller gets (the value range, a feedback item) is still being saved. Until it is
+  // answered the saved update holds the old choice, so nothing is sent; when it is, the state below is the agent's last
+  // choice (a refused save put it back and says why).
+  const saving = patchValue.pending || patch.pending;
+  const whyNotYet = blockedReason ?? (saving ? 'Saving your change. Send is back in a moment.' : null);
   const doSend = async (e: FormEvent) => {
     e.preventDefault();
-    if (blockedReason !== null) return;
+    if (blockedReason !== null || saving) return;
     setError(null);
-    // a removal the agent made rides with the send (it can only take the value range out, never put it back in);
-    // without one the saved update decides
+    // the agent's last choice rides with the send: a removal takes the value range out whatever the saved update says
+    // (the send can only take it out, never put it back in); without one the saved update decides
     const r = await send.run({ recommendation: text.trim(), excludedFeedbackIds: excluded, recipientIds: reachable.map((x) => x.contactId), ...(valueRemoved ? { valueRemoved: true } : {}) });
     if (r.ok) setResult(r.data);
     else setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
@@ -364,16 +376,16 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
             aria-describedby={helpId}
             className="min-h-[120px] rounded-xl border border-line bg-surface px-3.5 py-2 text-[17px] text-ink"
           />
-          {blockedReason ? (
+          {whyNotYet ? (
             <p className="text-[14px] text-ink-muted" aria-live="polite">
-              {blockedReason}
+              {whyNotYet}
             </p>
           ) : null}
-          <Button type="submit" block disabled={blockedReason !== null} pending={send.pending} pendingLabel="Sending">
+          <Button type="submit" block disabled={blockedReason !== null || saving} pending={send.pending} pendingLabel="Sending">
             {reachable.length === 1 ? `Send to ${reachable[0]!.name ?? 'the seller'}` : `Send to ${reachable.length} sellers`}
           </Button>
           {error && !update.stale ? <Notice tone="error">{error}</Notice> : null}
-          {patch.error ? <Notice tone="error">{messageFor(patch.error, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES })}</Notice> : null}
+          {(patch.error ?? patchText.error) ? <Notice tone="error">{messageFor((patch.error ?? patchText.error)!, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES })}</Notice> : null}
         </form>
       ) : null}
       {!update.canSend && !sent ? <p className="text-[14px] text-ink-muted">Only the listing agent can send this update.</p> : null}
