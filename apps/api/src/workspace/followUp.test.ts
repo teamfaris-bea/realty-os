@@ -169,6 +169,23 @@ describe('R-TODAY-1: every follow-up card says why, what was last discussed and 
   });
 });
 
+describe('R-TODAY-9: a logged outside call is idempotent on its client id', () => {
+  it('a double tap or a retry makes one record: the same noteId again answers the first note (200, replayed) and writes nothing; the card shows one logged call', async () => {
+    const c = await contactOf(a, { firstName: 'Twice' });
+    await dueTask(a, c.id, 'Call about the appraisal');
+    const noteId = randomUUID();
+    const body = { kind: 'call', direction: 'outbound', at: new Date(Date.now() - 120_000).toISOString(), outcome: 'no_answer', noteId };
+    const [one, two] = await Promise.all([call<{ replayed: boolean; note: { id: string } }>(a, 'POST', `/contacts/${c.id}/activities`, body), call<{ replayed: boolean; note: { id: string } }>(a, 'POST', `/contacts/${c.id}/activities`, body)]);
+    const three = await call<{ replayed: boolean; note: { id: string } }>(a, 'POST', `/contacts/${c.id}/activities`, { ...body, outcome: 'connected' });
+    expect([one.status, two.status].sort()).toEqual([200, 201]);
+    expect(three.status).toBe(200);
+    expect(three.body).toMatchObject({ replayed: true, note: { id: noteId } });
+    const rows = await h.su.query<{ id: string; activity_outcome: string; source: string }>('SELECT id, activity_outcome, source FROM notes WHERE contact_id = $1', [c.id]);
+    expect(rows.rows).toEqual([{ id: noteId, activity_outcome: 'no_answer', source: 'logged_activity' }]);
+    expect((await cardOf(a, c.id, 'promise_due'))!.lastTouch).toMatchObject({ kind: 'call', reported: true, outcome: 'no answer' });
+  });
+});
+
 describe('R-TODAY-2: an automated message is never the last thing discussed', () => {
   it('only an automatic text: no last touch, and the text is its own line; a person’s text then is the last touch; a later automatic one never replaces it', async () => {
     const c = await ownedContact(a, { firstName: 'Ilse' });

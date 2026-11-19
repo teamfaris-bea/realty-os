@@ -551,7 +551,7 @@ test('J10.9 (M6, E775, E776): Log → outcome → "Save and change to Trying to 
   await tap(page, s.getByRole('group', { name: 'Outcome' }).getByRole('button', { name: 'Left voicemail' }), n);
   // the same sheet: what is about to be logged, the suggestion, what it will do, the follow-up, ONE button
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(s.getByTestId('log-summary')).toHaveText('To log: Call · I called · Left voicemail');
+  await expect(s.getByTestId('log-summary')).toHaveText('To log: Call · I called from my phone · Left voicemail');
   const suggested = s.getByRole('radio', { name: 'Trying to reach Suggested' });
   await expect(suggested).toBeChecked({ timeout: 15_000 });
   await expect(suggested).toContainText('You left a voicemail. That is a try, not a conversation yet.');

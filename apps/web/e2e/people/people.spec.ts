@@ -168,7 +168,7 @@ test('log an outside call: Log → outcome → ONE button = 3 to a saved log AND
   expect(log.taps).toBe(3);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Stage: Trying to reach. Change stage' })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('list', { name: 'Notes' }).getByText(/Outbound call · No answer · Logged by .+ · not verified/).first()).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Notes' }).getByText(/^Logged by you: called from your phone, no answer · not verified · /).first()).toBeVisible();
 
   // with a "remind me": an ordinary task appears in the person's tasks
   await page.getByRole('button', { name: 'Log', exact: true }).click();

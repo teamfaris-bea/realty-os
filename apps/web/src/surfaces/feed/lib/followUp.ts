@@ -43,6 +43,9 @@ export function whenWords(iso: string, nowMs: number, o: { time?: boolean } = {}
   return Math.abs(days) < 7 ? `${day} ${t}` : `${day}, ${t}`;
 }
 
+/** The outcome of a LOGGED call in words (notes.activity_outcome; core's last-touch words are the same). */
+export const LOGGED_OUTCOME_WORDS: Readonly<Record<string, string>> = { connected: 'talked', left_voicemail: 'left a voicemail', no_answer: 'no answer', wrong_number: 'wrong number' };
+
 export interface LoggedActivityWords {
   kind: 'call' | 'text' | 'email' | (string & {});
   direction: 'inbound' | 'outbound' | null;

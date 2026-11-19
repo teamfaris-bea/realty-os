@@ -45,6 +45,20 @@ function localInputValue(d: Date): string {
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
+/**
+ * One-tap times for "when did it happen" (R-TODAY-9): now, an hour ago, and this morning (9:00) once the morning has
+ * passed. Each is a time today, never in the future; the field under them shows the exact time and stays editable.
+ */
+export function whenPresets(now: Date): { key: string; label: string; at: Date }[] {
+  const out = [{ key: 'now', label: 'Just now', at: now }];
+  const hourAgo = new Date(now.getTime() - 3_600_000);
+  if (hourAgo.getDate() === now.getDate()) out.push({ key: 'hour', label: 'An hour ago', at: hourAgo });
+  const morning = new Date(now);
+  morning.setHours(9, 0, 0, 0);
+  if (now.getTime() - morning.getTime() > 3_600_000) out.push({ key: 'morning', label: 'This morning', at: morning });
+  return out;
+}
+
 export function LogSheet({ contactId, contactName, onClose, onePass }: { contactId: string; contactName: string; onClose: () => void; /** R-TODAY-7: opened from Today or the global entry (StageStep.tsx OnePassOptions) */ onePass?: OnePassOptions | undefined }) {
   const [kind, setKind] = useState<'call' | 'text' | 'email'>('call');
   const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
@@ -85,7 +99,10 @@ export function LogSheet({ contactId, contactName, onClose, onePass }: { contact
   const reminding = remind > 0 && !stepFollowUp;
 
   const kindLabel = KINDS.find((k) => k.key === kind)!.label;
-  const directionLabel = (d: 'outbound' | 'inbound') => (d === 'outbound' ? (kind === 'call' ? 'I called' : 'I sent') : kind === 'call' ? `${first} called` : `${first} sent`);
+  // R-TODAY-9: said as what it was, a call or text from the agent's own phone (never as something the app placed)
+  const directionLabel = (d: 'outbound' | 'inbound') => (d === 'outbound' ? (kind === 'call' ? 'I called from my phone' : kind === 'text' ? 'I texted from my phone' : 'I emailed') : kind === 'call' ? `${first} called me` : kind === 'text' ? `${first} texted me` : `${first} emailed me`);
+  // "when": now unless the agent says otherwise; "earlier today" is one tap, and the exact time stays editable below
+  const presets = whenPresets(new Date());
 
   const run = async () => {
     if (busy.current || done.current) return;
@@ -254,6 +271,14 @@ export function LogSheet({ contactId, contactName, onClose, onePass }: { contact
               <label htmlFor={ids.when} className="text-[15px] font-medium text-ink">
                 When
               </label>
+              <div role="group" aria-label="When, quickly" className="flex flex-wrap gap-2">
+                {presets.map((p) => (
+                  // (pressed while the field still holds that time, give or take the minute that may have turned since)
+                  <Chip key={p.key} selected={Math.abs(new Date(when).getTime() - p.at.getTime()) < 90_000} disabled={working} onClick={() => setWhen(localInputValue(p.at))}>
+                    {p.label}
+                  </Chip>
+                ))}
+              </div>
               <input id={ids.when} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={selectClass} aria-invalid={future || undefined} />
               {future ? <p className="text-[14px] font-medium text-danger">That time is in the future.</p> : null}
             </div>

@@ -253,24 +253,26 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
     const contactId = req.params.id;
     const at = instantFromIso(b.at);
     if (at === null) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/at', code: 'invalid' }] });
+    /** The answer for a note this id already made: the first save's note, never a second one (R-STG-6). */
+    const replayOf = async (prior: NonNullable<Awaited<ReturnType<typeof repo.note>>>) => {
+      if (prior.author_user_id !== (req.actor as UserActor).userId || prior.contact_id !== contactId || prior.source !== 'logged_activity') throw new AppError('COMMAND_ID_REUSED');
+      // R-STG-2: a replay reads the suggestion again from the stored activity and the person's stage as it is now
+      // (so a double tap shows the same suggestion, and none once the stage was confirmed)
+      const view = noteView(prior, req.actor as UserActor, new Map());
+      const a = view.loggedActivity;
+      const signal = a ? activitySignal({ kind: a.kind as ActivityKind, direction: (a.direction ?? 'outbound') as ActivityDirection, outcome: a.outcome as CallOutcome | null }) : null;
+      const suggestedStage = await peopleTx(req, (tx, _now, actor) => suggestedStageInTx(tx, actor, contactId, signal));
+      // E790: the reminder the first save made with this log, if it made one (its id is derived from the note's, so
+      // the replay finds it and never makes a second task); the retried body's own remindInDays is not read
+      const taskId = await peopleTx(req, (tx) => reminderTaskOf(tx, prior.id));
+      reply.status(200);
+      return { note: view, taskId, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
+    };
     if (b.noteId) {
       const prior = await peopleTx(req, (tx) => repo.note(tx, b.noteId!));
-      if (prior) {
-        if (prior.author_user_id !== (req.actor as UserActor).userId || prior.contact_id !== contactId || prior.source !== 'logged_activity') throw new AppError('COMMAND_ID_REUSED');
-        // R-STG-2: a replay reads the suggestion again from the stored activity and the person's stage as it is now
-        // (so a double tap shows the same suggestion, and none once the stage was confirmed)
-        const view = noteView(prior, req.actor as UserActor, new Map());
-        const a = view.loggedActivity;
-        const signal = a ? activitySignal({ kind: a.kind as ActivityKind, direction: (a.direction ?? 'outbound') as ActivityDirection, outcome: a.outcome as CallOutcome | null }) : null;
-        const suggestedStage = await peopleTx(req, (tx, _now, actor) => suggestedStageInTx(tx, actor, contactId, signal));
-        // E790: the reminder the first save made with this log, if it made one (its id is derived from the note's, so
-        // the replay finds it and never makes a second task); the retried body's own remindInDays is not read
-        const taskId = await peopleTx(req, (tx) => reminderTaskOf(tx, prior.id));
-        reply.status(200);
-        return { note: view, taskId, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
-      }
+      if (prior) return replayOf(prior);
     }
-    const out = await peopleTx(req, async (tx, now, actor) => {
+    const write = () => peopleTx(req, async (tx, now, actor) => {
       const v = validateLoggedActivity({ kind: b.kind, direction: b.direction ?? null, at, outcome: b.outcome ?? null, body: b.body ?? null, remindInDays: b.remindInDays ?? null }, now);
       if (!v.ok) throw new AppError(v.code);
       const a = v.activity;
@@ -286,6 +288,17 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
       const suggestedStage = await suggestedStageInTx(tx, actor, contactId, activitySignal(a));
       return { note: noteView((await repo.note(tx, id))!, actor, new Map()), taskId, suggestDoNotContact: suggestsDoNotContact(a.body), suggestedStage, replayed: false };
     });
+    let out: Awaited<ReturnType<typeof write>>;
+    try {
+      out = await write();
+    } catch (e) {
+      // R-TODAY-9: two requests with the same client id at the same moment (a double tap that got past the screen):
+      // the one that lost the insert answers the note the other stored, as any later retry does. Anything else is
+      // the error it was.
+      const prior = b.noteId ? await peopleTx(req, (tx) => repo.note(tx, b.noteId!)) : null;
+      if (!prior) throw e;
+      return replayOf(prior);
+    }
     reply.status(201);
     return out;
   });

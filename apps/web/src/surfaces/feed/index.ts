@@ -5,6 +5,8 @@
 import { lazy } from 'react';
 import type { SurfaceModule } from '../../shell/index.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
+import { ToastProvider } from '../people-edit/hooks.js';
+import { QuickLogEntry } from './QuickLog.js';
 
 export const surface: SurfaceModule = {
   pages: [
@@ -17,4 +19,8 @@ export const surface: SurfaceModule = {
     },
   ],
   errorMessages: AGENT_ERROR_MESSAGES,
+  // R-TODAY-9: "Log a call or conversation" from any screen, beside the header's "+"
+  headerActions: [QuickLogEntry],
+  // its result is said in the page's ONE toast: the provider wraps the whole frame, and a page's own nests inside it
+  pageProviders: [ToastProvider],
 };
