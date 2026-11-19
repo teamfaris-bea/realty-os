@@ -73,7 +73,7 @@ test('filter by stage: phone People → Filter → Stage → choose → Show = 5
   await toPeople(page, c);
   await tap(page, page.getByRole('button', { name: 'Filter', exact: true }), c);
   await tap(page, sheet(page).getByRole('button', { name: 'Stage', exact: true }), c);
-  await tap(page, sheet(page).getByRole('checkbox', { name: 'Active' }), c);
+  await tap(page, sheet(page).getByRole('checkbox', { name: 'Active client', exact: true }), c);
   const show = sheet(page).getByRole('button', { name: 'Show 4 people' });
   await expect(show).toBeVisible(); // the live count of exactly what will be shown
   await tap(page, show, c);
@@ -141,7 +141,7 @@ test('the name box narrows inside a filter; an empty result names the filters to
   await page.goto(`${stack.webUrl}/people`);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await sheet(page).getByRole('button', { name: 'Stage', exact: true }).click();
-  await sheet(page).getByRole('checkbox', { name: 'Closed' }).click();
+  await sheet(page).getByRole('checkbox', { name: 'Closed sale', exact: true }).click();
   await sheet(page).getByRole('button', { name: 'Show 1 person' }).click();
   await expect(countLine(page, 1)).toBeVisible();
   await page.getByRole('searchbox', { name: 'Search people by name' }).fill('zzz nobody');
@@ -247,7 +247,7 @@ test('the People page with the builder: every control is at least 44 px; no hori
   await page.goto(`${stack.webUrl}/people`);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await sheet(page).getByRole('button', { name: 'Stage', exact: true }).click();
-  await sheet(page).getByRole('checkbox', { name: 'Active' }).click();
+  await sheet(page).getByRole('checkbox', { name: 'Active client', exact: true }).click();
   await sheet(page).getByRole('button', { name: 'Add another' }).click();
   const small = await page.evaluate(() => {
     const out: string[] = [];
