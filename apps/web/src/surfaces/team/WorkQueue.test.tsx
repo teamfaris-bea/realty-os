@@ -153,3 +153,33 @@ describe('Team work queue', () => {
     expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([]);
   });
 });
+
+describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
+  it('R-TEAMQ-18 E857: a row whose backup was alerted shows the server\'s line on its own, and the group says how many of its rows had their backup alerted', async () => {
+    const alerted = row({ backupAlert: { at: new Date(Date.now() - 9 * 60_000).toISOString(), alerted: true, line: 'Backup alerted at 2:06 PM: Sam T.' } });
+    const plain = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' }, backupAlert: null });
+    leadAdminApp(fake(workQueue({ new_lead: [alerted, plain] }, { new_lead: { backupAlerted: 1 } })), '/team');
+    const region = await loaded();
+    const group = within(region).getByRole('group', { name: 'New leads nobody has tried yet: 2' });
+    expect(within(group).getByText('Backup alerted for 1 of 2.')).toBeInTheDocument();
+    const quinn = within(group).getByRole('link', { name: 'Quinn Harbor' }).closest('li')!;
+    expect(within(quinn).getByText('Backup alerted at 2:06 PM: Sam T.')).toBeInTheDocument();
+    const opal = within(group).getByRole('link', { name: 'Opal Reyes' }).closest('li')!;
+    expect(within(opal).queryByText(/Backup alerted/)).toBeNull();
+  });
+
+  it('R-TEAMQ-18 E857: "nobody could be alerted" is shown as the server wrote it and is not counted as alerted; with no alert at all the group says nothing about backups', async () => {
+    const none = row({ backupAlert: { at: new Date().toISOString(), alerted: false, line: "Nobody could be alerted at 2:06 PM: the source's backup is unavailable and whoever has this lead has no team lead." } });
+    leadAdminApp(fake(workQueue({ new_lead: [none] }, { new_lead: { backupAlerted: 0 } })), '/team');
+    const region = await loaded();
+    expect(within(region).getByText(/^Nobody could be alerted at 2:06 PM/)).toBeInTheDocument();
+    expect(within(region).queryByText(/^Backup alerted for/)).toBeNull();
+  });
+
+  it('R-TEAMQ-18 E858: a capped read says "at least"; a server that sends no backup fields shows the rows as before', async () => {
+    leadAdminApp(fake(workQueue({ new_lead: [row({ backupAlert: { at: new Date().toISOString(), alerted: true, line: 'Backup alerted at 2:06 PM: Sam T.' } })] }, { new_lead: { total: 500, more: 499, atLeast: true, backupAlerted: 12 } })), '/team');
+    const region = await loaded();
+    expect(within(region).getByText('Backup alerted for 12 of at least 500.')).toBeInTheDocument();
+  });
+});
+

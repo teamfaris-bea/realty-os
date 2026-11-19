@@ -42,9 +42,15 @@ export interface ResponseInquiryFacts {
   firstAttempt: { at: Instant; kind: AttemptKind; byUserId: UserId | null; role: AttemptRole } | null;
   /** the first automated message sent to the person after the arrival; never an attempt */
   automatedReplyAt: Instant | null;
+  /**
+   * b19 R-TEAMQ-18: this inquiry's minute-three backup alert, when one was raised: when, to whom, and whether to the
+   * source's backup or to the team lead alerted in their place. Absent or null: nobody was alerted.
+   */
+  backupAlert?: { at: Instant; byUserId: UserId; recipient: 'backup' | 'team_lead' } | null;
 }
 
-export interface MeasuredInquiry extends Omit<ResponseInquiryFacts, 'firstAttempt'> {
+export interface MeasuredInquiry extends Omit<ResponseInquiryFacts, 'firstAttempt' | 'backupAlert'> {
+  backupAlert: NonNullable<ResponseInquiryFacts['backupAlert']> | null;
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
   offHours: boolean;
   countedFrom: Instant;
@@ -66,6 +72,10 @@ export interface ResponseRollup {
   waiting: number;
   /** with an automated reply (shown apart; never counted as an attempt) */
   automatedReplies: number;
+  /** b19 R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`) */
+  backupAlerted: number;
+  /** b19 R-TEAMQ-18: of `backupAlerted`, those whose first human attempt was made by the alerted person, after the alert */
+  byBackup: number;
   /** the attempted inquiries the percentiles rest on */
   sample: number;
   /** median staffed seconds to the first human attempt; null below RESPONSE_MEDIAN_MIN_SAMPLE */
@@ -84,11 +94,12 @@ export interface SourceResponseRollup extends ResponseRollup {
 
 /** One inquiry measured from its arrival: to its first human attempt, or to `now` while it waits. */
 export function measureInquiry(f: ResponseInquiryFacts, now: Instant, calendar: BusinessCalendar): MeasuredInquiry {
-  const { firstAttempt, ...rest } = f;
+  const { firstAttempt, backupAlert, ...rest } = f;
   const m = measureFromArrival(f.receivedAt, firstAttempt?.at ?? now, calendar);
   const attempt = firstAttempt === null ? null : { ...firstAttempt, wallSeconds: m.wallSeconds, staffedSeconds: m.staffedSeconds };
   return {
     ...rest,
+    backupAlert: backupAlert ?? null,
     offHours: m.offHours,
     countedFrom: m.countedFrom,
     attempt,
@@ -118,6 +129,8 @@ function rollup(list: readonly MeasuredInquiry[]): ResponseRollup {
     within15: list.filter((m) => m.within15).length,
     waiting: list.length - staffed.length,
     automatedReplies: list.filter((m) => m.automatedReplyAt !== null).length,
+    backupAlerted: list.filter((m) => m.backupAlert !== null).length,
+    byBackup: list.filter((m) => m.backupAlert !== null && m.attempt?.role === 'backup').length,
     sample: staffed.length,
     medianStaffedSeconds: staffed.length >= RESPONSE_MEDIAN_MIN_SAMPLE ? median(staffed) : null,
     p90StaffedSeconds: staffed.length >= RESPONSE_P90_MIN_SAMPLE ? nearestRank(staffed, 0.9) : null,

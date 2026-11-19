@@ -249,3 +249,47 @@ describe('who has the lead', () => {
     expect(holderLabel({ kind: 'pond', pondId: pond(1), name: null })).toBe('No owner yet: in a pond');
   });
 });
+
+describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
+  it('R-TEAMQ-18 E857: a row whose backup was alerted says so on its own line, with the time in the team\'s zone and who was alerted; the why line is unchanged', () => {
+    const plain = group(inputs({ inquiries: [inq()] }), 'new_lead').rows[0]!;
+    const g = group(inputs({ inquiries: [inq({ backupAlert: { at: t(-min(9)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } })] }), 'new_lead');
+    expect(g.rows[0]!.backupAlert).toEqual({ at: t(-min(9)), alerted: true, line: 'Backup alerted at 9:51 AM: Sam T.' });
+    expect(g.rows[0]!.why).toBe(plain.why);
+    expect(plain.backupAlert).toBeNull();
+    expect([g.backupAlerted, g.total]).toEqual([1, 1]);
+  });
+
+  it('R-TEAMQ-18 E857: the fallback and "nobody could be alerted" are said in words; an alert on another day says how long ago', () => {
+    const line = (o: NonNullable<QueueInquiryFacts['backupAlert']>, receivedAt = t(-min(12))) => group(inputs({ inquiries: [inq({ receivedAt, backupAlert: o })] }), 'new_lead').rows[0]!.backupAlert;
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead' })).toEqual({ at: t(-min(9)), alerted: true, line: 'The source\'s backup is unavailable: the team lead, Taylor L., was alerted at 9:51 AM.' });
+    expect(line({ at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null })).toEqual({ at: t(-min(9)), alerted: false, line: 'Nobody could be alerted at 9:51 AM: the source\'s backup is unavailable and whoever has this lead has no team lead.' });
+    expect(line({ at: t(-hours(26)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' }, t(-hours(27)))!.line).toBe('Backup alerted 26 h ago: Sam T.');
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: null, recipient: 'backup' })!.line).toBe('Backup alerted at 9:51 AM: a member.');
+  });
+
+  it('R-TEAMQ-18 E858: the group counts the rows whose backup was alerted over every waiting row (its denominator), also beyond the rows shown; a person who asked twice shows the latest alert', () => {
+    const many = Array.from({ length: TEAM_QUEUE_GROUP_CAP + 3 }, (_, n) =>
+      inq({ inquiryId: inquiry(n + 1), contactId: contact(n + 1), receivedAt: t(-min(n + 5)), ...(n % 2 === 0 ? { backupAlert: { at: t(-min(n + 2)), outcome: 'alerted' as const, name: 'Sam Torres', recipient: 'backup' as const } } : {}) }),
+    );
+    const g = group(inputs({ inquiries: many }), 'new_lead');
+    expect([g.backupAlerted, g.total]).toEqual([Math.ceil((TEAM_QUEUE_GROUP_CAP + 3) / 2), TEAM_QUEUE_GROUP_CAP + 3]);
+    // "nobody could be alerted" is not counted as alerted
+    const none = group(inputs({ inquiries: [inq({ backupAlert: { at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null } })] }), 'new_lead');
+    expect([none.backupAlerted, none.total]).toEqual([0, 1]);
+    const twice = group(
+      inputs({
+        inquiries: [
+          inq({ inquiryId: inquiry(1), receivedAt: t(-min(40)), backupAlert: { at: t(-min(37)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
+          inq({ inquiryId: inquiry(2), receivedAt: t(-min(10)), backupAlert: { at: t(-min(7)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
+        ],
+      }),
+      'new_lead',
+    );
+    expect(twice.rows).toHaveLength(1);
+    expect(twice.rows[0]!.backupAlert!.line).toBe('Backup alerted at 9:53 AM: Sam T.');
+    expect([twice.backupAlerted, twice.total]).toEqual([1, 1]);
+    // the other groups carry no such count
+    expect(buildTeamQueue(inputs()).groups.filter((x) => x.key !== 'new_lead').map((x) => x.backupAlerted)).toEqual([null, null, null, null]);
+  });
+});

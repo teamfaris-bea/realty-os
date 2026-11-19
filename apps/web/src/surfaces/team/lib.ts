@@ -158,6 +158,11 @@ export interface TeamQueueRow {
   /** new leads only: the same wait inside staffed hours */
   staffedSeconds: number | null;
   offHours: boolean;
+  /**
+   * new leads only (b19 step 2, R-TEAMQ-18): the minute-three backup alert, as the server's own line ("Backup
+   * alerted at 2:06 PM: Sam T.", the time in the team's zone); `alerted` false: nobody could be alerted
+   */
+  backupAlert?: { at: string; alerted: boolean; line: string } | null;
 }
 
 export interface TeamQueueGroup {
@@ -169,6 +174,8 @@ export interface TeamQueueGroup {
   more: number;
   /** the server's read reached its cap: total and more are lower bounds */
   atLeast: boolean;
+  /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
+  backupAlerted?: number | null;
 }
 
 export interface TeamQueueResponse {
@@ -190,6 +197,12 @@ export function queueWait(key: TeamQueueGroupKey, r: Pick<TeamQueueRow, 'waiting
   if (key === 'appointment_outcome') return `Ended ${wait} ago`;
   const staffed = r.staffedSeconds !== null && r.waitingSeconds - r.staffedSeconds >= 60 ? ` · ${formatAge(r.staffedSeconds)} in staffed hours` : '';
   return `Waiting ${wait}${staffed}`;
+}
+
+/** "Backup alerted for 2 of 5." (R-TEAMQ-18; the count with its denominator; null when no row's backup was alerted) */
+export function queueBackupLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 'backupAlerted'>): string | null {
+  if (g.backupAlerted === undefined || g.backupAlerted === null || g.backupAlerted <= 0) return null;
+  return `Backup alerted for ${g.backupAlerted} of ${queueCount(g)}.`;
 }
 
 /** "Showing the 25 waiting longest. 7 more are not shown." (null when everything is shown) */
@@ -227,6 +240,8 @@ export interface ResponseInquiry {
   attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   automatedReplyAt: string | null;
+  /** b19 step 2 (R-TEAMQ-18): the inquiry's minute-three backup alert: when, to whom, and whether to the backup or to the team lead in their place */
+  backupAlert?: { at: string; to: { userId: string; name: string | null }; recipient: 'backup' | 'team_lead' } | null;
   within5: boolean;
   within15: boolean;
 }
@@ -238,6 +253,9 @@ export interface ResponseRollup {
   within15: number;
   waiting: number;
   automatedReplies: number;
+  /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first tried by the alerted person */
+  backupAlerted?: number;
+  byBackup?: number;
   sample: number;
   medianStaffedSeconds: number | null;
   p90StaffedSeconds: number | null;
@@ -288,23 +306,36 @@ export function responseLines(r: ResponseRollup, rules: ResponseRules): { label:
     { label: 'Median to the first attempt', text: percentileLine(r.medianStaffedSeconds, r.sample, rules.medianMinSample) },
     { label: '90th percentile', text: percentileLine(r.p90StaffedSeconds, r.sample, rules.p90MinSample) },
     { label: 'Automatic replies', text: `${of(r.automatedReplies)}, shown apart and never counted as an attempt` },
+    // R-TEAMQ-18: the minute-three backup alert, each count with its own denominator
+    ...(r.backupAlerted === undefined ? [] : [{ label: 'Backup alerted', text: of(r.backupAlerted) }]),
+    ...(r.backupAlerted === undefined || r.backupAlerted <= 0 ? [] : [{ label: 'First attempt by the backup', text: `${r.byBackup ?? 0} of the ${r.backupAlerted} alerted` }]),
   ];
 }
 
 const ATTEMPT_KIND: Record<NonNullable<ResponseInquiry['attempt']>['kind'], string> = { call: 'a call', text: 'a text', email: 'an email', chat: 'a chat reply' };
 const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], string> = { owner: 'the lead’s owner', backup: 'the backup, after the backup alert', collaborator: 'a collaborator on the lead', other: 'who was not the owner' };
 
+/** R-TEAMQ-18: " The backup, Sam T., was alerted 3 min after it arrived." ('' when nobody was alerted). */
+function backupAlertSentence(i: ResponseInquiry): string {
+  const b = i.backupAlert;
+  if (!b) return '';
+  const after = formatAge(Math.max(0, Math.round((Date.parse(b.at) - Date.parse(i.receivedAt)) / 1000)));
+  const who = b.to.name ?? 'a former member';
+  return b.recipient === 'team_lead' ? ` The source's backup was unavailable, so the team lead, ${who}, was alerted ${after} after it arrived.` : ` The backup, ${who}, was alerted ${after} after it arrived.`;
+}
+
 /** What happened to one inquiry, in a sentence or two: still waiting, or who tried, how, in what role and after how long. */
 export function responseInquiryLine(i: ResponseInquiry): string {
   const auto = i.automatedReplyAt ? ` An automatic reply went out ${formatStamp(i.automatedReplyAt)}; it is not counted.` : ' No automatic reply went out.';
+  const alert = backupAlertSentence(i);
   if (i.attempt === null) {
     const w = i.waiting ?? { wallSeconds: 0, staffedSeconds: 0 };
     const off = i.offHours ? ` (${formatAge(w.staffedSeconds)} of staffed time: it arrived outside staffed hours and is counted from opening)` : '';
-    return `Still waiting after ${formatAge(w.wallSeconds)}${off}. No person has tried yet.${auto}`;
+    return `Still waiting after ${formatAge(w.wallSeconds)}${off}. No person has tried yet.${alert}${auto}`;
   }
   const a = i.attempt;
   const off = i.offHours ? ` It arrived outside staffed hours, so it is counted from opening (${formatAge(a.wallSeconds)} on the clock).` : '';
-  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${off}${auto}`;
+  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${off}${alert}${auto}`;
 }
 
 /** The lines under the report: imports and closed people apart, and the rules of the measure. */

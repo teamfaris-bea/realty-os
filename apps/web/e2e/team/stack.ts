@@ -20,6 +20,7 @@ import http from 'node:http';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
 import { acceptedLead, call, command, contactState, intake } from './src/accountability/testing.ts';
 import { approvedPlaybook, assistantWorld, randomPhone, runJobs } from './src/assistant/testing.ts';
+import { leadsWorker, postIntake } from './src/leads/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
 const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN] } });
@@ -77,6 +78,25 @@ const routes = {
       called: { contactId: called.contactId, ownerName: nameOf(called.owner.userId) },
     };
   },
+  /**
+   * b19 step 2: a covered source ("Website form": owner Ava Chen, backup Kim Park, who is outside the team), one
+   * lead of it through the real intake, four minutes on the clock, and the real minute-three job run by a real
+   * worker. Nobody has called, so the backup is alerted. The superuser only moves the clock and reads back.
+   */
+  async '/backup-alert'() {
+    await h.su.query('UPDATE sessions SET reauthenticated_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [w.owner.userId]);
+    const src = must(await call(w.owner, 'POST', '/lead-sources', { name: 'Website form', kind: 'website' }), 'source');
+    must(await call(w.owner, 'PUT', '/lead-sources/' + src.source.id + '/coverage', { ownerUserId: w.agents[0].userId, backupUserId: w.outsider.userId, highIntent: false, covered: true }), 'coverage');
+    const r = await postIntake(h, src.ingestToken, { inquiryType: 'buy', fullName: 'Bao Backupneeded', phones: [randomPhone()] });
+    if (r.statusCode !== 201) throw new Error('intake: ' + r.statusCode + ' ' + r.body);
+    const lead = r.json();
+    await h.su.query("UPDATE lead_inquiries SET received_at = received_at - interval '4 minutes', created_at = created_at - interval '4 minutes' WHERE id = $1", [lead.inquiryId]);
+    await h.su.query("UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND kind = 'leads.backup_alert' AND status = 'pending'", [w.tenantId]);
+    await leadsWorker(h).drain();
+    const alert = (await h.su.query('SELECT outcome, alerted_user_id FROM lead_backup_alerts WHERE inquiry_id = $1', [lead.inquiryId])).rows[0];
+    const st = await contactState(h, lead.contactId);
+    return { contactId: lead.contactId, outcome: alert ? alert.outcome : null, alertedUserId: alert ? alert.alerted_user_id : null, backupUserId: w.outsider.userId, state: st.ownership_state, toClient: (await h.su.query("SELECT count(*)::int AS n FROM messages WHERE contact_id = $1 AND direction = 'outbound'", [lead.contactId])).rows[0].n };
+  },
   /** what reading the page wrote: nothing (the queue is read-only) */
   async '/writes'() {
     const r = await h.su.query(
@@ -108,7 +128,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/waiting' | '/writes';
+export type FixturePath = '/world' | '/waiting' | '/writes' | '/backup-alert';
 
 export interface World {
   teamLead: { email: string; password: string; userId: string };
@@ -122,6 +142,15 @@ export interface Waiting {
   offered: { contactId: string; offeredToName: string };
   automated: { contactId: string; ownerName: string; automatedReplies: number };
   called: { contactId: string; ownerName: string };
+}
+
+export interface BackupAlerted {
+  contactId: string;
+  outcome: string | null;
+  alertedUserId: string | null;
+  backupUserId: string;
+  state: string;
+  toClient: number;
 }
 
 export interface TeamQueueStack {

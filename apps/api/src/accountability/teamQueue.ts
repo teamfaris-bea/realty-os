@@ -5,7 +5,9 @@
 //
 // What a team lead needs to answer "did anybody call?": five groups (new lead with no human attempt, unanswered
 // reply, due promise, overdue follow-up, appointment needing an outcome), each row saying why it is here, who has
-// it or "no owner yet" (on offer to whom, in which pond, or unassigned), and for how long, counted from ARRIVAL.
+// it or "no owner yet" (on offer to whom, in which pond, or unassigned), and for how long, counted from ARRIVAL. A
+// new-lead row also says when its backup was alerted and who that was (b19 step 2, R-TEAMQ-18), and the group counts
+// those rows over all its rows.
 //
 // READ-ONLY: this module only reads, in one transaction as the caller, so row-level security and the team scope of
 // repos/teamQueue.ts decide which people exist for them. It writes nothing, enqueues no job, sends no message and
@@ -64,6 +66,11 @@ export interface TeamQueueRowView {
   staffedSeconds: number | null;
   /** new leads only: it arrived outside staffed hours (staffed time counts from opening) */
   offHours: boolean;
+  /**
+   * new leads only (R-TEAMQ-18): the minute-three backup alert of this person's latest alerted inquiry, as its own
+   * line ("Backup alerted at 2:06 PM: Sam T.", the time in the team's zone). `alerted` false: nobody could be alerted.
+   */
+  backupAlert: { at: string; alerted: boolean; line: string } | null;
 }
 
 export interface TeamQueueGroupView {
@@ -75,6 +82,8 @@ export interface TeamQueueGroupView {
   more: number;
   /** the read reached its cap: `total` and `more` are lower bounds */
   atLeast: boolean;
+  /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
+  backupAlerted: number | null;
 }
 
 export interface TeamQueueView {
@@ -151,6 +160,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
       holder,
       humanAttemptAt: null, // the read keeps only inquiries with no human attempt at or after the arrival
       automatedReplyAt: q.automated_at === null ? null : ms(q.automated_at),
+      backupAlert: q.backup_alert_at === null || q.backup_alert_outcome === null ? null : { at: ms(q.backup_alert_at), outcome: q.backup_alert_outcome, name: q.backup_alert_name, recipient: q.backup_alert_recipient },
     });
   }
   const taskFacts: QueueTaskFacts[] = tasks.map((t) => ({
@@ -201,10 +211,12 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
         waitingSeconds: r.waitingSeconds,
         staffedSeconds: r.staffedSeconds,
         offHours: r.offHours,
+        backupAlert: r.backupAlert === null ? null : { at: iso(r.backupAlert.at), alerted: r.backupAlert.alerted, line: r.backupAlert.line },
       })),
       total: g.total,
       more: g.more,
       atLeast: capped[g.key],
+      backupAlerted: g.backupAlerted,
     })),
     staffedHours: { open: hours.open, close: hours.close, zone: hours.zone },
     windows: {

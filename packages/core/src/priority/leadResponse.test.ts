@@ -153,3 +153,30 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
     expect(r.totals).toMatchObject({ inquiries: 0, attempted: 0, within5: 0, within15: 0, waiting: 0, sample: 0, medianStaffedSeconds: null, p90StaffedSeconds: null });
   });
 });
+
+describe('R-TEAMQ-18 the backup in the roll-up (b19 step 2)', () => {
+  const alerted = (o: Partial<ResponseInquiryFacts> = {}) => ({ backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(7), recipient: 'backup' as const }, ...o });
+
+  it('R-TEAMQ-18 E858: "backup alerted" is counted over the inquiries, and "first attempt by the backup" over the inquiries whose backup was alerted', () => {
+    const list = [
+      tried(600, alerted(), { byUserId: user(7), role: 'backup' }), // alerted, and the backup made the first attempt
+      tried(700, alerted(), { byUserId: user(1), role: 'owner' }), // alerted, but the owner got there first
+      inq(alerted()), // alerted, still waiting
+      tried(60), // nobody alerted: tried within a minute
+      inq(), // not a covered source: waiting, no alert
+    ];
+    const r = rollUpResponses(list, NOW, CAL);
+    expect(r.totals).toMatchObject({ inquiries: 5, attempted: 3, waiting: 2, backupAlerted: 3, byBackup: 1 });
+    expect(r.sources[0]).toMatchObject({ inquiries: 5, backupAlerted: 3, byBackup: 1 });
+    // each measured inquiry keeps its alert
+    expect(r.measured.filter((m) => m.backupAlert !== null)).toHaveLength(3);
+    expect(measureInquiry(list[0]!, NOW, CAL).backupAlert).toEqual({ at: t(-hours(2) + min(3)), byUserId: user(7), recipient: 'backup' });
+    expect(measureInquiry(list[3]!, NOW, CAL).backupAlert).toBeNull();
+  });
+
+  it('R-TEAMQ-18: with no alert anywhere both counts are zero, never missing; a team lead alerted as the fallback counts as alerted and as the backup when they try', () => {
+    expect(rollUpResponses([tried(60), inq()], NOW, CAL).totals).toMatchObject({ backupAlerted: 0, byBackup: 0 });
+    const fallback = tried(500, { backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(9), recipient: 'team_lead' } }, { byUserId: user(9), role: 'backup' });
+    expect(rollUpResponses([fallback], NOW, CAL).totals).toMatchObject({ inquiries: 1, backupAlerted: 1, byBackup: 1 });
+  });
+});

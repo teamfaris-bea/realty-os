@@ -9,10 +9,14 @@
 //   - the lead response report on the scoreboard page (R-TEAMQ-7..9): from arrival, by source, every count with its
 //     denominator, the three still waiting listed under the source and the called lead not; axe, no horizontal
 //     scroll, 44 px targets.
+//   - b19 step 2 (R-TEAMQ-18), last, so the counts above stay what they were: a lead of a covered source whose
+//     backup was alerted by the real minute-three job shows "Backup alerted at … : Kim P." on its row with the
+//     group's count and denominator, and the report counts it for its source; the lead is still on offer to the
+//     same agent and nothing went to the client; axe with contrast on both.
 // Every lead is seeded through the real intake, ownership engine, first-response job and dial path.
 import { createRequire } from 'node:module';
 import { type Locator, type Page, expect, test } from 'playwright/test';
-import { type TeamQueueStack, type Waiting, type World, startTeamQueueStack } from './stack.js';
+import { type BackupAlerted, type TeamQueueStack, type Waiting, type World, startTeamQueueStack } from './stack.js';
 
 const require = createRequire(import.meta.url);
 const AXE_PATH = require.resolve('axe-core/axe.min.js');
@@ -159,4 +163,49 @@ test('the lead response report says "from arrival", counts the four inquiries by
   expect(overflow).toBeLessThanOrEqual(0);
   const smallLinks = await region.locator('a:visible').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.height < 44 || r.width < 44).length);
   expect(smallLinks).toBe(0);
+});
+
+test('a covered source\'s lead nobody tried: the row says the backup was alerted, when and who; the group and the report count it with their denominators; the offer is untouched and nothing went to the client', async ({ page }) => {
+  const alerted = await stack.fixture<BackupAlerted>('/backup-alert');
+  // the real job alerted the named backup, changed no owner and sent the client nothing
+  expect(alerted).toMatchObject({ outcome: 'alerted', alertedUserId: alerted.backupUserId, state: 'offered', toClient: 0 });
+  await signIn(page);
+  await page.goto(`${stack.webUrl}/team`);
+  const region = queue(page);
+  await expect(region.getByRole('group', { name: 'New leads nobody has tried yet: 4' })).toBeVisible();
+  const row = rowOf(page, 'Bao Backupneeded');
+  await expect(row).toBeVisible();
+  await expect(row.getByText(/^Backup alerted at \d{1,2}:\d\d [AP]M: Kim P\.$/)).toBeVisible();
+  await expect(row.getByText(/^Arrived .* from Website form\. On offer to .*\. Nobody has called, texted or emailed yet\./)).toBeVisible();
+  await expect(region.getByText('Backup alerted for 1 of 4.', { exact: true })).toBeVisible();
+  // the rows of the uncovered source say nothing about a backup
+  await expect(rowOf(page, 'Otis Offerman').getByText(/Backup alerted/)).toHaveCount(0);
+
+  await page.addScriptTag({ path: AXE_PATH });
+  const queueViolations = await page.evaluate(async () => {
+    const r = await (window as unknown as { axe: { run(n: Node, o: unknown): Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe.run(document.body, { resultTypes: ['violations'] });
+    return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
+  });
+  expect(queueViolations).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  // the report: its source has one inquiry, its backup was alerted, and nobody has tried yet
+  await page.goto(`${stack.webUrl}/team/scoreboard`);
+  const report = page.getByRole('region', { name: 'Lead response, from arrival' });
+  const source = report.getByRole('listitem').filter({ has: page.getByRole('heading', { level: 3, name: 'Website form' }) });
+  await expect(source.getByText('Backup alerted', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('1 of 1');
+  await expect(source.getByText('First attempt by the backup', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('0 of the 1 alerted');
+  const listed = source.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'Bao Backupneeded', exact: true }) });
+  await expect(listed.getByText(/No person has tried yet\. The backup, Kim Park, was alerted \d+ min after it arrived\./)).toBeVisible();
+  // the uncovered source counts no alert, and offers no second count
+  const portal = report.getByRole('listitem').filter({ has: page.getByRole('heading', { level: 3, name: 'Portal' }) });
+  await expect(portal.getByText('Backup alerted', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('0 of 4');
+  await expect(portal.getByText('First attempt by the backup', { exact: true })).toHaveCount(0);
+  await page.addScriptTag({ path: AXE_PATH });
+  const reportViolations = await page.evaluate(async () => {
+    const r = await (window as unknown as { axe: { run(n: Node, o: unknown): Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe.run(document.body, { resultTypes: ['violations'] });
+    return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
+  });
+  expect(reportViolations).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });

@@ -161,6 +161,8 @@ export const TeamQueueRowSchema = z.object({
   waitingSeconds: count,
   staffedSeconds: count.nullable(),
   offHours: z.boolean(),
+  /** new leads only (R-TEAMQ-18): the backup alert of this person's latest alerted inquiry, as its own line */
+  backupAlert: z.object({ at: z.string(), alerted: z.boolean(), line: z.string().min(1) }).nullable(),
 });
 export const TeamQueueResponse = z.object({
   groups: z.array(
@@ -172,6 +174,8 @@ export const TeamQueueResponse = z.object({
       total: count,
       more: count,
       atLeast: z.boolean(),
+      /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
+      backupAlerted: count.nullable(),
     }),
   ),
   staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
@@ -200,6 +204,8 @@ export const ResponseInquirySchema = z.object({
   }).nullable(),
   waiting: Waited.nullable(),
   automatedReplyAt: z.string().nullable(),
+  /** R-TEAMQ-18: the inquiry's minute-three backup alert (null: nobody was alerted) */
+  backupAlert: z.object({ at: z.string(), to: Person, recipient: z.enum(['backup', 'team_lead']) }).nullable(),
   within5: z.boolean(),
   within15: z.boolean(),
 });
@@ -210,6 +216,9 @@ const ResponseRollupSchema = z.object({
   within15: count,
   waiting: count,
   automatedReplies: count,
+  /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first attempted by the alerted person */
+  backupAlerted: count,
+  byBackup: count,
   sample: count,
   medianStaffedSeconds: count.nullable(),
   p90StaffedSeconds: count.nullable(),

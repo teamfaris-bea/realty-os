@@ -8,6 +8,8 @@
 // arrival in staffed and in wall-clock time, and whether an automated reply went out (shown apart, never counted).
 // Rolled up by lead source: inquiries, with a human attempt, within 5 and 15 staffed minutes, the median and 90th
 // percentile (never on a small sample), and still waiting. Every count travels with its denominator (R-ACC-4).
+// b19 step 2 (R-TEAMQ-18): an inquiry whose minute-three backup alert was raised says when and to whom; each roll-up
+// counts "backup alerted" over its inquiries and "first attempt by the backup" over those alerted.
 //
 // How it differs from the scoreboard's speed-to-lead: that number starts when an AGENT ACCEPTS a lead and credits
 // the owner's (or a collaborator's) first touch per ownership period; a lead nobody accepted, or one sitting in a
@@ -54,6 +56,8 @@ export interface ResponseInquiryView {
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   /** when an automated reply went out after the arrival (null: none). Never an attempt. */
   automatedReplyAt: string | null;
+  /** R-TEAMQ-18: this inquiry's minute-three backup alert: when, to whom, and whether to the backup or to the team lead in their place (null: nobody was alerted) */
+  backupAlert: { at: string; to: { userId: string; name: string | null }; recipient: 'backup' | 'team_lead' } | null;
   within5: boolean;
   within15: boolean;
 }
@@ -99,6 +103,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
   const attemptNames = new Map<string, string | null>();
   const facts: ResponseInquiryFacts[] = open.map((r) => {
     if (r.attempt_by !== null) attemptNames.set(r.attempt_by, r.attempt_by_name);
+    if (r.backup_alert_user !== null) attemptNames.set(r.backup_alert_user, r.backup_alert_name);
     return {
       inquiryId: r.id as never,
       contactId: r.contact_id as ContactId,
@@ -107,6 +112,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
       receivedAt: ms(r.received_at),
       firstAttempt: r.attempt_at === null ? null : { at: ms(r.attempt_at), kind: kindOf(r), byUserId: r.attempt_by as UserId | null, role: roleOf(r) },
       automatedReplyAt: r.automated_at === null ? null : ms(r.automated_at),
+      backupAlert: r.backup_alert_at === null || r.backup_alert_user === null || r.backup_alert_recipient === null ? null : { at: ms(r.backup_alert_at), byUserId: r.backup_alert_user as UserId, recipient: r.backup_alert_recipient },
     };
   });
   const calendar = businessCalendar({ zone: hours.zone, open: hours.open, close: hours.close });
@@ -132,6 +138,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
           },
     waiting: m.waiting,
     automatedReplyAt: m.automatedReplyAt === null ? null : iso(m.automatedReplyAt),
+    backupAlert: m.backupAlert === null ? null : { at: iso(m.backupAlert.at), to: { userId: m.backupAlert.byUserId, name: attemptNames.get(m.backupAlert.byUserId) ?? null }, recipient: m.backupAlert.recipient },
     within5: m.within5,
     within15: m.within15,
   });

@@ -34,6 +34,7 @@
 //   a member's ended appointments appointments_user_idx (tenant_id, user_id, starts_at), one range per member
 //   who owned the lead then      lead_ownership_events primary key (tenant_id, contact_id, seq)
 //   imports of a period          loe_type_time_idx (tenant_id, type, occurred_at DESC)
+//   an inquiry's backup alert    lead_backup_alerts_inquiry_once (tenant_id, inquiry_id) (b19 step 2, migration 0108)
 // messages and calls have no (tenant_id, time) index for inbound rows, which is why the unanswered-reply read
 // starts from the people whose last inbound is recent instead of scanning the tenant's messages.
 import type { ApptFacts, QueueInboundFacts, TaskFacts, TouchFacts } from '@realty/core/priority';
@@ -109,6 +110,11 @@ export interface WaitingInquiryRow extends HolderColumns {
   received_at: Date;
   source_name: string;
   automated_at: Date | null;
+  /** b19 R-TEAMQ-18: this inquiry's backup decision when it alerted someone or found nobody to alert (else null) */
+  backup_alert_at: Date | null;
+  backup_alert_outcome: 'alerted' | 'no_recipient' | null;
+  backup_alert_name: string | null;
+  backup_alert_recipient: 'backup' | 'team_lead' | null;
 }
 
 /**
@@ -120,7 +126,8 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
   const r = await sql<WaitingInquiryRow>`
     SELECT i.id, i.contact_id, i.received_at, s.name AS source_name, ${HOLDER_COLUMNS},
            (SELECT min(m.dispatched_at) FROM messages m
-             WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.received_at) AS automated_at
+             WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.received_at) AS automated_at,
+           ba.decided_at AS backup_alert_at, ba.outcome AS backup_alert_outcome, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient
       FROM lead_sources s
       CROSS JOIN LATERAL (
         SELECT i.id, i.contact_id, i.received_at FROM lead_inquiries i
@@ -131,6 +138,9 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
         ) i
       JOIN contacts c ON c.tenant_id = s.tenant_id AND c.id = i.contact_id
       ${HOLDER_JOINS}
+      -- b19 R-TEAMQ-18: the inquiry's backup alert (lead_backup_alerts_inquiry_once; read through its own policy)
+      LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = s.tenant_id AND ba.inquiry_id = i.id AND ba.outcome IN ('alerted', 'no_recipient')
+      LEFT JOIN users bau ON bau.id = ba.alerted_user_id
      WHERE s.tenant_id = app.tenant_id() AND c.deleted_at IS NULL AND c.ownership_state <> 'closed' AND ${TEAM_SCOPE}
        AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.received_at)
        AND NOT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${HUMAN_CALL} AND k.started_at >= i.received_at)

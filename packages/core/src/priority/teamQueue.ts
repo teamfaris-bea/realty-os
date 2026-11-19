@@ -34,6 +34,7 @@ import {
   nextOpening,
 } from '../foundation/index.js';
 import { answersClient, awaitsOutcome, taskDeadline } from './feed.js';
+import { shortMemberName } from './backupAlert.js';
 import { clip, formatDuration } from './format.js';
 import type { ApptFacts, InboundFacts, TaskFacts } from './types.js';
 
@@ -169,6 +170,12 @@ export interface QueueInquiryFacts {
   humanAttemptAt: Instant | null;
   /** The first automated (assistant or system) message sent to the person after the arrival; never an attempt. */
   automatedReplyAt: Instant | null;
+  /**
+   * b19 R-TEAMQ-18: this inquiry's minute-three backup decision, when it alerted someone or found nobody to alert
+   * (lead_backup_alerts): when, the alerted member's name, and whether they are the source's backup or the team lead
+   * alerted in their place. Absent or null: no alert (not a covered source, not due yet, or not needed).
+   */
+  backupAlert?: { at: Instant; outcome: 'alerted' | 'no_recipient'; name: string | null; recipient: 'backup' | 'team_lead' | null } | null;
 }
 
 /** A client message or missed call that may be waiting (the feed's InboundFacts without an owner). */
@@ -217,6 +224,12 @@ export interface TeamQueueRow {
   staffedSeconds: number | null;
   /** new_lead only: it arrived outside staffed hours */
   offHours: boolean;
+  /**
+   * new_lead only (b19 R-TEAMQ-18): the backup alert of this person's latest alerted inquiry, as its own line
+   * ("Backup alerted at 2:06 PM: Sam T."; the time is in the team's zone, like the why line's). `alerted` false: the
+   * job found nobody to alert, and the line says so. null: no alert.
+   */
+  backupAlert: { at: Instant; alerted: boolean; line: string } | null;
   subject: { kind: 'inquiry'; id: LeadInquiryId } | { kind: 'message' | 'call'; id: string } | { kind: 'task'; id: TaskId } | { kind: 'appointment'; id: AppointmentId };
 }
 
@@ -229,6 +242,8 @@ export interface TeamQueueGroup {
   total: number;
   /** total - rows.length */
   more: number;
+  /** new_lead only (b19 R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
+  backupAlerted: number | null;
 }
 
 export interface TeamQueue {
@@ -250,6 +265,15 @@ function clockTime(t: Instant, cal: BusinessCalendar): string {
 function automatedSentence(now: Instant, at: Instant | null, cal: BusinessCalendar): string {
   if (at === null) return 'No automatic reply has gone out.';
   return localDateOf(at, cal.zone) === localDateOf(now, cal.zone) ? `An automatic reply went out at ${clockTime(at, cal)}.` : `An automatic reply went out ${ago(now, at)}.`;
+}
+
+/** R-TEAMQ-18: the backup alert of a waiting lead, as its own line. */
+function backupAlertLine(now: Instant, a: NonNullable<QueueInquiryFacts['backupAlert']>, cal: BusinessCalendar): string {
+  const sameDay = localDateOf(a.at, cal.zone) === localDateOf(now, cal.zone);
+  const when = sameDay ? `at ${clockTime(a.at, cal)}` : ago(now, a.at);
+  if (a.outcome === 'no_recipient') return `Nobody could be alerted ${when}: the source's backup is unavailable and whoever has this lead has no team lead.`;
+  const who = stop(shortMemberName(a.name));
+  return a.recipient === 'team_lead' ? `The source's backup is unavailable: the team lead, ${shortMemberName(a.name)}, was alerted ${when}.` : `Backup alerted ${when}: ${who}`;
 }
 
 const TASK_WORD: Record<QueueTaskFacts['kind'], string> = { promise: 'Promise', follow_up: 'Follow-up', callback: 'Callback', todo: 'To-do', document: 'Document task' };
@@ -282,6 +306,8 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
     const again = list.length > 1 ? ` Asked again ${ago(now, latest.receivedAt)} (${list.length} inquiries).` : '';
     // the automatic reply said is the first one after the FIRST unanswered arrival
     const auto = list.map((q) => q.automatedReplyAt).filter((a): a is Instant => a !== null && a >= first.receivedAt).sort((a, b) => a - b)[0] ?? null;
+    // R-TEAMQ-18: the latest backup alert among the person's waiting inquiries
+    const alert = list.map((q) => q.backupAlert ?? null).filter((a): a is NonNullable<QueueInquiryFacts['backupAlert']> => a !== null).sort((a, b) => b.at - a.at)[0] ?? null;
     rows.push({
       group: 'new_lead',
       key: `new_lead:${contactId}`,
@@ -294,6 +320,7 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
       waitingSeconds: m.wallSeconds,
       staffedSeconds: m.staffedSeconds,
       offHours: m.offHours,
+      backupAlert: alert === null ? null : { at: alert.at, alerted: alert.outcome === 'alerted', line: backupAlertLine(now, alert, i.calendar) },
       subject: { kind: 'inquiry', id: first.inquiryId },
     });
   }
@@ -334,6 +361,7 @@ function replyRows(i: TeamQueueInputs): TeamQueueRow[] {
       waitingSeconds: seconds(now, first.at),
       staffedSeconds: null,
       offHours: false,
+      backupAlert: null,
       subject: { kind: missed ? 'call' : 'message', id: latest.id },
     });
   }
@@ -363,6 +391,7 @@ function taskRows(i: TeamQueueInputs, promise: boolean): TeamQueueRow[] {
       waitingSeconds: seconds(now, deadline),
       staffedSeconds: null,
       offHours: false,
+      backupAlert: null,
       subject: { kind: 'task', id: t.taskId },
     });
   }
@@ -390,6 +419,7 @@ function appointmentRows(i: TeamQueueInputs): TeamQueueRow[] {
       waitingSeconds: seconds(now, a.endsAt),
       staffedSeconds: null,
       offHours: false,
+      backupAlert: null,
       subject: { kind: 'appointment', id: a.appointmentId },
     });
   }
@@ -409,7 +439,8 @@ export function buildTeamQueue(i: TeamQueueInputs): TeamQueue {
   return {
     groups: TEAM_QUEUE_GROUPS.map((key) => {
       const rows = all[key].sort(byWaiting);
-      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap) };
+      const backupAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true).length : null;
+      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted };
     }),
   };
 }

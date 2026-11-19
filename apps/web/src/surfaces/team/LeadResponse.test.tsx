@@ -132,6 +132,35 @@ describe('Lead response report', () => {
     expect(row).toHaveTextContent('First tried after 6 min: a call by Ben Agent, the backup, after the backup alert. No automatic reply went out.');
   });
 
+  it('R-TEAMQ-18 E858: each source says how many inquiries had their backup alerted, of its inquiries, and how many of those the backup tried first; a source with no alert says so without a second count', async () => {
+    const withAlerts = report({
+      totals: rollup({ inquiries: 12, backupAlerted: 3, byBackup: 2 }),
+      sources: [
+        { sourceId: SRC.web, sourceName: 'Website form', ...rollup({ backupAlerted: 3, byBackup: 2 }), notWithin5: [], notWithin5More: 0 },
+        { sourceId: SRC.sign, sourceName: 'Open house sign-in', ...rollup({ inquiries: 3, backupAlerted: 0, byBackup: 0 }), notWithin5: [], notWithin5More: 0 },
+      ],
+    });
+    leadAdminApp(fake(withAlerts), '/team/scoreboard', 'owner');
+    const region = await section();
+    const web = (await within(region).findByRole('heading', { level: 3, name: 'Website form' })).closest('li')!;
+    expect(within(web).getByText('Backup alerted').nextElementSibling).toHaveTextContent('3 of 9');
+    expect(within(web).getByText('First attempt by the backup').nextElementSibling).toHaveTextContent('2 of the 3 alerted');
+    const sign = within(region).getByRole('heading', { level: 3, name: 'Open house sign-in' }).closest('li')!;
+    expect(within(sign).getByText('Backup alerted').nextElementSibling).toHaveTextContent('0 of 3');
+    expect(within(sign).queryByText('First attempt by the backup')).toBeNull();
+  });
+
+  it('R-TEAMQ-18 E857: an inquiry whose backup was alerted says who was alerted and how long after it arrived, the fallback in its own words', async () => {
+    const alerted = inquiry({ backupAlert: { at: '2026-11-09T18:03:00.000Z', to: { userId: ID.ben, name: 'Ben Agent' }, recipient: 'backup' } });
+    const fallback = inquiry({ inquiryId: '01900000-0000-7000-8000-0000000000e9', contact: { id: P.nia, name: 'Nia Night' }, backupAlert: { at: '2026-11-09T18:04:00.000Z', to: { userId: ID.ava, name: 'Ava Agent' }, recipient: 'team_lead' } });
+    leadAdminApp(fake(report({ sources: [{ sourceId: SRC.web, sourceName: 'Website form', ...rollup(), notWithin5: [alerted, fallback], notWithin5More: 0 }] })), '/team/scoreboard', 'team_lead');
+    const region = await section();
+    const wren = (await within(region).findByRole('link', { name: 'Wren Waiting' })).closest('li')!;
+    expect(wren).toHaveTextContent('The backup, Ben Agent, was alerted 3 min after it arrived.');
+    const nia = within(region).getByRole('link', { name: 'Nia Night' }).closest('li')!;
+    expect(nia).toHaveTextContent("The source's backup was unavailable, so the team lead, Ava Agent, was alerted 4 min after it arrived.");
+  });
+
   it('R-TEAMQ-8 E832: imports and closed people are said apart, never in the measure; the staffed hours and the minimum samples are stated', async () => {
     leadAdminApp(fake(), '/team/scoreboard', 'admin');
     const region = await section();

@@ -16,7 +16,7 @@ import { Link } from 'react-router-dom';
 import { Icon, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
-import { type TeamQueueGroup, type TeamQueueGroupKey, type TeamQueueResponse, queueCount, queueFootnote, queueMoreLine, queueWait } from './lib.js';
+import { type TeamQueueGroup, type TeamQueueGroupKey, type TeamQueueResponse, queueBackupLine, queueCount, queueFootnote, queueMoreLine, queueWait } from './lib.js';
 
 export const WORK_QUEUE_KEY = ['team', 'queue'] as const;
 const REFRESH_MS = 30_000;
@@ -69,6 +69,7 @@ function QueueGroup({ group: g, open, onToggle }: { group: TeamQueueGroup; open:
   const listId = useId();
   const count = queueCount(g);
   const more = queueMoreLine(g);
+  const backups = queueBackupLine(g);
   if (g.total === 0) {
     // nothing to open: the label, a zero, and the group's own honest sentence
     return (
@@ -97,6 +98,8 @@ function QueueGroup({ group: g, open, onToggle }: { group: TeamQueueGroup; open:
       </h3>
       {open ? (
         <div id={listId} className="border-t border-line px-4 pb-3">
+          {/* R-TEAMQ-18: how many of the waiting leads had their backup alerted, with the group's own total */}
+          {backups ? <p className="pt-2 text-[14px] text-ink-muted">{backups}</p> : null}
           <ul className="flex flex-col divide-y divide-line">
             {g.rows.map((r) => (
               <li key={r.key} className="flex flex-col gap-0.5 py-2">
@@ -107,6 +110,8 @@ function QueueGroup({ group: g, open, onToggle }: { group: TeamQueueGroup; open:
                   <span className="text-[14px] text-ink-muted">{queueWait(g.key, r)}</span>
                 </div>
                 <p className="text-[14px] leading-snug text-ink">{r.why}</p>
+                {/* R-TEAMQ-18: the server's own line about the minute-three backup alert */}
+                {r.backupAlert ? <p className="text-[14px] font-medium leading-snug text-ink">{r.backupAlert.line}</p> : null}
                 <p className={`text-[14px] font-medium ${r.owner.kind === 'owner' ? 'text-ink-muted' : 'text-ink'}`}>{r.owner.label}</p>
               </li>
             ))}
