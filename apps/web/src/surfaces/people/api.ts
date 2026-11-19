@@ -151,17 +151,12 @@ export interface FilterOptions {
   members: { userId: string; name: string; role: string; active: boolean }[];
 }
 export const FILTER_OPTIONS_KEY = ['lists', 'filter-options'] as const;
-/** module 57's stage labels key (admin/parity/StageLabelsPage.tsx), so a rename there refreshes the builder */
-export const STAGE_LABELS_KEY = ['settings', 'stage-labels'] as const;
+// the stage words (labels, definitions) and their cache key live in stageGuide.ts: the web's one source (R-STG-1)
+export { STAGE_LABELS_KEY, useStageGuide, useStageLabels } from './stageGuide.js';
 
 export function useFilterOptions(enabled = true) {
   const api = useApi();
   return useQuery<FilterOptions, ApiError>({ queryKey: FILTER_OPTIONS_KEY, queryFn: ({ signal }) => api.get('/people/filter-options', { signal }), enabled, staleTime: 60_000 });
-}
-
-export function useStageLabels() {
-  const api = useApi();
-  return useQuery<{ labels: Record<string, string>; stages: { key: string; label: string }[] }, ApiError>({ queryKey: STAGE_LABELS_KEY, queryFn: ({ signal }) => api.get('/stage-labels', { signal }), staleTime: 60_000 });
 }
 
 /** How long the builder waits after the last change before it counts (review: one count per keystroke at 250k). */
@@ -201,17 +196,6 @@ export function countText(c: { count: number; capped: boolean }): string {
   const n = c.capped ? `${c.count.toLocaleString('en-US')}+` : c.count.toLocaleString('en-US');
   return `${n} ${c.count === 1 && !c.capped ? 'person' : 'people'}`;
 }
-
-export const LEAD_STAGE_LABEL: Record<string, string> = {
-  new: 'New',
-  attempting: 'Attempting',
-  connected: 'Connected',
-  nurture: 'Nurture',
-  active: 'Active',
-  under_contract: 'Under contract',
-  closed: 'Closed',
-  lost: 'Lost',
-};
 
 /** Tag chip backgrounds from the design tokens (text stays `ink` for contrast in light and dark). */
 export function chipClass(color: TagColor | null): string {

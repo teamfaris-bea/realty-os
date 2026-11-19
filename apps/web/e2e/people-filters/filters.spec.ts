@@ -117,7 +117,7 @@ test('combine three filters (stage is not Lost, source is not Website, tags has 
   const s = sheet(page);
   await tap(page, s.getByRole('button', { name: 'Stage', exact: true }), c);
   await tap(page, s.getByText('is not', { exact: true }), c);
-  await tap(page, s.getByRole('checkbox', { name: 'Lost' }), c);
+  await tap(page, s.getByRole('checkbox', { name: 'Not moving forward' }), c);
   await tap(page, s.getByRole('button', { name: 'Add another' }), c);
   await tap(page, s.getByRole('button', { name: 'Source', exact: true }), c);
   await tap(page, s.getByText('is not', { exact: true }), c);
@@ -146,7 +146,7 @@ test('the name box narrows inside a filter; an empty result names the filters to
   await expect(countLine(page, 1)).toBeVisible();
   await page.getByRole('searchbox', { name: 'Search people by name' }).fill('zzz nobody');
   await expect(countLine(page, 0)).toBeVisible();
-  await expect(page.getByText('No one you can see matches all of these filters. Try removing Stage is Closed or Name contains “zzz nobody”.')).toBeVisible();
+  await expect(page.getByText('No one you can see matches all of these filters. Try removing Stage is Closed sale or Name contains “zzz nobody”.')).toBeVisible();
   await page.getByRole('searchbox', { name: 'Search people by name' }).fill('');
   await expect(countLine(page, 1)).toBeVisible();
 });
@@ -186,7 +186,7 @@ test('edit a saved list\'s filters: People → list → Edit filters → the fil
   await expect(countLine(page, 4)).toBeVisible();
   await tap(page, page.getByRole('button', { name: /^Edit filters/ }), c);
   await tap(page, sheet(page).getByRole('button', { name: 'Change filter Stage is Active' }), c);
-  await tap(page, sheet(page).getByRole('checkbox', { name: 'Nurture' }), c);
+  await tap(page, sheet(page).getByRole('checkbox', { name: 'Long-term follow-up' }), c);
   await tap(page, sheet(page).getByRole('button', { name: 'Done' }), c);
   await tap(page, sheet(page).getByRole('button', { name: 'Save changes to “Active buyers”' }), c);
   await expect(sheet(page)).toHaveCount(0);

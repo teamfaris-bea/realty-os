@@ -2,10 +2,14 @@
 // import @realty/api), and the queries the people surfaces share.
 import { useQuery } from '@tanstack/react-query';
 import { type ApiError, useApi } from '../../shell/index.js';
+import type { StageGuideRow } from '../people/stageGuide.js';
 
 export interface StageInfo {
   stage: string;
   label: string;
+  /** R-STG-1: what is true of a person in this stage, and what the stage does not mean */
+  definition: string;
+  notThis: string;
   locked: string[];
   lockedReason: string | null;
 }
@@ -58,6 +62,8 @@ export interface Details {
   doNotContact: boolean;
   stage: StageInfo;
   stageLabels: Record<string, string>;
+  /** R-STG-1: the eight stages in order, each with the label shown (the team's, else the default) and its two lines */
+  stageGuide: StageGuideRow[];
   addresses: AddressView[];
   collaborators: CollaboratorView[];
   relationships: RelationshipView[];
@@ -114,9 +120,8 @@ export function useCandidates(contactId: string, enabled: boolean) {
   return useQuery<{ members: Candidate[] }, ApiError>({ queryKey: ['people', 'mention-candidates', contactId], enabled, staleTime: 60_000, queryFn: ({ signal }) => api.get(`/contacts/${contactId}/mention-candidates`, { signal }) });
 }
 
-export const STAGE_KEYS = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'] as const;
-export const DEFAULT_STAGE_LABEL: Record<string, string> = { new: 'New', attempting: 'Attempting', connected: 'Connected', nurture: 'Nurture', active: 'Active', under_contract: 'Under contract', closed: 'Closed', lost: 'Lost' };
-export const stageLabelOf = (key: string, labels: Record<string, string>) => labels[key] ?? DEFAULT_STAGE_LABEL[key] ?? key.replace(/_/g, ' ');
+// stage keys, labels and definitions: people/stageGuide.ts (the web's one source, R-STG-1)
+export { STAGE_KEYS, type StageGuideRow, guideOf, labelIn } from '../people/stageGuide.js';
 
 export const RELATIONSHIP_LABEL: Record<string, string> = { spouse_partner: 'Spouse / partner', family: 'Family', household: 'Household', co_buyer: 'Co-buyer', co_seller: 'Co-seller', referred_by: 'Referred by', other: 'Other' };
 

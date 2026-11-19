@@ -6,7 +6,7 @@
 import { useId, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useReachability } from '../../reasons/index.js';
-import { type Details, STAGE_KEYS, stageLabelOf } from './api.js';
+import { type Details, guideOf, labelIn } from './api.js';
 import { usePersonAction, useToast } from './hooks.js';
 
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
@@ -41,7 +41,8 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
   const act = usePersonAction<{ stage: { stage: string; label: string }; previousStage: string; automation?: StageAutomation }>(contactId);
   const toast = useToast();
   const lockedId = useId();
-  const labels = details.stageLabels;
+  // R-STG-1: the eight stages as the API describes them for this team
+  const guide = guideOf(details.stageGuide);
   const current = details.stage.stage;
   const locked = new Set(details.stage.locked);
   // a reply in the open website chat is first contact (owner decision D8) and opens the stages; a chat that ended, was
@@ -61,7 +62,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
     const still = a && 'started' in a ? `. ${a.started} is still running` : '';
     toast({
       text: plan ? `Stage: ${r.data.stage.label}. ${plan}` : `Stage: ${r.data.stage.label}`,
-      undo: () => void act.run('POST', `/contacts/${contactId}/stage`, { stage: prev }).then((u) => u.ok && toast({ text: `Stage back to ${stageLabelOf(prev, labels)}${still}` })),
+      undo: () => void act.run('POST', `/contacts/${contactId}/stage`, { stage: prev }).then((u) => u.ok && toast({ text: `Stage back to ${labelIn(guide, prev)}${still}` })),
     });
   };
 
@@ -91,7 +92,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
             </div>
           ) : null}
           <ul className="flex flex-col gap-1" aria-label="Stages">
-            {STAGE_KEYS.map((s) => {
+            {guide.map(({ key: s, label }) => {
               const isLocked = locked.has(s);
               return (
                 <li key={s}>
@@ -103,7 +104,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
                     onClick={() => void move(s)}
                     className={`flex min-h-tap w-full items-center justify-between rounded-xl px-3 text-left text-[17px] ${s === current ? 'bg-accent-soft font-semibold text-ink' : 'text-ink'} disabled:text-ink-muted`}
                   >
-                    <span>{stageLabelOf(s, labels)}</span>
+                    <span>{label}</span>
                     <span className="text-[14px] text-ink-muted">{s === current ? 'Current' : isLocked ? 'Locked' : ''}</span>
                   </button>
                 </li>

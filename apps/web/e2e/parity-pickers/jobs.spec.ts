@@ -218,7 +218,7 @@ test('the stage-to-plan setting: the Owner picks "Active buyer" (the tenant\'s l
   await page.goto(`${stack.webUrl}/settings/playbooks/${world.ids.buyerPlan}`);
   const select = page.getByLabel('Start this plan when a person enters stage');
   await expect(select).toHaveValue('');
-  await expect(select.locator('option')).toHaveText(['No stage', 'New', 'Attempting', 'Connected', 'Nurture', 'Active buyer', 'Under contract', 'Closed', 'Lost']);
+  await expect(select.locator('option')).toHaveText(['No stage', 'New lead', 'Trying to reach', 'Connected', 'Long-term follow-up', 'Active buyer', 'Under contract', 'Closed sale', 'Not moving forward']);
   await select.selectOption({ label: 'Active buyer' });
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Saved. This playbook now starts when a person enters “Active buyer”.')).toBeVisible();

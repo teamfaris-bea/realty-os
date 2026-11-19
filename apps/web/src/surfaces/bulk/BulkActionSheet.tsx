@@ -21,21 +21,11 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useCommand, useSession } from '../../shell/index.js';
+import { useStageGuide } from '../people/stageGuide.js';
 import { KIND_LABEL } from '../settings/playbooks.js';
 import { type TemplateView, readableMergeFields } from '../templates/api.js';
 import { BULK_ERROR_MESSAGES, BULK_KEY, type BulkActionView, type BulkKind, KIND_WORDS, reasonWordsFor } from './api.js';
 import { type AssignTarget, type PlanChoice, mayBulkAssign, mayBulkEnroll, useAssignTargets, usePlanChoices } from './choices.js';
-
-export const STAGE_CHOICES: readonly { key: string; label: string }[] = [
-  { key: 'new', label: 'New' },
-  { key: 'attempting', label: 'Attempting' },
-  { key: 'connected', label: 'Connected' },
-  { key: 'nurture', label: 'Nurture' },
-  { key: 'active', label: 'Active' },
-  { key: 'under_contract', label: 'Under contract' },
-  { key: 'closed', label: 'Closed' },
-  { key: 'lost', label: 'Lost' },
-];
 
 /** A whole smart list as resolveSelection's input (PARITY_PLAN §4.2): a saved list, or an unsaved definition (a tag chip view). */
 export type BulkListSelection = { listId: string } | { definition: unknown };
@@ -95,6 +85,8 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
   const [draft, setDraft] = useState<BulkActionView | null>(null);
   const [confirmed, setConfirmed] = useState<BulkActionView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // R-STG-1: the stages a bulk move offers read as the team's labels (asked only when the sheet picks a stage)
+  const stageGuide = useStageGuide(kind === 'stage');
   const templates = useQuery<{ templates: TemplateView[] }, ApiError>({
     queryKey: ['templates', kind === 'email' ? 'email' : 'sms'],
     queryFn: ({ signal }) => api.get<{ templates: TemplateView[] }>(`/templates?channel=${kind === 'email' ? 'email' : 'sms'}`, { signal }),
@@ -191,7 +183,7 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
       ) : null}
       {!draft && needsChoice && kind === 'stage' ? (
         <section aria-label="Stages" className="grid grid-cols-2 gap-1.5">
-          {STAGE_CHOICES.map((s) => (
+          {stageGuide.stages.map((s) => (
             <button key={s.key} type="button" disabled={create.pending} onClick={() => void build({ stage: s.key, label: `Move to ${s.label}` })} className="min-h-tap rounded-xl border border-line bg-surface px-3 text-[17px] text-ink active:bg-surface-2 disabled:opacity-60">
               {s.label}
             </button>

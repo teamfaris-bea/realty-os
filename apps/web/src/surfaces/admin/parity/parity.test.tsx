@@ -102,10 +102,10 @@ describe('Admin → Stage labels (R-PAR-13)', () => {
     const fake = new FakeFetch().on('GET /stage-labels', { status: 200, body: stages({ nurture: 'Long term' }) }).on('PUT /stage-labels', (c) => ({ status: 200, body: stages((c.body as { labels: Record<string, string> }).labels) }));
     app(fake, '/admin/stage-labels');
     const user = userEvent.setup();
-    const nurture = await screen.findByLabelText('Nurture');
+    const nurture = await screen.findByLabelText('Long-term follow-up');
     expect(nurture).toHaveValue('Long term');
     await user.clear(nurture);
-    await user.type(screen.getByLabelText('New'), '  Fresh lead ');
+    await user.type(screen.getByLabelText('New lead'), '  Fresh lead ');
     await user.click(screen.getByRole('button', { name: 'Save labels' }));
     await waitFor(() => expect(fake.callsTo('PUT /stage-labels')[0]?.body).toEqual({ labels: { new: 'Fresh lead' } }));
     await waitFor(() => expect(screen.getByTestId('toast')).toHaveTextContent('Stage labels saved'));
@@ -117,7 +117,7 @@ describe('Admin → Stage labels (R-PAR-13)', () => {
     const fake = new FakeFetch().on('GET /stage-labels', { status: 200, body: stages({}) }).on('PUT /stage-labels', err(422, 'STAGE_LABEL_INVALID'));
     app(fake, '/admin/stage-labels');
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Lost'), 'x');
+    await user.type(await screen.findByLabelText('Not moving forward'), 'x');
     await user.click(screen.getByRole('button', { name: 'Save labels' }));
     expect(await screen.findByText('Each stage label is 1 to 24 characters.')).toBeInTheDocument();
   });

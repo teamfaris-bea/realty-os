@@ -187,12 +187,12 @@ test('change stage: pill → stage = 2 with an Undo toast; locked stages say why
   await signIn(page);
   await openContact(page, ben.id, 'Ben Doe');
   const stage = { taps: 0 };
-  await tap(page, page.getByRole('button', { name: 'Stage: New. Change stage' }), stage);
-  await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Nurture/ }), stage);
-  await expect(peopleToast(page).getByText('Stage: Nurture')).toBeVisible();
+  await tap(page, page.getByRole('button', { name: 'Stage: New lead. Change stage' }), stage);
+  await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Long-term follow-up/ }), stage);
+  await expect(peopleToast(page).getByText('Stage: Long-term follow-up')).toBeVisible();
   expect(stage.taps).toBe(2);
   await peopleToast(page).getByRole('button', { name: 'Undo' }).click();
-  await expect(page.getByRole('button', { name: 'Stage: New. Change stage' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Stage: New lead. Change stage' })).toBeVisible({ timeout: 15_000 });
 
   // a routed lead nobody reached yet: the picker shows the locked stages and why, up front
   const lead = await stack.fixture<{ id: string; state: string }>('/offer', { name: isPhone(page) ? 'Lou Phone' : 'Lou Desk' });
@@ -203,8 +203,8 @@ test('change stage: pill → stage = 2 with an Undo toast; locked stages say why
   await page.getByRole('button', { name: /^Stage: New/ }).click();
   const picker = page.getByRole('dialog');
   await expect(picker.getByText('Reach them first.')).toBeVisible();
-  await expect(picker.getByRole('button', { name: /^Lost/ })).toBeDisabled();
-  await expect(picker.getByRole('button', { name: /^Attempting/ })).toBeEnabled();
+  await expect(picker.getByRole('button', { name: /^Not moving forward/ })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: /^Trying to reach/ })).toBeEnabled();
   await shot(page, 'stage-locked');
   await picker.getByRole('button', { name: 'Cancel' }).click();
 });

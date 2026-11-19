@@ -160,7 +160,7 @@ test('J6: a FUB import dry-runs with counts that add up, commits stages, tags an
   const ana = (await stack.sql<{ id: string }>("SELECT id FROM contacts WHERE import_batch_id = $1 AND first_name = 'Ana'", [batchId]))[0]!.id;
   await page.goto(`${stack.webUrl}/contacts/${ana}`);
   await expect(page.getByRole('heading', { level: 1, name: `Ana ${surname}` })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('button', { name: /^Stage: Active\./ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Stage: Active client\./ })).toBeVisible();
   const tags = page.getByRole('region', { name: 'Tags' });
   for (const t of ['Buyer', 'Relocating', 'FUB stage: Hot Prospect']) await expect(tags.getByRole('button', { name: `Tag ${t}, show everyone with it` })).toBeVisible();
   // the typed custom field values, in the person's Details section (PARITY_PLAN §5), each in its field's own

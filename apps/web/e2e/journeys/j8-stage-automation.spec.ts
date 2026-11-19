@@ -53,7 +53,7 @@ async function toActive(page: Page, p: { id: string; name: string }) {
   await page.goto(`${stack.webUrl}/contacts/${p.id}`);
   await expect(page.getByRole('heading', { level: 1, name: p.name })).toBeVisible({ timeout: 15_000 });
   const n = { taps: 0 };
-  await tap(page, page.getByRole('button', { name: 'Stage: New. Change stage' }), n);
+  await tap(page, page.getByRole('button', { name: 'Stage: New lead. Change stage' }), n);
   await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Active/ }), n);
   expect(n.taps).toBe(2);
 }
@@ -67,7 +67,7 @@ test('J8: Stage → Active starts the Buyer plan; the toast says so; the enrollm
   await signIn(page, stack, agent);
   await toActive(page, amy);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText('Stage: Active. Started Buyer plan')).toBeVisible({ timeout: 15_000 });
+  await expect(toast.getByText('Stage: Active client. Started Buyer plan')).toBeVisible({ timeout: 15_000 });
   await shot(page, info, 'j8', '1-plan-started');
 
   const [d] = await decisions(amy.id);
@@ -104,8 +104,8 @@ test('J8: a person who texted STOP: the stage changes, the toast says why the pl
   await signIn(page, stack, agent);
   await toActive(page, bo);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText("Stage: Active. Buyer plan didn't start: they can't be messaged")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('button', { name: 'Stage: Active. Change stage' })).toBeVisible();
+  await expect(toast.getByText("Stage: Active client. Buyer plan didn't start: they can't be messaged")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Stage: Active client. Change stage' })).toBeVisible();
   await shot(page, info, 'j8', '2-plan-skipped-optout');
 
   expect(await decisions(bo.id)).toEqual([expect.objectContaining({ outcome: 'skipped', reason: 'cannot_be_reached', playbook_id: playbookId, enrollment_id: null })]);

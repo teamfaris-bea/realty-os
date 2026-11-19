@@ -14,21 +14,10 @@ import { type WebChatFixture, reachability } from '../feed/lib/testing.js';
 import type { Details } from './api.js';
 import { StagePill } from './StagePill.js';
 import { ToastProvider } from './hooks.js';
+import { detailsFixture, stageFixture } from './testing.js';
 
 const C = '01900000-0000-7000-8000-0000000c0001';
-const details = (): Details => ({
-  contactId: C,
-  rowVersion: 1,
-  doNotContact: false,
-  stage: { stage: 'new', label: 'New', locked: ['connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'], lockedReason: 'STAGE_NEEDS_CONTACT' },
-  stageLabels: {},
-  addresses: [],
-  collaborators: [],
-  relationships: [],
-  removedPoints: [],
-  canEdit: true,
-  canManageCollaborators: false,
-});
+const details = (): Details => detailsFixture(C, 'new', { stage: stageFixture('new', { locked: ['connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'], lockedReason: 'STAGE_NEEDS_CONTACT' }) });
 
 function mount(chat: WebChatFixture) {
   const fake = new FakeFetch()
@@ -53,7 +42,7 @@ function mount(chat: WebChatFixture) {
 describe('StagePill: the lock says what reaches the lead (R-PAR-14, owner decision D8)', () => {
   it('E310: a chat lead whose chat is open is offered Reply in the chat first, and the sheet says a chat reply opens the stages', async () => {
     const { u, on } = mount('open');
-    await u.click(screen.getByRole('button', { name: 'Stage: New. Change stage' }));
+    await u.click(screen.getByRole('button', { name: 'Stage: New lead. Change stage' }));
     const sheet = screen.getByRole('dialog');
     expect(within(sheet).getByText(/the locked stages open once you reach them: a call, text, email or reply in their website chat/)).toBeInTheDocument();
     const reply = await within(sheet).findByRole('button', { name: 'Reply in chat' });
@@ -65,7 +54,7 @@ describe('StagePill: the lock says what reaches the lead (R-PAR-14, owner decisi
 
   it.each(['none', 'ended', 'off'] as const)('E312: no Reply in chat when the chat is %s (no chat, the visitor left, the widget turned off: a reply there is refused, and is no touch)', async (chat) => {
     const { u, fake } = mount(chat);
-    await u.click(screen.getByRole('button', { name: 'Stage: New. Change stage' }));
+    await u.click(screen.getByRole('button', { name: 'Stage: New lead. Change stage' }));
     const sheet = screen.getByRole('dialog');
     await waitFor(() => expect(fake.callsTo(`GET /contacts/${C}/reachability`)).toHaveLength(1));
     await new Promise((r) => setTimeout(r, 20));

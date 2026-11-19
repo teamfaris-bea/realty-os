@@ -33,7 +33,6 @@ import {
   type Clause,
   type Definition,
   EVERYONE,
-  LEAD_STAGE_LABEL,
   LISTS_KEY,
   type PersonView,
   type SmartListView,
@@ -49,6 +48,7 @@ import {
   usePeopleCount,
   useFields,
   useFilterOptions,
+  useStageGuide,
   useStageLabels,
   useTags,
 } from './api.js';
@@ -242,24 +242,25 @@ function People() {
 
 /** The builder's catalogs: stage labels, sources and members, tags, custom fields (all member-readable). */
 function useCatalogs(meId: string | null): { ready: boolean; value: Catalogs } {
-  const stages = useStageLabels();
+  const stagesQ = useStageLabels();
+  const stages = useStageGuide();
   const options = useFilterOptions();
   const tags = useTags();
   const fields = useFields();
   const value = useMemo<Catalogs>(
     () => ({
-      stageLabel: (k: string) => stages.data?.stages.find((s) => s.key === k)?.label ?? LEAD_STAGE_LABEL[k] ?? k,
+      stageLabel: stages.labelOf,
       sources: options.data?.sources ?? [],
       members: options.data?.members ?? [],
       tags: tags.data?.tags ?? [],
       fields: fields.data?.fields ?? [],
       meId,
     }),
-    [stages.data, options.data, tags.data, fields.data, meId],
+    [stages.labelOf, options.data, tags.data, fields.data, meId],
   );
   // a catalog that failed still lets the builder open (its choices are just empty; the label falls back)
   const settled = (x: { isPending: boolean }) => !x.isPending;
-  return { ready: settled(stages) && settled(options) && settled(tags) && settled(fields), value };
+  return { ready: settled(stagesQ) && settled(options) && settled(tags) && settled(fields), value };
 }
 
 /** PATCH for "Save changes" with the plain sentence of a refusal (the builder shows it). */
@@ -422,6 +423,8 @@ function Rows(p: {
   const [bulk, setBulk] = useState<BulkRequest | null>(null);
   const [tagFor, setTagFor] = useState<BulkKind | null>(null);
   const [saving, setSaving] = useState(false);
+  // R-STG-1: a row's stage reads as the team's label (asked once for the list, not per row)
+  const { labelOf: stageLabel } = useStageGuide();
   const selCount = p.allSelected ? (count.data?.count ?? people.length) : p.selected.size;
   const selection = p.allSelected ? selectionOf(p.source) : { contactIds: [...p.selected] };
   // R-PAR-8: people hand-picked from a list built on a protected tag are still that list's audience, so the
@@ -500,7 +503,7 @@ function Rows(p: {
 
       <ul aria-label="People" className={`flex flex-col divide-y divide-line rounded-2xl border border-line bg-surface ${people.length === 0 ? 'hidden' : ''}`}>
         {people.map((x) => (
-          <PersonRow key={x.id} person={x} checked={p.allSelected || p.selected.has(x.id)} onToggle={canBulk ? () => toggle(x.id) : null} onOpen={() => openPerson(x.id)} onTag={p.onTag} />
+          <PersonRow key={x.id} person={x} checked={p.allSelected || p.selected.has(x.id)} onToggle={canBulk ? () => toggle(x.id) : null} onOpen={() => openPerson(x.id)} onTag={p.onTag} stageLabel={stageLabel} />
         ))}
       </ul>
       {q.hasNextPage ? (
@@ -580,9 +583,9 @@ function Rows(p: {
   );
 }
 
-function PersonRow({ person, checked, onToggle, onOpen, onTag }: { person: PersonView; checked: boolean; onToggle: (() => void) | null; onOpen: () => void; onTag: (t: { id: string; name: string }) => void }) {
+function PersonRow({ person, checked, onToggle, onOpen, onTag, stageLabel }: { person: PersonView; checked: boolean; onToggle: (() => void) | null; onOpen: () => void; onTag: (t: { id: string; name: string }) => void; stageLabel: (key: string) => string }) {
   const now = useNow(60_000);
-  const meta = [LEAD_STAGE_LABEL[person.stage] ?? person.stage, person.owner?.displayName ? `Owner ${person.owner.displayName}` : 'No owner', person.lastActivityAt ? `Active ${relativeTime(Date.parse(person.lastActivityAt), now)}` : 'No activity yet'];
+  const meta = [stageLabel(person.stage), person.owner?.displayName ? `Owner ${person.owner.displayName}` : 'No owner', person.lastActivityAt ? `Active ${relativeTime(Date.parse(person.lastActivityAt), now)}` : 'No activity yet'];
   return (
     <li className="flex items-start gap-1 px-2 py-2 md:px-3">
       {onToggle ? (
