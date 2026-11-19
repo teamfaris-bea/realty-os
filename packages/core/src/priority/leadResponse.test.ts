@@ -204,9 +204,15 @@ describe('R-TEAMQ-18 the backup in the roll-up (b19 step 2)', () => {
     expect(measureInquiry(list[3]!, NOW, CAL).backupAlert).toBeNull();
   });
 
-  it('R-TEAMQ-18: with no alert anywhere both counts are zero, never missing; a team lead alerted as the fallback counts as alerted and as the backup when they try', () => {
-    expect(rollUpResponses([tried(60), inq()], NOW, CAL).totals).toMatchObject({ backupAlerted: 0, byBackup: 0 });
-    const fallback = tried(500, { backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(9), recipient: 'team_lead' } }, { byUserId: user(9), role: 'backup' });
-    expect(rollUpResponses([fallback], NOW, CAL).totals).toMatchObject({ inquiries: 1, backupAlerted: 1, byBackup: 1 });
+  it('R-TEAMQ-18 R-TEAMQ-25 E890 (review fix L4): with no alert anywhere every count is zero, never missing; a TEAM LEAD alerted in the backup\'s place is counted as a team lead alerted, and their attempt as the team lead\'s: never as "the backup" (this line used to say backupAlerted 1, byBackup 1)', () => {
+    expect(rollUpResponses([tried(60), inq()], NOW, CAL).totals).toMatchObject({ backupAlerted: 0, byBackup: 0, teamLeadAlerted: 0, byTeamLead: 0, adminsAlerted: 0 });
+    const fallback = tried(500, { backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(9), recipient: 'team_lead' } }, { byUserId: user(9), role: 'team_lead' });
+    expect(rollUpResponses([fallback], NOW, CAL).totals).toMatchObject({ inquiries: 1, backupAlerted: 0, byBackup: 0, teamLeadAlerted: 1, byTeamLead: 1, adminsAlerted: 0 });
+    // the Owners and Admins alerted when there is no team lead: their own count
+    const admins = inq({ backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(3), recipient: 'admins' } });
+    expect(rollUpResponses([fallback, admins, tried(600, alerted(), { byUserId: user(7), role: 'backup' })], NOW, CAL).totals).toMatchObject({ inquiries: 3, backupAlerted: 1, byBackup: 1, teamLeadAlerted: 1, byTeamLead: 1, adminsAlerted: 1 });
+    // a team lead who was alerted but whose team's owner made the first attempt: alerted, not "by the team lead"
+    const ownerFirst = tried(400, { backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(9), recipient: 'team_lead' } }, { byUserId: user(1), role: 'owner' });
+    expect(rollUpResponses([ownerFirst], NOW, CAL).totals).toMatchObject({ teamLeadAlerted: 1, byTeamLead: 0, backupAlerted: 0 });
   });
 });

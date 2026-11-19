@@ -774,13 +774,14 @@ describe('R-TEAMQ-18 the team work queue and the response report show the backup
   interface QueueRow {
     contact: { id: string };
     why: string;
-    backupAlert: { at: string; alerted: boolean; line: string } | null;
+    backupAlert: { at: string; alerted: boolean; recipient: string | null; line: string } | null;
   }
   interface QueueGroup {
     key: string;
     rows: QueueRow[];
     total: number;
     backupAlerted: number | null;
+    othersAlerted: number | null;
   }
   const newLeads = async (c: TestClient): Promise<QueueGroup> => {
     const r = await call<{ groups: QueueGroup[] }>(c, 'GET', '/team/queue');
@@ -828,8 +829,10 @@ describe('R-TEAMQ-18 the team work queue and the response report show the backup
     expect(g.rows.find((r) => r.contact.id === rescued.contactId)).toBeUndefined();
     expect(g.rows.find((r) => r.contact.id === prompt.contactId)).toBeUndefined();
     // every count with its denominator: alerted rows of all waiting rows (other tests' leads are in both numbers)
-    const alertedRows = g.rows.filter((r) => r.backupAlert?.alerted === true).length;
+    // R-TEAMQ-25 (review fix L4): "backup alerted" counts only the alerts that went to the backup; a team lead or the Owners and Admins alerted in their place are counted apart
+    const alertedRows = g.rows.filter((r) => r.backupAlert?.alerted === true && r.backupAlert.recipient === 'backup').length;
     expect(g.backupAlerted).toBe(alertedRows);
+    expect(g.othersAlerted).toBe(g.rows.filter((r) => r.backupAlert?.alerted === true && r.backupAlert.recipient !== 'backup').length);
     expect(g.backupAlerted!).toBeGreaterThanOrEqual(1);
     expect(g.backupAlerted!).toBeLessThanOrEqual(g.total);
     // the Team Lead sees their team's waiting lead with the same line; an agent has no queue
@@ -848,6 +851,37 @@ describe('R-TEAMQ-18 the team work queue and the response report show the backup
     expect(byId.get(prompt.inquiryId)).toMatchObject({ attempt: { role: 'owner' }, backupAlert: null });
     // no client name, number or message in the alert line, and no id of another team anywhere
     expect(row.backupAlert!.line).not.toMatch(/Rivera|\d{3}[-.\s]\d{4}/);
+  });
+
+  it('R-TEAMQ-25 E890 (review fix L4): an alert that went to a TEAM LEAD is never counted or worded as "the backup": the queue counts it apart, the report counts "team lead alerted" and labels the team lead\'s attempt team_lead', async () => {
+    const world = (await assistantWorld(h, { agents: 1, teamLead: true })) as CommsWorld;
+    await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
+    const b = await h.invite(world.owner, 'agent');
+    const src = await source('Team lead fallback (alert test)', { world, backupUser: b });
+    const lead = await arrive(src);
+    await accept(lead, world);
+    await freshReauth(h, world.owner);
+    const members = await call<{ members: { userId: string; version: number }[] }>(world.owner, 'GET', '/members');
+    expect((await call(world.owner, 'PATCH', `/members/${b.userId}`, { status: 'suspended', version: members.body.members.find((m) => m.userId === b.userId)!.version })).status).toBe(200);
+    await minutesPass(lead, 4, world.tenantId);
+    await run();
+    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient])).toEqual([['alerted', world.teamLead!.userId, 'team_lead']]);
+
+    // the queue: not "backup alerted"
+    const q = await call<{ groups: { key: string; rows: { contact: { id: string }; backupAlert: { alerted: boolean; recipient: string | null; line: string } | null }[]; total: number; backupAlerted: number | null; othersAlerted: number | null }[] }>(world.owner, 'GET', '/team/queue');
+    const g = q.body.groups.find((x) => x.key === 'new_lead')!;
+    expect(g.rows.find((r) => r.contact.id === lead.contactId)!.backupAlert).toMatchObject({ alerted: true, recipient: 'team_lead', line: expect.stringMatching(/the team lead, .+, was alerted at/) });
+    expect([g.backupAlerted, g.othersAlerted, g.total]).toEqual([0, 1, 1]);
+
+    // the team lead then texts: their attempt is the team lead's, and the report's "backup" counts stay at zero
+    await humanText(world.teamLead!, lead.contactId);
+    interface Rep {
+      sources: { sourceId: string; inquiries: number; attempted: number; backupAlerted: number; byBackup: number; teamLeadAlerted: number; byTeamLead: number; adminsAlerted: number }[];
+      inquiries: { inquiryId: string; attempt: { role: string; by: { userId: string } | null } | null; backupAlert: { recipient: string } | null }[];
+    }
+    const rep = (await call<Rep>(world.owner, 'GET', '/team/lead-response?range=7d')).body;
+    expect(rep.inquiries.find((i) => i.inquiryId === lead.inquiryId)).toMatchObject({ attempt: { role: 'team_lead', by: { userId: world.teamLead!.userId } }, backupAlert: { recipient: 'team_lead' } });
+    expect(rep.sources.find((x) => x.sourceId === src.id)).toMatchObject({ inquiries: 1, attempted: 1, backupAlerted: 0, byBackup: 0, teamLeadAlerted: 1, byTeamLead: 1, adminsAlerted: 0 });
   });
 
   it('R-TEAMQ-18 R-TEN-1: another team\'s queue and report never show this team\'s alerts', async () => {

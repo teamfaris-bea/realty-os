@@ -164,6 +164,25 @@ describe('Lead response report', () => {
     expect(within(sign).queryByText('First attempt by the backup')).toBeNull();
   });
 
+  it('R-TEAMQ-25 E890 (review fix L4): an alert that went to a team lead is its own line with its own denominator, and that team lead\'s attempt is said as the team lead\'s: never "backup alerted", never "the backup"', async () => {
+    const byLead = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000ea', attempt: { at: '2026-11-09T18:09:00.000Z', kind: 'text', by: { userId: ID.ava, name: 'Ava Agent' }, role: 'team_lead', wallSeconds: 540, staffedSeconds: 540 }, waiting: null, automatedReplyAt: null, backupAlert: { at: '2026-11-09T18:03:00.000Z', to: { userId: ID.ava, name: 'Ava Agent' }, recipient: 'team_lead' } });
+    const r = report();
+    r.sources[0] = { ...r.sources[0]!, backupAlerted: 0, byBackup: 0, teamLeadAlerted: 1, byTeamLead: 1, adminsAlerted: 3, notWithin5: [byLead], notWithin5More: 0 };
+    leadAdminApp(fake(r), '/team/scoreboard', 'team_lead');
+    const region = await section();
+    const web = (await within(region).findByRole('heading', { level: 3, name: 'Website form' })).closest('li')!;
+    const n = r.sources[0]!.inquiries;
+    expect(within(web).getByText('Team lead alerted instead of the backup')).toBeInTheDocument();
+    expect(within(web).getByText('First attempt by that team lead')).toBeInTheDocument();
+    expect(within(web).getByText('1 of the 1 alerted')).toBeInTheDocument();
+    expect(within(web).getByText('Owners and Admins alerted (no team lead to tell)')).toBeInTheDocument();
+    expect(within(web).getByText('Owners and Admins alerted (no team lead to tell)').closest('div, li, dl, p')!.parentElement).toHaveTextContent(`3 of ${n}`);
+    expect(within(web).queryByText('First attempt by the backup')).toBeNull();
+    const rowEl = within(within(web).getByRole('list', { name: 'Not within 5 minutes, Website form' })).getAllByRole('listitem')[0]!;
+    expect(rowEl).toHaveTextContent(/First tried after 9 min: a text by Ava Agent, the team lead, after the alert went to them in the backup’s place\./);
+    expect(rowEl).not.toHaveTextContent(/the backup, after the backup alert/);
+  });
+
   it('R-TEAMQ-18 E857: an inquiry whose backup was alerted says who was alerted and how long after it arrived, the fallback in its own words', async () => {
     const alerted = inquiry({ backupAlert: { at: '2026-11-09T18:03:00.000Z', to: { userId: ID.ben, name: 'Ben Agent' }, recipient: 'backup' } });
     const fallback = inquiry({ inquiryId: '01900000-0000-7000-8000-0000000000e9', contact: { id: P.nia, name: 'Nia Night' }, backupAlert: { at: '2026-11-09T18:04:00.000Z', to: { userId: ID.ava, name: 'Ava Agent' }, recipient: 'team_lead' } });

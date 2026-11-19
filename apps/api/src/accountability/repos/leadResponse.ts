@@ -8,8 +8,9 @@
 //     (repos/teamQueue.ts HUMAN_MESSAGE / HUMAN_CALL, migration 0053), with who made it;
 //   - that person's role to the lead AT THAT MOMENT: `owner` when the ledger's latest event at or before the
 //     attempt names them as the owner (lead_ownership_events.owner_user_id is the owner AFTER the event),
-//     `backup` when this inquiry's minute-three alert had gone to them before the attempt (lead_backup_alerts, b19
-//     R-TEAMQ-18: read through its own policy, so a caller sees it exactly when they see the inquiry),
+//     `backup`, `team_lead` or `admin` when this inquiry's minute-three alert had gone to them, in that role, before
+//     the attempt (lead_backup_alerts, b19 R-TEAMQ-18 and R-TEAMQ-25: `backup` only for the source's named backup;
+//     read through its own policy, so a caller sees it exactly when they see the inquiry),
 //     `collaborator` when contact_collaborators held them then, else `other`;
 //   - the first automated message that went out after the arrival (reported apart, never an attempt);
 //   - the first inbound call of the lead a PERSON answered since the arrival, or the call that is the inquiry itself
@@ -40,8 +41,11 @@ export interface InquiryResponseRow extends HolderColumns {
   /** the lead's owner when the attempt was made (null: nobody owned it then, or the ledger is not the caller's to read) */
   owner_then: string | null;
   collaborator_then: boolean;
-  /** the attempt was made by the person this inquiry's backup alert went to, at or after the alert */
-  backup_then: boolean;
+  /**
+   * the attempt was made, at or after the alert, by someone this inquiry's alert went to (R-TEAMQ-25: in the role they
+   * were alerted in: the alerted member for `backup` and `team_lead`; any Owner or Admin for `admins`)
+   */
+  alerted_then: boolean;
   /** this inquiry's backup alert, when one was raised: when, to whom (their name), and whether as the fallback */
   backup_alert_at: Date | null;
   backup_alert_user: string | null;
@@ -76,7 +80,7 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
                       WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND k.user_id = h.by_user
                         AND k.created_at <= h.at AND (k.removed_at IS NULL OR k.removed_at > h.at)
                         AND (k.expires_at IS NULL OR k.expires_at > h.at)), false) AS collaborator_then,
-           COALESCE(ba.alerted_user_id = h.by_user AND h.at >= ba.decided_at, false) AS backup_then,
+           COALESCE(h.at >= ba.decided_at AND (ba.alerted_user_id = h.by_user OR (ba.recipient = 'admins' AND hm.role IN ('owner', 'admin'))), false) AS alerted_then,
            ba.decided_at AS backup_alert_at, ba.alerted_user_id AS backup_alert_user, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
            (SELECT min(m.dispatched_at) FROM messages m
              WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
@@ -95,6 +99,7 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
             ORDER BY k.started_at ASC LIMIT 1)) x
          ORDER BY x.at ASC LIMIT 1) h ON true
       LEFT JOIN users hu ON hu.id = h.by_user
+      LEFT JOIN memberships hm ON hm.tenant_id = c.tenant_id AND hm.user_id = h.by_user
       -- R-TEAMQ-22: the first call of theirs a person answered (never an attempt; its own state)
       LEFT JOIN LATERAL (
         SELECT k.answered_at, k.agent_user_id FROM calls k

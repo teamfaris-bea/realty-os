@@ -607,6 +607,8 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                       "enum": [
                         "owner",
                         "backup",
+                        "team_lead",
+                        "admin",
                         "collaborator",
                         "other",
                       ],
@@ -874,6 +876,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "adminsAlerted": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
             "answeredCalls": {
               "maximum": 9007199254740991,
               "minimum": 0,
@@ -895,6 +902,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "type": "integer",
             },
             "byBackup": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "byTeamLead": {
               "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer",
@@ -1032,6 +1044,8 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                             "enum": [
                               "owner",
                               "backup",
+                              "team_lead",
+                              "admin",
                               "collaborator",
                               "other",
                             ],
@@ -1255,6 +1269,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                 "null",
               ],
             },
+            "teamLeadAlerted": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
             "waiting": {
               "maximum": 9007199254740991,
               "minimum": 0,
@@ -1281,6 +1300,9 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "automatedReplies",
             "backupAlerted",
             "byBackup",
+            "teamLeadAlerted",
+            "byTeamLead",
+            "adminsAlerted",
             "sample",
             "medianStaffedSeconds",
             "p90StaffedSeconds",
@@ -1316,6 +1338,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
       "totals": {
         "additionalProperties": false,
         "properties": {
+          "adminsAlerted": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
           "answeredCalls": {
             "maximum": 9007199254740991,
             "minimum": 0,
@@ -1337,6 +1364,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "type": "integer",
           },
           "byBackup": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "byTeamLead": {
             "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer",
@@ -1375,6 +1407,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "minimum": 0,
             "type": "integer",
           },
+          "teamLeadAlerted": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
           "waiting": {
             "maximum": 9007199254740991,
             "minimum": 0,
@@ -1401,6 +1438,9 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
           "automatedReplies",
           "backupAlerted",
           "byBackup",
+          "teamLeadAlerted",
+          "byTeamLead",
+          "adminsAlerted",
           "sample",
           "medianStaffedSeconds",
           "p90StaffedSeconds",
@@ -2364,6 +2404,18 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "minimum": 0,
               "type": "integer",
             },
+            "othersAlerted": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "rows": {
               "items": {
                 "additionalProperties": false,
@@ -2389,10 +2441,26 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                             "minLength": 1,
                             "type": "string",
                           },
+                          "recipient": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "backup",
+                                  "team_lead",
+                                  "admins",
+                                ],
+                                "type": "string",
+                              },
+                              {
+                                "type": "null",
+                              },
+                            ],
+                          },
                         },
                         "required": [
                           "at",
                           "alerted",
+                          "recipient",
                           "line",
                         ],
                         "type": "object",
@@ -2545,6 +2613,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "more",
             "atLeast",
             "backupAlerted",
+            "othersAlerted",
             "answeredCalls",
           ],
           "type": "object",

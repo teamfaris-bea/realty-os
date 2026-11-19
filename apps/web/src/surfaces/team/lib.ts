@@ -166,7 +166,7 @@ export interface TeamQueueRow {
    * new leads only (b19 step 2, R-TEAMQ-18): the minute-three backup alert, as the server's own line ("Backup
    * alerted at 2:06 PM: Sam T.", the time in the team's zone); `alerted` false: nobody could be alerted
    */
-  backupAlert?: { at: string; alerted: boolean; line: string } | null;
+  backupAlert?: { at: string; alerted: boolean; recipient?: 'backup' | 'team_lead' | 'admins' | null; line: string } | null;
   /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived (the why line says so) */
   answeredCallAt?: string | null;
 }
@@ -182,6 +182,8 @@ export interface TeamQueueGroup {
   atLeast: boolean;
   /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
   backupAlerted?: number | null;
+  /** new_lead only (R-TEAMQ-25): of `total`, the rows whose alert went to a team lead or to the Owners and Admins instead */
+  othersAlerted?: number | null;
   /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
   answeredCalls?: number | null;
 }
@@ -207,10 +209,16 @@ export function queueWait(key: TeamQueueGroupKey, r: Pick<TeamQueueRow, 'waiting
   return `Waiting ${wait}${staffed}`;
 }
 
-/** "Backup alerted for 2 of 5." (R-TEAMQ-18; the count with its denominator; null when no row's backup was alerted) */
-export function queueBackupLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 'backupAlerted'>): string | null {
-  if (g.backupAlerted === undefined || g.backupAlerted === null || g.backupAlerted <= 0) return null;
-  return `Backup alerted for ${g.backupAlerted} of ${queueCount(g)}.`;
+/**
+ * "Backup alerted for 2 of 5." and, apart, "A team lead or the Owners and Admins were alerted instead for 1 of 5."
+ * (R-TEAMQ-18, R-TEAMQ-25: an alert that did not go to the backup is never counted as the backup's; each count with
+ * its denominator; null when no row was alerted)
+ */
+export function queueBackupLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 'backupAlerted' | 'othersAlerted'>): string | null {
+  const parts: string[] = [];
+  if ((g.backupAlerted ?? 0) > 0) parts.push(`Backup alerted for ${g.backupAlerted} of ${queueCount(g)}.`);
+  if ((g.othersAlerted ?? 0) > 0) parts.push(`A team lead or the Owners and Admins were alerted instead for ${g.othersAlerted} of ${queueCount(g)}.`);
+  return parts.length === 0 ? null : parts.join(' ');
 }
 
 /** "A person answered the call of 1 of 5; nobody has called back, texted or emailed." (R-TEAMQ-22; null when no row's call was answered) */
@@ -251,7 +259,7 @@ export interface ResponseInquiry {
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
   offHours: boolean;
   countedFrom: string;
-  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
+  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'team_lead' | 'admin' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
   /** R-TEAMQ-22: a person answered the lead's own call since it arrived (never an attempt): when, by whom, how long after the arrival */
   answeredCall?: { at: string; by: { userId: string; name: string | null } | null; wallSeconds: number; staffedSeconds: number } | null;
   /** R-TEAMQ-22: attempted, else answered_call, else waiting */
@@ -276,6 +284,10 @@ export interface ResponseRollup {
   /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first tried by the alerted person */
   backupAlerted?: number;
   byBackup?: number;
+  /** R-TEAMQ-25: alerts that went to a team lead in the backup's place (and of those, first tried by that team lead), or to the Owners and Admins */
+  teamLeadAlerted?: number;
+  byTeamLead?: number;
+  adminsAlerted?: number;
   sample: number;
   medianStaffedSeconds: number | null;
   p90StaffedSeconds: number | null;
@@ -331,11 +343,22 @@ export function responseLines(r: ResponseRollup, rules: ResponseRules): { label:
     // R-TEAMQ-18: the minute-three backup alert, each count with its own denominator
     ...(r.backupAlerted === undefined ? [] : [{ label: 'Backup alerted', text: of(r.backupAlerted) }]),
     ...(r.backupAlerted === undefined || r.backupAlerted <= 0 ? [] : [{ label: 'First attempt by the backup', text: `${r.byBackup ?? 0} of the ${r.backupAlerted} alerted` }]),
+    // R-TEAMQ-25: an alert that went to someone else in the backup's place is its own line, never "backup alerted"
+    ...((r.teamLeadAlerted ?? 0) <= 0 ? [] : [{ label: 'Team lead alerted instead of the backup', text: of(r.teamLeadAlerted ?? 0) }, { label: 'First attempt by that team lead', text: `${r.byTeamLead ?? 0} of the ${r.teamLeadAlerted} alerted` }]),
+    ...((r.adminsAlerted ?? 0) <= 0 ? [] : [{ label: 'Owners and Admins alerted (no team lead to tell)', text: of(r.adminsAlerted ?? 0) }]),
   ];
 }
 
 const ATTEMPT_KIND: Record<NonNullable<ResponseInquiry['attempt']>['kind'], string> = { call: 'a call', text: 'a text', email: 'an email', chat: 'a chat reply' };
-const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], string> = { owner: 'the lead’s owner', backup: 'the backup, after the backup alert', collaborator: 'a collaborator on the lead', other: 'who was not the owner' };
+const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], string> = {
+  owner: 'the lead’s owner',
+  backup: 'the backup, after the backup alert',
+  // R-TEAMQ-25: alerted in the backup's place: said as who they are, never as "the backup"
+  team_lead: 'the team lead, after the alert went to them in the backup’s place',
+  admin: 'an Owner or Admin, after the alert went to the Owners and Admins',
+  collaborator: 'a collaborator on the lead',
+  other: 'who was not the owner',
+};
 
 /** R-TEAMQ-18: " The backup, Sam T., was alerted 3 min after it arrived." ('' when nobody was alerted). */
 function backupAlertSentence(i: ResponseInquiry): string {

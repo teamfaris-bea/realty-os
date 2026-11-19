@@ -10,7 +10,8 @@
 // percentile (never on a small sample), those whose own call a person ANSWERED (R-TEAMQ-22: its own state, never an
 // attempt and never "no attempt"), and still waiting. Every count travels with its denominator (R-ACC-4).
 // b19 step 2 (R-TEAMQ-18): an inquiry whose minute-three backup alert was raised says when and to whom; each roll-up
-// counts "backup alerted" over its inquiries and "first attempt by the backup" over those alerted.
+// counts "backup alerted" over its inquiries and "first attempt by the backup" over those alerted. An alert that went
+// to a team lead, or to the Owners and Admins, in the backup's place is counted and worded as that (R-TEAMQ-25).
 //
 // How it differs from the scoreboard's speed-to-lead: that number starts when an AGENT ACCEPTS a lead and credits
 // the owner's (or a collaborator's) first touch per ownership period; a lead nobody accepted, or one sitting in a
@@ -92,10 +93,14 @@ function kindOf(r: repo.InquiryResponseRow): AttemptKind {
   return r.attempt_channel === 'email' ? 'email' : r.attempt_channel === 'web_chat' ? 'chat' : 'text';
 }
 
-/** R-TEAMQ-18: the owner at that moment is `owner`; else the alerted backup, after the alert, is `backup`. */
+/**
+ * R-TEAMQ-18, R-TEAMQ-25 (review fix L4): the owner at that moment is `owner`; else whoever this inquiry's alert went
+ * to, attempting after it, in the role they were alerted in: `backup` only for the source's named backup, `team_lead`
+ * for a team lead alerted in the backup's place, `admin` for an Owner or Admin alerted when there was no team lead.
+ */
 function roleOf(r: repo.InquiryResponseRow): AttemptRole {
   if (r.attempt_by !== null && r.owner_then !== null && r.attempt_by === r.owner_then) return 'owner';
-  if (r.backup_then) return 'backup';
+  if (r.alerted_then && r.backup_alert_recipient !== null) return r.backup_alert_recipient === 'backup' ? 'backup' : r.backup_alert_recipient === 'team_lead' ? 'team_lead' : 'admin';
   return r.collaborator_then ? 'collaborator' : 'other';
 }
 

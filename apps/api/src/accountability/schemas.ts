@@ -163,7 +163,7 @@ export const TeamQueueRowSchema = z.object({
   staffedSeconds: count.nullable(),
   offHours: z.boolean(),
   /** new leads only (R-TEAMQ-18): the backup alert of this person's latest alerted inquiry, as its own line */
-  backupAlert: z.object({ at: z.string(), alerted: z.boolean(), line: z.string().min(1) }).nullable(),
+  backupAlert: z.object({ at: z.string(), alerted: z.boolean(), recipient: z.enum(['backup', 'team_lead', 'admins']).nullable(), line: z.string().min(1) }).nullable(),
   /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived; else null */
   answeredCallAt: z.string().nullable(),
 });
@@ -179,6 +179,8 @@ export const TeamQueueResponse = z.object({
       atLeast: z.boolean(),
       /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
       backupAlerted: count.nullable(),
+      /** new_lead only (R-TEAMQ-25): of `total`, the rows whose alert went to a team lead or to the Owners and Admins instead */
+      othersAlerted: count.nullable(),
       /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
       answeredCalls: count.nullable(),
     }),
@@ -205,7 +207,8 @@ export const ResponseInquirySchema = z.object({
     at: z.string(),
     kind: z.enum(['call', 'text', 'email', 'chat']),
     by: Person.nullable(),
-    role: z.enum(['owner', 'backup', 'collaborator', 'other']),
+    // R-TEAMQ-25: `backup` only for the source's named backup; a team lead or an Owner/Admin alerted in their place is said as that
+    role: z.enum(['owner', 'backup', 'team_lead', 'admin', 'collaborator', 'other']),
   }).nullable(),
   /** R-TEAMQ-22: attempted, else answered_call (a person answered the lead's own call; never an attempt), else waiting */
   state: z.enum(['attempted', 'answered_call', 'waiting']),
@@ -229,6 +232,10 @@ const ResponseRollupSchema = z.object({
   /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first attempted by the alerted person */
   backupAlerted: count,
   byBackup: count,
+  /** R-TEAMQ-25: alerts that went to a team lead in the backup's place, and of those, first attempted by that team lead; alerts that went to the Owners and Admins */
+  teamLeadAlerted: count,
+  byTeamLead: count,
+  adminsAlerted: count,
   sample: count,
   medianStaffedSeconds: count.nullable(),
   p90StaffedSeconds: count.nullable(),

@@ -283,7 +283,7 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
   it('R-TEAMQ-18 E857: a row whose backup was alerted says so on its own line, with the time in the team\'s zone and who was alerted; the why line is unchanged', () => {
     const plain = group(inputs({ inquiries: [inq()] }), 'new_lead').rows[0]!;
     const g = group(inputs({ inquiries: [inq({ backupAlert: { at: t(-min(9)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } })] }), 'new_lead');
-    expect(g.rows[0]!.backupAlert).toEqual({ at: t(-min(9)), alerted: true, line: 'Backup alerted at 9:51 AM: Sam T.' });
+    expect(g.rows[0]!.backupAlert).toEqual({ at: t(-min(9)), alerted: true, recipient: 'backup', line: 'Backup alerted at 9:51 AM: Sam T.' });
     expect(g.rows[0]!.why).toBe(plain.why);
     expect(plain.backupAlert).toBeNull();
     expect([g.backupAlerted, g.total]).toEqual([1, 1]);
@@ -291,11 +291,11 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
 
   it('R-TEAMQ-18 E857: the fallback and "nobody could be alerted" are said in words; an alert on another day says how long ago', () => {
     const line = (o: NonNullable<QueueInquiryFacts['backupAlert']>, arrivedAt = t(-min(12))) => group(inputs({ inquiries: [inq({ arrivedAt, backupAlert: o })] }), 'new_lead').rows[0]!.backupAlert;
-    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead' })).toEqual({ at: t(-min(9)), alerted: true, line: 'The source\'s backup is unavailable: the team lead, Taylor L., was alerted at 9:51 AM.' });
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead' })).toEqual({ at: t(-min(9)), alerted: true, recipient: 'team_lead', line: 'The source\'s backup is unavailable: the team lead, Taylor L., was alerted at 9:51 AM.' });
     // R-TEAMQ-21 (review fix M2): "nobody" now only when there is nobody but the person holding the lead; a lead with no team lead on its side tells the Owners and Admins
-    expect(line({ at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null })).toEqual({ at: t(-min(9)), alerted: false, line: 'Nobody else could be alerted at 9:51 AM: the team has no team lead, Owner or Admin other than the person who has this lead.' });
+    expect(line({ at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null })).toEqual({ at: t(-min(9)), alerted: false, recipient: null, line: 'Nobody else could be alerted at 9:51 AM: the team has no team lead, Owner or Admin other than the person who has this lead.' });
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead', reason: 'backup_is_holder' })!.line).toBe('The backup has this lead: their team lead, Taylor L., was alerted at 9:51 AM.');
-    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Olive Owens', recipient: 'admins', reason: 'backup_unavailable', count: 3 })).toEqual({ at: t(-min(9)), alerted: true, line: 'The source\'s backup is unavailable and there is no team lead to alert: 3 Owners and Admins were alerted at 9:51 AM.' });
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Olive Owens', recipient: 'admins', reason: 'backup_unavailable', count: 3 })).toEqual({ at: t(-min(9)), alerted: true, recipient: 'admins', line: 'The source\'s backup is unavailable and there is no team lead to alert: 3 Owners and Admins were alerted at 9:51 AM.' });
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Olive Owens', recipient: 'admins', reason: 'backup_is_holder', count: 1 })!.line).toBe('The backup has this lead and there is no team lead to alert: Olive O., an Owner or Admin, was alerted at 9:51 AM.');
     expect(line({ at: t(-hours(26)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' }, t(-hours(27)))!.line).toBe('Backup alerted 26 h ago: Sam T.');
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: null, recipient: 'backup' })!.line).toBe('Backup alerted at 9:51 AM: a member.');
@@ -310,6 +310,21 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     // "nobody could be alerted" is not counted as alerted
     const none = group(inputs({ inquiries: [inq({ backupAlert: { at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null } })] }), 'new_lead');
     expect([none.backupAlerted, none.total]).toEqual([0, 1]);
+    // R-TEAMQ-25 E890 (review fix L4): an alert that went to a team lead, or to the Owners and Admins, is not "the backup alerted": counted apart
+    const mixed = group(
+      inputs({
+        inquiries: [
+          inq({ inquiryId: inquiry(1), contactId: contact(1), backupAlert: { at: t(-min(9)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
+          inq({ inquiryId: inquiry(2), contactId: contact(2), backupAlert: { at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead', reason: 'backup_unavailable' } }),
+          inq({ inquiryId: inquiry(3), contactId: contact(3), backupAlert: { at: t(-min(9)), outcome: 'alerted', name: 'Olive Owens', recipient: 'admins', reason: 'backup_is_holder', count: 2 } }),
+          inq({ inquiryId: inquiry(4), contactId: contact(4) }),
+        ],
+      }),
+      'new_lead',
+    );
+    expect([mixed.backupAlerted, mixed.othersAlerted, mixed.total]).toEqual([1, 2, 4]);
+    expect(mixed.rows.map((r) => r.backupAlert?.recipient ?? null).sort()).toEqual(['admins', 'backup', 'team_lead', null].sort());
+    expect(buildTeamQueue(inputs()).groups.filter((x) => x.key !== 'new_lead').map((x) => x.othersAlerted)).toEqual([null, null, null, null]);
     const twice = group(
       inputs({
         inquiries: [

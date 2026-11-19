@@ -168,6 +168,15 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     expect(within(opal).queryByText(/Backup alerted/)).toBeNull();
   });
 
+  it('R-TEAMQ-25 E890 (review fix L4): alerts that went to a team lead or to the Owners and Admins are counted apart from "Backup alerted", each with the group\'s total', async () => {
+    const backupRow = row({ backupAlert: { at: new Date().toISOString(), alerted: true, recipient: 'backup', line: 'Backup alerted at 2:06 PM: Sam T.' } });
+    const leadRow = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' }, backupAlert: { at: new Date().toISOString(), alerted: true, recipient: 'team_lead', line: "The source's backup is unavailable: the team lead, Taylor L., was alerted at 2:06 PM." } });
+    leadAdminApp(fake(workQueue({ new_lead: [backupRow, leadRow] }, { new_lead: { backupAlerted: 1, othersAlerted: 1 } })), '/team');
+    const region = await loaded();
+    const group = within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 2' });
+    expect(within(group).getByText('Backup alerted for 1 of 2. A team lead or the Owners and Admins were alerted instead for 1 of 2.')).toBeInTheDocument();
+  });
+
   it('R-TEAMQ-22 E882: a row whose call a person answered shows the server\'s true words, and the group says how many of its rows that is, with its total', async () => {
     const answered = row({ why: 'Arrived 6 min ago from Website form. Owned by Jordan P. A person answered their call at 2:04 PM. Nobody has called back, texted or emailed since.', answeredCallAt: new Date(Date.now() - 4 * 60_000).toISOString() });
     const plain = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' }, answeredCallAt: null });

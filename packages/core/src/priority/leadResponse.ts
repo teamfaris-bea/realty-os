@@ -27,10 +27,12 @@ export const RESPONSE_P90_MIN_SAMPLE = 10;
 export const RESPONSE_NOT_WITHIN_CAP = 20;
 
 /**
- * The attempter's role to the lead at the moment of the attempt. `backup` (b19 R-TEAMQ-18): the person the
- * minute-three backup alert of this inquiry went to, attempting after it; the owner at that moment is always `owner`.
+ * The attempter's role to the lead at the moment of the attempt. The owner at that moment is always `owner`. Else,
+ * the person this inquiry's minute-three alert went to, attempting after it, in the role they were alerted in
+ * (R-TEAMQ-18; R-TEAMQ-25, review fix L4): `backup` only for the source's named backup; `team_lead` for the team lead
+ * alerted in the backup's place; `admin` for an Owner or Admin alerted when there was no team lead to tell.
  */
-export type AttemptRole = 'owner' | 'backup' | 'collaborator' | 'other';
+export type AttemptRole = 'owner' | 'backup' | 'team_lead' | 'admin' | 'collaborator' | 'other';
 export type AttemptKind = 'call' | 'text' | 'email' | 'chat';
 
 export interface ResponseInquiryFacts {
@@ -90,10 +92,16 @@ export interface ResponseRollup {
   waiting: number;
   /** with an automated reply (shown apart; never counted as an attempt) */
   automatedReplies: number;
-  /** b19 R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`) */
+  /** R-TEAMQ-18, R-TEAMQ-25: inquiries whose alert went to the source's named BACKUP (of `inquiries`) */
   backupAlerted: number;
-  /** b19 R-TEAMQ-18: of `backupAlerted`, those whose first human attempt was made by the alerted person, after the alert */
+  /** of `backupAlerted`, those whose first human attempt was made by the backup, after the alert */
   byBackup: number;
+  /** R-TEAMQ-25: inquiries whose alert went to a TEAM LEAD in the backup's place (of `inquiries`) */
+  teamLeadAlerted: number;
+  /** of `teamLeadAlerted`, those whose first human attempt was made by that team lead, after the alert */
+  byTeamLead: number;
+  /** R-TEAMQ-25: inquiries whose alert went to the team's Owners and Admins (no team lead to tell; of `inquiries`) */
+  adminsAlerted: number;
   /** the attempted inquiries the percentiles rest on */
   sample: number;
   /** median staffed seconds to the first human attempt; null below RESPONSE_MEDIAN_MIN_SAMPLE */
@@ -153,8 +161,11 @@ function rollup(list: readonly MeasuredInquiry[]): ResponseRollup {
     answeredCalls: list.filter((m) => m.state === 'answered_call').length,
     waiting: list.filter((m) => m.state === 'waiting').length,
     automatedReplies: list.filter((m) => m.automatedReplyAt !== null).length,
-    backupAlerted: list.filter((m) => m.backupAlert !== null).length,
-    byBackup: list.filter((m) => m.backupAlert !== null && m.attempt?.role === 'backup').length,
+    backupAlerted: list.filter((m) => m.backupAlert?.recipient === 'backup').length,
+    byBackup: list.filter((m) => m.backupAlert?.recipient === 'backup' && m.attempt?.role === 'backup').length,
+    teamLeadAlerted: list.filter((m) => m.backupAlert?.recipient === 'team_lead').length,
+    byTeamLead: list.filter((m) => m.backupAlert?.recipient === 'team_lead' && m.attempt?.role === 'team_lead').length,
+    adminsAlerted: list.filter((m) => m.backupAlert?.recipient === 'admins').length,
     sample: staffed.length,
     medianStaffedSeconds: staffed.length >= RESPONSE_MEDIAN_MIN_SAMPLE ? median(staffed) : null,
     p90StaffedSeconds: staffed.length >= RESPONSE_P90_MIN_SAMPLE ? nearestRank(staffed, 0.9) : null,

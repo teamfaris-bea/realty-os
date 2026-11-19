@@ -248,7 +248,7 @@ export interface TeamQueueRow {
    * ("Backup alerted at 2:06 PM: Sam T."; the time is in the team's zone, like the why line's). `alerted` false: the
    * job found nobody to alert, and the line says so. null: no alert.
    */
-  backupAlert: { at: Instant; alerted: boolean; line: string } | null;
+  backupAlert: { at: Instant; alerted: boolean; recipient: AlertRecipient | null; line: string } | null;
   /** new_lead only (R-TEAMQ-22): when a person answered the lead's own call since the arrival (the why line says so); else null */
   answeredCallAt: Instant | null;
   subject: { kind: 'inquiry'; id: LeadInquiryId } | { kind: 'message' | 'call'; id: string } | { kind: 'task'; id: TaskId } | { kind: 'appointment'; id: AppointmentId };
@@ -263,8 +263,10 @@ export interface TeamQueueGroup {
   total: number;
   /** total - rows.length */
   more: number;
-  /** new_lead only (b19 R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
+  /** new_lead only (R-TEAMQ-18, R-TEAMQ-25): of `total`, the rows whose alert went to the source's named BACKUP; null for the other groups */
   backupAlerted: number | null;
+  /** new_lead only (R-TEAMQ-25): of `total`, the rows whose alert went to a team lead or to the Owners and Admins in the backup's place */
+  othersAlerted: number | null;
   /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
   answeredCalls: number | null;
 }
@@ -357,7 +359,7 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
       waitingSeconds: m.wallSeconds,
       staffedSeconds: m.staffedSeconds,
       offHours: m.offHours,
-      backupAlert: alert === null ? null : { at: alert.at, alerted: alert.outcome === 'alerted', line: backupAlertLine(now, alert, i.calendar) },
+      backupAlert: alert === null ? null : { at: alert.at, alerted: alert.outcome === 'alerted', recipient: alert.outcome === 'alerted' ? alert.recipient : null, line: backupAlertLine(now, alert, i.calendar) },
       answeredCallAt: answered,
       subject: { kind: 'inquiry', id: first.inquiryId },
     });
@@ -480,9 +482,11 @@ export function buildTeamQueue(i: TeamQueueInputs): TeamQueue {
   return {
     groups: TEAM_QUEUE_GROUPS.map((key) => {
       const rows = all[key].sort(byWaiting);
-      const backupAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true).length : null;
+      // R-TEAMQ-25: "the backup was alerted" only when it was the backup; a team lead or the Owners and Admins are counted apart
+      const backupAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true && r.backupAlert.recipient === 'backup').length : null;
+      const othersAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true && r.backupAlert.recipient !== 'backup').length : null;
       const answeredCalls = key === 'new_lead' ? rows.filter((r) => r.answeredCallAt !== null).length : null;
-      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted, answeredCalls };
+      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted, othersAlerted, answeredCalls };
     }),
   };
 }

@@ -71,7 +71,7 @@ export interface TeamQueueRowView {
    * new leads only (R-TEAMQ-18): the minute-three backup alert of this person's latest alerted inquiry, as its own
    * line ("Backup alerted at 2:06 PM: Sam T.", the time in the team's zone). `alerted` false: nobody could be alerted.
    */
-  backupAlert: { at: string; alerted: boolean; line: string } | null;
+  backupAlert: { at: string; alerted: boolean; recipient: 'backup' | 'team_lead' | 'admins' | null; line: string } | null;
   /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived (the why line says so); else null */
   answeredCallAt: string | null;
 }
@@ -87,6 +87,8 @@ export interface TeamQueueGroupView {
   atLeast: boolean;
   /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
   backupAlerted: number | null;
+  /** new_lead only (R-TEAMQ-25): of `total`, the rows whose alert went to a team lead or to the Owners and Admins in the backup's place */
+  othersAlerted: number | null;
   /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
   answeredCalls: number | null;
 }
@@ -217,13 +219,14 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
         waitingSeconds: r.waitingSeconds,
         staffedSeconds: r.staffedSeconds,
         offHours: r.offHours,
-        backupAlert: r.backupAlert === null ? null : { at: iso(r.backupAlert.at), alerted: r.backupAlert.alerted, line: r.backupAlert.line },
+        backupAlert: r.backupAlert === null ? null : { at: iso(r.backupAlert.at), alerted: r.backupAlert.alerted, recipient: r.backupAlert.recipient, line: r.backupAlert.line },
         answeredCallAt: r.answeredCallAt === null ? null : iso(r.answeredCallAt),
       })),
       total: g.total,
       more: g.more,
       atLeast: capped[g.key],
       backupAlerted: g.backupAlerted,
+      othersAlerted: g.othersAlerted,
       answeredCalls: g.answeredCalls,
     })),
     staffedHours: { open: hours.open, close: hours.close, zone: hours.zone },
