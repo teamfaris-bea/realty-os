@@ -280,6 +280,31 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     expect(await alertNotes(lead.inquiryId)).toEqual([]);
   });
 
+  it('R-TEAMQ-14: a person answered the lead\'s own call, or the lead was closed, before minute three: nobody is alerted and the row says which', async () => {
+    const src = await source('Answered or closed (alert test)');
+    // the lead called in and a person picked up (an inbound answered call has no application path in this module: a fixture row)
+    const answered = await arrive(src);
+    const conversationId = randomUUID();
+    await suFixture(h, [
+      { text: `INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, contact_id) DO NOTHING`, values: [w.tenantId, conversationId, answered.contactId] },
+      {
+        text: `INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, agent_user_id, client_address, initiator, handled_by, status, started_at, answered_at, ended_at, duration_s, recording_mode, recording_decision)
+               SELECT $1, $2, c.id, $3, 'inbound', $4, $5, 'client', 'human', 'completed', now(), now(), now(), 95, 'off', '{}'::jsonb FROM conversations c WHERE c.tenant_id = $1 AND c.contact_id = $3`,
+        values: [w.tenantId, randomUUID(), answered.contactId, w.agents[0]!.userId, answered.phone],
+      },
+    ]);
+    // another lead is closed as spam by the Owner before anyone is alerted
+    const closed = await arrive(src);
+    const seq = Number((await contactState(h, closed.contactId)).ownership_seq);
+    expect((await command(w.owner, closed.contactId, 'close', { reason: 'spam', expectedSeq: seq })).status).toBe(200);
+    for (const lead of [answered, closed]) await minutesPass(lead);
+    await run();
+    expect((await alertRows(answered.inquiryId)).map((r) => [r.outcome, r.alerted_user_id])).toEqual([['answered_call', null]]);
+    expect((await alertRows(closed.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.holder])).toEqual([['lead_closed', null, null]]);
+    expect(await alertNotes(answered.inquiryId)).toEqual([]);
+    expect(await alertNotes(closed.inquiryId)).toEqual([]);
+  });
+
   it('R-TEAMQ-14 E855: a "No automated contact" source: its CLIENT gets nothing, and the staff alert still fires', async () => {
     const src = await source('Partner referrals (alert test)', { noAutomatedContact: true });
     const lead = await arrive(src);
