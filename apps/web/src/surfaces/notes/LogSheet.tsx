@@ -17,6 +17,8 @@
 //     the button stays enabled and a retry never makes a second note.
 //   - A call logged with no outcome suggests nothing: no stage step, the button is "Save", and the sheet closes.
 //   - Nothing is said twice: the toast after the sheet closes is the only place the save is confirmed.
+//   - One follow-up per log (E790): "Remind me" and the stage step's Follow-up are never both set, and a replayed log
+//     says its reminder from the server's answer (the first save's task), never from this sheet's select.
 //   - When the server says the note reads like a do-not-contact request, the stage is NOT changed by that tap: the
 //     sheet asks first. "No" comes back to the saved log with the stage step still to confirm.
 import { ACTIVITY_MAX_AHEAD_MS, CALL_OUTCOMES, activitySignal, suggestsDoNotContact } from '@realty/core/parity/people';
@@ -26,7 +28,7 @@ import { firstNameOf } from '../people-edit/api.js';
 import { Chip, selectClass, textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
 import { NeverNote } from '../people-edit/StagePreview.js';
 import { Saved, StageStepBody, useStageStep } from '../people-edit/StageStep.js';
-import type { SuggestedStage } from '../people-edit/stageFlow.js';
+import { type SuggestedStage, joinWords } from '../people-edit/stageFlow.js';
 
 const KINDS = [
   { key: 'call', label: 'Call' },
@@ -76,6 +78,11 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
   // the outcome is chosen and the person is still being read: the button waits, so the step is never skipped by a fast tap
   const stepPending = hasOutcome && step.details === null && step.failed === null;
   const folded = saved === null && kind === 'call' && outcome !== null && !editing;
+  // E790: one follow-up per log. "Remind me" (a task the log route makes with the note) and the stage step's
+  // Follow-up (a task of its own) are the same thing to the agent, so only one of them is ever set: with a reminder
+  // chosen the step shows no chips, and with a chip chosen (or its task already saved) "Remind me" is off.
+  const stepFollowUp = stepOn && (step.follow.key !== 'none' || step.follow.stored !== null);
+  const reminding = remind > 0 && !stepFollowUp;
 
   const kindLabel = KINDS.find((k) => k.key === kind)!.label;
   const directionLabel = (d: 'outbound' | 'inbound') => (d === 'outbound' ? (kind === 'call' ? 'I called' : 'I sent') : kind === 'call' ? `${first} called` : `${first} sent`);
@@ -93,12 +100,15 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
           at: at.toISOString(),
           ...(kind === 'call' && outcome ? { outcome } : {}),
           ...(body.trim() ? { body: body.trim() } : {}),
-          ...(remind > 0 ? { remindInDays: remind } : {}),
+          ...(reminding ? { remindInDays: remind } : {}),
           noteId: noteId.current,
         });
         // nothing was saved (or nobody can say): nothing is claimed, and the same tap again is the same note
         if (!r.ok) return;
-        const logged = `${kindLabel} logged${r.data.taskId ? `, reminder in ${remind} day${remind === 1 ? '' : 's'}` : ''}`;
+        // E790: the reminder is said from the server's answer. A first save says the days this sheet asked for; a
+        // replay answers the FIRST save's task, whose days this sheet may no longer show, so no number is said.
+        const reminder = !r.data.taskId ? '' : r.data.replayed ? ', with the reminder set the first time' : `, reminder in ${remind} day${remind === 1 ? '' : 's'}`;
+        const logged = `${kindLabel} logged${reminder}`;
         const what = kind === 'call' && outcome ? `${logged} (${OUTCOME_LABEL[outcome].toLowerCase()})` : logged;
         // a repeat of this sheet's save (a retry after a lost answer) is the note the first one stored
         words = r.data.replayed ? `${what}. Your first tap had already saved it, as first written.` : what;
@@ -110,7 +120,7 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
       }
       if (!stepOn) {
         done.current = true;
-        toast({ text: words });
+        toast({ text: joinWords([words]) });
         onClose();
         return;
       }
@@ -139,7 +149,7 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
         setAskDnc(null);
         return;
       }
-      if (saved) toast({ text: saved });
+      if (saved) toast({ text: joinWords([saved]) });
       onClose();
     };
     return (
@@ -230,7 +240,7 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
           </>
         )}
         {stepOn ? (
-          <StageStepBody s={step} disabled={working} />
+          <StageStepBody s={step} disabled={working} followUpNote={saved === null && reminding ? `Follow-up: the reminder in ${remind} day${remind === 1 ? '' : 's'}, saved with this log.` : undefined} />
         ) : stepPending ? (
           <p className="text-[15px] text-ink-muted">Loading</p>
         ) : hasOutcome && step.details && !step.canEdit ? (
@@ -258,13 +268,18 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
               <label htmlFor={ids.remind} className="text-[15px] font-medium text-ink">
                 Remind me
               </label>
-              <select id={ids.remind} value={remind} onChange={(e) => setRemind(Number(e.target.value))} className={selectClass}>
+              <select id={ids.remind} value={stepFollowUp ? 0 : remind} disabled={stepFollowUp} aria-describedby={stepFollowUp ? `${ids.remind}-why` : undefined} onChange={(e) => setRemind(Number(e.target.value))} className={`${selectClass} disabled:opacity-60`}>
                 {REMIND.map((d) => (
                   <option key={d} value={d}>
                     {d === 0 ? 'No reminder' : `In ${d} day${d === 1 ? '' : 's'}`}
                   </option>
                 ))}
               </select>
+              {stepFollowUp ? (
+                <p id={`${ids.remind}-why`} className="text-[14px] text-ink-muted">
+                  A follow-up is already set above: one task per log.
+                </p>
+              ) : null}
             </div>
             <Button variant="quiet" className="self-start px-3" disabled={working} onClick={() => setAskDnc('asked')}>
               They asked not to be contacted…

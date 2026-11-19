@@ -18,8 +18,9 @@
 // never grants access. A logged activity is never a messages/calls row and never a touch (R-PAR-5, R-PAR-32).
 import { type Actor, type UserActor, instantFromDate, instantFromIso, toIso } from '@realty/core/foundation';
 import { DAY_MS, plusMs } from '@realty/core/foundation';
+import { uuidV5 } from '@realty/core/parity/bulk';
 import { type ActivityDirection, type ActivityKind, type CallOutcome, addedMentions, followUpTitle, mentionTokens, mentionDedupeKey, mentionTitle, parseMentions, suggestsDoNotContact, validateLoggedActivity } from '@realty/core/parity/people';
-import { withTenantTx } from '@realty/db';
+import { type Tx, withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
@@ -125,6 +126,22 @@ function isAtText(a: string): boolean {
 function isNotesCursor(v: unknown): v is { p: boolean; a: string; i: string } {
   const o = v as { p?: unknown; a?: unknown; i?: unknown };
   return !!o && typeof o.p === 'boolean' && typeof o.a === 'string' && typeof o.i === 'string' && UUID_RE.test(o.i) && isAtText(o.a);
+}
+
+
+/**
+ * E790: the id of the "remind me" task a logged activity makes: UUIDv5 of the note's id under a fixed namespace of
+ * this module (never change it: a replay would stop finding the first save's task). One note, at most one such task.
+ */
+const ACTIVITY_REMINDER_NAMESPACE = '6f2c1d9e-4b7a-4c35-9e81-2a5d7f0b3c64';
+export function reminderTaskId(noteId: string): string {
+  return uuidV5(ACTIVITY_REMINDER_NAMESPACE, `activity.reminder:${noteId.toLowerCase()}`);
+}
+
+/** The reminder task of a logged activity, as the caller's own RLS shows it (null: none was made, or it is not theirs to see). */
+async function reminderTaskOf(tx: Tx, noteId: string): Promise<string | null> {
+  const r = await sql<{ id: string }>`SELECT id FROM tasks WHERE tenant_id = app.tenant_id() AND id = ${reminderTaskId(noteId)}`.execute(tx);
+  return r.rows[0]?.id ?? null;
 }
 
 export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
@@ -246,8 +263,11 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
         const a = view.loggedActivity;
         const signal = a ? activitySignal({ kind: a.kind as ActivityKind, direction: (a.direction ?? 'outbound') as ActivityDirection, outcome: a.outcome as CallOutcome | null }) : null;
         const suggestedStage = await peopleTx(req, (tx, _now, actor) => suggestedStageInTx(tx, actor, contactId, signal));
+        // E790: the reminder the first save made with this log, if it made one (its id is derived from the note's, so
+        // the replay finds it and never makes a second task); the retried body's own remindInDays is not read
+        const taskId = await peopleTx(req, (tx) => reminderTaskOf(tx, prior.id));
         reply.status(200);
-        return { note: view, taskId: null, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
+        return { note: view, taskId, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
       }
     }
     const out = await peopleTx(req, async (tx, now, actor) => {
@@ -259,7 +279,8 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
       let taskId: string | null = null;
       if (a.remindInDays !== null) {
         // "Remind me in N days" is an ordinary task for the author (R-PAR-30)
-        taskId = await createTask(tx, actor, p.ids, { title: followUpTitle(a.kind), kind: 'follow_up', contactId, dueAt: toIso(plusMs(now, a.remindInDays * DAY_MS)) });
+        // (E790: the task's id is derived from the note's, so a replay of this log answers this same task)
+        taskId = await createTask(tx, actor, p.ids, { id: reminderTaskId(id), title: followUpTitle(a.kind), kind: 'follow_up', contactId, dueAt: toIso(plusMs(now, a.remindInDays * DAY_MS)) });
       }
       // R-STG-2: the stage this outcome suggests, for the agent to confirm. Nothing here changes the stage.
       const suggestedStage = await suggestedStageInTx(tx, actor, contactId, activitySignal(a));

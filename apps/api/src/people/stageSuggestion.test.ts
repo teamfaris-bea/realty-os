@@ -136,6 +136,31 @@ describe('POST /contacts/:id/activities answers the suggested stage (R-STG-2)', 
     expect(tl.body.suggestedStage).toEqual({ stage: 'connected', why: expect.any(String), locked: false, alsoOffer: [{ stage: 'nurture', locked: false }] });
   });
 
+  it('L12 E790 a log saved with "remind me" and replayed (a retry after a lost answer) answers the SAME reminder task, never null and never a second task; a log saved without one answers none', async () => {
+    const c = await ownedContact(agent, { consent: false });
+    const noteId = randomUUID();
+    const first = await log(agent, c.id, { kind: 'call', outcome: 'no_answer', remindInDays: 2, noteId });
+    expect(first.status).toBe(201);
+    const taskId = (first.body as unknown as { taskId: string | null }).taskId;
+    expect(taskId).toMatch(/^[0-9a-f-]{36}$/);
+    // the retry: the body may even ask for another reminder; the stored note and its one task are the answer
+    const again = await log(agent, c.id, { kind: 'call', outcome: 'no_answer', remindInDays: 7, noteId });
+    expect(again.status).toBe(200);
+    expect(again.body.replayed).toBe(true);
+    expect((again.body as unknown as { taskId: string | null }).taskId).toBe(taskId);
+    expect((await h.su.query<{ id: string }>('SELECT id FROM tasks WHERE contact_id = $1', [c.id])).rows).toEqual([{ id: taskId }]);
+    // no reminder first time: none on the replay, and the replay makes none
+    const plain = randomUUID();
+    const p1 = await log(agent, c.id, { kind: 'call', outcome: 'no_answer', noteId: plain });
+    const p2 = await log(agent, c.id, { kind: 'call', outcome: 'no_answer', remindInDays: 3, noteId: plain });
+    expect([(p1.body as unknown as { taskId: string | null }).taskId, (p2.body as unknown as { taskId: string | null }).taskId]).toEqual([null, null]);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM tasks WHERE contact_id = $1', [c.id])).rows[0].n).toBe(1);
+    // another member's replay of that id is refused as before, and learns nothing about the task
+    const other = await log(agent2, c.id, { kind: 'call', outcome: 'no_answer', noteId });
+    expect(other.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(other.body)).not.toContain(taskId!);
+  });
+
   it('R-STG-2 E766 a replay of the same log (a double tap) answers the same suggestion until the stage is confirmed, then none', async () => {
     const c = await ownedContact(agent, { consent: false });
     const noteId = randomUUID();

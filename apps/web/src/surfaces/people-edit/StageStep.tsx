@@ -209,7 +209,7 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
 export type StageStepState = ReturnType<typeof useStageStep>;
 
 /** The step's choices, the one effect line and the follow-up, in that order (for someone who may edit). */
-export function StageStepBody({ s, disabled = false }: { s: StageStepState; disabled?: boolean }) {
+export function StageStepBody({ s, disabled = false, followUpNote }: { s: StageStepState; disabled?: boolean; /** E790: the sheet already makes this log's one follow-up another way (the Log sheet's "Remind me"): said here in place of the chips */ followUpNote?: string | undefined }) {
   const { offer, offerLocked, current, lockedSet, selected, all, ids } = s;
   const off = disabled || s.working;
   const choice = (k: string, o: { badge?: string; why?: string; label?: string; brief?: boolean } = {}) => (
@@ -250,7 +250,13 @@ export function StageStepBody({ s, disabled = false }: { s: StageStepState; disa
       </div>
       <StagePreviewBlock contactId={s.contactId} to={selected} effectId={ids.effect} />
       {s.refused ? <Notice tone="warn">This stage is locked for now: reach {s.first} first (a call, text, email or reply in their website chat).</Notice> : null}
-      <FollowUpChips f={s.follow} disabled={off} />
+      {followUpNote ? (
+        <p className="text-[14px] leading-snug text-ink [overflow-wrap:anywhere]" data-testid="follow-up-line">
+          {followUpNote}
+        </p>
+      ) : (
+        <FollowUpChips f={s.follow} disabled={off} />
+      )}
     </>
   );
 }

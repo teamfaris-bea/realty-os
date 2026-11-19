@@ -33,7 +33,9 @@ function fakeLog(fake: FakeFetch, o: { lose?: (n: number) => boolean; fail?: (n:
     const replayed = notes.has(b.noteId);
     if (!replayed) notes.set(b.noteId, call.body);
     if (o.lose?.(n)) return 'network-error';
-    return { status: replayed ? 200 : 201, body: { note: { id: b.noteId }, taskId: !replayed && b.remindInDays ? '01900000-0000-7000-8000-00000000d001' : null, suggestDoNotContact: o.suggestDoNotContact ?? false, suggestedStage: null, replayed } };
+    // the reminder is the FIRST save's: a replay answers that task (or none), whatever the retried body asks (E790)
+    const first = notes.get(b.noteId) as { remindInDays?: number };
+    return { status: replayed ? 200 : 201, body: { note: { id: b.noteId }, taskId: first.remindInDays ? '01900000-0000-7000-8000-00000000d001' : null, suggestDoNotContact: o.suggestDoNotContact ?? false, suggestedStage: null, replayed } };
   });
   return notes;
 }
@@ -228,6 +230,55 @@ describe('M6: Log → outcome → one button saves the log and confirms the stag
     expect(fake.calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual([`/contacts/${C}/activities`, '/tasks', `/contacts/${C}/stage`]);
     expect(tasks.open()).toHaveLength(1);
     expect(toast().textContent).toMatch(/^Call logged \(left voicemail\)\. Stage: Trying to reach\. Follow-up saved for .+9:00 AM/);
+  });
+
+  it('L12 (E790): one follow-up per log. With "Remind me" set, the stage step offers no second follow-up (it says the reminder is saved with the log) and no task request is sent beside the log', async () => {
+    const { fake, tasks, onClose, tap, u } = mount();
+    const s = await sheet();
+    await tap(within(s).getByRole('button', { name: 'Left voicemail' }));
+    await within(s).findByRole('group', { name: 'Follow-up' });
+    await u.selectOptions(within(s).getByLabelText('Remind me'), '2');
+    expect(within(s).queryByRole('group', { name: 'Follow-up' })).toBeNull();
+    expect(within(s).getByTestId('follow-up-line')).toHaveTextContent('Follow-up: the reminder in 2 days, saved with this log.');
+    expect(primary(s)).toHaveTextContent(/^Save and change to Trying to reach$/);
+    await waitFor(() => expect(primary(s)).toBeEnabled());
+    await tap(primary(s));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(logPosts(fake)[0]!.body).toMatchObject({ remindInDays: 2 });
+    expect(fake.callsTo('POST /tasks')).toHaveLength(0);
+    expect(tasks.open()).toHaveLength(0);
+    expect(await within(toast()).findByText('Call logged, reminder in 2 days (left voicemail). Stage: Trying to reach')).toBeInTheDocument();
+  });
+
+  it('L12 (E790): with a follow-up chosen in the stage step, "Remind me" is off and says why; the log is sent without a reminder and ONE task is made', async () => {
+    const { fake, tasks, onClose, tap } = mount();
+    const s = await sheet();
+    await tap(within(s).getByRole('button', { name: 'Left voicemail' }));
+    await tap(await within(s).findByRole('button', { name: '3 days' }));
+    const remind = within(s).getByLabelText('Remind me');
+    expect(remind).toBeDisabled();
+    expect(remind).toHaveAccessibleDescription('A follow-up is already set above: one task per log.');
+    await waitFor(() => expect(primary(s)).toBeEnabled());
+    await tap(primary(s));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(logPosts(fake)[0]!.body).not.toHaveProperty('remindInDays');
+    expect(fake.callsTo('POST /tasks')).toHaveLength(1);
+    expect(tasks.open()).toHaveLength(1);
+  });
+
+  it('L12 (E790): a replayed log that had a reminder still says so (the server answers the first save\'s task), without inventing how many days', async () => {
+    // the first save stored the note and its reminder; its answer was lost; meanwhile the select was changed
+    const { onClose, tap, u } = mount({ log: { lose: (n) => n === 1 } });
+    const s = await sheet();
+    await u.selectOptions(within(s).getByLabelText('Remind me'), '2');
+    await tap(primary(s));
+    expect(await within(s).findByRole('alert')).toHaveTextContent("Can't reach the server.");
+    await u.selectOptions(within(s).getByLabelText('Remind me'), '14');
+    await tap(primary(s));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    const said = toast().textContent ?? '';
+    expect(said).toBe('Call logged, with the reminder set the first time. Your first tap had already saved it, as first written');
+    expect(said).not.toMatch(/14 days|2 days/);
   });
 
   it('a call with no outcome suggests nothing: no stage step, the button is "Save", and the sheet closes with the one toast', async () => {
