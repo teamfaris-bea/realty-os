@@ -10,6 +10,7 @@
 //   GET  /team/scoreboard?range=                             scoreboard.view
 //   GET  /team/momentum                                      scoreboard.view
 //   GET  /team/queue                                         team_queue.view    (Owner/Admin: all; TL: their teams and pond leads; read-only)
+//   GET  /team/lead-response?range=                          team_queue.view    (the same scope; response time from ARRIVAL; read-only)
 //
 // Authorization: core.can on facts read from RLS-visible rows (DATA_MODEL §3). An item the caller cannot
 // see, or may not act on, is 404 (R-PERM-5). List routes authorize the caller's own scope; RLS decides
@@ -24,6 +25,7 @@ import { accTx, actorOf } from './common.js';
 import { type Verb, actOnException, exceptionFacts, getException, listExceptions, reassignException } from './exceptions.js';
 import * as S from './schemas.js';
 import { scoreboardFor, teamMomentum, teamScoreboard } from './scoreboard.js';
+import { leadResponse } from './leadResponse.js';
 import { teamQueue } from './teamQueue.js';
 
 const keyOf = (req: FastifyRequest) => (req.params as { dedupeKey: string }).dedupeKey;
@@ -85,6 +87,12 @@ async function register(app: FastifyInstance): Promise<void> {
     '/team/queue',
     { config: { auth: 'team_queue.view' }, preHandler: authorize('team_queue.view', teamScope), schema: { querystring: S.TeamQueueQuery, response: { 200: S.TeamQueueResponse } } },
     async (req) => accTx(req, (tx, now) => teamQueue(tx, now)),
+  );
+
+  r.get(
+    '/team/lead-response',
+    { config: { auth: 'team_queue.view' }, preHandler: authorize('team_queue.view', teamScope), schema: { querystring: S.LeadResponseQuery, response: { 200: S.LeadResponseResponse } } },
+    async (req) => accTx(req, (tx, now) => leadResponse(tx, req.query.range ?? '7d', now)),
   );
 
   // ---- scoreboard and momentum ----

@@ -179,6 +179,55 @@ export const TeamQueueResponse = z.object({
   generatedAt: z.string(),
 });
 
+// ---- the lead response report (b19 team-queue lane; R-TEAMQ-6..9) -----------------------------------------------
+
+export const LeadResponseQuery = z.strictObject({ range: RangeKeySchema.optional() });
+
+const Waited = z.object({ wallSeconds: count, staffedSeconds: count });
+export const ResponseInquirySchema = z.object({
+  inquiryId: uuid,
+  contact: z.object({ id: uuid, name: z.string() }),
+  sourceId: uuid,
+  sourceName: z.string().nullable(),
+  receivedAt: z.string(),
+  offHours: z.boolean(),
+  countedFrom: z.string(),
+  attempt: Waited.extend({
+    at: z.string(),
+    kind: z.enum(['call', 'text', 'email', 'chat']),
+    by: Person.nullable(),
+    role: z.enum(['owner', 'collaborator', 'other']),
+  }).nullable(),
+  waiting: Waited.nullable(),
+  automatedReplyAt: z.string().nullable(),
+  within5: z.boolean(),
+  within15: z.boolean(),
+});
+const ResponseRollupSchema = z.object({
+  inquiries: count,
+  attempted: count,
+  within5: count,
+  within15: count,
+  waiting: count,
+  automatedReplies: count,
+  sample: count,
+  medianStaffedSeconds: count.nullable(),
+  p90StaffedSeconds: count.nullable(),
+});
+export const LeadResponseResponse = z.object({
+  range: RangeSchema,
+  staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
+  rules: z.object({ within5Seconds: count, within15Seconds: count, medianMinSample: count, p90MinSample: count }),
+  totals: ResponseRollupSchema,
+  sources: z.array(ResponseRollupSchema.extend({ sourceId: uuid, sourceName: z.string().nullable(), notWithin5: z.array(ResponseInquirySchema), notWithin5More: count })),
+  inquiries: z.array(ResponseInquirySchema),
+  inquiriesMore: count,
+  imports: z.object({ people: count }),
+  closedExcluded: count,
+  truncated: z.boolean(),
+  generatedAt: z.string(),
+});
+
 /** Every response schema of the module (snapshot-tested: no confidence, no tenant id). */
 export const ACCOUNTABILITY_RESPONSE_SCHEMAS = {
   QueueResponse,
@@ -187,4 +236,5 @@ export const ACCOUNTABILITY_RESPONSE_SCHEMAS = {
   TeamScoreboardResponse,
   MomentumResponse,
   TeamQueueResponse,
+  LeadResponseResponse,
 } as const;

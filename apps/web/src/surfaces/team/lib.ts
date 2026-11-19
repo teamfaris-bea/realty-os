@@ -212,3 +212,117 @@ export function queueFootnote(q: Pick<TeamQueueResponse, 'generatedAt' | 'staffe
   const replies = w.replyDays === w.newLeadDays ? `${plural(w.newLeadDays, 'day')} for new leads and replies` : `${plural(w.newLeadDays, 'day')} for new leads, ${plural(w.replyDays, 'day')} for replies`;
   return `Checked ${formatStamp(q.generatedAt)}. Staffed hours are ${clock12(q.staffedHours.open)} to ${clock12(q.staffedHours.close)} (${q.staffedHours.zone}). Looks back ${replies}, ${plural(w.taskDays, 'day')} for promises and follow-ups, ${plural(w.appointmentDays, 'day')} for appointments.`;
 }
+
+// ---- the lead response report (b19 team-queue lane; GET /team/lead-response, read-only) ----------------------
+
+export interface ResponseInquiry {
+  inquiryId: string;
+  contact: { id: string; name: string };
+  sourceId: string;
+  sourceName: string | null;
+  receivedAt: string;
+  /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
+  offHours: boolean;
+  countedFrom: string;
+  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
+  waiting: { wallSeconds: number; staffedSeconds: number } | null;
+  automatedReplyAt: string | null;
+  within5: boolean;
+  within15: boolean;
+}
+
+export interface ResponseRollup {
+  inquiries: number;
+  attempted: number;
+  within5: number;
+  within15: number;
+  waiting: number;
+  automatedReplies: number;
+  sample: number;
+  medianStaffedSeconds: number | null;
+  p90StaffedSeconds: number | null;
+}
+
+export interface ResponseRules {
+  within5Seconds: number;
+  within15Seconds: number;
+  medianMinSample: number;
+  p90MinSample: number;
+}
+
+export interface LeadResponseReport {
+  range: { key: 'today' | '7d' | '30d' | '90d'; from: string; to: string; days: number; zone: string };
+  staffedHours: { open: string; close: string; zone: string };
+  rules: ResponseRules;
+  totals: ResponseRollup;
+  sources: (ResponseRollup & { sourceId: string; sourceName: string | null; notWithin5: ResponseInquiry[]; notWithin5More: number })[];
+  inquiries: ResponseInquiry[];
+  inquiriesMore: number;
+  imports: { people: number };
+  closedExcluded: number;
+  truncated: boolean;
+  generatedAt: string;
+}
+
+/** One line: how the report differs from the scoreboard's speed to lead. */
+export const FROM_ARRIVAL_LINE =
+  'From arrival: the clock starts when a lead arrives and stops at the first call, text, email or chat reply a person makes, whoever makes it. Speed to lead above starts only when an agent accepts the lead.';
+
+const minutes = (seconds: number): number => Math.round(seconds / 60);
+
+function percentileLine(seconds: number | null, sample: number, min: number): string {
+  // never a percentile on a small sample: the server sends null below the minimum, and the sample size is always said
+  if (seconds === null || sample < min) return `Not shown: ${sample} of the ${min} attempts it needs`;
+  return `${formatDuration(seconds)} (of ${plural(sample, 'attempt')})`;
+}
+
+/** A roll-up's lines. Every count is "x of y" inquiries (R-ACC-4); a percentile comes with its sample or not at all. */
+export function responseLines(r: ResponseRollup, rules: ResponseRules): { label: string; text: string }[] {
+  const of = (n: number) => `${n} of ${r.inquiries}`;
+  return [
+    { label: 'Inquiries', text: plural(r.inquiries, 'inquiry', 'inquiries') },
+    { label: 'With a human attempt', text: of(r.attempted) },
+    { label: `Within ${minutes(rules.within5Seconds)} minutes`, text: of(r.within5) },
+    { label: `Within ${minutes(rules.within15Seconds)} minutes`, text: of(r.within15) },
+    { label: 'Still waiting', text: of(r.waiting) },
+    { label: 'Median to the first attempt', text: percentileLine(r.medianStaffedSeconds, r.sample, rules.medianMinSample) },
+    { label: '90th percentile', text: percentileLine(r.p90StaffedSeconds, r.sample, rules.p90MinSample) },
+    { label: 'Automatic replies', text: `${of(r.automatedReplies)}, shown apart and never counted as an attempt` },
+  ];
+}
+
+const ATTEMPT_KIND: Record<NonNullable<ResponseInquiry['attempt']>['kind'], string> = { call: 'a call', text: 'a text', email: 'an email', chat: 'a chat reply' };
+const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], string> = { owner: 'the lead’s owner', collaborator: 'a collaborator on the lead', other: 'who was not the owner' };
+
+/** What happened to one inquiry, in a sentence or two: still waiting, or who tried, how, in what role and after how long. */
+export function responseInquiryLine(i: ResponseInquiry): string {
+  const auto = i.automatedReplyAt ? ` An automatic reply went out ${formatStamp(i.automatedReplyAt)}; it is not counted.` : ' No automatic reply went out.';
+  if (i.attempt === null) {
+    const w = i.waiting ?? { wallSeconds: 0, staffedSeconds: 0 };
+    const off = i.offHours ? ` (${formatAge(w.staffedSeconds)} of staffed time: it arrived outside staffed hours and is counted from opening)` : '';
+    return `Still waiting after ${formatAge(w.wallSeconds)}${off}. No person has tried yet.${auto}`;
+  }
+  const a = i.attempt;
+  const off = i.offHours ? ` It arrived outside staffed hours, so it is counted from opening (${formatAge(a.wallSeconds)} on the clock).` : '';
+  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${off}${auto}`;
+}
+
+/** The lines under the report: imports and closed people apart, and the rules of the measure. */
+export function responseFootnotes(r: Pick<LeadResponseReport, 'imports' | 'closedExcluded' | 'staffedHours' | 'rules'>): string[] {
+  const out = [
+    r.imports.people > 0
+      ? `${plural(r.imports.people, 'person', 'people')} came in by import in this period. They are not inquiries and are not measured here.`
+      : 'No one came in by import in this period.',
+  ];
+  if (r.closedExcluded > 0) {
+    out.push(
+      r.closedExcluded === 1
+        ? '1 inquiry from a person since closed (spam, not a lead, do not contact or merged) is left out.'
+        : `${r.closedExcluded} inquiries from people since closed (spam, not a lead, do not contact or merged) are left out.`,
+    );
+  }
+  out.push(
+    `Minutes are staffed time: ${clock12(r.staffedHours.open)} to ${clock12(r.staffedHours.close)} (${r.staffedHours.zone}). A lead that arrives outside those hours is counted from opening. A median is shown from ${plural(r.rules.medianMinSample, 'attempt')} and a 90th percentile from ${r.rules.p90MinSample}.`,
+  );
+  return out;
+}

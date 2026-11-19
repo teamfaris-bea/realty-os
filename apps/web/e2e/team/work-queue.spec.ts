@@ -6,6 +6,9 @@
 //     lead its agent has called. The name opens the person. Reading the page writes nothing.
 //   - axe-core (color contrast included) on the queue, no horizontal page scroll on a phone, and 44 px tap targets
 //     for every button and every link of the queue.
+//   - the lead response report on the scoreboard page (R-TEAMQ-7..9): from arrival, by source, every count with its
+//     denominator, the three still waiting listed under the source and the called lead not; axe, no horizontal
+//     scroll, 44 px targets.
 // Every lead is seeded through the real intake, ownership engine, first-response job and dial path.
 import { createRequire } from 'node:module';
 import { type Locator, type Page, expect, test } from 'playwright/test';
@@ -120,5 +123,40 @@ test('the queue passes axe (color contrast included), has no horizontal scroll, 
   const small = await page.locator('main button:visible, main [role="radio"]:visible').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.height < 44 || r.width < 44).length);
   expect(small).toBe(0);
   const smallLinks = await queue(page).locator('a:visible').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.height < 44 || r.width < 44).length);
+  expect(smallLinks).toBe(0);
+});
+
+test('the lead response report says "from arrival", counts the four inquiries by source with denominators, and lists the three nobody has tried under the source', async ({ page }) => {
+  await signIn(page);
+  await page.goto(`${stack.webUrl}/team/scoreboard`);
+  const region = page.getByRole('region', { name: 'Lead response, from arrival' });
+  await expect(region).toBeVisible();
+  await expect(region.getByText(/^From arrival: the clock starts when a lead arrives .* Speed to lead above starts only when an agent accepts the lead\.$/)).toBeVisible();
+  const portal = region.getByRole('listitem').filter({ has: page.getByRole('heading', { level: 3, name: 'Portal' }) });
+  await expect(portal.getByText('4 inquiries', { exact: true })).toBeVisible();
+  // one of four has a human attempt (the call), made at once: within 5 minutes; three still wait
+  await expect(portal.getByText('With a human attempt').locator('xpath=following-sibling::dd[1]')).toHaveText('1 of 4');
+  await expect(portal.getByText('Within 5 minutes').locator('xpath=following-sibling::dd[1]')).toHaveText('1 of 4');
+  await expect(portal.getByText('Still waiting').locator('xpath=following-sibling::dd[1]')).toHaveText('3 of 4');
+  // no percentile on one attempt
+  await expect(portal.getByText('Not shown: 1 of the 5 attempts it needs', { exact: true })).toBeVisible();
+  const list = portal.getByRole('list', { name: 'Not within 5 minutes, Portal' });
+  await expect(list.getByRole('listitem')).toHaveCount(3);
+  for (const name of ['Pilar Pondsworth', 'Otis Offerman', 'Aurelio Autoreply']) await expect(list.getByRole('link', { name, exact: true })).toBeVisible();
+  await expect(list.getByRole('link', { name: 'Hana Called' })).toHaveCount(0);
+  const automated = list.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'Aurelio Autoreply', exact: true }) });
+  await expect(automated.getByText(/^Still waiting after .*\. No person has tried yet\. An automatic reply went out .*; it is not counted\.$/)).toBeVisible();
+  // the existing scoreboard is still there
+  await expect(page.getByRole('heading', { level: 2, name: 'Scoreboard' })).toBeVisible();
+
+  await page.addScriptTag({ path: AXE_PATH });
+  const violations = await page.evaluate(async () => {
+    const r = await (window as unknown as { axe: { run(n: Node, o: unknown): Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe.run(document.body, { resultTypes: ['violations'] });
+    return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
+  });
+  expect(violations).toEqual([]);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  const smallLinks = await region.locator('a:visible').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.height < 44 || r.width < 44).length);
   expect(smallLinks).toBe(0);
 });
