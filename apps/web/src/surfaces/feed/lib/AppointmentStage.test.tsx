@@ -62,7 +62,8 @@ describe('the appointment outcome sheet and the stage step (R-STG-2)', () => {
     expect(active).toBeChecked();
     expect(active).toHaveAccessibleDescription(/We are working together now\..*They signed an agreement, so you are working together now\./);
     expect(within(step).getByRole('radio', { name: 'Keep Connected' })).toBeInTheDocument();
-    expect(await within(step).findByText('Will start: Buyer plan. No message is due from it yet.')).toBeInTheDocument();
+    expect(await within(within(step).getByTestId('stage-preview')).findByText('Will start: Buyer plan. No message is due from it yet.')).toBeInTheDocument();
+    expect(within(step).getByTestId('stage-step-effect')).toHaveTextContent('Will start: Buyer plan. No message is due from it yet.');
     expect(fake.callsTo(`POST /contacts/${C}/stage`)).toHaveLength(0);
     const confirm = within(step).getByRole('button', { name: 'Change to Active client' });
     await waitFor(() => expect(confirm).toBeEnabled());

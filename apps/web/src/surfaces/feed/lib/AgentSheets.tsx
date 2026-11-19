@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom';
 import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
+import { detailsKey } from '../../people-edit/api.js';
 import { ToastProvider } from '../../people-edit/hooks.js';
 import { StageStep } from '../../people-edit/StageStep.js';
 import type { SuggestedStage } from '../../people-edit/stageFlow.js';
@@ -128,7 +129,8 @@ function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: s
   const [state, setState] = useState<CallState>({ step: 'dialing' });
   const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null } | null>(null);
   const started = useRef(false);
-  const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY]] });
+  // the person's details too: the dial was a first contact, which opens the stages a routed lead had locked (R-PAR-14)
+  const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY], [...detailsKey(contact.id)]] });
   const who = firstName(contact.name);
   // the exact reason a refused call rests on ("Asked not to be called (recorded by Avery Brooks on Oct 3)")
   const voice = useChannelState(contact.id, 'voice');

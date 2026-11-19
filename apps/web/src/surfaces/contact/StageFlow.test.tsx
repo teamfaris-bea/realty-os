@@ -34,8 +34,9 @@ function page(stage = 'new') {
   for (const s of guideFixture()) fake.on(`GET /contacts/${C}/stage/preview?to=${s.key}`, { status: 200, body: { ...PREVIEW, sameStage: s.key === stage } });
   return fake;
 }
-const bar = () => screen.findByTestId('person-phone-bar');
-const step = () => screen.findByRole('dialog', { name: 'Stage for Jane Doe' });
+// the first mount of the whole app can take longer than findBy's default 1 s under full-suite load
+const bar = () => screen.findByTestId('person-phone-bar', {}, { timeout: 10_000 });
+const step = () => screen.findByRole('dialog', { name: 'Stage for Jane Doe' }, { timeout: 5_000 });
 
 describe('one sheet, no navigation: call → outcome → confirm the stage', () => {
   it('Call → Left voicemail → "Change to Trying to reach" is 3 taps: the outcome is saved by its own tap, the same sheet then suggests the stage, and the page never changes', async () => {
@@ -53,7 +54,8 @@ describe('one sheet, no navigation: call → outcome → confirm the stage', () 
     expect(within(s).getByRole('status')).toHaveTextContent('Voicemail logged');
     expect(await within(s).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
     expect(within(s).getByRole('radio', { name: 'Keep New lead' })).toBeInTheDocument();
-    expect(await within(s).findByText('No plan starts on this stage.')).toBeInTheDocument();
+    expect(await within(within(s).getByTestId('stage-preview')).findByText('No plan starts on this stage.')).toBeInTheDocument();
+    expect(within(s).getByTestId('stage-step-effect')).toHaveTextContent('No plan starts on this stage.');
     expect(fake.callsTo(`POST /contacts/${C}/stage`)).toHaveLength(0);
     const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach' });
     await waitFor(() => expect(confirm).toBeEnabled());

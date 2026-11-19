@@ -7,6 +7,8 @@
 //   the two lines, the effect line and, when locked, the "Reach them first" explanation (R-PAR-14): a locked stage is
 //   shown locked before the tap and is never selectable.
 // - `effect`: what choosing it would do to the person's automated plan (StagePreview.tsx), when the caller knows.
+// - `compact` (a set of choices in a sheet on a phone): the "does not mean" line shows on demand, for the selected
+//   choice, so the choices and what the selected one will do fit one screen. The definition always shows.
 import { type ReactNode, useId } from 'react';
 import type { StageGuideRow } from './api.js';
 
@@ -29,14 +31,17 @@ export interface StageRowProps {
   mode: 'pick' | 'select';
   selected?: boolean;
   /** the visible label, when it is not the stage's own ("Keep New lead") */
-  label?: string;
+  label?: string | undefined;
+  /** show the "does not mean" line only while this choice is selected */
+  compact?: boolean;
   onPick(): void;
 }
 
-export function StageRow({ stage, current = false, locked = false, lockedBy, badge, why, effect, disabled = false, mode, selected = false, label, onPick }: StageRowProps) {
+export function StageRow({ stage, current = false, locked = false, lockedBy, badge, why, effect, disabled = false, mode, selected = false, label, compact = false, onPick }: StageRowProps) {
   const id = useId();
+  const showNot = !compact || selected;
   const state = locked ? 'Locked' : current && mode === 'pick' ? 'Current' : (badge ?? '');
-  const describedBy = [`${id}-d`, `${id}-n`, why ? `${id}-w` : null, effect ? `${id}-e` : null, locked ? lockedBy : null].filter(Boolean).join(' ');
+  const describedBy = [`${id}-d`, showNot ? `${id}-n` : null, why ? `${id}-w` : null, effect ? `${id}-e` : null, locked ? lockedBy : null].filter(Boolean).join(' ');
   const on = mode === 'select' ? selected : current;
   return (
     <button
@@ -63,9 +68,11 @@ export function StageRow({ stage, current = false, locked = false, lockedBy, bad
       <span id={`${id}-d`} className="text-[15px] leading-snug text-ink [overflow-wrap:anywhere]">
         {stage.definition}
       </span>
-      <span id={`${id}-n`} className="text-[13px] leading-snug text-ink-muted [overflow-wrap:anywhere]">
-        {stage.notThis}
-      </span>
+      {showNot ? (
+        <span id={`${id}-n`} className="text-[13px] leading-snug text-ink-muted [overflow-wrap:anywhere]">
+          {stage.notThis}
+        </span>
+      ) : null}
       {why ? (
         <span id={`${id}-w`} className="text-[14px] leading-snug text-ink [overflow-wrap:anywhere]">
           {why}

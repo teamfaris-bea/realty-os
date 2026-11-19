@@ -9,7 +9,9 @@
 //   - what the selected choice will do, from the server's preview (StagePreview.tsx);
 //   - a follow-up: None, Tomorrow, 3 days, 1 week, or a picked date. It is an ordinary task, created with an id made
 //     once per sheet, so a second tap or a retry answers the same task (R-STG-6);
-//   - ONE primary button named for its effect ("Change to Trying to reach", "Keep New lead").
+//   - ONE primary button named for its effect ("Change to Trying to reach", "Keep New lead"), with the one line that
+//     says what the choice will do to the automated plan directly above it, so it is read before the tap even when
+//     the sheet's body is scrolled (a phone shows the choices first).
 //
 // Nothing is offered that the server would refuse: the stage controls show only to someone who may edit the person
 // (`details.canEdit`), a locked stage is disabled, and the primary button waits for the preview and is disabled when
@@ -20,11 +22,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { formatDateTime } from '../feed/lib/format.js';
-import { type Details, type StageGuideRow, detailsKey, firstNameOf, guideOf, labelIn, useDetails } from './api.js';
-import { Chip, selectClass, usePersonAction, useToast } from './hooks.js';
+import { useApi } from '../../shell/index.js';
+import { type Details, type StageGuideRow, detailsKey, firstNameOf, guideOf, labelIn } from './api.js';
+import { Chip, peopleMessage, selectClass, usePersonAction, useToast } from './hooks.js';
 import { StageRow } from './StageChoices.js';
-import { StagePreviewBlock } from './StagePreview.js';
-import { type SuggestedStage, effectLabel, useStagePreview } from './stageFlow.js';
+import { PREVIEW_FAILED, PREVIEW_LOADING, StagePreviewBlock } from './StagePreview.js';
+import { type SuggestedStage, effectLabel, effectLine, useStagePreview } from './stageFlow.js';
 import { useStageChange } from './useStageChange.js';
 
 export type { StageSignal };
@@ -84,15 +87,23 @@ function Saved({ text }: { text: string }) {
 export function StageStep(props: StageStepProps) {
   const { contactId, contactName, saved, onClose } = props;
   const qc = useQueryClient();
-  // the outcome just saved may have changed what the person's details say (a first touch opens the locked stages)
-  useEffect(() => {
-    void qc.invalidateQueries({ queryKey: detailsKey(contactId) });
-  }, [qc, contactId]);
-  const d = useDetails(contactId);
-  // The person as they were when the step opened, read once the fresh answer is in. A confirmed change refreshes the
-  // details behind the sheet; it must not turn this step into another one, so the step keeps its first reading.
+  const api = useApi();
+  // The person as they are NOW, asked afresh when the step opens: the outcome just saved may have changed what the
+  // page had cached (the dial of a first call is the first contact, which opens the locked stages). The step keeps
+  // this one reading: a confirmed change refreshes the details behind the sheet and must not turn the step into
+  // another one. The answer also replaces the page's cached details, so the stage pill agrees with the sheet.
   const [details, setDetails] = useState<Details | null>(null);
-  if (details === null && d.data && !d.isFetching) setDetails(d.data.details);
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    qc.fetchQuery<{ details: Details }>({ queryKey: detailsKey(contactId), queryFn: ({ signal }) => api.get<{ details: Details }>(`/contacts/${contactId}/details`, { signal }), staleTime: 0 }).then(
+      (r) => live && setDetails(r.details),
+      (e: unknown) => live && setFailed(peopleMessage(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [qc, api, contactId]);
   const canEdit = details?.canEdit === true;
 
   const guide = useMemo(() => guideOf(details?.stageGuide), [details?.stageGuide]);
@@ -116,7 +127,7 @@ export function StageStep(props: StageStepProps) {
   const stage = useStageChange(contactId, labelOf);
   const task = usePersonAction<{ task: { id: string }; replayed: boolean }>(contactId);
   const toast = useToast();
-  const ids = { locked: useId(), follow: useId(), pick: useId() };
+  const ids = { locked: useId(), follow: useId(), pick: useId(), effect: useId() };
   const first = firstNameOf(contactName);
 
   const preview = useStagePreview(contactId, canEdit ? selected : null);
@@ -165,14 +176,14 @@ export function StageStep(props: StageStepProps) {
       >
         <div className="flex flex-col gap-3">
           <Saved text={saved} />
-          {!details ? d.isError ? <Notice tone="error">{d.error.message}</Notice> : <p className="text-[15px] text-ink-muted">Loading</p> : <p className="text-[15px] text-ink">The stage stays {details.stage.label}. Only someone who can edit this person changes it.</p>}
+          {!details ? failed ? <Notice tone="error">{failed}</Notice> : <p className="text-[15px] text-ink-muted">Loading</p> : <p className="text-[15px] text-ink">The stage stays {details.stage.label}. Only someone who can edit this person changes it.</p>}
         </div>
       </Dialog>
     );
   }
 
   const choice = (k: string, o: { badge?: string; why?: string; label?: string } = {}) => (
-    <StageRow key={k} mode="select" stage={row(k)} locked={k !== current && lockedSet.has(k)} lockedBy={ids.locked} selected={selected === k} badge={o.badge} why={o.why} label={o.label} disabled={working} onPick={() => setPickedStage(k)} />
+    <StageRow key={k} mode="select" compact stage={row(k)} locked={k !== current && lockedSet.has(k)} lockedBy={ids.locked} selected={selected === k} badge={o.badge} why={o.why} label={o.label} disabled={working} onPick={() => setPickedStage(k)} />
   );
   const also = (offer?.alsoOffer ?? []).filter((a) => a.stage !== current && a.stage !== offer?.stage);
   const anyLocked = all ? lockedSet.size > 0 : offerLocked || also.some((a) => a.locked || lockedSet.has(a.stage));
@@ -184,7 +195,11 @@ export function StageStep(props: StageStepProps) {
       onClose={onClose}
       footer={
         <div className="flex flex-col gap-2">
-          <Button block pending={working} disabled={refused || waiting || !dueOk} onClick={() => void confirm()} data-testid="stage-step-confirm">
+          {/* what the tap will do to the automated plan, always in view above the button (the full preview is in the body) */}
+          <p id={ids.effect} data-testid="stage-step-effect" className="text-[14px] leading-snug text-ink [overflow-wrap:anywhere]">
+            {refused ? 'Locked for now: reach them first.' : preview.data ? effectLine(preview.data) : preview.isError ? PREVIEW_FAILED : PREVIEW_LOADING}
+          </p>
+          <Button block className="py-2" pending={working} disabled={refused || waiting || !dueOk} aria-describedby={ids.effect} onClick={() => void confirm()} data-testid="stage-step-confirm">
             {primary}
           </Button>
           <Button block variant="quiet" onClick={onClose}>
@@ -207,22 +222,22 @@ export function StageStep(props: StageStepProps) {
             <>
               {offer ? (
                 offerLocked ? (
-                  <StageRow mode="select" stage={row(offer.stage)} locked lockedBy={ids.locked} why={offer.why} onPick={() => undefined} />
+                  <StageRow mode="select" compact stage={row(offer.stage)} locked lockedBy={ids.locked} why={offer.why} onPick={() => undefined} />
                 ) : (
                   choice(offer.stage, { badge: 'Suggested', why: offer.why })
                 )
               ) : null}
               {choice(current, { label: `Keep ${labelOf(current)}` })}
-              {also.map((a) => (a.locked || lockedSet.has(a.stage) ? <StageRow key={a.stage} mode="select" stage={row(a.stage)} locked lockedBy={ids.locked} onPick={() => undefined} /> : choice(a.stage)))}
+              {also.map((a) => (a.locked || lockedSet.has(a.stage) ? <StageRow key={a.stage} mode="select" compact stage={row(a.stage)} locked lockedBy={ids.locked} onPick={() => undefined} /> : choice(a.stage)))}
             </>
           )}
         </div>
+        <StagePreviewBlock contactId={contactId} to={selected} />
         {all ? null : (
           <Button variant="quiet" className="self-start" aria-expanded={false} onClick={() => setAll(true)}>
             Another stage…
           </Button>
         )}
-        <StagePreviewBlock contactId={contactId} to={selected} />
         {refused ? <Notice tone="warn">This stage is locked for now: reach {first} first (a call, text, email or reply in their website chat).</Notice> : null}
         <div className="flex flex-col gap-2">
           <p id={ids.follow} className="text-[15px] font-medium text-ink">

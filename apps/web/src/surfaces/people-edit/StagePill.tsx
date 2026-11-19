@@ -30,11 +30,12 @@ function PickerRow({ contactId, stage, current, locked, lockedBy, busy, onPick }
 
 const PICK_PREVIEW_FAILED = "We couldn't check what this would start. The change is still checked when you pick it.";
 
-/** Above the stages, once: the plan the person is in keeps running whatever stage is picked (Stop when allowed). */
+/** Above the stages, once, when the person is in a plan: it keeps running whatever stage is picked (Stop when allowed). */
 function RunningPlan({ contactId, anyStage }: { contactId: string; anyStage: string | null }) {
   // every stage's preview reports the same running plan: read it from one the rows already ask for
   const k = useStagePreview(contactId, anyStage).data?.keepsRunning ?? null;
   const [stopped, setStopped] = useState<string | null>(null);
+  if (!k && !stopped) return null;
   return (
     <div className="mb-3 flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
       {k ? <KeepsRunning contactId={contactId} k={k} onStopped={setStopped} /> : null}
@@ -43,6 +44,14 @@ function RunningPlan({ contactId, anyStage }: { contactId: string; anyStage: str
           Stopped {stopped}.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/** Under the stages: what no stage change ever does. */
+function NeverNote() {
+  return (
+    <div className="mt-3 flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
       <p>{NEVER_STOPS}</p>
       <p className="text-ink-muted">
         <span>{AI_UNCHANGED}</span> · <span>{TASKS_UNCHANGED}</span>
@@ -104,6 +113,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
               </li>
             ))}
           </ul>
+          <NeverNote />
           {act.error ? <Notice tone="error">{act.error}</Notice> : null}
         </Dialog>
       ) : null}

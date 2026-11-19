@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiClient } from '../../shell/index.js';
 import { ShellProvider } from '../../shell/context.js';
 import { FakeFetch, err, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
-import type { Details } from './api.js';
+import { type Details, detailsKey } from './api.js';
 import { ToastProvider } from './hooks.js';
 import { StageStep, type StageStepProps, morningIn, suggestionFromSignal } from './StageStep.js';
 import type { StagePreview, StageResponse, SuggestedStage } from './stageFlow.js';
@@ -24,7 +24,7 @@ const VOICEMAIL: SuggestedStage = { stage: 'attempting', why: 'You left a voicem
 const TALKED: SuggestedStage = { stage: 'connected', why: 'You talked with them. That is a two-way conversation.', locked: false, alsoOffer: [{ stage: 'nurture', locked: false }] };
 const LOCKED = ['connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'];
 
-function mount(o: { details?: Details; props?: Partial<StageStepProps>; previews?: Record<string, StagePreview>; extra?: (f: FakeFetch) => void } = {}) {
+function mount(o: { details?: Details; cached?: Details; props?: Partial<StageStepProps>; previews?: Record<string, StagePreview>; extra?: (f: FakeFetch) => void } = {}) {
   const details = o.details ?? detailsFixture(C, 'new');
   const fake = new FakeFetch().on('GET /auth/session', { status: 200, body: sessionFixture() }).on(`GET /contacts/${C}/details`, { status: 200, body: { details } });
   for (const s of guideFixture()) fake.on(`GET /contacts/${C}/stage/preview?to=${s.key}`, { status: 200, body: o.previews?.[s.key] ?? preview({ sameStage: s.key === details.stage.stage }) });
@@ -36,7 +36,9 @@ function mount(o: { details?: Details; props?: Partial<StageStepProps>; previews
     .on('POST /tasks', (call, n) => ({ status: n === 1 ? 201 : 200, body: { task: { id: (call.body as { id: string }).id }, replayed: n > 1 } }));
   o.extra?.(fake);
   const onClose = vi.fn();
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  // what the page already had about the person when the sheet opened (the stage pill's details)
+  if (o.cached) qc.setQueryData(detailsKey(C), { details: o.cached });
   render(
     <QueryClientProvider client={qc}>
       <ShellProvider api={new ApiClient({ fetch: fake.fetch })} table={tableWith()}>
@@ -53,6 +55,9 @@ function mount(o: { details?: Details; props?: Partial<StageStepProps>; previews
 const sheet = () => screen.findByRole('dialog', { name: 'Stage for Dana Reyes' });
 const stages = async () => within(await sheet()).findByRole('radiogroup', { name: 'Stage' });
 const stagePosts = (fake: FakeFetch) => fake.callsTo(`POST /contacts/${C}/stage`);
+/** the full preview in the sheet's body, and the one line above the button */
+const previewBlock = () => within(screen.getByTestId('stage-preview'));
+const effect = () => screen.getByTestId('stage-step-effect');
 
 describe('the stage step after an outcome', () => {
   it('a voicemail on a new lead: what was saved; "Trying to reach" suggested with its definition and why, preselected; "Keep New lead"; the preview of the selected choice; one tap confirms', async () => {
@@ -65,7 +70,10 @@ describe('the stage step after an outcome', () => {
     expect(radios[0]).toHaveAccessibleDescription(/We tried to reach them but have not had a two-way conversation yet\. A voicemail or an unanswered text is not a conversation\. You left a voicemail\. That is a try, not a conversation yet\./);
     // nothing is offered that the outcome does not suggest
     expect(within(group).queryByText('Long-term follow-up')).toBeNull();
-    expect(await within(await sheet()).findByText('No plan starts on this stage.')).toBeInTheDocument();
+    expect(await previewBlock().findByText('No plan starts on this stage.')).toBeInTheDocument();
+    // the same line sits directly above the button, and the button is described by it
+    expect(effect()).toHaveTextContent('No plan starts on this stage.');
+    expect(within(await sheet()).getByRole('button', { name: 'Change to Trying to reach' })).toHaveAccessibleDescription('No plan starts on this stage.');
     expect(fake.callsTo(`GET /contacts/${C}/stage/preview?to=attempting`).length).toBeGreaterThanOrEqual(1);
     // the suggestion has changed nothing yet
     expect(stagePosts(fake)).toHaveLength(0);
@@ -81,7 +89,8 @@ describe('the stage step after an outcome', () => {
   it('"Keep New lead" changes nothing: the button is named for it, the preview says nothing starts, and no stage request is sent', async () => {
     const { fake, onClose, u } = mount();
     await u.click(within(await stages()).getByRole('radio', { name: 'Keep New lead' }));
-    expect(await within(await sheet()).findByText('They are in this stage now. Nothing starts.')).toBeInTheDocument();
+    expect(await previewBlock().findByText('They are in this stage now. Nothing starts.')).toBeInTheDocument();
+    expect(effect()).toHaveTextContent('They are in this stage now. Nothing starts.');
     await u.click(within(await sheet()).getByRole('button', { name: 'Keep New lead' }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(stagePosts(fake)).toHaveLength(0);
@@ -99,10 +108,12 @@ describe('the stage step after an outcome', () => {
     expect(within(group).getByRole('radio', { name: 'Keep Trying to reach' })).not.toBeChecked();
     const longTerm = within(group).getByRole('radio', { name: 'Long-term follow-up' });
     expect(longTerm).toHaveAccessibleDescription(/We have talked and they are months away, so we keep in touch\./);
-    expect(await within(await sheet()).findByText('Will start: Stay in touch, first step text tomorrow 9:00 AM')).toBeInTheDocument();
+    expect(await previewBlock().findByText('Will start: Stay in touch, first step text tomorrow 9:00 AM')).toBeInTheDocument();
+    expect(effect()).toHaveTextContent('Will start: Stay in touch, first step text tomorrow 9:00 AM');
     await u.click(longTerm);
     expect(await within(await sheet()).findByRole('button', { name: 'Change to Long-term follow-up' })).toBeInTheDocument();
-    await waitFor(() => expect(within(screen.getByTestId('stage-preview')).getByText('No plan starts on this stage.')).toBeInTheDocument());
+    await waitFor(() => expect(previewBlock().getByText('No plan starts on this stage.')).toBeInTheDocument());
+    await waitFor(() => expect(effect()).toHaveTextContent('No plan starts on this stage.'));
   });
 
   it('"Another stage…" opens all eight with their definitions; the current one is marked and a locked one cannot be selected', async () => {
@@ -112,10 +123,15 @@ describe('the stage step after an outcome', () => {
     await u.click(within(await sheet()).getByRole('button', { name: 'Another stage…' }));
     const radios = within(group).getAllByRole('radio');
     expect(radios).toHaveLength(8);
-    for (const s of guideFixture()) {
-      expect(within(group).getByText(s.definition)).toBeInTheDocument();
-      expect(within(group).getByText(s.notThis)).toBeInTheDocument();
-    }
+    // every stage says what it means; what it does NOT mean shows on demand, for the selected choice
+    for (const s of guideFixture()) expect(within(group).getByText(s.definition)).toBeInTheDocument();
+    const not = (key: string) => guideFixture().find((g) => g.key === key)!.notThis;
+    expect(within(group).getByText(not('attempting'))).toBeInTheDocument();
+    expect(within(group).queryByText(not('new'))).toBeNull();
+    await u.click(within(group).getByRole('radio', { name: 'New lead Current' }));
+    expect(within(group).getByText(not('new'))).toBeInTheDocument();
+    expect(within(group).queryByText(not('attempting'))).toBeNull();
+    await u.click(within(group).getByRole('radio', { name: 'Trying to reach Suggested' }));
     expect(within(group).getByRole('radio', { name: 'New lead Current' })).not.toBeDisabled();
     expect(within(group).getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
     for (const s of guideFixture().filter((g) => LOCKED.includes(g.key))) {
@@ -141,12 +157,27 @@ describe('the stage step after an outcome', () => {
     expect(fake.callsTo(`GET /contacts/${C}/stage/preview?to=connected`)).toHaveLength(0);
   });
 
+  it('the step reads the person afresh: what the page had cached before the outcome (stages still locked) never locks a stage the outcome has just opened', async () => {
+    // the first call to a routed lead: the dial was the first contact, so the server's suggestion is not locked,
+    // while the page's cached details still list every later stage as locked
+    const stale = detailsFixture(C, 'new', { stage: stageFixture('new', { locked: LOCKED, lockedReason: 'STAGE_NEEDS_CONTACT' }) });
+    const { fake } = mount({ cached: stale, details: detailsFixture(C, 'new'), props: { saved: 'Conversation logged', suggested: TALKED } });
+    const group = await stages();
+    const connected = within(group).getByRole('radio', { name: 'Connected Suggested' });
+    expect(connected).toBeChecked();
+    expect(connected).toBeEnabled();
+    expect(within(group).getByRole('radio', { name: 'Long-term follow-up' })).toBeEnabled();
+    expect(within(await sheet()).queryByText(/Reach them first/)).toBeNull();
+    expect(fake.callsTo(`GET /contacts/${C}/details`)).toHaveLength(1);
+  });
+
   it('the server\'s preview refuses the selected stage (it locked since): the button is disabled and says why; nothing is sent', async () => {
     const { fake } = mount({ previews: { attempting: preview({ allowed: false, lockedReason: 'STAGE_NEEDS_CONTACT' }) } });
     await stages();
     const confirm = within(await sheet()).getByRole('button', { name: 'Change to Trying to reach' });
     expect(await within(await sheet()).findByText(/This stage is locked for now: reach Dana first/)).toBeInTheDocument();
     expect(confirm).toBeDisabled();
+    expect(effect()).toHaveTextContent('Locked for now: reach them first.');
     expect(stagePosts(fake)).toHaveLength(0);
   });
 
