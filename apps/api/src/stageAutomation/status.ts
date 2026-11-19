@@ -6,7 +6,8 @@
 //                    is still shown with why. `next` is the runner's own next step (assistant/enrollmentStatus.ts:
 //                    the planning walk the step runner acts on), never its wake-up time; null when the plan is not
 //                    active or the runner would not take a step next. `blocked` is why a paused or stopped plan is
-//                    not moving. `deliveryUnconfirmed`: the plan's most recent message was handed to the provider and
+//                    not moving; a paused plan's sentence invites "Resume" only when canResume is true, and names
+//                    the resume route's own refusal when it is about the plan (E786). `deliveryUnconfirmed`: the plan's most recent message was handed to the provider and
 //                    no answer came; it is said in its own field and sentence, never as sent and never as retried. canPause, canResume and canStop are the pause, resume and stop routes' own
 //                    authorization (comms.send on the person, as a marketing send) AND their own state checks
 //                    (assistant/enrollments.ts pauseCheck, resumeCheck, stopCheck), read in the viewer's own
@@ -89,12 +90,16 @@ export async function playbookStatus(db: Database, viewer: UserActor, contactId:
       const shown = await shownEnrollment(tx, contactId);
       const e = shown ? await P.enrollmentById(tx, shown.id) : null;
       const may = e ? mayChangeEnrollment(viewer, await enrollmentSendFacts(tx, contactId)) : false;
+      const resume = e ? await resumeCheck(tx, e) : null;
       const can = e
-        ? { pause: may && pauseCheck(e).kind === 'acts', stop: may && stopCheck(e).kind === 'acts', resume: may && (await resumeCheck(tx, e)).kind === 'acts' }
+        ? { pause: may && pauseCheck(e).kind === 'acts', stop: may && stopCheck(e).kind === 'acts', resume: may && resume?.kind === 'acts' }
         : { pause: false, stop: false, resume: false };
+      // E786: why THIS viewer's resume would be refused, when it is about the plan (they may ask, and it would not
+      // resume). A viewer who may not ask at all is told nothing more than that it is paused.
+      const resumeRefusal = may && resume?.kind === 'refused' ? resume.error.code : null;
       const event = await R.latestStageEvent(tx, contactId);
       const decision = event ? await R.decisionOf(tx, event.id) : null;
-      return { shown, e, can, event, decision };
+      return { shown, e, can, resumeRefusal, event, decision };
     },
     { db },
   );
@@ -116,7 +121,7 @@ export async function playbookStatus(db: Database, viewer: UserActor, contactId:
   const { shown, e, can, event, decision } = mine;
   const blocked = (): { code: string; sentence: string } | null => {
     if (!e || !shown) return null;
-    if (e.state === 'paused') return { code: e.pauseReason ?? 'paused', sentence: pausedSentence(e.pauseReason ?? '') };
+    if (e.state === 'paused') return { code: e.pauseReason ?? 'paused', sentence: pausedSentence(e.pauseReason ?? '', { canResume: can.resume, refusal: mine.resumeRefusal }) };
     if (e.state === 'stopped') return { code: shown.stopReason ?? 'stopped', sentence: stoppedSentence(shown.stopReason ?? '') };
     return null;
   };

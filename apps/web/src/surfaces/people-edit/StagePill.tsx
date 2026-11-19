@@ -41,7 +41,7 @@ function RunningPlan({ contactId, anyStage }: { contactId: string; anyStage: str
       {k ? <KeepsRunning contactId={contactId} k={k} onStopped={setStopped} /> : null}
       {stopped ? (
         <p role="status" className="font-medium">
-          Stopped {stopped}.
+          {stopped}
         </p>
       ) : null}
     </div>

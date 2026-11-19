@@ -159,9 +159,9 @@ async function register(app: FastifyInstance): Promise<void> {
       return { enrollment };
     },
   );
-  r.post('/enrollments/:id/pause', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentResponse } } }, async (req) => ({ enrollment: await pauseEnrollment(actorOf(req), req.params.id, deps()) }));
-  r.post('/enrollments/:id/resume', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentResponse } } }, async (req) => ({ enrollment: await resumeEnrollment(actorOf(req), req.params.id, deps()) }));
-  r.post('/enrollments/:id/stop', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentResponse } } }, async (req) => ({ enrollment: await stopEnrollment(actorOf(req), req.params.id, deps()) }));
+  r.post('/enrollments/:id/pause', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentChangeResponse } } }, async (req) => pauseEnrollment(actorOf(req), req.params.id, deps()));
+  r.post('/enrollments/:id/resume', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentChangeResponse } } }, async (req) => resumeEnrollment(actorOf(req), req.params.id, deps()));
+  r.post('/enrollments/:id/stop', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentChangeResponse } } }, async (req) => stopEnrollment(actorOf(req), req.params.id, deps()));
 
   // ---- saved searches ----
   r.get(

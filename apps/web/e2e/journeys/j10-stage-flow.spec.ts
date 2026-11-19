@@ -328,7 +328,7 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
 
   await tap(page, row.getByRole('button', { name: `Pause ${PLAN}` }));
   await expect(row.getByTestId('plan-state')).toHaveText('Paused', { timeout: 15_000 });
-  await expect(row.getByText('Paused by someone on the team. Resume it when you are ready.')).toBeVisible();
+  await expect(row.getByText('Paused by hand. Resume it when you are ready.')).toBeVisible();
   await expect(row.getByText(/^Next: /)).toHaveCount(0);
   expect((await enrollments(dana.id))[0]!.state).toBe('paused');
   await tap(page, row.getByRole('button', { name: `Resume ${PLAN}` }));
@@ -336,7 +336,7 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   expect((await enrollments(dana.id))[0]!.state).toBe('active');
   await tap(page, row.getByRole('button', { name: `Stop ${PLAN}` }));
   await expect(row.getByTestId('plan-state')).toHaveText('Stopped', { timeout: 15_000 });
-  await expect(row.getByText('Stopped by someone on the team.')).toBeVisible();
+  await expect(row.getByText('Stopped by hand.')).toBeVisible();
   await expect(row.getByRole('button')).toHaveCount(0);
   expect((await enrollments(dana.id))[0]!.state).toBe('stopped');
   await shot(page, info, 'j10', '4b-panel-stopped');

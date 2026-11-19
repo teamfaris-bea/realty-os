@@ -252,6 +252,24 @@ export function originLine(s: PlaybookStatus, labelOf: (key: string) => string, 
   }
 }
 
+// ---- stop (E786) --------------------------------------------------------------------------------------------------------
+
+/** POST /enrollments/:id/stop (and pause, resume): the plan as it is now, and whether THIS request changed it. */
+export interface EnrollmentChange {
+  enrollment: { state: string };
+  /** false: nothing was written (the plan had already ended); absent on an answer from before the field existed */
+  changed?: boolean;
+}
+
+/**
+ * What a Stop did, from the stop route's own answer. "Stopped <plan>." only when this request stopped it; a plan that
+ * had already ended (a teammate stopped it a moment ago, or it finished) is said as that, and nothing is claimed.
+ */
+export function stoppedWords(plan: string, r: EnrollmentChange): string {
+  if (r.changed !== false) return `Stopped ${plan}.`;
+  return r.enrollment.state === 'completed' ? `${plan} had already finished. Nothing was changed.` : `${plan} had already been stopped. Nothing was changed.`;
+}
+
 // ---- undo (R-STG-5) ---------------------------------------------------------------------------------------------------
 
 /**

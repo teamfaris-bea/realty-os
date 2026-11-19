@@ -30,7 +30,7 @@ function mount(o: { undo: StageResponse | 'refused'; stop?: 'ok' | 'refused' }) 
     if (b.undoOf) return o.undo === 'refused' ? err(409, 'STAGE_UNDO_INVALID') : { status: 200, body: o.undo };
     return { status: 200, body: { stage: stageFixture('active'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Buyer plan' }, automationSentence: 'Buyer plan started.', stillRunning: null } satisfies StageResponse };
   });
-  if (o.stop) fake.on(`POST /enrollments/${E}/stop`, o.stop === 'ok' ? { status: 200, body: { enrollment: { id: E, state: 'stopped' } } } : err(404, 'NOT_FOUND'));
+  if (o.stop) fake.on(`POST /enrollments/${E}/stop`, o.stop === 'ok' ? { status: 200, body: { enrollment: { id: E, state: 'stopped' }, changed: true } } : err(404, 'NOT_FOUND'));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
@@ -102,6 +102,15 @@ describe('R-STG-5 undo of a stage change', () => {
     const toast = await changeThenUndo(u);
     expect(await within(toast).findByText('Stage back to Trying to reach. Buyer plan is still running; undo does not stop it.')).toBeInTheDocument();
     expect(within(toast).queryByRole('button', { name: /Stop/ })).toBeNull();
+  });
+
+  it('L10 (E786): Stop on the undo\'s toast for a plan that had already ended says so, never "Stopped <plan>."', async () => {
+    const { fake, u } = mount({ undo: undone() });
+    fake.on(`POST /enrollments/${E}/stop`, { status: 200, body: { enrollment: { id: E, state: 'stopped' }, changed: false } });
+    const toast = await changeThenUndo(u);
+    await u.click(await within(toast).findByRole('button', { name: 'Stop Buyer plan' }));
+    expect(await within(toast).findByText('Buyer plan had already been stopped. Nothing was changed.')).toBeInTheDocument();
+    expect(toast.textContent).not.toMatch(/Stopped Buyer plan/);
   });
 
   it('a refused Stop says the server\'s reason and never that the plan stopped', async () => {

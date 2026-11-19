@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runJobs, smsStep, stepNow } from '../assistant/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { type CommsWorld, call, commsWorld, inboundSms, ownedContact, randomPhone } from '../comms/testing.js';
+import { pausedSentence, stoppedSentence } from './sentences.js';
 import { changeStage, enrollmentsOf, newContact, playbook, rawStageChange, reconcileAsJob, setStage } from './testing.js';
 
 let h: ApiHarness;
@@ -251,6 +252,75 @@ describe('what the last stage change did (R-STG-4)', () => {
     const sysOnly = await newContact(agent);
     await h.su.query("UPDATE contacts SET stage = 'connected' WHERE id = $1", [sysOnly]);
     expect((await status(agent, sysOnly)).body.lastStageChange).toMatchObject({ to: 'connected', pending: false, decision: null });
+  });
+});
+
+// b19 fix pass L10: the status never invites a tap the server would refuse, never says "someone on the team" to the
+// person who did it, and the stop route says whether THIS request stopped anything.
+describe('L10 (E786): paused and stopped, said truthfully to whoever is looking', () => {
+  it('L10 E786 a plan paused by hand invites "Resume" only a viewer whose resume request would act; a viewer who cannot resume it is told it is paused, with no invitation', async () => {
+    const c = await newContact(agent2);
+    expect((await call(agent2, 'POST', `/contacts/${c}/collaborators`, { userId: agent.userId, role: 'co_agent' })).status).toBe(200);
+    expect((await changeStage(agent2, c, 'closed')).body.automation).toEqual({ started: SECRET_NAME });
+    const [e] = await enrollmentsOf(h, c);
+    expect((await act(agent2, e!.id, 'pause')).status).toBe(200);
+    const mine = (await status(agent2, c)).body.plan!;
+    expect(mine).toMatchObject({ state: 'paused', canResume: true, blocked: { code: 'manual', sentence: 'Paused by hand. Resume it when you are ready.' } });
+    // the collaborator does not see the owner's private plan, so the resume route would not find it for them
+    const theirs = (await status(agent, c)).body.plan!;
+    expect(theirs).toMatchObject({ state: 'paused', canResume: false, blocked: { code: 'manual' } });
+    expect(theirs.blocked!.sentence).toBe('Paused by hand.');
+    expect(theirs.blocked!.sentence).not.toMatch(/resume/i);
+    expect((await act(agent, e!.id, 'resume')).status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('L10 E786 the sentences of a pause: the invitation is there only with canResume; a refusal the viewer may know is named', () => {
+    expect(pausedSentence('manual', { canResume: true })).toBe('Paused by hand. Resume it when you are ready.');
+    expect(pausedSentence('manual', { canResume: false })).toBe('Paused by hand.');
+    expect(pausedSentence('client_reply', { canResume: true })).toBe('Paused because they replied. Read the reply, then resume the plan if it still fits.');
+    expect(pausedSentence('client_reply', { canResume: false })).toBe('Paused because they replied.');
+    expect(pausedSentence('manual', { canResume: false, refusal: 'PLAYBOOK_NOT_APPROVED' })).toBe('Paused by hand. It cannot resume until the plan has an approved version again.');
+    expect(pausedSentence('manual', { canResume: false, refusal: 'PLAYBOOK_OWNER_MISMATCH' })).toBe('Paused by hand. It cannot resume: the plan belonged to this person’s previous owner.');
+    // a pause no person can lift never had an invitation
+    for (const code of ['opt_out', 'wrong_number', 'approval_revoked', 'ineligible', 'owner_change']) expect(pausedSentence(code, { canResume: false }), code).not.toMatch(/resume it|then resume/i);
+    for (const code of ['manual', 'client_reply', 'owner_change', 'opt_out', 'wrong_number', 'approval_revoked', 'ineligible', 'something_new']) expect(pausedSentence(code, { canResume: false }), code).toMatch(/^Paused/);
+  });
+
+  it('L10 E786 a plan stopped by hand says so without "someone on the team" (the status does not know who pressed Stop, and the person looking may be the one who did)', async () => {
+    const c = await newContact(agent);
+    await changeStage(agent, c, 'active');
+    const [e] = await enrollmentsOf(h, c);
+    expect((await act(agent, e!.id, 'stop')).status).toBe(200);
+    const s = (await status(agent, c)).body.plan!;
+    expect(s.blocked).toEqual({ code: 'manual', sentence: 'Stopped by hand.' });
+    expect(stoppedSentence('manual')).not.toMatch(/someone/i);
+  });
+
+  it('L10 E786 the stop route says whether this request stopped anything: true the first time, false for a plan that had already ended (stopped or finished); pause and resume say the same of themselves', async () => {
+    const c = await newContact(agent);
+    await changeStage(agent, c, 'active');
+    const [e] = await enrollmentsOf(h, c);
+    const changedOf = (r: { body: unknown }) => (r.body as { changed: boolean }).changed;
+    const paused = await act(agent, e!.id, 'pause');
+    expect([paused.status, changedOf(paused)]).toEqual([200, true]);
+    expect(changedOf(await act(agent, e!.id, 'pause'))).toBe(false);
+    const resumed = await act(agent, e!.id, 'resume');
+    expect([resumed.status, changedOf(resumed)]).toEqual([200, true]);
+    expect(changedOf(await act(agent, e!.id, 'resume'))).toBe(false);
+    const first = await act(agent, e!.id, 'stop');
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ enrollment: { id: e!.id, state: 'stopped' }, changed: true });
+    const again = await act(agent, e!.id, 'stop');
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ enrollment: { id: e!.id, state: 'stopped' }, changed: false });
+    // a plan that FINISHED: Stop changes nothing, and says so
+    const done = await newContact(agent);
+    await changeStage(agent, done, 'active');
+    const [d] = await enrollmentsOf(h, done);
+    await h.su.query("UPDATE playbook_enrollments SET state = 'completed', next_step_due_at = NULL, ended_at = now() WHERE id = $1", [d!.id]);
+    const late = await act(agent, d!.id, 'stop');
+    expect(late.status).toBe(200);
+    expect(late.body).toMatchObject({ enrollment: { state: 'completed' }, changed: false });
   });
 });
 

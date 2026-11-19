@@ -11,20 +11,21 @@
 import { useCallback } from 'react';
 import { type ActionResult, usePersonAction, useToast } from './hooks.js';
 import { hasNextPanel, showNextPanel } from './NextPanel.js';
-import { type StageResponse, UNDO_REFUSED, automationWords, joinWords, undoneText } from './stageFlow.js';
+import { type EnrollmentChange, type StageResponse, UNDO_REFUSED, automationWords, joinWords, stoppedWords, undoneText } from './stageFlow.js';
 
 /** The stage toast's way to the page's "What happens next" panel. */
 export const SEE_NEXT = 'See what happens next';
 
 export function useStageChange(contactId: string, labelOf: (key: string) => string) {
   const act = usePersonAction<StageResponse>(contactId);
-  const stopper = usePersonAction(contactId);
+  const stopper = usePersonAction<EnrollmentChange>(contactId);
   const toast = useToast();
 
   const stop = useCallback(
     async (enrollmentId: string, plan: string) => {
       const r = await stopper.run('POST', `/enrollments/${enrollmentId}/stop`);
-      toast({ text: r.ok ? `Stopped ${plan}.` : `${plan} was not stopped. ${r.message}` });
+      // E786: "Stopped" only when this request stopped it; a plan that had already ended is said as that
+      toast({ text: r.ok ? stoppedWords(plan, r.data) : `${plan} was not stopped. ${r.message}` });
     },
     [stopper, toast],
   );

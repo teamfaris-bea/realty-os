@@ -341,29 +341,36 @@ export async function resumeCheck(tx: Tx, e: P.EnrollmentRow): Promise<{ kind: '
   return { kind: 'acts', reason };
 }
 
+/** What the pause, resume and stop routes answer (E786): the plan as it is now, and whether THIS request changed it. */
+export interface EnrollmentChange {
+  enrollment: EnrollmentView;
+  changed: boolean;
+}
+
 /** POST /enrollments/:id/pause */
-export async function pauseEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
-  const v = await asUser(deps, actor, async (tx, now) => {
+export async function pauseEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentChange> {
+  const v = await asUser(deps, actor, async (tx, now): Promise<EnrollmentChange> => {
     const e = await lockedEnrollment(tx, enrollmentId);
     const check = pauseCheck(e);
-    if (check.kind === 'no_change') return viewOf(e);
+    if (check.kind === 'no_change') return { enrollment: viewOf(e), changed: false };
     if (check.kind === 'refused') throw check.error;
     await P.pauseEnrollment(tx, e.id, 'manual', now);
     await audit(tx, actor, { action: 'enrollment.changed', entity: { type: 'playbook_enrollment', id: e.id }, reason: 'paused' });
-    return viewOf((await P.enrollmentById(tx, e.id))!);
+    return { enrollment: viewOf((await P.enrollmentById(tx, e.id))!), changed: true };
   });
   await cancelPendingSteps(deps, actor.tenantId, enrollmentId, 'ENROLLMENT_PAUSED');
   return v;
 }
 
 /** POST /enrollments/:id/stop */
-export async function stopEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
-  const v = await asUser(deps, actor, async (tx, now) => {
+export async function stopEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentChange> {
+  const v = await asUser(deps, actor, async (tx, now): Promise<EnrollmentChange> => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (stopCheck(e).kind === 'no_change') return viewOf(e);
+    // an ended plan (stopped by someone else a moment ago, or finished) is left as it is, and the answer says so
+    if (stopCheck(e).kind === 'no_change') return { enrollment: viewOf(e), changed: false };
     await P.endEnrollment(tx, e.id, 'stopped', 'manual', now);
     await audit(tx, actor, { action: 'enrollment.changed', entity: { type: 'playbook_enrollment', id: e.id }, reason: 'stopped' });
-    return viewOf((await P.enrollmentById(tx, e.id))!);
+    return { enrollment: viewOf((await P.enrollmentById(tx, e.id))!), changed: true };
   });
   await cancelPendingSteps(deps, actor.tenantId, enrollmentId, 'ENROLLMENT_STOPPED');
   return v;
@@ -374,18 +381,18 @@ export async function stopEnrollment(actor: UserActor, enrollmentId: string, dep
  * conversation pause (the agent read the reply). Opt-out, wrong-number and revoked-approval pauses are
  * not resumable here: they have their own paths (the person's own action; a new approval).
  */
-export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
-  return asUser(deps, actor, async (tx, now) => {
+export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentChange> {
+  return asUser(deps, actor, async (tx, now): Promise<EnrollmentChange> => {
     const e = await lockedEnrollment(tx, enrollmentId);
     const check = await resumeCheck(tx, e);
-    if (check.kind === 'no_change') return viewOf(e);
+    if (check.kind === 'no_change') return { enrollment: viewOf(e), changed: false };
     if (check.kind === 'refused') throw check.error;
     const reason = check.reason;
     if (reason === 'client_reply') await resumeAutomation(tx, e.contactId, actor.userId);
     await P.resumeEnrollment(tx, e.id, actor.userId, now);
     await enqueueStep(tx, e.id, now);
     await audit(tx, actor, { action: 'automation.resumed', entity: { type: 'playbook_enrollment', id: e.id }, reason: `resumed:${reason}` });
-    return viewOf((await P.enrollmentById(tx, e.id))!);
+    return { enrollment: viewOf((await P.enrollmentById(tx, e.id))!), changed: true };
   });
 }
 

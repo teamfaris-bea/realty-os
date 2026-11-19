@@ -18,20 +18,21 @@
 import { useState } from 'react';
 import { Button, Notice } from '../../design/index.js';
 import { usePersonAction } from './hooks.js';
-import { AI_UNCHANGED, NEVER_STOPS, type StagePreview, TASKS_UNCHANGED, effectLine, keepsRunningText, useStagePreview } from './stageFlow.js';
+import { AI_UNCHANGED, type EnrollmentChange, NEVER_STOPS, type StagePreview, TASKS_UNCHANGED, effectLine, keepsRunningText, stoppedWords, useStagePreview } from './stageFlow.js';
 
 export const PREVIEW_LOADING = 'Checking what this will start…';
 export const PREVIEW_FAILED = "We couldn't check what this change would start. The change is still checked when you save it.";
 
 /**
  * Stop for a plan a stage change leaves running. Rendered only for a viewer the server says may stop it. A refusal
- * shows the server's reason; "Stopped" is said only after the stop route answered.
+ * shows the server's reason; "Stopped" is said only after the stop route answered that this request stopped it (E786:
+ * a plan that had already ended is said as that).
  */
-export function StopPlan({ contactId, enrollmentId, plan, onStopped, compact = false }: { contactId: string; enrollmentId: string; plan: string; onStopped?: (plan: string) => void; compact?: boolean }) {
-  const act = usePersonAction(contactId);
+export function StopPlan({ contactId, enrollmentId, plan, onStopped, compact = false }: { contactId: string; enrollmentId: string; plan: string; /** what the stop route's answer says happened, in words (E786) */ onStopped?: (words: string) => void; compact?: boolean }) {
+  const act = usePersonAction<EnrollmentChange>(contactId);
   const stop = async () => {
     const r = await act.run('POST', `/enrollments/${enrollmentId}/stop`);
-    if (r.ok) onStopped?.(plan);
+    if (r.ok) onStopped?.(stoppedWords(plan, r.data));
   };
   return (
     <>
@@ -44,7 +45,7 @@ export function StopPlan({ contactId, enrollmentId, plan, onStopped, compact = f
 }
 
 /** The plan a stage change leaves running, with Stop when the viewer may stop it. */
-export function KeepsRunning({ contactId, k, onStopped }: { contactId: string; k: NonNullable<StagePreview['keepsRunning']>; onStopped: (plan: string) => void }) {
+export function KeepsRunning({ contactId, k, onStopped }: { contactId: string; k: NonNullable<StagePreview['keepsRunning']>; onStopped: (words: string) => void }) {
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <span className="min-w-0 [overflow-wrap:anywhere]">{keepsRunningText(k)}</span>
@@ -65,7 +66,7 @@ export function StagePreviewBlock({ contactId, to, effectId }: { contactId: stri
       {p?.keepsRunning ? <KeepsRunning contactId={contactId} k={p.keepsRunning} onStopped={setStopped} /> : null}
       {stopped ? (
         <p role="status" className="font-medium">
-          Stopped {stopped}.
+          {stopped}
         </p>
       ) : null}
     </div>

@@ -14,7 +14,7 @@ import { reachability } from '../feed/lib/testing.js';
 import { StagePill } from './StagePill.js';
 import { NeverNote, StagePreviewBlock } from './StagePreview.js';
 import { ToastProvider } from './hooks.js';
-import { type StagePreview, effectLabel, effectLine, whenWords, willStartText } from './stageFlow.js';
+import { type StagePreview, effectLabel, effectLine, stoppedWords, whenWords, willStartText } from './stageFlow.js';
 import { detailsFixture, guideFixture, stageFixture } from './testing.js';
 
 const C = '01900000-0000-7000-8000-0000000c0001';
@@ -130,7 +130,7 @@ describe('R-STG-3 the preview block', () => {
 
   it('a running plan keeps running; Stop is offered only when the server says this viewer may stop it, and calls the stop route', async () => {
     const running = (canStop: boolean) => preview({ keepsRunning: { enrollmentId: E, plan: 'Seller plan', state: 'active', canStop } });
-    const { fake, u } = block(running(true), (f) => f.on(`POST /enrollments/${E}/stop`, { status: 200, body: { enrollment: { id: E, state: 'stopped' } } }));
+    const { fake, u } = block(running(true), (f) => f.on(`POST /enrollments/${E}/stop`, { status: 200, body: { enrollment: { id: E, state: 'stopped' }, changed: true } }));
     expect(await screen.findByText('Keeps running: Seller plan')).toBeInTheDocument();
     // the plan is gone from the next preview once it is stopped
     fake.on(`GET /contacts/${C}/stage/preview?to=active`, { status: 200, body: preview() });
@@ -138,6 +138,26 @@ describe('R-STG-3 the preview block', () => {
     await waitFor(() => expect(fake.callsTo(`POST /enrollments/${E}/stop`)).toHaveLength(1));
     expect(await screen.findByText('Stopped Seller plan.')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Keeps running: Seller plan')).toBeNull());
+  });
+
+  it('L10 (E786): "Stopped <plan>." is said only when THIS request stopped it; a plan that had already ended says so instead', async () => {
+    const running = preview({ keepsRunning: { enrollmentId: E, plan: 'Seller plan', state: 'active', canStop: true } });
+    // a teammate stopped it a moment ago: the stop route answers the plan as it is, and that this request changed nothing
+    const { u } = block(running, (f) => f.on(`POST /enrollments/${E}/stop`, { status: 200, body: { enrollment: { id: E, state: 'stopped' }, changed: false } }));
+    await u.click(await screen.findByRole('button', { name: 'Stop Seller plan' }));
+    expect(await screen.findByText('Seller plan had already been stopped. Nothing was changed.')).toBeInTheDocument();
+    expect(screen.queryByText('Stopped Seller plan.')).toBeNull();
+  });
+
+  it('L10 (E786): a plan that had already finished says so; a stop that did act still says "Stopped <plan>."', async () => {
+    const running = preview({ keepsRunning: { enrollmentId: E, plan: 'Seller plan', state: 'active', canStop: true } });
+    const { u } = block(running, (f) => f.on(`POST /enrollments/${E}/stop`, { status: 200, body: { enrollment: { id: E, state: 'completed' }, changed: false } }));
+    await u.click(await screen.findByRole('button', { name: 'Stop Seller plan' }));
+    expect(await screen.findByText('Seller plan had already finished. Nothing was changed.')).toBeInTheDocument();
+    expect(screen.queryByText('Stopped Seller plan.')).toBeNull();
+    expect(stoppedWords('Seller plan', { enrollment: { state: 'stopped' }, changed: true })).toBe('Stopped Seller plan.');
+    // an answer from before the field existed is read as a stop that acted, as it always was
+    expect(stoppedWords('Seller plan', { enrollment: { state: 'stopped' } })).toBe('Stopped Seller plan.');
   });
 
   it('no Stop for a viewer the server would refuse; a paused plan stays paused', async () => {

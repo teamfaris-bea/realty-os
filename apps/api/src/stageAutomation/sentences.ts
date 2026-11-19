@@ -53,23 +53,43 @@ export function decisionSentence(d: { outcome: 'started' | 'skipped'; reason: st
 
 // ---- why a plan is not moving (playbook_enrollments.pause_reason / stop_reason) ---------------------------------
 
-const PAUSED: Record<string, string> = {
-  manual: 'Paused by someone on the team. Resume it when you are ready.',
-  client_reply: 'Paused because they replied. Read the reply, then resume the plan if it still fits.',
-  owner_change: 'Paused because this person has a new owner.',
-  opt_out: 'Paused because they opted out. A plan never resumes over an opt-out.',
-  wrong_number: 'Paused because their number was reported as a wrong number.',
-  approval_revoked: "Paused because the plan's approval was withdrawn. It needs a newly approved version.",
-  ineligible: 'Paused because the plan could not run for this person.',
+// E786: `why` is true for anyone looking. `invite` is said only to a viewer whose own resume request would act (the
+// status's canResume): the screen never invites a tap the server would refuse. A pause made with the Pause button is
+// "by hand": the enrollment does not record who pressed it, and the person reading may be the one who did.
+const PAUSED: Record<string, { why: string; invite?: string }> = {
+  manual: { why: 'Paused by hand.', invite: 'Resume it when you are ready.' },
+  client_reply: { why: 'Paused because they replied.', invite: 'Read the reply, then resume the plan if it still fits.' },
+  owner_change: { why: 'Paused because this person has a new owner.' },
+  opt_out: { why: 'Paused because they opted out. A plan never resumes over an opt-out.' },
+  wrong_number: { why: 'Paused because their number was reported as a wrong number.' },
+  approval_revoked: { why: "Paused because the plan's approval was withdrawn. It needs a newly approved version." },
+  ineligible: { why: 'Paused because the plan could not run for this person.' },
 };
 
-/** Why a paused plan is paused (`code` is the stored pause reason). */
-export function pausedSentence(code: string): string {
-  return PAUSED[code] ?? 'Paused.';
+/** Why the resume route would refuse, for the refusals that are about the plan itself (never about who is asking). */
+const CANNOT_RESUME: Record<string, string> = {
+  PLAYBOOK_NOT_APPROVED: 'It cannot resume until the plan has an approved version again.',
+  PLAYBOOK_OWNER_MISMATCH: 'It cannot resume: the plan belonged to this person’s previous owner.',
+  [SOURCE_NO_AUTOMATED_CONTACT]: `It cannot resume. ${sourceRefusalSentence(SOURCE_NO_AUTOMATED_CONTACT)}`,
+  [SOURCE_UNCLASSIFIED]: `It cannot resume. ${sourceRefusalSentence(SOURCE_UNCLASSIFIED)}`,
+};
+
+/**
+ * Why a paused plan is paused (`code` is the stored pause reason), for a viewer who can (`canResume`) or cannot resume
+ * it. `refusal`: the resume route's own refusal code for this viewer, when their request reached the plan and the
+ * plan could not resume; a viewer who simply may not resume it is told only that it is paused.
+ */
+export function pausedSentence(code: string, o: { canResume: boolean; refusal?: string | null } = { canResume: false }): string {
+  const p = PAUSED[code];
+  if (!p) return 'Paused.';
+  if (o.canResume) return p.invite ? `${p.why} ${p.invite}` : p.why;
+  const cannot = o.refusal ? CANNOT_RESUME[o.refusal] : undefined;
+  return cannot ? `${p.why} ${cannot}` : p.why;
 }
 
 const STOPPED: Record<string, string> = {
-  manual: 'Stopped by someone on the team.',
+  // E786: by hand (the Stop button). The enrollment does not record who pressed it, so nobody is told "someone".
+  manual: 'Stopped by hand.',
   replaced: 'Stopped because they were moved to another plan.',
   contact_removed: 'Stopped because this person was deleted.',
   merged: 'Stopped because this person was merged into another record.',

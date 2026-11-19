@@ -115,8 +115,8 @@ describe('R-STG-4 the "What happens next" panel', () => {
   });
 
   it('Pause calls the pause route and the row then says what the server says: Paused, why, and Resume when allowed; Resume and Stop work the same way', async () => {
-    const paused = plan({ state: 'paused', next: null, blocked: { code: 'manual', sentence: 'Paused by someone on the team. Resume it when you are ready.' }, canPause: false, canResume: true });
-    const stopped = plan({ state: 'stopped', next: null, blocked: { code: 'manual', sentence: 'Stopped by someone on the team.' }, canPause: false, canResume: false, canStop: false });
+    const paused = plan({ state: 'paused', next: null, blocked: { code: 'manual', sentence: 'Paused by hand. Resume it when you are ready.' }, canPause: false, canResume: true });
+    const stopped = plan({ state: 'stopped', next: null, blocked: { code: 'manual', sentence: 'Stopped by hand.' }, canPause: false, canResume: false, canStop: false });
     const { fake, u } = mount({ status: { plan: plan(), lastStageChange: change() } });
     const r = row('Automated playbook');
     fake.on(`POST /enrollments/${E}/pause`, () => {
@@ -125,7 +125,7 @@ describe('R-STG-4 the "What happens next" panel', () => {
     });
     await u.click(await within(r).findByRole('button', { name: 'Pause Buyer follow-up' }));
     expect(await within(r).findByText('Paused')).toBeInTheDocument();
-    expect(within(r).getByText('Paused by someone on the team. Resume it when you are ready.')).toBeInTheDocument();
+    expect(within(r).getByText('Paused by hand. Resume it when you are ready.')).toBeInTheDocument();
     expect(within(r).queryByText(/^Next:/)).toBeNull();
     expect(within(r).queryByRole('button', { name: /Pause/ })).toBeNull();
 
@@ -142,7 +142,7 @@ describe('R-STG-4 the "What happens next" panel', () => {
     });
     await u.click(within(r).getByRole('button', { name: 'Stop Buyer follow-up' }));
     expect(await within(r).findByText('Stopped')).toBeInTheDocument();
-    expect(within(r).getByText('Stopped by someone on the team.')).toBeInTheDocument();
+    expect(within(r).getByText('Stopped by hand.')).toBeInTheDocument();
     expect(within(r).queryByRole('button')).toBeNull();
     expect(fake.callsTo(`POST /enrollments/${E}/pause`)).toHaveLength(1);
     expect(fake.callsTo(`POST /enrollments/${E}/resume`)).toHaveLength(1);
@@ -174,7 +174,7 @@ describe('R-STG-4 the "What happens next" panel', () => {
     expect(within(r).queryByText('None running')).toBeNull();
     expect(within(r).queryByRole('button', { name: /^(Pause|Resume|Stop) / })).toBeNull();
     // one way forward: ask again; the row then says what the server says now
-    fake.on(`GET /contacts/${C}/playbook-status`, { status: 200, body: { plan: plan({ state: 'stopped', next: null, blocked: { code: 'manual', sentence: 'Stopped by someone on the team.' }, canPause: false, canStop: false }), lastStageChange: change() } });
+    fake.on(`GET /contacts/${C}/playbook-status`, { status: 200, body: { plan: plan({ state: 'stopped', next: null, blocked: { code: 'manual', sentence: 'Stopped by hand.' }, canPause: false, canStop: false }), lastStageChange: change() } });
     await u.click(within(r).getByRole('button', { name: 'Try again' }));
     expect(await within(r).findByText('Stopped')).toBeInTheDocument();
     expect(within(r).queryByRole('alert')).toBeNull();

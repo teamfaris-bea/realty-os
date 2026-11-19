@@ -146,6 +146,11 @@ export const EnrollmentSchema = z.object({
   nextStepDueAt: z.string().nullable(),
 });
 export const EnrollmentResponse = z.object({ enrollment: EnrollmentSchema });
+/**
+ * The pause, resume and stop routes (E786): `changed` says whether THIS request did it. False: the plan was already
+ * in that state, or (stop) had already ended; nothing was written, and the screen must not say it stopped a plan.
+ */
+export const EnrollmentChangeResponse = z.object({ enrollment: EnrollmentSchema, changed: z.boolean() });
 
 // ---- saved searches ----
 
@@ -193,4 +198,4 @@ export const SearchResponse = z.object({ search: SearchSchema });
 export const SearchesResponse = z.object({ searches: z.array(SearchSchema) });
 
 export const ASSISTANT_REQUEST_SCHEMAS = { ApproveBody, ClaimReviewBody, DraftRequestBody, CreatePlaybookBody, CreateVersionBody, VersionDecisionBody, EnrollBody, ApproveSearchBody } as const;
-export const ASSISTANT_RESPONSE_SCHEMAS = { InboxResponse, ActionResponse, ApproveResponse, RejectResponse, ClaimReviewResponse, PlaybookResponse, PlaybooksResponse, EnrollmentResponse, SearchResponse, SearchesResponse } as const;
+export const ASSISTANT_RESPONSE_SCHEMAS = { InboxResponse, ActionResponse, ApproveResponse, RejectResponse, ClaimReviewResponse, PlaybookResponse, PlaybooksResponse, EnrollmentResponse, EnrollmentChangeResponse, SearchResponse, SearchesResponse } as const;
