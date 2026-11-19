@@ -305,6 +305,249 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
     ],
     "type": "object",
   },
+  "CreateTaskResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "replayed": {
+        "type": "boolean",
+      },
+      "task": {
+        "additionalProperties": false,
+        "properties": {
+          "assigneeUserId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "import",
+            ],
+            "type": "string",
+          },
+          "dealId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "dueAllDay": {
+            "type": "boolean",
+          },
+          "dueAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "dueTz": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "enum": [
+              "todo",
+              "callback",
+              "promise",
+              "follow_up",
+              "document",
+            ],
+            "type": "string",
+          },
+          "listingId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "needsReview": {
+            "type": "boolean",
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "source": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "actionId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "claimText": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "evidence": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                        },
+                        "locator": {
+                          "additionalProperties": {},
+                          "propertyNames": {
+                            "type": "string",
+                          },
+                          "type": "object",
+                        },
+                        "snippet": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "sourceAvailable": {
+                          "type": "boolean",
+                        },
+                        "sourceId": {
+                          "type": "string",
+                        },
+                        "sourceType": {
+                          "type": "string",
+                        },
+                        "verified": {
+                          "type": "boolean",
+                        },
+                      },
+                      "required": [
+                        "sourceType",
+                        "sourceId",
+                        "locator",
+                        "snippet",
+                        "verified",
+                        "sourceAvailable",
+                        "label",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "actionId",
+                  "claimText",
+                  "evidence",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done",
+              "canceled",
+            ],
+            "type": "string",
+          },
+          "title": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "notes",
+          "dueAt",
+          "dueAllDay",
+          "dueTz",
+          "status",
+          "completedAt",
+          "assigneeUserId",
+          "contact",
+          "dealId",
+          "listingId",
+          "createdByKind",
+          "needsReview",
+          "source",
+          "createdAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "task",
+      "replayed",
+    ],
+    "type": "object",
+  },
   "DealDateResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

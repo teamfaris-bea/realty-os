@@ -59,7 +59,7 @@ import {
 import { listNotifications, listPreferences, markRead, putPreference } from './notifications.js';
 import * as S from './schemas.js';
 import { search } from './search.js';
-import { createTask, listTasks, taskById, updateTask } from './tasks.js';
+import { createTaskOnce, listTasks, taskById, updateTask } from './tasks.js';
 
 const idOf = (req: FastifyRequest) => (req.params as { id: string }).id;
 const facts = <T>(req: FastifyRequest, fn: (tx: Tx) => Promise<T>) => wsTx(req, (tx) => fn(tx));
@@ -83,10 +83,14 @@ async function register(app: FastifyInstance): Promise<void> {
   r.get('/tasks', { config: { auth: 'self' }, schema: { querystring: S.TasksQuery, response: { 200: S.TasksResponse } } }, async (req) => ({
     tasks: await wsTx(req, (tx, _now, actor) => listTasks(tx, actor, app.platform.envelope, req.query)),
   }));
-  r.post('/tasks', { config: { auth: 'self' }, schema: { body: S.CreateTaskBody, response: { 201: S.TaskResponse } } }, async (req, reply) => {
-    const task = await wsTx(req, async (tx, _now, actor) => taskById(tx, actor, app.platform.envelope, await createTask(tx, actor, app.platform.ids, req.body)));
-    reply.code(201);
-    return { task };
+  // R-STG-6: an optional client-generated `id` makes the create idempotent (201 the first time, 200 and replayed after)
+  r.post('/tasks', { config: { auth: 'self' }, schema: { body: S.CreateTaskBody, response: { 201: S.CreateTaskResponse, 200: S.CreateTaskResponse } } }, async (req, reply) => {
+    const out = await wsTx(req, async (tx, _now, actor) => {
+      const made = await createTaskOnce(tx, actor, app.platform.ids, req.body);
+      return { task: await taskById(tx, actor, app.platform.envelope, made.id), replayed: made.replayed };
+    });
+    reply.code(out.replayed ? 200 : 201);
+    return out;
   });
   r.get('/tasks/:id', { config: { auth: 'self' }, schema: { params: S.IdParams, response: { 200: S.TaskResponse } } }, async (req) => ({
     task: await wsTx(req, (tx, _now, actor) => taskById(tx, actor, app.platform.envelope, req.params.id)),

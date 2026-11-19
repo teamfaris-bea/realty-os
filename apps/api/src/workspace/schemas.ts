@@ -73,6 +73,8 @@ export const TaskSchema = z.object({
   createdAt: z.string(),
 });
 export const TaskResponse = z.object({ task: TaskSchema });
+/** POST /tasks: `replayed` is true (and the status 200) when the client id already named this task (R-STG-6) */
+export const CreateTaskResponse = z.object({ task: TaskSchema, replayed: z.boolean() });
 export const TasksResponse = z.object({ tasks: z.array(TaskSchema) });
 export const TasksQuery = z.strictObject({
   status: z.enum(['open', 'done', 'canceled', 'all']).optional(),
@@ -84,6 +86,8 @@ export const TasksQuery = z.strictObject({
 });
 export const CreateTaskBody = z
   .strictObject({
+    /** R-STG-6: an optional client-generated id; the same id again by the same person answers the same task */
+    id: uuid.optional(),
     title: z.string().trim().min(1).max(300),
     kind: z.enum(['todo', 'callback', 'follow_up', 'document']).optional(),
     notes: z.string().max(5000).nullable().optional(),
@@ -419,6 +423,7 @@ export const WORKSPACE_RESPONSE_SCHEMAS = {
   FeedResponse,
   FeedActionResponse,
   TaskResponse,
+  CreateTaskResponse,
   TasksResponse,
   AppointmentResponse,
   AppointmentsResponse,
