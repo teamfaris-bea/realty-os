@@ -158,7 +158,7 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
       }
       const also = f.task ? followUpSavedText(f.task) : undefined;
       if (changing) {
-        const r = await stage.change(selected, { ...(o.lead ? { lead: o.lead } : {}), ...(also ? { also } : {}) });
+        const r = await stage.change(selected, { from: current, ...(o.lead ? { lead: o.lead } : {}), ...(also ? { also } : {}) });
         if (!r.ok) {
           // refused: the stage did not change. A lost answer: nobody knows yet; the retry reads what is stored (E780)
           // (the follow-up is not repeated here: its own line says the stored task, and stays true if it is changed)

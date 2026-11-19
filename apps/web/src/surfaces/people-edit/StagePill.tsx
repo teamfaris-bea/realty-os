@@ -64,7 +64,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
   // that a plan the change started keeps running (useStageChange.ts)
   const act = useStageChange(contactId, (k) => labelIn(guide, k));
   const move = async (to: string) => {
-    const r = await act.change(to);
+    const r = await act.change(to, { from: current });
     if (r.ok) setOpen(false);
   };
 

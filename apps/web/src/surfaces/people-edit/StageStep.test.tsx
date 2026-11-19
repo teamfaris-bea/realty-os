@@ -277,6 +277,42 @@ describe('the stage step after an outcome', () => {
     expect(stagePosts(fake)).toHaveLength(1);
   });
 
+  it('L2 (E780): a retry after a lost answer is not silent: the server answers "the same stage again" with what is stored, and the toast says it (the plan that started, the follow-up, Undo)', async () => {
+    // the first request changed the stage and started the plan, but its answer never arrived
+    const repeat: StageResponse = { stage: stageFixture('attempting'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Buyer plan' }, automationSentence: 'Buyer plan started.', stillRunning: null };
+    const { fake, onClose, u } = mount({ extra: (f) => f.on(`POST /contacts/${C}/stage`, (_c, n) => (n === 1 ? 'network-error' : n === 2 ? { status: 200, body: repeat } : { status: 200, body: { stage: stageFixture('new'), previousStage: 'attempting', rowVersion: 3, eventId: '01900000-0000-7000-8000-0000000e0003', automation: null, stillRunning: null } })) });
+    const s = await sheet();
+    await stages();
+    await u.click(within(s).getByRole('button', { name: 'Tomorrow' }));
+    const confirm = within(s).getByTestId('stage-step-confirm');
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await u.click(confirm);
+    expect(await within(s).findByRole('alert')).toHaveTextContent('Voicemail logged. We could not confirm the stage change:');
+    expect(onClose).not.toHaveBeenCalled();
+    await u.click(confirm);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    const toast = screen.getByTestId('people-toast');
+    expect(toast.textContent).toMatch(/^Stage: Trying to reach\. Buyer plan started\. Follow-up saved for .+9:00 AM/);
+    // Undo names the stored event and goes back to the stage the sheet knew the person was in
+    await u.click(within(toast).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagePosts(fake)).toHaveLength(3));
+    expect(stagePosts(fake)[2]!.body).toEqual({ stage: 'new', undoOf: EV });
+  });
+
+  it('L2 (E780): a repeat whose answer names no stage event (the person was already there by another route) still says the stage, with no Undo', async () => {
+    const repeat: StageResponse = { stage: stageFixture('attempting'), previousStage: 'attempting', rowVersion: 2, eventId: null, automation: null, stillRunning: null };
+    const { onClose, u } = mount({ extra: (f) => f.on(`POST /contacts/${C}/stage`, { status: 200, body: repeat }) });
+    const s = await sheet();
+    await stages();
+    const confirm = within(s).getByTestId('stage-step-confirm');
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await u.click(confirm);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    const toast = screen.getByTestId('people-toast');
+    expect(await within(toast).findByText('Stage: Trying to reach')).toBeInTheDocument();
+    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
   it('"Pick a date" shows a date and time field; with Keep the button is "Keep New lead + follow-up" and only the task is made', async () => {
     const { fake, onClose, u } = mount({ props: { suggested: null, saved: 'Wrong number logged' } });
     const s = await sheet();
