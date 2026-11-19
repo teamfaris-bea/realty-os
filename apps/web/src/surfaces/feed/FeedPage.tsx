@@ -20,7 +20,8 @@ import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, Ratio, useCountdownAnnouncement } from '../../design/index.js';
 import { ApiError, messageFor, useApi } from '../../shell/index.js';
 import { ReachabilityBatch } from '../../reasons/index.js';
-import { ActionButton } from './ActionButton.js';
+import { ActionButton, LogButton } from './ActionButton.js';
+import { OnePassProvider } from './OnePass.js';
 import { AgentSheetsProvider, useAgentSheets } from './lib/AgentSheets.js';
 import { automaticLine, lastTouchLine, nextPromiseLine } from './lib/followUp.js';
 import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } from './lib/format.js';
@@ -49,7 +50,9 @@ export function useFeed() {
 export default function FeedPage() {
   return (
     <AgentSheetsProvider>
-      <Feed />
+      <OnePassProvider>
+        <Feed />
+      </OnePassProvider>
     </AgentSheetsProvider>
   );
 }
@@ -207,6 +210,8 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
   const follow = card.contact !== null && Array.isArray(card.why) && card.why.length > 0;
   // the Next line already says the card's own task when that task is the person's next promise
   const taskSaidBelow = follow && card.task != null && card.nextPromise?.taskId === card.task.id;
+  // R-TODAY-7: a follow-up card's Call, Text and Log are one pass, here (the sheets of the person's page)
+  const onePass = follow ? { replaces: replacedTask(card) } : undefined;
   // a card whose one tap IS its details shows them in the same panel, under its own name
   const detailsFirst = card.primaryAction.kind === 'show_details';
   const details = { open: why, controls: whyId, onOpen: () => setWhy((w) => !w) };
@@ -241,9 +246,11 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
       {expired ? <p className="text-[15px] text-ink-muted">This offer ended. The lead is going to the next agent.</p> : null}
       {follow ? <FollowUpLines card={card} now={now} /> : null}
       <div className="flex flex-wrap items-start gap-2">
-        <ActionButton action={card.primaryAction} card={card} expired={expired} details={details} className="min-w-[8rem]" />
+        <ActionButton action={card.primaryAction} card={card} expired={expired} details={details} className="min-w-[8rem]" onePass={onePass} />
+        {/* beside the primary action: "I already called from my phone" is as close as Call */}
+        {follow && card.contact ? <LogButton contact={card.contact} onePass={onePass} /> : null}
         {inlineAlternatives(card).map((a, i) => (
-          <ActionButton key={`${a.kind}:${i}`} action={a} card={card} variant="secondary" details={details} expired={expired && (a.kind === 'accept_offer' || a.kind === 'decline_offer')} />
+          <ActionButton key={`${a.kind}:${i}`} action={a} card={card} variant="secondary" details={details} expired={expired && (a.kind === 'accept_offer' || a.kind === 'decline_offer')} onePass={onePass} />
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-x-1">
@@ -273,7 +280,7 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
           {moreAlternatives(card).length > 0
             ? moreAlternatives(card).map((a, i) => (
                 <li key={`more:${a.kind}:${i}`} className="pt-1">
-                  <ActionButton action={a} card={card} variant="quiet" />
+                  <ActionButton action={a} card={card} variant="quiet" onePass={onePass} />
                 </li>
               ))
             : null}
@@ -314,6 +321,17 @@ export function FollowUpLines({ card, now }: { card: FeedCard; now: number }) {
       </div>
     </dl>
   );
+}
+
+/**
+ * The due task a one-pass sheet's new follow-up replaces (R-TODAY-7): only a "follow up" or "call back" task, and only
+ * when the card or row is about that very task. A promise or any other task is never closed for the agent.
+ */
+export function replacedTask(card: FeedCard): { taskId: string; title: string } | null {
+  const next = card.nextPromise;
+  if (!next || (next.kind !== 'follow_up' && next.kind !== 'callback')) return null;
+  const about = card.task?.id === next.taskId || ((card as Partial<FollowUpTodayCard>).taskIds ?? []).includes(next.taskId);
+  return about ? { taskId: next.taskId, title: next.text } : null;
 }
 
 /** Alternatives shown as buttons: at most 3, without "Open" when the contact's name is already a link. */

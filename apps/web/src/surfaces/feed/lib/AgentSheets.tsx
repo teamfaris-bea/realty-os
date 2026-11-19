@@ -17,6 +17,7 @@
 // and one button named for its effect. Call → outcome → confirm is 3 taps. Elsewhere (the feed, the thread, tasks)
 // the call sheet closes after the outcome as it always did. An outcome that was saved as a task for a new owner (the
 // lead moved during the call) has no stage step: the caller no longer works that person.
+import { useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -25,7 +26,7 @@ import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
 import { detailsKey } from '../../people-edit/api.js';
 import { ToastProvider, useToastSlot } from '../../people-edit/hooks.js';
-import { StageStep } from '../../people-edit/StageStep.js';
+import { type OnePassOptions, StageStep } from '../../people-edit/StageStep.js';
 import type { SuggestedStage } from '../../people-edit/stageFlow.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
 import { AGENT_ERROR_MESSAGES } from './messages.js';
@@ -33,7 +34,11 @@ import { useMutate } from './hooks.js';
 import type { AppointmentResult, AppointmentView, CallOutcome, CallOutcomeResponse, CallResponse, ComposeResponse, DecisionView } from './types.js';
 
 export interface AgentSheets {
-  call(contact: { id: string; name: string }): void;
+  /**
+   * `onePass` (R-TODAY-7, a follow-up card on Today): after the outcome tap the same sheet goes on to the stage step,
+   * as on the person's page, with the follow-up the outcome suggests preselected; closing it refreshes the feed.
+   */
+  call(contact: { id: string; name: string }, o?: { onePass?: Pick<OnePassOptions, 'replaces'> }): void;
   logAppointment(appointmentId: string, label?: string): void;
   announce(text: string): void;
 }
@@ -47,7 +52,7 @@ export function useAgentSheets(): AgentSheets {
 }
 
 type Open =
-  | { kind: 'call'; contact: { id: string; name: string } }
+  | { kind: 'call'; contact: { id: string; name: string }; onePass?: Pick<OnePassOptions, 'replaces'> | undefined }
   | { kind: 'appointment'; appointmentId: string; label?: string | undefined }
   | null;
 
@@ -75,20 +80,25 @@ export function AgentSheetsProvider({ children, stageStep = false }: { children:
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   const value = useMemo<AgentSheets>(
     () => ({
-      call: (contact) => setOpen({ kind: 'call', contact }),
+      call: (contact, o) => setOpen({ kind: 'call', contact, onePass: o?.onePass }),
       logAppointment: (appointmentId, label) => setOpen({ kind: 'appointment', appointmentId, label }),
       announce,
     }),
     [announce],
   );
-  const close = () => setOpen(null);
+  const qc = useQueryClient();
+  const close = () => {
+    // a one-pass sheet changed what the feed says about the person (the last touch, the next step): read it again
+    if (open?.kind === 'call' && open.onePass) void qc.invalidateQueries({ queryKey: ['feed'] });
+    setOpen(null);
+  };
   return (
     // the stage step's toast (Undo) lives with the page, so it outlasts the sheet; the person page's own sections share it
     <ToastProvider>
     <Ctx.Provider value={value}>
       {children}
       <AnnounceToast text={toast} />
-      {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} stageStep={stageStep} /> : null}
+      {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} stageStep={stageStep || open.onePass !== undefined} onePass={open.onePass} /> : null}
       {open?.kind === 'appointment' ? <AppointmentSheet appointmentId={open.appointmentId} label={open.label} onClose={close} announce={announce} /> : null}
     </Ctx.Provider>
     </ToastProvider>
@@ -138,10 +148,10 @@ const CALL_FAILED: Record<string, string> = {
   CONTACT_MERGED: AGENT_ERROR_MESSAGES.CONTACT_MERGED as string,
 };
 
-function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void; stageStep: boolean }) {
+function CallSheet({ contact, onClose, announce, stageStep, onePass }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void; stageStep: boolean; onePass?: Pick<OnePassOptions, 'replaces'> | undefined }) {
   const api = useApi();
   const [state, setState] = useState<CallState>({ step: 'dialing' });
-  const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null } | null>(null);
+  const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null; outcome: CallOutcome } | null>(null);
   const started = useRef(false);
   // the person's details too: the dial was a first contact, which opens the stages a routed lead had locked (R-PAR-14)
   const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY], [...detailsKey(contact.id)]] });
@@ -182,14 +192,26 @@ function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: s
     // Anywhere else the sheet closes as before, and the toast is where it is said.
     if (stageStep && r.data.recordedAs === 'call') {
       speak(`${OUTCOME_SAVED[o]}.`);
-      setLogged({ saved: OUTCOME_SAVED[o], suggested: r.data.suggestedStage ?? null });
+      setLogged({ saved: OUTCOME_SAVED[o], suggested: r.data.suggestedStage ?? null, outcome: o });
       return;
     }
     announce(r.data.recordedAs === 'task_for_current_owner' ? `${who} was reassigned during the call, so your outcome was saved as a task for the new owner.` : 'Call outcome saved.');
     onClose();
   };
 
-  if (logged) return <StageStep contactId={contact.id} contactName={contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
+  if (logged) {
+    return (
+      <StageStep
+        contactId={contact.id}
+        contactName={contact.name}
+        saved={logged.saved}
+        suggested={logged.suggested}
+        onClose={onClose}
+        // R-TODAY-7: from Today the follow-up this outcome suggests is preselected (the stage suggestion stays the server's)
+        onePass={onePass ? { ...onePass, followUpSignal: { kind: 'call', outcome: logged.outcome } } : undefined}
+      />
+    );
+  }
 
   return (
     <Dialog title={`Call ${contact.name}`} onClose={onClose} footer={<CloseButton onClose={onClose} />}>

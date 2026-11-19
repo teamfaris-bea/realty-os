@@ -27,7 +27,7 @@ import { Button, Dialog, Notice } from '../../design/index.js';
 import { firstNameOf } from '../people-edit/api.js';
 import { Chip, selectClass, textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
 import { NeverNote } from '../people-edit/StagePreview.js';
-import { Saved, StageStepBody, useStageStep } from '../people-edit/StageStep.js';
+import { type OnePassOptions, Saved, StageStepBody, useStageStep } from '../people-edit/StageStep.js';
 import { type SuggestedStage, joinWords } from '../people-edit/stageFlow.js';
 
 const KINDS = [
@@ -45,7 +45,7 @@ function localInputValue(d: Date): string {
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
-export function LogSheet({ contactId, contactName, onClose }: { contactId: string; contactName: string; onClose: () => void }) {
+export function LogSheet({ contactId, contactName, onClose, onePass }: { contactId: string; contactName: string; onClose: () => void; /** R-TODAY-7: opened from Today or the global entry (StageStep.tsx OnePassOptions) */ onePass?: OnePassOptions | undefined }) {
   const [kind, setKind] = useState<'call' | 'text' | 'email'>('call');
   const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
   const [outcome, setOutcome] = useState<(typeof CALL_OUTCOMES)[number] | null>(null);
@@ -73,7 +73,7 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
 
   // The stage step. An outcome is what reveals it: a call's outcome chip, or a text or email (its own outcome).
   const hasOutcome = kind !== 'call' || outcome !== null;
-  const step = useStageStep(contactId, contactName, { signal: activitySignal({ kind, direction, outcome }), active: hasOutcome });
+  const step = useStageStep(contactId, contactName, { signal: activitySignal({ kind, direction, outcome }), active: hasOutcome, onePass });
   const stepOn = hasOutcome && step.canEdit;
   // the outcome is chosen and the person is still being read: the button waits, so the step is never skipped by a fast tap
   const stepPending = hasOutcome && step.details === null && step.failed === null;

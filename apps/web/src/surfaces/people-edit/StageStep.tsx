@@ -25,14 +25,14 @@
 //
 // A partial save is said exactly (E775): when the follow-up or the stage change fails after something was saved, the
 // sheet stays open, says what was saved and what was not with the server's reason, and the button stays enabled.
-import { type StageSignal, suggestStageFromOutcome } from '@realty/core/parity/people';
+import { type StageSignal, suggestStageFromOutcome, suggestedFollowUpDays } from '@realty/core/parity/people';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useApi } from '../../shell/index.js';
 import { type Details, type StageGuideRow, detailsKey, firstNameOf, guideOf, labelIn } from './api.js';
-import { FollowUpChips, followUpSavedText, morningIn, useFollowUp } from './FollowUp.js';
-import { peopleMessage, useToast } from './hooks.js';
+import { FollowUpChips, followUpKeyForDays, followUpSavedText, morningIn, useFollowUp } from './FollowUp.js';
+import { peopleMessage, usePersonAction, useToast } from './hooks.js';
 import { StageRow } from './StageChoices.js';
 import { NeverNote, StagePreviewBlock } from './StagePreview.js';
 import { type SuggestedStage, effectLabel, joinWords, useStagePreview } from './stageFlow.js';
@@ -53,6 +53,24 @@ export interface StageStepSource {
   signal?: StageSignal | null | undefined;
   /** false: no outcome is chosen yet (the Log sheet before its outcome), so nothing is asked about any stage */
   active?: boolean | undefined;
+  /** R-TODAY-7: the sheet was opened from Today or the global "Log a call or conversation" entry (see OnePassOptions) */
+  onePass?: OnePassOptions | undefined;
+}
+
+/**
+ * One pass from Today or from any screen (R-TODAY-7; feed/OnePass.tsx). The step is the SAME one the person's page
+ * uses; these only say how it opens and what else its one button does:
+ *   - a follow-up is PRESELECTED from the outcome (core suggestedFollowUpDays: tomorrow after a voicemail or no
+ *     answer, 3 days after a text or email, a week after a conversation). The line above the chips says the exact task
+ *     and the button is named "+ follow-up"; None removes it. Nothing is created before the button is tapped;
+ *   - `replaces`: a due "Follow up with …" task the card was about. When the button saves a new follow-up, that old
+ *     task is marked done by the same tap (the sheet says so first). A promise or any other task is never closed here;
+ *   - the closing toast says the whole result once ("Voicemail logged. Stage: Trying to reach. Follow-up saved …").
+ */
+export interface OnePassOptions {
+  /** the outcome's signal, when `signal` is not given because the server answered the stage suggestion itself (a call) */
+  followUpSignal?: StageSignal | null | undefined;
+  replaces?: { taskId: string; title: string } | null | undefined;
 }
 
 export interface StageStepProps extends StageStepSource {
@@ -128,8 +146,15 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
   const toast = useToast();
   const ids = { locked: useId(), effect: useId() };
   const first = firstNameOf(contactName);
+  // R-TODAY-7: in a one-pass sheet the follow-up the outcome suggests is preselected (never on the person's page)
+  const onePass = src.onePass;
+  const suggestedDays = onePass && (src.active ?? true) ? suggestedFollowUpDays(onePass.followUpSignal ?? src.signal ?? null) : null;
   // M1: what the screen says about the follow-up is the task the server answered (FollowUp.tsx)
-  const follow = useFollowUp(contactId, first);
+  const follow = useFollowUp(contactId, first, { suggested: followUpKeyForDays(suggestedDays) });
+  const replaces = onePass?.replaces ?? null;
+  const closer = usePersonAction<{ task: { id: string; status: string } }>(contactId);
+  // the old follow-up was marked done by this sheet (a retry does not ask again)
+  const replaced = useRef(false);
 
   const preview = useStagePreview(contactId, canEdit && (src.active ?? true) ? selected : null);
   // never a control the server would refuse: the change waits for its preview, and a refused one cannot be sent
@@ -156,7 +181,16 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
         setFailure(`${sentence(o.saved)} ${what}: ${f.message}`);
         return false;
       }
-      const also = f.task ? followUpSavedText(f.task) : undefined;
+      // R-TODAY-7: the new follow-up replaces the due one the card was about: that one is marked done by the same tap
+      if (replaces && f.task && !replaced.current) {
+        const d = await closer.run('PATCH', `/tasks/${replaces.taskId}`, { status: 'done' });
+        if (!d.ok) {
+          setFailure(`${sentence(o.saved)} ${followUpSavedText(f.task)}. “${replaces.title}” was not marked done${changing ? ', and the stage was not changed' : ''}: ${d.message}`);
+          return false;
+        }
+        replaced.current = true;
+      }
+      const also = joinWords([f.task ? followUpSavedText(f.task) : undefined, replaces && replaced.current ? `Marked done: “${replaces.title}”` : undefined]) || undefined;
       if (changing) {
         const r = await stage.change(selected, { from: current, ...(o.lead ? { lead: o.lead } : {}), ...(also ? { also } : {}) });
         if (!r.ok) {
@@ -201,6 +235,9 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
     refused,
     /** the button is named for its effect: "Change to Connected", "Keep New lead" (+ follow-up when it will add one) */
     primary: `${effectLabel(selected, current, labelOf)}${follow.willAdd ? ' + follow-up' : ''}`,
+    /** said under the chips while a new follow-up will replace the due one the card was about */
+    replacesNote: replaces && !replaced.current && (follow.willAdd || follow.stored !== null) ? `The new follow-up replaces “${replaces.title}”, which is marked done.` : null,
+    onePass: onePass !== undefined,
     blocked: refused || waiting || !follow.dueOk,
     finish,
   };
@@ -257,6 +294,11 @@ export function StageStepBody({ s, disabled = false, followUpNote }: { s: StageS
       ) : (
         <FollowUpChips f={s.follow} disabled={off} />
       )}
+      {s.replacesNote && !followUpNote ? (
+        <p className="text-[14px] leading-snug text-ink-muted [overflow-wrap:anywhere]" data-testid="follow-up-replaces">
+          {s.replacesNote}
+        </p>
+      ) : null}
     </>
   );
 }
@@ -291,7 +333,8 @@ export function StageStep(props: StageStepProps) {
     );
   }
   const confirm = async () => {
-    if (await s.finish({ saved })) onClose();
+    // R-TODAY-7: away from the person's page the closing toast is the only place the result stays: it says all of it
+    if (await s.finish({ saved, ...(s.onePass ? { lead: saved } : {}) })) onClose();
   };
   return (
     <Dialog

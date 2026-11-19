@@ -19,7 +19,7 @@ import { ComposeBox } from '../compose/ComposeBox.js';
 import { sendOutcomeText, sentResult } from '../feed/lib/AgentSheets.js';
 import type { ContactFullView } from '../feed/lib/types.js';
 import { TemplatePicker } from '../templates/TemplatePicker.js';
-import { StageStep, type StageSignal } from './StageStep.js';
+import { type OnePassOptions, StageStep, type StageSignal } from './StageStep.js';
 
 /**
  * What a send says about the stage: a text or email the API reports SENT is a try; anything else, nothing. A message
@@ -56,7 +56,7 @@ export function TextSheetProvider({ contact, children }: { contact: ContactFullV
   );
 }
 
-export function TextSheet({ contact, onClose }: { contact: ContactFullView; onClose: () => void }) {
+export function TextSheet({ contact, onClose, onePass }: { contact: ContactFullView; onClose: () => void; /** R-TODAY-7: opened from Today (StageStep.tsx OnePassOptions) */ onePass?: OnePassOptions | undefined }) {
   const [sent, setSent] = useState<{ saved: string; signal: StageSignal | null } | null>(null);
   // the assistant's reply waiting for this person, offered in the box as the conversation page offers it
   const inbox = useInbox();
@@ -81,7 +81,7 @@ export function TextSheet({ contact, onClose }: { contact: ContactFullView; onCl
     seen.observe(el, { childList: true, subtree: true });
     return () => seen.disconnect();
   }, []);
-  if (sent) return <StageStep contactId={contact.id} contactName={contact.displayName} saved={sent.saved} signal={sent.signal} onClose={onClose} />;
+  if (sent) return <StageStep contactId={contact.id} contactName={contact.displayName} saved={sent.saved} signal={sent.signal} onClose={onClose} onePass={onePass} />;
   return (
     <Dialog
       title={`Text ${contact.displayName}`}

@@ -59,6 +59,7 @@ export {
   type StageSuggestion,
   activitySignal,
   suggestStageFromOutcome,
+  suggestedFollowUpDays,
 } from './stageSuggestion.js';
 export { MAX_MENTIONS, type MentionResult, type MentionToken, addedMentions, mentionDedupeKey, mentionTitle, mentionToken, mentionTokens, parseMentions, renderMentions } from './mentions.js';
 export {
