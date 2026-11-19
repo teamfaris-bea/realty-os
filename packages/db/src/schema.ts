@@ -1592,6 +1592,11 @@ export interface LeadSourcesTable {
   no_ai_care_changed_at: Timestamp | null;
   import_labels: Generated<string[]>;
   import_unlabeled_batches: Generated<string[]>;
+  owner_user_id: string | null;
+  backup_user_id: string | null;
+  high_intent: Generated<boolean>;
+  covered: Generated<boolean>;
+  coverage_changed_at: Timestamp | null;
 }
 
 /** public.listing_contacts (table) */

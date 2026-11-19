@@ -150,6 +150,9 @@ const PLAIN_EXACT = new Set([
   // address or a phone number typed into a label is still masked in the audit row (maskPii, toJson).
   'import_label', // import_source_labels (0102) and the audit key importLabel
   'import_labels', // lead_sources (0099): the labels the Owner mapped to this source
+  // ---- batch 19 team-queue lane, classified on purpose (R-AUDIT-4): two on/off settings of a lead source (0107) ----
+  'high_intent', // lead_sources: the team's "high intent" mark; its audit row shows from and to
+  'covered', // lead_sources: the coverage switch; its audit row shows from and to
 ]);
 
 /** Structural suffixes that never hold free text (ids, instants, counts, digests), checked after secrets. */

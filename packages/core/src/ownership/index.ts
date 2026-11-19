@@ -66,3 +66,14 @@ export {
   effectPlacement,
   placeEffects,
 } from './decide.js';
+export {
+  COVERAGE_WARNING_CODES,
+  type CoverageWarningCode,
+  type CoverageWarning,
+  type CoverageMember,
+  type SourceRouting,
+  type SourceCoverageFacts,
+  type SourceCoverage,
+  sourceRouting,
+  sourceCoverage,
+} from './coverage.js';
