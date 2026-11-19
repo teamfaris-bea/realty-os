@@ -3,7 +3,7 @@ import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { systemActor } from '../worker/systemActor.js';
 import { assignmentById } from './repo.js';
-import { lockModelBudget, reserveModelCall } from './spend.js';
+import { budgetResumeSpreadMs, lockModelBudget, reserveModelCall } from './spend.js';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { inboundSms } from '../comms/testing.js';
@@ -47,7 +47,11 @@ it.each(['PERSON', 'TENANT'] as const)('R-ISA-20: %s limit holds before the prov
   expect((await h.su.query(`SELECT decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_kind = 'inbound'`, [a.id])).rows)
     .toEqual([{ code: `ISA_MODEL_${scope}_DAILY_LIMIT` }]);
   const next = (await h.su.query<{ at: Date }>(`SELECT (((now() AT TIME ZONE default_timezone)::date + 1)::timestamp AT TIME ZONE default_timezone) AS at FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId])).rows[0]!.at;
-  if (held.kind === 'retry') expect(held.retryAt).toBe(next.getTime());
+  // E794: the turn is held until the next team-local day exactly (not_before); the job that resumes it is parked a fixed
+  // part of the first ten minutes later, derived from the assignment id (the resumes of a team do not all fire at once)
+  if (held.kind === 'retry') expect(held.retryAt).toBe(next.getTime() + budgetResumeSpreadMs(a.id));
+  expect(budgetResumeSpreadMs(a.id)).toBeLessThan(10 * 60_000);
+  expect((await h.su.query<{ nb: Date }>(`SELECT not_before AS nb FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_kind = 'inbound'`, [a.id])).rows[0]!.nb.getTime()).toBe(next.getTime());
   // Model the date rollover by moving only the synthetic ledger into the preceding local day.
   await h.su.query(`UPDATE ai_runs SET created_at = created_at - interval '1 day' WHERE tenant_id = $1`, [w.tenantId]);
   expect((await run()).kind).toBe('done');

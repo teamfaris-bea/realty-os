@@ -9,8 +9,9 @@
 // is held for that moment only: never across a provider call, never together with a contact, turn or assignment
 // lock (§3.7 locks 1–6), and never by a turn that makes no model call. The hold of a refused turn is written after
 // that transaction has committed, without the lock.
+import { createHash } from 'node:crypto';
 import type { Instant } from '@realty/core/foundation';
-import { type Tx, withTenantTx } from '@realty/db';
+import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { systemActor } from '../worker/systemActor.js';
 import { AI_ISA_PROMPT_VERSION, ISA_TURN_LIMITS } from './coreSeam.js';
@@ -20,6 +21,27 @@ import type { AssignmentRow } from './repo.js';
 export type ModelBudgetCode = 'ISA_MODEL_PERSON_DAILY_LIMIT' | 'ISA_MODEL_TENANT_DAILY_LIMIT';
 export type Reservation = { runId: string } | { kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string };
 interface Refused { code: ModelBudgetCode; reset: Date }
+
+/** The turn a call is reserved for, as the run that prepared it knows it. */
+export interface TurnCall {
+  id: string;
+  /** the conversation's inbound sequence the run pinned in TX-A (a newer inbound makes the turn stale, as in TX-B) */
+  pinnedSeq: number;
+  /** the repair call of the turn (the second call after a schema failure) */
+  repair: boolean;
+  /** who resumes the turn if it is held: the worker job that runs it (its id); null for a run outside a job (tests) */
+  owner: string | null;
+}
+
+/**
+ * E794: every held turn of a team would otherwise resume at the same instant (the rollover). Each assignment's resume
+ * waits a fixed part of the first ten minutes after it, derived from the assignment id (no randomness: a replay parks
+ * the job at the same instant).
+ */
+export const BUDGET_RESUME_SPREAD_MS = 10 * 60_000;
+export function budgetResumeSpreadMs(assignmentId: string): number {
+  return createHash('sha256').update(assignmentId, 'utf8').digest().readUInt32BE(0) % BUDGET_RESUME_SPREAD_MS;
+}
 
 export async function lockModelBudget(tx: Tx): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended('realty.isa.model-budget:' || app.tenant_id()::text, 0))`.execute(tx);
@@ -54,14 +76,42 @@ async function countAndReserve(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: Assignment
   return { runId };
 }
 
-/** The hold of a refused call: the turn waits, `deferred`, for the next team-local day. A turn that is no longer open is left as it is. */
-async function holdTurn(tx: Tx, turnId: string, refused: Refused, repair: boolean): Promise<{ kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string }> {
-  const held = await sql<{ id: string }>`UPDATE ai_isa_turns SET status = 'deferred', not_before = ${refused.reset}, decision = ${JSON.stringify({ code: refused.code, budgetRepair: repair })}::jsonb
-    WHERE tenant_id = app.tenant_id() AND id = ${turnId}
-      AND (status = 'deciding' OR (status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')))
+/**
+ * The hold of a refused call: the turn waits, `deferred`, for the next team-local day (`not_before`), and the job that
+ * owns it is parked until then plus the assignment's spread. A turn that is no longer open is left as it is. A turn an
+ * inbound has overtaken since TX-A pinned its sequence is not held: it is `stale` (E493, as TX-B does it) and a new
+ * turn reads both messages, so a person never has two held turns (E794).
+ */
+async function holdTurn(tx: Tx, a: AssignmentRow, t: TurnCall, refused: Refused): Promise<{ kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string }> {
+  const open = sql`(status = 'deciding' OR (status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')))`;
+  const conv = await sql<{ seq: string | null }>`SELECT inbound_seq AS seq FROM conversations WHERE tenant_id = app.tenant_id() AND contact_id = ${a.contactId}`.execute(tx);
+  const seq = Number(conv.rows[0]?.seq ?? 0);
+  if (seq > t.pinnedSeq) {
+    const stale = await sql<{ id: string }>`UPDATE ai_isa_turns SET status = 'stale', not_before = NULL, decision = '{"code":"ISA_STALE_REPLY"}'::jsonb
+      WHERE tenant_id = app.tenant_id() AND id = ${t.id} AND ${open} RETURNING id`.execute(tx);
+    if (stale.rows.length === 0) return { kind: 'done', code: 'DISCARDED' };
+    await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'inbound', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:${seq}` });
+    return { kind: 'done', code: 'ISA_STALE_REPLY' };
+  }
+  const decision = { code: refused.code, budgetRepair: t.repair, ...(t.owner !== null ? { job: t.owner } : {}) };
+  const held = await sql<{ id: string }>`UPDATE ai_isa_turns SET status = 'deferred', not_before = ${refused.reset}, decision = ${JSON.stringify(decision)}::jsonb
+    WHERE tenant_id = app.tenant_id() AND id = ${t.id} AND ${open}
     RETURNING id`.execute(tx);
   if (held.rows.length === 0) return { kind: 'done', code: 'DISCARDED' };
-  return { kind: 'retry', retryAt: refused.reset.getTime() as Instant };
+  return { kind: 'retry', retryAt: (refused.reset.getTime() + budgetResumeSpreadMs(a.id)) as Instant };
+}
+
+/**
+ * E794: one open model turn per assignment. When a newer turn of the assignment awaits the model (a newer inbound was
+ * consumed), every other turn of it still held at a budget is superseded (`stale`), in the transaction that consumed
+ * the inbound (TX-A, under the turn lock). The newer turn's prompt reads every message, so one call answers them all.
+ */
+export async function supersedeHeldTurns(tx: Tx, assignmentId: string, exceptTurnId: string): Promise<number> {
+  const r = await sql<{ id: string }>`UPDATE ai_isa_turns SET status = 'stale', not_before = NULL,
+      decision = jsonb_build_object('code', 'ISA_SUPERSEDED_BY_NEWER_TURN', 'held', decision->>'code')
+    WHERE tenant_id = app.tenant_id() AND assignment_id = ${assignmentId} AND id <> ${exceptTurnId} AND status = 'deferred'
+      AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT') RETURNING id`.execute(tx);
+  return r.rows.length;
 }
 
 /** Only a budget hold reopens. Terminal and other deferred turns keep the TX-B replay fence. */
@@ -74,7 +124,7 @@ export async function reopenHeldTurn(tx: Tx, turnId: string): Promise<void> {
 /** The count, the reservation or the hold, and the reopening in ONE transaction whose caller holds the team lock. */
 export async function reserveModelCall(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, turnId: string, repair: boolean): Promise<Reservation> {
   const r = await countAndReserve(tx, deps, a, turnId);
-  if ('code' in r) return holdTurn(tx, turnId, r, repair);
+  if ('code' in r) return holdTurn(tx, a, { id: turnId, pinnedSeq: Number.MAX_SAFE_INTEGER, repair, owner: null }, r);
   await reopenHeldTurn(tx, turnId);
   return r;
 }
@@ -84,12 +134,12 @@ export async function reserveModelCall(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: As
  * transaction takes the team lock, counts and reserves, and commits. A refused call is then held in a second
  * transaction, after the lock is gone (one UPDATE of the turn's own row, guarded by its status).
  */
-export async function reserveForTurn(deps: Pick<IsaDeps, 'ids' | 'db'>, tenantId: string, a: AssignmentRow, turnId: string, repair: boolean): Promise<Reservation> {
+export async function reserveForTurn(deps: Pick<IsaDeps, 'ids' | 'db'>, tenantId: string, a: AssignmentRow, t: TurnCall): Promise<Reservation> {
   const actor = systemActor(tenantId as never, 'assistant');
   const r = await withTenantTx(actor, async (tx) => {
     await lockModelBudget(tx);
-    return countAndReserve(tx, deps, a, turnId);
+    return countAndReserve(tx, deps, a, t.id);
   }, { db: deps.db, retries: 2 });
   if ('runId' in r) return r;
-  return withTenantTx(actor, (tx) => holdTurn(tx, turnId, r, repair), { db: deps.db, retries: 2 });
+  return withTenantTx(actor, (tx) => holdTurn(tx, a, t, r), { db: deps.db, retries: 2 });
 }

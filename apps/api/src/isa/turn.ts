@@ -25,7 +25,7 @@ import { systemActor } from '../worker/systemActor.js';
 import {
   buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
-import { reopenHeldTurn, reserveForTurn } from './spend.js';
+import { reopenHeldTurn, reserveForTurn, supersedeHeldTurns } from './spend.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
@@ -49,6 +49,11 @@ export interface TurnPayload {
 }
 
 export type TurnResult = { kind: 'done'; code: string } | { kind: 'retry'; retryAt: Instant };
+
+/** The run of a turn job: the worker job's id is the identity that owns a turn it holds at a budget (E794). */
+export interface TurnRun {
+  jobId?: string;
+}
 
 interface Prepared {
   /** set when a held repair call resumes: the provider loop starts at the repair call */
@@ -104,7 +109,7 @@ function actor(tenantId: string): SystemActor {
 }
 
 /** TX-A. Returns a prepared model call, or the turn's outcome when no model call is needed. */
-async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Prepared | TurnResult> {
+async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, me: string | null): Promise<Prepared | TurnResult> {
   return withTenantTx(actor(tenantId), async (tx, now) => {
     const peek = await assignmentById(tx, p.assignmentId);
     if (peek === null || peek.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
@@ -171,17 +176,20 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
       : a.machine.phase === 'starting' ? { type: 'start', at: now }
       : { type: 'timer', at: now, timer: 'follow_up' };
     // R-ISA-20: a model call held at a daily budget (the original call or the repair) resumes here, on the retry of
-    // the job that owns the held turn (its trigger_key starts with this job's trigger and epoch). The machine already
-    // awaits the model: the inbound is consumed and a repair keeps its schema-failure counter. The turn is reopened
-    // and its prompt rebuilt only after the normal chain, pause and epoch checks above; the call is reserved after
-    // this transaction (runTurn). A newer inbound takes the ordinary path instead.
+    // the job that owns the held turn (its trigger_key starts with this job's trigger and epoch, and the hold recorded
+    // this job's id: E794, so of the jobs parked for one person exactly one resumes). The machine already awaits the
+    // model: the inbound is consumed and a repair keeps its schema-failure counter. The turn is reopened and its
+    // prompt rebuilt only after the normal chain, pause and epoch checks above; the call is reserved after this
+    // transaction (runTurn). A newer inbound takes the ordinary path instead, and supersedes the held turn (below).
     if (inbounds.length === 0 && a.machine.awaitingModel) {
-      const held = (await sql<{ id: string; attempt: number; repair: boolean }>`SELECT id, attempt, COALESCE(decision->>'budgetRepair', 'false') = 'true' AS repair FROM ai_isa_turns
+      const found = (await sql<{ id: string; attempt: number; repair: boolean; job: string | null }>`SELECT id, attempt, COALESCE(decision->>'budgetRepair', 'false') = 'true' AS repair, decision->>'job' AS job FROM ai_isa_turns
         WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND epoch = ${a.epoch}
           AND status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')
           AND starts_with(trigger_key, ${`${p.trigger}:${a.epoch}:`})
           AND (${p.trigger !== 'timer'} OR trigger_key = ${`${p.trigger}:${a.epoch}:${p.timer ?? 'start'}`})
         ORDER BY seq DESC LIMIT 1`.execute(tx)).rows[0];
+      // a turn held by a run outside a job, or resumed by one, has no owner to compare (tests); every worker run has
+      const held = found !== undefined && (found.job === null || me === null || found.job === me) ? found : undefined;
       if (held) {
         await reopenHeldTurn(tx, held.id);
         await sql`UPDATE ai_isa_turns SET attempt = attempt + 1 WHERE tenant_id = app.tenant_id() AND id = ${held.id}`.execute(tx);
@@ -202,6 +210,8 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
         WHERE tenant_id = app.tenant_id() AND id = ${turn.id} AND status = 'deciding'`.execute(tx);
       return { kind: 'done', code: applied.ended ? 'ENDED' : 'NO_MODEL' } as const;
     }
+    // E794: this turn now carries the assignment's one pending model call; an older turn still held at a budget is superseded
+    await supersedeHeldTurns(tx, a.id, turn.id);
     const fresh = (await assignmentById(tx, a.id))!;
     return prepare(tx, { ...ctx, a: fresh }, fresh, turn.id, turn.attempt, conv.seq, event, now, awaiting.kind === 'await_model' ? awaiting : null);
   }, { db: deps.db, retries: 2 });
@@ -275,13 +285,14 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
 }
 
 /** One full turn (the job body). */
-export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<TurnResult> {
-  const pre = await txA(deps, tenantId, p);
+export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRun = {}): Promise<TurnResult> {
+  const me = run.jobId ?? null;
+  const pre = await txA(deps, tenantId, p, me);
   if ('kind' in pre) return pre;
   let note: string | undefined;
   for (let call = pre.repair ? 1 : 0; call < 2; call += 1) {
     // R-ISA-20: every provider call is reserved first, with no turn lock held; at a daily limit the turn is held here
-    const reservation = await reserveForTurn(deps, tenantId, pre.a, pre.turnId, call > 0);
+    const reservation = await reserveForTurn(deps, tenantId, pre.a, { id: pre.turnId, pinnedSeq: pre.pinnedSeq, repair: call > 0, owner: me });
     if ('kind' in reservation) return reservation;
     const { runId } = reservation;
     const started = Date.now();
