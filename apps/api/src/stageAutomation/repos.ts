@@ -122,11 +122,13 @@ export async function memberOf(tx: Tx, userId: string): Promise<{ role: string; 
  * survivor (0027, append-only copies with the original instant and actor) is not a stage entry and is
  * never reconciled.
  */
-export async function pendingStageEvents(tx: Tx, since: Instant, limit: number): Promise<string[]> {
+export async function pendingStageEvents(tx: Tx, since: Instant, limit: number, only?: { eventId: string }): Promise<string[]> {
+  // `only`: the same question about one event (the playbook status's "pending": is the scan still going to decide it?)
+  const one = only ? sql`AND e.id = ${only.eventId}` : sql``;
   const r = await sql<{ id: string }>`
     SELECT e.id FROM contact_stage_events e
       JOIN contacts c ON c.tenant_id = e.tenant_id AND c.id = e.contact_id
-     WHERE e.tenant_id = app.tenant_id() AND e.actor_kind = 'user' AND e.occurred_at > ${toIso(since)}::timestamptz
+     WHERE e.tenant_id = app.tenant_id() AND e.actor_kind = 'user' AND e.occurred_at > ${toIso(since)}::timestamptz ${one}
        AND NOT EXISTS (SELECT 1 FROM stage_automation_decisions d WHERE d.tenant_id = e.tenant_id AND d.stage_event_id = e.id)
        AND EXISTS (SELECT 1 FROM playbooks p WHERE p.tenant_id = e.tenant_id AND p.status = 'active' AND p.auto_enroll_stage = e.to_stage
                      AND p.updated_at <= e.occurred_at AND (p.scope = 'team' OR p.owner_user_id = c.owner_user_id))
@@ -136,6 +138,13 @@ export async function pendingStageEvents(tx: Tx, since: Instant, limit: number):
                           AND o.actor_kind = e.actor_kind AND o.actor_user_id IS NOT DISTINCT FROM e.actor_user_id)
      ORDER BY e.occurred_at, e.id LIMIT ${limit}`.execute(tx);
   return r.rows.map((x) => x.id);
+}
+
+/** The person's most recent stage event (any actor), read under the caller's RLS (visible with the person's detail). */
+export async function latestStageEvent(tx: Tx, contactId: string): Promise<StageEventRow | null> {
+  const r = await sql<{ id: string }>`
+    SELECT id FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} ORDER BY occurred_at DESC, id DESC LIMIT 1`.execute(tx);
+  return r.rows[0] ? stageEvent(tx, r.rows[0].id) : null;
 }
 
 /**

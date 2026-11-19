@@ -302,12 +302,52 @@ async function lockedEnrollment(tx: Tx, id: string): Promise<P.EnrollmentRow> {
   return (await P.enrollmentById(tx, id, { lock: true }))!;
 }
 
+// What pause, stop and resume would do with an enrollment as it is now: decided once, here. The three commands below
+// act on these, and the contact's playbook status (stageAutomation/status.ts) reads canPause, canStop and canResume
+// from the same functions, in the caller's own transaction, so a button is offered exactly when its route would act
+// (R-STG-4). They read only.
+export type EnrollmentCheck = { kind: 'acts' } | { kind: 'no_change' } | { kind: 'refused'; error: AppError };
+
+/** Pause: an active plan pauses; a paused one is left as it is; an ended one is refused. */
+export function pauseCheck(e: Pick<P.EnrollmentRow, 'state'>): EnrollmentCheck {
+  if (e.state === 'paused') return { kind: 'no_change' };
+  if (e.state !== 'active') return { kind: 'refused', error: new AppError('ENROLLMENT_NOT_LIVE', { state: e.state }) };
+  return { kind: 'acts' };
+}
+
+/** Stop: a live plan (active or paused) stops; an ended one is left as it is. Never refused. */
+export function stopCheck(e: Pick<P.EnrollmentRow, 'state'>): EnrollmentCheck {
+  return e.state === 'stopped' || e.state === 'completed' ? { kind: 'no_change' } : { kind: 'acts' };
+}
+
+/**
+ * Resume: only a plan paused by a person, by an owner change or by the client's reply, whose playbook the caller sees,
+ * still speaks for the person's owner and still has an approved version, for a person automated contact may go to.
+ * Read in the caller's transaction (their RLS decides whether they see the playbook, as it does for the route).
+ */
+export async function resumeCheck(tx: Tx, e: P.EnrollmentRow): Promise<{ kind: 'acts'; reason: string } | { kind: 'no_change' } | { kind: 'refused'; error: AppError }> {
+  if (e.state === 'active') return { kind: 'no_change' };
+  if (e.state !== 'paused') return { kind: 'refused', error: new AppError('ENROLLMENT_NOT_LIVE', { state: e.state }) };
+  const reason = e.pauseReason ?? '';
+  if (!['manual', 'owner_change', 'client_reply'].includes(reason)) return { kind: 'refused', error: new AppError('ENROLLMENT_NOT_RESUMABLE', { pauseReason: reason }) };
+  const pb = await P.playbookById(tx, e.playbookId);
+  const c = await contactCore(tx, e.contactId);
+  if (!pb || !c) return { kind: 'refused', error: new AppError('NOT_FOUND') };
+  if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) return { kind: 'refused', error: new AppError('PLAYBOOK_OWNER_MISMATCH') };
+  if (!(await P.approvedVersionOf(tx, pb.id))) return { kind: 'refused', error: new AppError('PLAYBOOK_NOT_APPROVED') };
+  // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
+  const refused = await noAutomatedContact(tx, e.contactId);
+  if (refused !== null) return { kind: 'refused', error: sourceRefusalError(refused, pb.id) };
+  return { kind: 'acts', reason };
+}
+
 /** POST /enrollments/:id/pause */
 export async function pauseEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
   const v = await asUser(deps, actor, async (tx, now) => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (e.state === 'paused') return viewOf(e);
-    if (e.state !== 'active') throw new AppError('ENROLLMENT_NOT_LIVE', { state: e.state });
+    const check = pauseCheck(e);
+    if (check.kind === 'no_change') return viewOf(e);
+    if (check.kind === 'refused') throw check.error;
     await P.pauseEnrollment(tx, e.id, 'manual', now);
     await audit(tx, actor, { action: 'enrollment.changed', entity: { type: 'playbook_enrollment', id: e.id }, reason: 'paused' });
     return viewOf((await P.enrollmentById(tx, e.id))!);
@@ -320,7 +360,7 @@ export async function pauseEnrollment(actor: UserActor, enrollmentId: string, de
 export async function stopEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
   const v = await asUser(deps, actor, async (tx, now) => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (e.state === 'stopped' || e.state === 'completed') return viewOf(e);
+    if (stopCheck(e).kind === 'no_change') return viewOf(e);
     await P.endEnrollment(tx, e.id, 'stopped', 'manual', now);
     await audit(tx, actor, { action: 'enrollment.changed', entity: { type: 'playbook_enrollment', id: e.id }, reason: 'stopped' });
     return viewOf((await P.enrollmentById(tx, e.id))!);
@@ -337,18 +377,10 @@ export async function stopEnrollment(actor: UserActor, enrollmentId: string, dep
 export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
   return asUser(deps, actor, async (tx, now) => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (e.state === 'active') return viewOf(e);
-    if (e.state !== 'paused') throw new AppError('ENROLLMENT_NOT_LIVE', { state: e.state });
-    const reason = e.pauseReason ?? '';
-    if (!['manual', 'owner_change', 'client_reply'].includes(reason)) throw new AppError('ENROLLMENT_NOT_RESUMABLE', { pauseReason: reason });
-    const pb = await P.playbookById(tx, e.playbookId);
-    const c = await contactCore(tx, e.contactId);
-    if (!pb || !c) throw new AppError('NOT_FOUND');
-    if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
-    if (!(await P.approvedVersionOf(tx, pb.id))) throw new AppError('PLAYBOOK_NOT_APPROVED');
-    // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
-    const refused = await noAutomatedContact(tx, e.contactId);
-    if (refused !== null) throw sourceRefusalError(refused, pb.id);
+    const check = await resumeCheck(tx, e);
+    if (check.kind === 'no_change') return viewOf(e);
+    if (check.kind === 'refused') throw check.error;
+    const reason = check.reason;
     if (reason === 'client_reply') await resumeAutomation(tx, e.contactId, actor.userId);
     await P.resumeEnrollment(tx, e.id, actor.userId, now);
     await enqueueStep(tx, e.id, now);

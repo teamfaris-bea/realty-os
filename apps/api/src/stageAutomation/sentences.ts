@@ -4,7 +4,7 @@
 //
 // `tense`: 'will' before the change (the preview: "will not start"), 'did' after it (the status: "did not start").
 import { SOURCE_NO_AUTOMATED_CONTACT, SOURCE_UNCLASSIFIED, sourceRefusalSentence } from '../leads/automatedContact.js';
-import type { SkipReason } from './decide.js';
+import { type SkipReason, isSkipReason } from './decide.js';
 
 export type Tense = 'will' | 'did';
 
@@ -30,4 +30,53 @@ export function skipSentence(reason: SkipReason, plan: string, tense: Tense): st
 
 function cap(s: string): string {
   return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
+}
+
+/** "<Plan> started." (only ever said of a decision row whose outcome is `started`). */
+export function startedSentence(plan: string): string {
+  return `${cap(plan)} started.`;
+}
+
+/** What a decision row says after the change, in the past tense. An unknown reason says only that it did not start. */
+export function decisionSentence(d: { outcome: 'started' | 'skipped'; reason: string | null }, plan: string): string {
+  if (d.outcome === 'started') return startedSentence(plan);
+  return d.reason !== null && isSkipReason(d.reason) ? skipSentence(d.reason, plan, 'did') : `${cap(plan)} did not start.`;
+}
+
+// ---- why a plan is not moving (playbook_enrollments.pause_reason / stop_reason) ---------------------------------
+
+const PAUSED: Record<string, string> = {
+  manual: 'Paused by someone on the team. Resume it when you are ready.',
+  client_reply: 'Paused because they replied. Read the reply, then resume the plan if it still fits.',
+  owner_change: 'Paused because this person has a new owner.',
+  opt_out: 'Paused because they opted out. A plan never resumes over an opt-out.',
+  wrong_number: 'Paused because their number was reported as a wrong number.',
+  approval_revoked: "Paused because the plan's approval was withdrawn. It needs a newly approved version.",
+  ineligible: 'Paused because the plan could not run for this person.',
+};
+
+/** Why a paused plan is paused (`code` is the stored pause reason). */
+export function pausedSentence(code: string): string {
+  return PAUSED[code] ?? 'Paused.';
+}
+
+const STOPPED: Record<string, string> = {
+  manual: 'Stopped by someone on the team.',
+  replaced: 'Stopped because they were moved to another plan.',
+  contact_removed: 'Stopped because this person was deleted.',
+  merged: 'Stopped because this person was merged into another record.',
+  ai_isa_started: 'Stopped because AI follow-up started for this person.',
+  wrong_number: 'Stopped because their number was reported as a wrong number.',
+  source_no_automated_contact: `Stopped. ${sourceRefusalSentence(SOURCE_NO_AUTOMATED_CONTACT)}`,
+  source_unclassified: `Stopped. ${sourceRefusalSentence(SOURCE_UNCLASSIFIED)}`,
+  'stop_if:appointment_booked': 'Stopped because an appointment was booked.',
+  'stop_if:deal_opened': 'Stopped because a deal was opened.',
+  'stop_if:deal_closed': 'Stopped because their deal closed.',
+  'stop_if:listing_inactive': 'Stopped because the listing is no longer active.',
+  'stop_if:event_canceled': 'Stopped because the event it was for was canceled.',
+};
+
+/** Why a stopped plan stopped (`code` is the stored stop reason). */
+export function stoppedSentence(code: string): string {
+  return STOPPED[code] ?? 'Stopped.';
 }
