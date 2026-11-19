@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { formatStamp } from '../admin/lib/format.js';
 import { OWNER_MAPS_LABELS, changedWords } from './ImportLabels.js';
 import { sentenceFor } from './messages.js';
-import { IN_REVIEW_MEANS, REMOVE_WARNING, afterImportLine, beforeImportLine, choiceWords, mappingKey, provenanceWords, reviewCounts, rowKey, stateWords, stoppedWords } from './reviewWords.js';
+import { IN_REVIEW_MEANS, REMOVE_WARNING, afterImportLine, beforeImportLine, choiceWords, mappingKey, notCoveredWords, provenanceWords, reviewCounts, rowKey, stateWords, stoppedWords } from './reviewWords.js';
 import { type FakeFetch, err, labelRow, overview, source, sourcesApp, sourcesFake } from './testing.js';
 
 const MARKED = { id: '01900000-0000-7000-8000-00000000528a', name: 'Northgate Referrals', noAiCare: true };
@@ -242,6 +242,20 @@ describe("R-LSRC-10: the review's own words", () => {
       expect(stateWords({ state, noAutomatedContact: false }).text).toMatch(/^In review/);
       expect(stateWords({ state, noAutomatedContact: false }).text).not.toMatch(/Mapped/i);
     }
+  });
+
+  it('R-LSRC-10 E755: the "not covered" chip is shown only on a row mapped to a marked source that counts people the file only matched; the CRM-wide list (no such count) never shows it', () => {
+    expect(notCoveredWords(labelRow('Partner file', { people: 3, committedPeople: 2, mappedTo: MARKED, file: { matchedOnly: 1, open: false } }))).toBe('1 person already in the CRM is not covered');
+    expect(notCoveredWords(labelRow('Partner file', { people: 3, mappedTo: MARKED, file: { matchedOnly: 2, open: true } }))).toBe('2 people already in the CRM are not covered');
+    expect(notCoveredWords(labelRow('Partner file', { people: 3, mappedTo: MARKED, file: { matchedOnly: 0, open: true } }))).toBeNull();
+    // the CRM-wide list's row, a row mapped to an unmarked source and a row in review carry no count, so no chip
+    expect(desk.matchedOnlyPeople).toBeNull();
+    expect(notCoveredWords(desk)).toBeNull();
+    expect(notCoveredWords(labelRow('Sunday flyer', { people: 2, mappedTo: OPEN, file: { matchedOnly: 2, open: true } }))).toBeNull();
+    expect(notCoveredWords(flyer)).toBeNull();
+    // a row from an older server with no such field shows none either
+    const { matchedOnlyPeople: _gone, ...older } = labelRow('Partner file', { people: 3, mappedTo: MARKED });
+    expect(notCoveredWords(older)).toBeNull();
   });
 
   it('counts: what is still in review before the import (its people) and after it (the people it brought in)', () => {

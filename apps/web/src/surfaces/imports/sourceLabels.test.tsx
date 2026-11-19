@@ -6,6 +6,11 @@
 // and Import, and the summary after the import repeats it with the people actually imported. Only the Owner gets
 // controls. The rows carry the API's own sentences (lead-sources/testing.tsx reviewSentence). Labels and sources are
 // made up.
+//
+// E755 (migration 0103): a label mapped to a source with "No automated contact for leads from this source" on covers the
+// people an import COMMITTED, not a person the file only matched. An import's own row says so in numbers (the API's
+// sentence, shown as it is), and the row carries a warning chip while someone of the file is not covered, in the step
+// before the import and in the summary after it.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -38,7 +43,7 @@ function batch(stages: ImportStage[], over: Partial<ImportBatch> = {}): ImportBa
 // source's name (suggested, never applied), one label an Owner mapped earlier, and the people with no label
 const unknown = labelRow('Sunday flyer', { people: 2 });
 const suggested = labelRow(' open houses', { people: 3, suggest: OPEN });
-const mapped = labelRow('Northgate referral desk', { people: 3, mappedTo: MARKED, id: 'r1', firstSeen: { importId: BID, kind: 'fub_api', at: '2026-11-02T15:00:00.000Z' }, changedBy: { userId: 'u1', name: 'Olive Owner' }, changedAt: '2026-11-03T16:00:00.000Z' });
+const mapped = labelRow('Northgate referral desk', { people: 3, mappedTo: MARKED, file: { kind: 'fub_api', matchedOnly: 0, open: true }, id: 'r1', firstSeen: { importId: BID, kind: 'fub_api', at: '2026-11-02T15:00:00.000Z' }, changedBy: { userId: 'u1', name: 'Olive Owner' }, changedAt: '2026-11-03T16:00:00.000Z' });
 const blank = labelRow('', { unlabeledImportId: BID, people: 1 });
 const ROWS = [unknown, suggested, mapped, blank];
 
@@ -238,6 +243,47 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     const s = within(await screen.findByRole('region', { name: 'Review sources' }));
     expect(s.getByText('Every source this import brought in is mapped to a lead source.')).toBeInTheDocument();
     expect(s.queryByText(IN_REVIEW_MEANS)).toBeNull();
+  });
+
+  it('R-LSRC-10 E755: before the import, a row mapped to a marked source says how many people of the file are already in the CRM and not covered by the mapping, and carries a warning chip; a row with nobody of the kind carries none', async () => {
+    const partner = labelRow('Partner file', { people: 3, mappedTo: MARKED, file: { kind: 'csv', matchedOnly: 2, open: true } });
+    expect(partner.matchedOnlyPeople).toBe(2);
+    expect(partner.sentence).toBe(
+      '"Partner file": 3 people in this file. None has been imported from this file yet. The label is mapped to Northgate Referrals, which has "No automated contact for leads from this source" on: that covers a person once their row is imported or attached, not before. 2 were already in the CRM and are not imported from this file, so this mapping does not cover them unless their row is attached. 1 other is not imported yet.',
+    );
+    const csv: ImportBatch['csv'] = { headers: ['First Name', 'Source'], mapping: [{ field: 'first_name' }, { field: 'lead_source' }] };
+    leadAdminApp(fake(batch([stage('contacts', 'dry_run_ready')], { source: 'csv', fileLabel: 'partner.csv', csv }), () => [partner, mapped]), `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
+    const s = await step();
+    const r = within(await s.findByRole('group', { name: 'Source label "Partner file"' }));
+    expect(r.getByText(partner.sentence)).toBeInTheDocument();
+    expect(r.getByText('Mapped · no automated contact')).toBeInTheDocument();
+    expect(r.getByText('2 people already in the CRM are not covered')).toBeInTheDocument();
+    // the old claim is not on the page for a row that counts the file's people
+    expect(s.queryByText(/nothing automatic reaches the people imported with it/)).toBeNull();
+    const other = row(s, 'Source label "Northgate referral desk"');
+    expect(other.getByText(mapped.sentence)).toBeInTheDocument();
+    expect(other.queryByText(/not covered/)).toBeNull();
+  });
+
+  it('R-LSRC-10 E755: the summary after the import says both numbers for a row mapped to a marked source: the people imported and covered, and the person already in the CRM whom the mapping does not cover, with the same chip', async () => {
+    const partner = labelRow('Partner file', { people: 3, committedPeople: 2, mappedTo: MARKED, file: { kind: 'csv', matchedOnly: 1, open: false }, id: 'r7', firstSeen: { importId: BID, kind: 'csv', at: '2026-11-10T11:00:00.000Z' } });
+    const group = labelRow('', { unlabeledImportId: BID, people: 1, committedPeople: 1, mappedTo: MARKED, file: { kind: 'csv', matchedOnly: 0, open: false } });
+    expect(partner.sentence).toBe(
+      '"Partner file": 3 people in this file. 2 were imported or attached and get no automated contact, because the label is mapped to Northgate Referrals, which has "No automated contact for leads from this source" on. 1 was already in the CRM and is not imported from this file, so this mapping does not cover them: their row is not attached.',
+    );
+    expect(group.sentence).toBe('No source label: 1 person in this file. 1 was imported or attached and gets no automated contact, because the people of this import with no source label are counted as Northgate Referrals, which has "No automated contact for leads from this source" on.');
+    const b = batch([stage('contacts', 'verified')], { source: 'csv', fileLabel: 'partner.csv', csv: { headers: ['First Name', 'Source'], mapping: [{ field: 'first_name' }, { field: 'lead_source' }] } });
+    expect(sourceReviewIsAStep(b)).toBe(false);
+    leadAdminApp(fake(b, () => [partner, group]), `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
+    const s = within(await screen.findByRole('region', { name: 'Review sources' }));
+    expect(s.getByRole('heading', { level: 3, name: 'Review sources' })).toBeInTheDocument();
+    const r = within(await s.findByRole('group', { name: 'Source label "Partner file"' }));
+    expect(r.getByText(partner.sentence)).toBeInTheDocument();
+    expect(r.getByText('1 person already in the CRM is not covered')).toBeInTheDocument();
+    const g = row(s, 'People imported with no source label');
+    expect(g.getByText(group.sentence)).toBeInTheDocument();
+    expect(g.queryByText(/not covered/)).toBeNull();
+    expect(s.queryByText(/nothing automatic reaches/)).toBeNull();
   });
 
   it('R-LSRC-10 E751: an Admin runs the import and reads the review, with no control the server would refuse', async () => {

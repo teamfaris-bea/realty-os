@@ -76,18 +76,48 @@ export { err } from '../../shell/testing/fakeApi.js';
 const people = (n: number): string => (n === 1 ? '1 person' : `${n} people`);
 const SETTING = 'No automated contact for leads from this source';
 
+/** How an import's own row counts its people, as the API does (leads/importLabels.ts InThisImport). */
+export interface InThisImport {
+  /** a Follow Up Boss account is "this import"; a CSV or an export is a file (default: a file) */
+  kind?: 'csv' | 'fub_api' | 'fub_export';
+  matchedOnly: number;
+  /** the contacts are not imported yet: a row can still be attached to the person it matched */
+  open: boolean;
+}
+
+/** E755: the API's sentence for an import's own row mapped to a marked source (leads/importLabels.ts inThisImportSentence, word for word). */
+function inThisImportSentence(head: string, n: number, committed: number, f: InThisImport, because: string, thisMapping: string): string {
+  const from = f.kind === 'fub_api' ? 'by this import' : 'from this file';
+  const where = f.kind === 'fub_api' ? 'in this import' : 'in this file';
+  const rest = Math.max(0, n - committed - f.matchedOnly);
+  const out = [`${head}: ${people(n)} ${where}.`];
+  if (committed > 0) out.push(`${committed} ${committed === 1 ? 'was' : 'were'} imported or attached and ${committed === 1 ? 'gets' : 'get'} no automated contact, because ${because}.`);
+  else out.push(`${f.open ? `None has been imported ${from} yet` : `None is imported ${from}`}. ${because.charAt(0).toUpperCase()}${because.slice(1)}: that covers a person once their row is imported or attached, not before.`);
+  if (f.matchedOnly > 0) out.push(`${f.matchedOnly} ${f.matchedOnly === 1 ? 'was' : 'were'} already in the CRM and ${f.matchedOnly === 1 ? 'is' : 'are'} not imported ${from}, so ${thisMapping} does not cover them${f.open ? ' unless their row is attached' : ': their row is not attached'}.`);
+  if (rest > 0 && committed + f.matchedOnly > 0) out.push(`${rest} other${rest === 1 ? ' is' : 's are'} not imported ${f.open ? 'yet' : from}.`);
+  return out.join(' ');
+}
+
 /**
  * The API's own sentence for a review row (apps/api/src/leads/importLabels.ts importLabelSentence and unlabeledSentence,
- * word for word), so the web tests hold the real contract. `where` is how a no-label row names its import.
+ * word for word), so the web tests hold the real contract. `where` is how a no-label row names its import. `file` is
+ * given for an import's OWN row: mapped to a marked source, it says the numbers (E755) instead of "nothing automatic
+ * reaches the people imported with it", which is the CRM-wide list's sentence about committed people.
  */
-export function reviewSentence(r: Pick<ImportLabelView, 'label' | 'unlabeledImportId' | 'people' | 'state' | 'leadSourceName' | 'noAutomatedContact' | 'suggestion'>, where = 'this import'): string {
+export function reviewSentence(
+  r: Pick<ImportLabelView, 'label' | 'unlabeledImportId' | 'people' | 'state' | 'leadSourceName' | 'noAutomatedContact' | 'suggestion'> & { committedPeople?: number },
+  where = 'this import',
+  file: InThisImport | null = null,
+): string {
   if (r.unlabeledImportId) {
     const who = `No source label in ${where} (${people(r.people)})`;
     if (r.state !== 'mapped') return `${who}: not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`;
+    if (r.noAutomatedContact && file) return inThisImportSentence('No source label', r.people, r.committedPeople ?? 0, file, `the people of this import with no source label are counted as ${r.leadSourceName}, which has "${SETTING}" on`, 'this');
     return r.noAutomatedContact ? `${who}: counted as ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches the people imported without a label.` : `${who}: counted as ${r.leadSourceName}.`;
   }
   const who = `"${r.label}" (${people(r.people)})`;
   const inReview = 'Nothing automatic goes to the people imported with it until the Owner maps it to a lead source.';
+  if (r.state === 'mapped' && r.noAutomatedContact && file) return inThisImportSentence(`"${r.label}"`, r.people, r.committedPeople ?? 0, file, `the label is mapped to ${r.leadSourceName}, which has "${SETTING}" on`, 'this mapping');
   if (r.state === 'mapped') return r.noAutomatedContact ? `${who}: mapped to ${r.leadSourceName}, which has "${SETTING}" on, so nothing automatic reaches the people imported with it.` : `${who}: mapped to ${r.leadSourceName}.`;
   if (r.state === 'suggested' && r.suggestion) {
     const n = r.suggestion.leadSourceName;
@@ -97,16 +127,20 @@ export function reviewSentence(r: Pick<ImportLabelView, 'label' | 'unlabeledImpo
   return `${who}: not reviewed yet. ${inReview}`;
 }
 
-/** One review row with the API's sentence for its state. `mappedTo` and `suggest` name a lead source. */
+/**
+ * One review row with the API's sentence for its state. `mappedTo` and `suggest` name a lead source. `file` makes it an
+ * import's OWN row (E755): mapped to a marked source it carries `matchedOnlyPeople` and the sentence with the numbers.
+ */
 export function labelRow(
   label: string,
-  o: Partial<Omit<ImportLabelView, 'label' | 'sentence' | 'suggestion' | 'leadSourceId' | 'leadSourceName' | 'noAutomatedContact' | 'inReview'>> & {
+  o: Partial<Omit<ImportLabelView, 'label' | 'sentence' | 'suggestion' | 'leadSourceId' | 'leadSourceName' | 'noAutomatedContact' | 'inReview' | 'matchedOnlyPeople'>> & {
     mappedTo?: { id: string; name: string; noAiCare?: boolean };
     suggest?: { id: string; name: string; noAiCare?: boolean };
     where?: string;
+    file?: InThisImport;
   } = {},
 ): ImportLabelView {
-  const { mappedTo, suggest, where, ...rest } = o;
+  const { mappedTo, suggest, where, file, ...rest } = o;
   const state: ImportLabelView['state'] = rest.state ?? (mappedTo ? 'mapped' : suggest ? 'suggested' : 'in_review');
   const row = {
     id: null,
@@ -118,6 +152,7 @@ export function labelRow(
     changedBy: null,
     changedAt: null,
     ...rest,
+    matchedOnlyPeople: file && state === 'mapped' && mappedTo?.noAiCare === true ? file.matchedOnly : null,
     state,
     leadSourceId: mappedTo?.id ?? null,
     leadSourceName: mappedTo?.name ?? null,
@@ -125,5 +160,5 @@ export function labelRow(
     inReview: state !== 'mapped',
     suggestion: state === 'suggested' && suggest ? { leadSourceId: suggest.id, leadSourceName: suggest.name, noAutomatedContact: suggest.noAiCare === true } : null,
   };
-  return { ...row, sentence: reviewSentence(row, where) };
+  return { ...row, sentence: reviewSentence(row, where, file ?? null) };
 }

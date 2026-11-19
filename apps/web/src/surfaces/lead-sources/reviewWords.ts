@@ -26,6 +26,12 @@ export interface ImportLabelView {
   people: number;
   /** of those, the people an import has committed with it (0 on an import's rows before its contacts are imported) */
   committedPeople: number;
+  /**
+   * E755 (migration 0103): only on an import's own row mapped to a marked source; null (or absent) on every other row.
+   * Of `people`, those already in the CRM whom the import only matched: the mapping does not cover them, and automated
+   * contact still reaches them. The API's sentence says the numbers; the row adds a chip (notCoveredWords).
+   */
+  matchedOnlyPeople?: number | null;
   state: ImportLabelState;
   leadSourceId: string | null;
   leadSourceName: string | null;
@@ -72,6 +78,17 @@ export function stateWords(r: Pick<ImportLabelView, 'state' | 'noAutomatedContac
     case 'in_review':
       return { text: 'In review', tone: 'warn' };
   }
+}
+
+/**
+ * E755: the chip of an import's own row mapped to a source with the setting on, while people of the file are already in
+ * the CRM and not imported from it: the mapping does not cover them (only a committed import outcome does). Null when
+ * the row counts nobody of the kind, which is every row of the CRM-wide list.
+ */
+export function notCoveredWords(r: Pick<ImportLabelView, 'state' | 'noAutomatedContact' | 'matchedOnlyPeople'>): string | null {
+  const n = r.matchedOnlyPeople ?? 0;
+  if (r.state !== 'mapped' || !r.noAutomatedContact || n <= 0) return null;
+  return n === 1 ? '1 person already in the CRM is not covered' : `${n} people already in the CRM are not covered`;
 }
 
 const KIND_WORDS: Record<ImportKind, string> = { csv: 'a CSV file', fub_api: 'Follow Up Boss', fub_export: 'a Follow Up Boss export file' };

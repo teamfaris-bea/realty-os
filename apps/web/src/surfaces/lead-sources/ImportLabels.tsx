@@ -26,7 +26,7 @@ import { type ActionResult, useAction, useAnnounce } from '../admin/lib/hooks.js
 import { Pill, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { SOURCE_KEYS, useOverview } from './hooks.js';
 import { sentenceFor } from './messages.js';
-import { IN_REVIEW_MEANS, type ImportLabelView, OWNER_MAPS_LABELS, REMOVE_WARNING, choiceWords, fieldLabel, mappingKey, provenanceWords, rowGroupName, rowKey, rowTitle, stateWords, stoppedWords } from './reviewWords.js';
+import { IN_REVIEW_MEANS, type ImportLabelView, OWNER_MAPS_LABELS, REMOVE_WARNING, choiceWords, fieldLabel, mappingKey, notCoveredWords, provenanceWords, rowGroupName, rowKey, rowTitle, stateWords, stoppedWords } from './reviewWords.js';
 import type { SourceOverview } from './types.js';
 import { madeSafeWords } from './words.js';
 
@@ -112,6 +112,7 @@ function ReviewRow({ row: r, owner, sources, onDone, onStale }: { row: ImportLab
   const chosenSource = sources.find((s) => s.id === chosen) ?? null;
   const pending = put.pending || confirm.pending;
   const state = stateWords(r);
+  const notCovered = notCoveredWords(r);
 
   const settle = (res: ActionResult<Answer>, retry: () => void) => {
     if (res.ok) {
@@ -143,6 +144,8 @@ function ReviewRow({ row: r, owner, sources, onDone, onStale }: { row: ImportLab
         {/* the label exactly as imported: its spaces and line breaks are kept, and a long one wraps */}
         <p className="min-w-0 flex-1 basis-40 whitespace-pre-wrap break-words text-[16px] font-semibold text-ink">{rowTitle(r)}</p>
         <Pill tone={state.tone}>{state.text}</Pill>
+        {/* E755: people of the file the mapping does not cover (the row's sentence says who, in numbers) */}
+        {notCovered ? <Pill tone="warn">{notCovered}</Pill> : null}
       </div>
       <p className="break-words text-[15px] text-ink">{r.sentence}</p>
       <p className="text-[14px] text-ink-muted">{provenanceWords(r)}</p>
