@@ -3,8 +3,9 @@
 // shown locked BEFORE the tap, with why and what to do instead ("Reach them first: Call · Text · Close", with Reply
 // in chat first while the lead's website chat is open: owner decision D8 made a chat reply first contact, R-OWN-14),
 // never failing after it. Each stage shows what it means and what it does not (R-STG-1; StageChoices.tsx), and what
-// picking it will do to the person's automated plan, before the tap (R-STG-3; StagePreview.tsx).
-import { useId, useState } from 'react';
+// picking it will do to the person's automated plan, before the tap (R-STG-3; StagePreview.tsx). The previews are not
+// all asked for at once (E792): one at a time down the list, and at once for the stage the agent points at.
+import { useEffect, useId, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useReachability } from '../../reasons/index.js';
 import { type Details, type StageGuideRow, guideOf, labelIn } from './api.js';
@@ -18,14 +19,28 @@ export { type StageAutomation, automationText } from './stageFlow.js';
 
 /**
  * One stage in the pill's picker. Tapping it changes the stage at once (PARITY_PLAN §5: pill → stage = 2 taps), so
- * what the change will do is on the row BEFORE the tap (R-STG-3): the row asks the server's preview for its stage
+ * what the change will do is on the row BEFORE the tap (R-STG-3): the row shows the server's preview for its stage
  * and cannot be picked until the answer is in. The person's own stage and a locked stage are not asked about.
+ *
+ * `ask` (E792): the picker does not send every stage's preview at once. A row asks when it is its turn in the list
+ * (one at a time, top to bottom) or when the agent points at it (focus or hover), whichever is first; once asked it
+ * stays asked. `onSettled`: its answer is in (or failed), so the next row may ask.
  */
-function PickerRow({ contactId, stage, current, locked, lockedBy, busy, onPick }: { contactId: string; stage: StageGuideRow; current: boolean; locked: boolean; lockedBy: string; busy: boolean; onPick: () => void }) {
-  const q = useStagePreview(contactId, current || locked ? null : stage.key);
+function PickerRow({ contactId, stage, current, locked, lockedBy, busy, ask, onPoint, onSettled, onPick }: { contactId: string; stage: StageGuideRow; current: boolean; locked: boolean; lockedBy: string; busy: boolean; ask: boolean; onPoint: () => void; onSettled: () => void; onPick: () => void }) {
   const asked = !current && !locked;
+  const q = useStagePreview(contactId, asked && ask ? stage.key : null);
+  const settled = asked && ask && !q.isPending;
+  useEffect(() => {
+    if (settled) onSettled();
+    // told once per row, when its answer first comes in
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled]);
   const effect = !asked ? undefined : q.data ? effectLine(q.data) : q.isError ? PICK_PREVIEW_FAILED : PREVIEW_LOADING;
-  return <StageRow mode="pick" stage={stage} current={current} locked={locked} lockedBy={lockedBy} effect={effect} disabled={busy || (asked && q.isPending)} onPick={onPick} />;
+  return (
+    <div onPointerEnter={asked ? onPoint : undefined} onFocusCapture={asked ? onPoint : undefined}>
+      <StageRow mode="pick" stage={stage} current={current} locked={locked} lockedBy={lockedBy} effect={effect} disabled={busy || (asked && !settled)} onPick={onPick} />
+    </div>
+  );
 }
 
 const PICK_PREVIEW_FAILED = "We couldn't check what this would start. The change is still checked when you pick it.";
@@ -59,6 +74,14 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
   // turned off or is blocked takes no reply (E312), so it is not offered. Asked only for a lead with locked stages.
   const chat = useReachability(locked.size > 0 ? contactId : null)?.channels.web_chat;
   const chatOpen = chat?.session?.open === true && !chat.blocked;
+
+  // E792: the previews are asked for one at a time, in the list's order, and for the stage the agent points at.
+  // `settled`: the stages whose answer is in; `pointed`: the stages the agent has focused or hovered.
+  const askable = guide.filter((g) => g.key !== current && !locked.has(g.key)).map((g) => g.key);
+  const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
+  const [pointed, setPointed] = useState<ReadonlySet<string>>(new Set());
+  const turn = askable.find((k) => !settled.has(k)) ?? null;
+  const add = (set: (f: (prev: ReadonlySet<string>) => ReadonlySet<string>) => void, k: string) => set((prev) => (prev.has(k) ? prev : new Set([...prev, k])));
 
   // R-STG-5: the toast's Undo names the stage event (undoOf), so an undo never starts a plan, and it says plainly
   // that a plan the change started keeps running (useStageChange.ts)
@@ -97,7 +120,18 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
           <ul className="flex flex-col gap-1" aria-label="Stages">
             {guide.map((g) => (
               <li key={g.key}>
-                <PickerRow contactId={contactId} stage={g} current={g.key === current} locked={locked.has(g.key)} lockedBy={lockedId} busy={act.pending} onPick={() => void move(g.key)} />
+                <PickerRow
+                  contactId={contactId}
+                  stage={g}
+                  current={g.key === current}
+                  locked={locked.has(g.key)}
+                  lockedBy={lockedId}
+                  busy={act.pending}
+                  ask={g.key === turn || settled.has(g.key) || pointed.has(g.key)}
+                  onPoint={() => add(setPointed, g.key)}
+                  onSettled={() => add(setSettled, g.key)}
+                  onPick={() => void move(g.key)}
+                />
               </li>
             ))}
           </ul>

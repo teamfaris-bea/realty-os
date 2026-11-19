@@ -196,6 +196,52 @@ describe('R-STG-3 the stage pill: every stage says what it will do BEFORE the ta
     return { fake, u };
   }
 
+  it('L14 (E792): opening the picker does not send seven preview requests at once: one at a time in the list\'s order, and the stage the agent points at (focus or hover) goes next, ahead of the queue', async () => {
+    // every preview answers only when the test lets it: what is in flight is then exactly what was asked
+    const waiting = new Map<string, () => void>();
+    const asked: string[] = [];
+    let inFlight = 0;
+    let most = 0;
+    const fake = new FakeFetch().on(`GET /contacts/${C}/reachability`, { status: 200, body: { reachability: reachability(C) } });
+    for (const s of guideFixture()) {
+      fake.on(`GET /contacts/${C}/stage/preview?to=${s.key}`, async () => {
+        asked.push(s.key);
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        await new Promise<void>((r) => waiting.set(s.key, r));
+        inFlight -= 1;
+        return { status: 200, body: preview() };
+      });
+    }
+    const u = wrap(fake, <StagePill contactId={C} name="Dana Reyes" details={detailsFixture(C, 'attempting')} onCall={vi.fn()} onText={vi.fn()} onReplyChat={vi.fn()} />);
+    await u.click(screen.getByRole('button', { name: 'Stage: Trying to reach. Change stage' }));
+    const sheet = screen.getByRole('dialog');
+    // at open: ONE request, for the first stage that can be picked (the person's own stage is never asked about)
+    await waitFor(() => expect(asked).toEqual(['new']));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(asked).toEqual(['new']);
+    // a row whose answer is not in cannot be picked yet (nobody saves a change they were not shown)
+    expect(within(sheet).getByRole('button', { name: 'Closed sale' })).toBeDisabled();
+    // the agent points at a later stage: its preview is asked for next, without waiting for the queue
+    await u.hover(within(sheet).getByRole('button', { name: 'Closed sale' }));
+    await waitFor(() => expect(asked).toEqual(['new', 'closed']));
+    expect(inFlight).toBe(2);
+    // each answer lets the next stage in the list be asked; never more than the queue's one and the pointed one
+    // (when the queue reaches the pointed stage, already asked, it waits for that answer and asks nothing twice)
+    for (const k of ['new', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost']) {
+      await waitFor(() => expect(waiting.has(k)).toBe(true));
+      waiting.get(k)!();
+    }
+    await waitFor(() => expect(asked).toHaveLength(7));
+    expect(asked).toEqual(['new', 'closed', 'connected', 'nurture', 'active', 'under_contract', 'lost']);
+    expect(new Set(asked)).toEqual(new Set(['new', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost']));
+    expect(most, 'never more than two preview requests in flight').toBeLessThanOrEqual(2);
+    // each stage was asked about once, and every row can then be picked
+    for (const s of guideFixture().filter((g) => g.key !== 'attempting')) expect(fake.callsTo(`GET /contacts/${C}/stage/preview?to=${s.key}`)).toHaveLength(1);
+    await waitFor(() => expect(within(sheet).getByRole('button', { name: 'Closed sale' })).toBeEnabled());
+    await waitFor(() => expect(within(sheet).getByRole('button', { name: 'Not moving forward' })).toBeEnabled());
+  });
+
   it('the row of a stage whose plan will start says so with its first step; a stage whose plan will not start says why; the others say nothing starts', async () => {
     const { u, fake } = pill(undefined, {
       active: preview({ starts: { plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(1, 9).toISOString() } } }),
