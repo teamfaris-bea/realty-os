@@ -1,6 +1,7 @@
 // R-TODAY-6 / R-TODAY-8 (web): the "Follow up today" group on Today. A list of people with a reason each, between
 // "Due now" and "Next up"; a person is shown once; the count has its denominator; the empty state is in plain words.
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, IDS, agentApp, card, err, feed, offerCard, reachability } from './lib/testing.js';
@@ -129,5 +130,71 @@ describe('R-TODAY-6: "Follow up today" on Today', () => {
     open(feed([], [card({ primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane } })]));
     await screen.findByRole('heading', { level: 2, name: 'Next up' });
     expect(screen.queryByRole('region', { name: 'Follow up today' })).toBeNull();
+  });
+});
+
+// b19 Today fix 1 (M4; R-TODAY-13): "Nobody is due today." is said only of a COMPLETE read that found nobody. A read
+// that stopped at its bound says how many people it checked and offers to look further.
+describe('M4 (R-TODAY-13): "nobody is due" only after a complete read', () => {
+  const partial = (over: Partial<NonNullable<FeedResponse['followUpToday']>> = {}): FeedResponse => ({ ...feed(), followUpToday: { people: [], total: 0, totalIsMinimum: true, checked: 120, complete: false, ...over } });
+
+  it('an incomplete read that found nobody says how many it checked and offers to look further; it never says "Nobody is due today" or "You’re caught up"', async () => {
+    open(partial());
+    const g = await group();
+    expect(within(g).getByText('Checked 120 of your people so far, and nobody is due yet. There are more to check.')).toBeInTheDocument();
+    expect(within(g).getByRole('button', { name: 'Look further' })).toBeEnabled();
+    expect(screen.queryByText(NOBODY)).toBeNull();
+    expect(screen.queryByText("You're caught up")).toBeNull();
+  });
+
+  it('"Look further" asks the server to check more (followUpDepth), and the people it finds are shown; then "nobody" is no longer on the page', async () => {
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: partial() })
+      .on('GET /feed?followUpDepth=4', { status: 200, body: withPlan(feed(), [person()]) })
+      .on('GET /reachability', { status: 200, body: { contacts: [reachability(IDS.jane)] } });
+    agentApp(fake);
+    const g = await group();
+    await userEvent.setup().click(within(g).getByRole('button', { name: 'Look further' }));
+    expect(await within(await group()).findByRole('article', { name: 'Dana Reyes' })).toBeInTheDocument();
+    expect(fake.callsTo('GET /feed?followUpDepth=4')).toHaveLength(1);
+    expect(screen.queryByText(/nobody is due/i)).toBeNull();
+  });
+
+  it('looking further that still finds nobody says the new count; at the deepest read it says that is as far as Today looks', async () => {
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: partial() })
+      .on('GET /feed?followUpDepth=4', { status: 200, body: partial({ checked: 240 }) })
+      .on('GET /feed?followUpDepth=8', { status: 200, body: partial({ checked: 480 }) })
+      .on('GET /feed?followUpDepth=10', { status: 200, body: partial({ checked: 600 }) });
+    agentApp(fake);
+    const u = userEvent.setup();
+    for (const n of [240, 480]) {
+      await u.click(within(await group()).getByRole('button', { name: 'Look further' }));
+      await waitFor(async () => expect(within(await group()).getByText(`Checked ${n} of your people so far, and nobody is due yet. There are more to check.`)).toBeInTheDocument());
+    }
+    await u.click(within(await group()).getByRole('button', { name: 'Look further' }));
+    await waitFor(async () => expect(within(await group()).getByText('Checked 600 of your people, and nobody is due yet. That is as far as Today looks; your People list has everyone.')).toBeInTheDocument());
+    expect(within(await group()).queryByRole('button', { name: 'Look further' })).toBeNull();
+    expect(screen.queryByText(NOBODY)).toBeNull();
+  });
+
+  it('an incomplete read that found some people shows them and says more may be due, with the way to look further', async () => {
+    open(partial({ people: [person()], total: 1, checked: 120 }));
+    const g = await group();
+    expect(within(g).getByRole('article', { name: 'Dana Reyes' })).toBeInTheDocument();
+    expect(within(g).getByText('Checked 120 of your people so far. More may be due.')).toBeInTheDocument();
+    expect(within(g).getByRole('button', { name: 'Look further' })).toBeEnabled();
+  });
+
+  it('a complete read that found nobody still says "Nobody is due today."', async () => {
+    open({ ...feed(), followUpToday: { people: [], total: 0, totalIsMinimum: false, checked: 62, complete: true } });
+    expect(await screen.findByText(NOBODY)).toBeInTheDocument();
+  });
+
+  it('W1 (the reviewer’s case): an answer that only says the total is a lower bound (no `complete`) is not a complete read either', async () => {
+    open({ ...feed(), followUpToday: { people: [], total: 0, totalIsMinimum: true } });
+    await group();
+    expect(screen.queryByText(NOBODY)).toBeNull();
+    expect(within(await group()).getByText('Nobody is due among the people checked so far. There are more to check.')).toBeInTheDocument();
   });
 });

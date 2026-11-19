@@ -14,7 +14,7 @@
 //   written by their own modules and arrive with a label and one primary action like any other card. A
 //   card whose page does not exist yet (the weekly plan, the daily tip) opens its own lines in place
 //   ("See the plan"): one tap, and nothing pretends a page is there.
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, Ratio, useCountdownAnnouncement } from '../../design/index.js';
@@ -33,16 +33,25 @@ import type { CardTask } from '../people-edit/StageStep.js';
 
 export const FEED_KEY = ['feed'] as const;
 
-export function useFeed() {
+/**
+ * How far the daily plan's bounded read looks (R-TODAY-13): pages of candidates the server checks. The first read uses
+ * the server's own default; each "Look further" asks for the next of these, up to the server's maximum (10).
+ */
+export const FOLLOW_UP_DEPTHS: readonly (number | undefined)[] = [undefined, 4, 8, 10];
+
+export function useFeed(followUpDepth?: number) {
   const api = useApi();
   return useQuery<FeedResponse, ApiError>({
-    queryKey: FEED_KEY,
+    // (every ['feed'] invalidation still matches a deeper read's key)
+    queryKey: followUpDepth === undefined ? FEED_KEY : [...FEED_KEY, { followUpDepth }],
     // never resolves without a feed (react-query refuses undefined data): an empty or malformed answer is an error
     queryFn: async ({ signal }) => {
-      const r = await api.get<FeedResponse | undefined>('/feed', { signal });
+      const r = await api.get<FeedResponse | undefined>(followUpDepth === undefined ? '/feed' : `/feed?followUpDepth=${followUpDepth}`, { signal });
       if (!r || !Array.isArray(r.pinned) || !Array.isArray(r.scored)) throw new ApiError('BAD_RESPONSE', 200);
       return r;
     },
+    // the page stays as it is while a deeper read is on its way
+    placeholderData: keepPreviousData,
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
@@ -59,7 +68,9 @@ export default function FeedPage() {
 }
 
 function Feed() {
-  const q = useFeed();
+  // R-TODAY-13: how far the daily plan has been asked to look (an index into FOLLOW_UP_DEPTHS)
+  const [look, setLook] = useState(0);
+  const q = useFeed(FOLLOW_UP_DEPTHS[look]);
   const data = q.data;
 
   // refetch the moment the earliest pinned deadline passes: the server decides what happens next
@@ -95,13 +106,14 @@ function Feed() {
     <ReachabilityBatch contactIds={contactIds}>
     <div className="flex flex-col gap-6">
       {q.isError ? <Notice tone="warn">Couldn't refresh just now. This is your feed as of {formatTime(data.generatedAt)}.</Notice> : null}
-      {shown === 0 && (plan?.people.length ?? 0) === 0 ? (
+      {/* (never "caught up" while the plan's read was not complete: somebody may still be due) */}
+      {shown === 0 && (plan?.people.length ?? 0) === 0 && (plan === undefined || planComplete(plan)) ? (
         <EmptyState icon="check" title="You're caught up">
           New leads, replies and anything due will show up here.
         </EmptyState>
       ) : null}
       {data.pinned.length > 0 ? <Band title="Due now" cards={data.pinned} pinned /> : null}
-      {plan ? <FollowUpToday plan={plan} /> : null}
+      {plan ? <FollowUpToday plan={plan} looking={q.isPlaceholderData} onLookFurther={look < FOLLOW_UP_DEPTHS.length - 1 ? () => setLook((n) => Math.min(n + 1, FOLLOW_UP_DEPTHS.length - 1)) : null} /> : null}
       {nextUp.length > 0 ? <Band title="Next up" cards={nextUp} pinned={false} /> : null}
       <p className="flex flex-wrap gap-x-3 text-[13px] text-ink-muted">
         {data.total > shown ? <Ratio value={shown} of={data.total} label="items shown" /> : null}
@@ -137,14 +149,40 @@ export const FOLLOW_UP_TODAY_WHAT = 'People you promised to get back to, and peo
 /** What the group says when nobody is due (R-TODAY-8): plain words, no tutorial. */
 export const NOBODY_DUE = 'Nobody is due today. People you promise to follow up with will show here.';
 
+type Plan = NonNullable<FeedResponse['followUpToday']>;
+
+/** True when the plan's read looked at every candidate (R-TODAY-13). An older server says only whether the total is a lower bound. */
+export function planComplete(plan: Plan): boolean {
+  return plan.complete ?? !plan.totalIsMinimum;
+}
+
+/**
+ * What an INCOMPLETE read may say (R-TODAY-13): how many people it checked, never "nobody is due". `more`: the screen
+ * can still ask the server to look further.
+ */
+export function incompleteWords(plan: Plan, more: boolean): string {
+  const found = plan.people.length > 0;
+  if (plan.checked === undefined) return found ? 'More people may be due than are shown.' : 'Nobody is due among the people checked so far. There are more to check.';
+  if (found) return `Checked ${plan.checked} of your people so far. More may be due.`;
+  return more
+    ? `Checked ${plan.checked} of your people so far, and nobody is due yet. There are more to check.`
+    : `Checked ${plan.checked} of your people, and nobody is due yet. That is as far as Today looks; your People list has everyone.`;
+}
+
 /**
  * "Follow up today" (R-TODAY-6): the people the agent owns who are due by a promise or task today or earlier, or who
  * have gone quiet in "Connected" or "Long-term follow-up". A list of people with a reason each, most overdue first.
  * A row is drawn like a card and offers the same one-pass actions; it is not a stored card, so it has nothing to
  * snooze or dismiss: it leaves when the person is followed up with, or the task is done.
+ *
+ * R-TODAY-13: "Nobody is due today." is said only of a complete read that found nobody. A read that stopped at its
+ * bound says how many people it checked and offers "Look further" (`onLookFurther`; null: it is at the deepest read).
  */
-function FollowUpToday({ plan }: { plan: NonNullable<FeedResponse['followUpToday']> }) {
+function FollowUpToday({ plan, onLookFurther, looking }: { plan: Plan; onLookFurther: (() => void) | null; looking: boolean }) {
   const id = useId();
+  const complete = planComplete(plan);
+  // a capped list says its count ("Showing 20 of at least 31"); looking further would not show more people
+  const capped = plan.total > plan.people.length;
   return (
     <section aria-labelledby={id} aria-describedby={plan.people.length > 0 ? `${id}-what` : undefined} className="flex flex-col gap-3">
       <div className="flex flex-col gap-0.5">
@@ -159,7 +197,9 @@ function FollowUpToday({ plan }: { plan: NonNullable<FeedResponse['followUpToday
         ) : null}
       </div>
       {plan.people.length === 0 ? (
-        <p className="rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink-muted">{NOBODY_DUE}</p>
+        complete ? (
+          <p className="rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink-muted">{NOBODY_DUE}</p>
+        ) : null
       ) : (
         <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {plan.people.map((p: FollowUpTodayCard) => (
@@ -169,11 +209,22 @@ function FollowUpToday({ plan }: { plan: NonNullable<FeedResponse['followUpToday
           ))}
         </ul>
       )}
-      {plan.total > plan.people.length ? (
+      {capped ? (
         <p className="text-[13px] text-ink-muted">
           Showing {plan.people.length} of {plan.totalIsMinimum ? 'at least ' : ''}
           {plan.total} people due
         </p>
+      ) : !complete ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface px-4 py-2">
+          <p role="status" className="min-w-0 flex-1 basis-56 text-[15px] text-ink [overflow-wrap:anywhere]">
+            {incompleteWords(plan, onLookFurther !== null)}
+          </p>
+          {onLookFurther ? (
+            <Button variant="secondary" pending={looking} onClick={onLookFurther}>
+              Look further
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

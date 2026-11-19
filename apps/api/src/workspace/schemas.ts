@@ -59,8 +59,10 @@ export const FeedResponse = z.object({
   scored: z.array(FeedCardSchema),
   total: z.number().int().min(0),
   generatedAt: z.string(),
-  followUpToday: z.object({ people: z.array(FollowUpTodayCardSchema), total: z.number().int().min(0), totalIsMinimum: z.boolean() }),
+  followUpToday: z.object({ people: z.array(FollowUpTodayCardSchema), total: z.number().int().min(0), totalIsMinimum: z.boolean(), checked: z.number().int().min(0), complete: z.boolean() }),
 });
+/** R-TODAY-13: `followUpDepth`: pages of candidates the daily plan may check (1 to 10; workspace/repos/followUp.ts states the bound). */
+export const FeedQuery = z.strictObject({ followUpDepth: z.coerce.number().int().min(1).max(10).optional() });
 export const SnoozeBody = z.strictObject({ until: isoDate });
 export const FeedActionResponse = z.object({ item: z.object({ id: uuid, state: z.string(), snoozedUntil: z.string().nullable() }) });
 

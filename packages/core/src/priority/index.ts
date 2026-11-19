@@ -62,6 +62,7 @@ export {
   NO_CONVERSATION_YET,
   SNIPPET_MAX,
   classifyCandidate,
+  isContactCandidate,
   selectLastContact,
   selectNextPromise,
   promiseDeadline,

@@ -200,7 +200,11 @@ export interface FeedView {
    * R-TODAY-6: the daily plan. People the viewer owns who are due by a task of theirs today or earlier, or who are
    * quiet in a warm stage; most overdue first, capped. Read with the feed, never stored; reading it writes nothing.
    */
-  followUpToday: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean };
+  /**
+   * R-TODAY-13: `checked` people were looked at; `complete` false means the bounded read stopped before every candidate
+   * was read (then `total` is a lower bound, and a screen may not say "nobody is due").
+   */
+  followUpToday: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean; checked: number; complete: boolean };
 }
 
 interface StoredRow {
@@ -560,14 +564,19 @@ type ReadRow = StoredRow & {
   card: StoredCard | null;
 };
 
+export interface FeedReadOptions {
+  /** R-TODAY-13: how many pages of candidates the daily plan may check (GET /feed?followUpDepth=N; the default is the repo's) */
+  followUpDepth?: number | undefined;
+}
+
 /**
  * GET /feed: bring the materialized feed up to `now` (materializeFeed), then read the top cards in feed order
  * straight from priority_feed_items (core.compareFeedItems as an index order: pinned by due instant, scored by
  * score; ties score / due, then the card's own instant and key), pinned first.
  */
-export async function getFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now: Instant): Promise<FeedView> {
+export async function getFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now: Instant, o: FeedReadOptions = {}): Promise<FeedView> {
   await materializeFeed(tx, actor, deps, now);
-  return readFeed(tx, actor, now);
+  return readFeed(tx, actor, now, o);
 }
 
 /** FROM/WHERE of the cards GET shows (the Phase 1 read's filters), for user `userId`. */
@@ -625,7 +634,7 @@ async function hiddenPondIds(tx: Tx, actor: UserActor, now: Instant): Promise<st
 }
 
 /** The feed as stored: the top cards in feed order with their wording for `now` (no re-scoring). */
-export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<FeedView> {
+export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedReadOptions = {}): Promise<FeedView> {
   const base = shownCards(actor.userId);
   const hidden = await hiddenPondIds(tx, actor, now);
   const pondHidden = sql`(f.item_type = 'pond_new' AND (f.card->'primaryAction'->>'pondId') = ANY (${hidden}::text[]))`;
@@ -656,7 +665,7 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
   // R-TODAY-1: what each follow-up card says about its person, read once for the whole page (no per-card query)
   const followUp = (row: ReadRow) => row.contact_id !== null && isFollowUpItemType(row.item_type);
   // R-TODAY-6: the daily plan is read in the same statements
-  const today = await loadFollowUpToday(tx, actor, now, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string));
+  const today = await loadFollowUpToday(tx, actor, now, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string), o.followUpDepth === undefined ? {} : { depth: o.followUpDepth });
   const lines = today.contexts;
   const card = (row: ReadRow): FeedCard => {
     const actions = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
@@ -709,7 +718,7 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
     scored: scored.rows.map(card),
     total: total.rows[0]?.n ?? 0,
     generatedAt: iso(now),
-    followUpToday: { people, total: today.plan.total, totalIsMinimum: today.plan.totalIsMinimum },
+    followUpToday: { people, total: today.plan.total, totalIsMinimum: today.plan.totalIsMinimum, checked: today.plan.checked, complete: today.plan.complete },
   };
 }
 

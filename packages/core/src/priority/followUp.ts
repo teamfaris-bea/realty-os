@@ -119,7 +119,14 @@ export interface LastAutomatic {
 }
 
 export interface LastContact {
+  /** what the "Last" line may say: the most recent human contact OR manual note the viewer can see */
   lastTouch: LastTouch | null;
+  /**
+   * The most recent human CONTACT with the person (isContactCandidate): what the quiet clock counts from. A manual
+   * note is never one (R-TODAY-12), so this can be older than `lastTouch`, or null while `lastTouch` is a note.
+   */
+  lastContact: LastTouch | null;
+  lastContactAt: Instant | null;
   /** the most recent automated message AFTER the last human contact (or the most recent one when there is none) */
   lastAutomatic: LastAutomatic | null;
   /** only when there is no last touch: the date of the latest imported entry, if any history was imported */
@@ -166,6 +173,17 @@ export function classifyCandidate(c: ContactCandidate, now: Instant): CandidateC
     case 'appointment':
       return c.status === 'held' ? 'human' : 'none';
   }
+}
+
+/**
+ * True for a row that is CONTACT with the person (R-TODAY-12): a call, a text, an email, a chat message, a held
+ * appointment, or a call, text or email the agent logged from outside the app (their own report; the owner's brief
+ * decided it counts). A manual note is not: it is somebody's own words ABOUT the person (a Team Lead's housekeeping
+ * note, the agent's reminder to themselves), so it never resets the quiet clock, though it may be the "Last" line.
+ */
+export function isContactCandidate(c: ContactCandidate, now: Instant): boolean {
+  if (classifyCandidate(c, now) !== 'human') return false;
+  return !(c.source === 'note' && c.activity === null);
 }
 
 export const SNIPPET_MAX = 140;
@@ -247,10 +265,13 @@ export function selectLastContact(candidates: readonly ContactCandidate[], now: 
   automatic.sort(newerFirst);
   const last = human[0];
   const lastTouch = last ? touchOf(last) : null;
+  // (already newest first)
+  const contact = human.find((c) => isContactCandidate(c, now));
+  const lastContact = contact === undefined ? null : contact === last ? lastTouch : touchOf(contact);
   const auto = automatic[0];
   const lastAutomatic: LastAutomatic | null =
     auto && (lastTouch === null || auto.at > lastTouch.at) ? { kind: (MESSAGE_KIND[auto.channel] ?? 'text') as LastAutomatic['kind'], at: auto.at, bulk: auto.bulk } : null;
-  return { lastTouch, lastAutomatic, importedHistoryAt: lastTouch === null ? importedAt : null };
+  return { lastTouch, lastContact, lastContactAt: lastContact?.at ?? null, lastAutomatic, importedHistoryAt: lastTouch === null ? importedAt : null };
 }
 
 // ---- the next promise -----------------------------------------------------------------------------
@@ -341,7 +362,10 @@ export interface FollowUpPersonFacts {
   stage: string;
   /** every open task of the agent for this person */
   tasks: readonly PromiseTask[];
-  /** the most recent human contact of any kind the agent can see (a logged outside call and imported history count); null: none */
+  /**
+   * the most recent human CONTACT the agent can see (selectLastContact's lastContactAt, the system's own last-touch
+   * instant and imported history all count; a manual note never does: R-TODAY-12); null: none
+   */
   lastContactAt: Instant | null;
   /** for someone never contacted: since when they are the agent's */
   sinceAt: Instant;

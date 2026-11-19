@@ -48,6 +48,8 @@ export interface FollowUpContext {
   /** null: the viewer cannot open this person's detail, so nothing about them is said */
   stage: { key: string; label: string } | null;
   lastTouch: LastTouch | null;
+  /** the most recent human CONTACT (never a manual note: R-TODAY-12): what the quiet clock counts from */
+  lastContactAt: Instant | null;
   lastAutomatic: LastAutomatic | null;
   importedHistoryAt: Instant | null;
   /** the latest imported entry of the person's history, whether or not there is a last touch (the daily plan reads it) */
@@ -77,7 +79,7 @@ export interface FollowUpContexts {
 
 interface HistoryRow {
   contact_id: string;
-  source: 'stage' | 'message' | 'automatic' | 'call' | 'note' | 'appointment' | 'imported';
+  source: 'stage' | 'message' | 'automatic' | 'call' | 'note' | 'logged' | 'appointment' | 'imported';
   id: string | null;
   at: Date | null;
   by_user: string | null;
@@ -109,7 +111,8 @@ function candidateOf(r: HistoryRow): ContactCandidate | null {
       };
     case 'call':
       return { ...base, source: 'call', direction: f.direction as never, initiator: f.initiator as never, imported: f.imported === true, status: str(f.status) ?? '', answered: f.answered === true, handledBy: f.handledBy as never, outcome: str(f.outcome), talkSeconds: typeof f.talkSeconds === 'number' ? f.talkSeconds : null };
-    case 'note': {
+    case 'note':
+    case 'logged': {
       const kind = str(f.activityKind) as 'call' | 'text' | 'email' | null;
       const direction = str(f.activityDirection) as 'inbound' | 'outbound' | null;
       const outcome = str(f.activityOutcome);
@@ -188,12 +191,24 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
                 OR (k.direction = 'inbound' AND k.answered_at IS NOT NULL AND k.handled_by = 'human'))
          ORDER BY k.started_at DESC, k.id DESC LIMIT 1) x
       UNION ALL
+      -- somebody's own note about the person: it may be the "Last" line, and is never contact (R-TODAY-12)
       SELECT p.id, 'note', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (
+        SELECT n.id, n.created_at AS at, n.author_user_id AS by_user,
+               jsonb_build_object('noteSource', n.source, 'imported', n.imported, 'activityKind', NULL, 'activityDirection', NULL,
+                                  'activityOutcome', NULL, 'body', left(n.body, ${BODY_READ})) AS facts
+          FROM notes n
+         WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND NOT n.imported AND n.source = 'manual' AND n.activity_kind IS NULL
+           AND n.created_at <= ${nowIso}::timestamptz
+         ORDER BY n.created_at DESC, n.id DESC LIMIT 1) x
+      UNION ALL
+      -- a call, text or email the agent logged from outside the app: their own report, and contact. Its own branch,
+      -- so a newer manual note never hides it from the quiet clock
+      SELECT p.id, 'logged', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (
         SELECT n.id, COALESCE(n.activity_at, n.created_at) AS at, n.author_user_id AS by_user,
                jsonb_build_object('noteSource', n.source, 'imported', n.imported, 'activityKind', n.activity_kind, 'activityDirection', n.activity_direction,
                                   'activityOutcome', n.activity_outcome, 'body', left(n.body, ${BODY_READ})) AS facts
           FROM notes n
-         WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND NOT n.imported AND n.source IN ('manual','logged_activity')
+         WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND NOT n.imported AND n.source = 'logged_activity' AND n.activity_kind IS NOT NULL
            AND COALESCE(n.activity_at, n.created_at) <= ${nowIso}::timestamptz
          ORDER BY COALESCE(n.activity_at, n.created_at) DESC, n.id DESC LIMIT 1) x
       UNION ALL
@@ -263,6 +278,7 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
     byContact.set(id, {
       stage: stage === null ? null : { key: stage, label: stageLabel(stage as never, stageLabels) },
       lastTouch: picked.lastTouch,
+      lastContactAt: picked.lastContactAt,
       lastAutomatic: picked.lastAutomatic,
       // only said when there is no last touch
       importedHistoryAt: picked.lastTouch === null ? (importedAt.get(id) ?? null) : null,
@@ -274,22 +290,62 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
   return { zone, stageLabels, byContact };
 }
 
-// ---- the daily plan: "Follow up today" (R-TODAY-6) -------------------------------------------------
+// ---- the daily plan: "Follow up today" (R-TODAY-6, R-TODAY-13) ---------------------------------------
 
 /**
- * The statements one read of the plan sends when anyone is due, however many are: settings, the candidates, the
+ * The plan is read in PAGES of candidates (R-TODAY-13). A candidate is found by the system's own last-touch instant
+ * (an index-friendly column a logged outside call never moves), oldest first; whether they are DUE is then decided
+ * for each page by the plan's own "latest human contact" (core planFollowUpToday over this file's contexts). So a
+ * person cannot hide behind a stale clock: the read goes on to the next page until FOLLOW_UP_TODAY_CAP people are
+ * found, the candidates are exhausted, or `depth` pages were read. The bound is stated and tested:
+ *
+ *   FOLLOW_UP_PAGE           candidates a page
+ *   FOLLOW_UP_DEPTH_DEFAULT  pages a read checks unless asked (GET /feed)
+ *   FOLLOW_UP_DEPTH_MAX      the most a read may be asked for (GET /feed?followUpDepth=N, "Look further")
+ *
+ * A read that stopped before the candidates ran out says so (`complete: false`) with how many people it checked; only
+ * a complete read that found nobody may be worded "nobody is due".
+ */
+export const FOLLOW_UP_PAGE = 60;
+export const FOLLOW_UP_DEPTH_DEFAULT = 2;
+export const FOLLOW_UP_DEPTH_MAX = 10;
+/**
+ * The statements a read sends when one page is enough, however many people are due: settings, the candidates, the
  * history and the tasks of the page (cards and candidates together), and the three of the channel summary.
  */
 export const FOLLOW_UP_TODAY_QUERIES = 7;
-/** Candidates read per reason: more than the cap, since a logged call or imported history may take some out. */
-const CANDIDATES_READ = FOLLOW_UP_TODAY_CAP * 3;
+/** Each further page: its candidates, their history and tasks, and the three of the channel summary. */
+export const FOLLOW_UP_PAGE_QUERIES = 6;
 
 export interface FollowUpToday {
   /** the lines of every person asked about: the plan's candidates and `alsoContactIds` (the feed's own cards) */
   contexts: FollowUpContexts;
-  plan: { people: FollowUpTodayEntry[]; total: number; /** more candidates exist than were read: `total` is a lower bound */ totalIsMinimum: boolean };
+  plan: {
+    people: FollowUpTodayEntry[];
+    total: number;
+    /** the read was not complete: `total` is a lower bound */
+    totalIsMinimum: boolean;
+    /** how many candidate people this read looked at */
+    checked: number;
+    /** every candidate was read: the plan is the whole plan */
+    complete: boolean;
+  };
   names: Map<string, string>;
   gates: Map<string, GateSummary>;
+}
+
+interface CandidateRow {
+  id: string;
+  display_name: string;
+  stage: string;
+  last_human_touch_at: Date | null;
+  since_at: Date;
+  by_task: boolean;
+  /** the warm candidates' order within this page (1-based); null: a candidate by a due task only */
+  warm_rn: number | null;
+  /** the page's sort key as Postgres wrote it (microseconds kept: a JS Date would lose them and break the next page) */
+  warm_k: string | null;
+  due_cut: boolean;
 }
 
 /**
@@ -298,50 +354,80 @@ export interface FollowUpToday {
  * another agent's person is not theirs even when a task of theirs names them. A source restriction is not read here:
  * it limits automated contact, and this is the agent's own one-to-one follow-up. Nothing is written.
  *
- * Candidates are found by the system's own last-touch instant, which a logged outside call never moves; the plan
- * then counts the latest human contact the viewer can see (a logged call and imported history included), so a
- * candidate may turn out not to be due. `alsoContactIds`: other people whose lines the same statements should read.
+ * `alsoContactIds`: other people whose lines the same statements should read. `o.depth`: pages to check at most.
  */
-export async function loadFollowUpToday(tx: Tx, actor: UserActor, now: Instant, alsoContactIds: readonly string[]): Promise<FollowUpToday> {
+export async function loadFollowUpToday(tx: Tx, actor: UserActor, now: Instant, alsoContactIds: readonly string[], o: { depth?: number } = {}): Promise<FollowUpToday> {
+  const depth = Math.min(Math.max(1, Math.trunc(o.depth ?? FOLLOW_UP_DEPTH_DEFAULT)), FOLLOW_UP_DEPTH_MAX);
   const settings = await loadFollowUpSettings(tx);
   const nowIso = new Date(now).toISOString();
   const tomorrowIso = new Date(startOfTomorrow(now, settings.zone)).toISOString();
   const stages = Object.keys(WARM_FOLLOW_UP_DAYS);
   const days = stages.map((k) => WARM_FOLLOW_UP_DAYS[k] as number);
-  const cand = await sql<{ id: string; display_name: string; stage: string; last_human_touch_at: Date | null; since_at: Date; by_task: boolean; cut: boolean }>`
-    WITH mine AS MATERIALIZED (
-      SELECT c.id, c.display_name, c.stage, c.last_human_touch_at, COALESCE(c.owned_at, c.created_at) AS since_at
-        FROM contacts c
-       WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${actor.userId}
-         AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL),
-    due AS (
-      SELECT m.id, min(t.due_at) AS k FROM mine m JOIN tasks t ON t.tenant_id = app.tenant_id() AND t.contact_id = m.id
-       WHERE t.assignee_user_id = ${actor.userId} AND t.status = 'open' AND t.due_at < ${tomorrowIso}::timestamptz
-       GROUP BY m.id ORDER BY k, m.id LIMIT ${CANDIDATES_READ + 1}),
-    warm AS (
-      SELECT m.id, COALESCE(m.last_human_touch_at, m.since_at) AS k
-        FROM mine m JOIN unnest(${stages}::text[], ${days}::int[]) AS th(stage, days) ON th.stage = m.stage
-       WHERE COALESCE(m.last_human_touch_at, m.since_at) < ${nowIso}::timestamptz - make_interval(days => th.days)
-       ORDER BY k, m.id LIMIT ${CANDIDATES_READ + 1})
-    SELECT m.id, m.display_name, m.stage, m.last_human_touch_at, m.since_at, (d.id IS NOT NULL) AS by_task,
-           ((SELECT count(*) FROM due) > ${CANDIDATES_READ} OR (SELECT count(*) FROM warm) > ${CANDIDATES_READ}) AS cut
-      FROM mine m LEFT JOIN due d ON d.id = m.id LEFT JOIN warm w ON w.id = m.id
-     WHERE d.id IS NOT NULL OR w.id IS NOT NULL`.execute(tx);
-  const ids = cand.rows.map((r) => r.id);
-  const contexts = await loadFollowUpContext(tx, actor, [...alsoContactIds, ...ids], now, settings);
-  const gates = (await gateSummaries(tx, ids)) as Map<string, GateSummary>;
-  const people: FollowUpPersonFacts[] = cand.rows.map((r) => {
-    const ctx = contexts.byContact.get(r.id);
-    const seen = [r.last_human_touch_at?.getTime() ?? null, ctx?.lastTouch?.at ?? null, ctx?.importedAt ?? null].filter((t): t is number => t !== null);
-    return {
-      contactId: r.id,
-      stage: r.stage,
-      tasks: ctx?.tasks ?? [],
-      lastContactAt: seen.length > 0 ? (Math.max(...seen) as Instant) : null,
-      sinceAt: r.since_at.getTime() as Instant,
-      gate: gates.get(r.id),
-    };
-  });
+
+  /** One page of candidates: the warm ones after `after` (oldest system touch first), and on the first page the people with a task due. */
+  const page = async (after: { k: string; id: string } | null) =>
+    (
+      await sql<CandidateRow>`
+        WITH mine AS MATERIALIZED (
+          SELECT c.id, c.display_name, c.stage, c.last_human_touch_at, COALESCE(c.owned_at, c.created_at) AS since_at
+            FROM contacts c
+           WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${actor.userId}
+             AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL),
+        due AS (
+          SELECT m.id, min(t.due_at) AS k FROM mine m JOIN tasks t ON t.tenant_id = app.tenant_id() AND t.contact_id = m.id
+           WHERE ${after === null} AND t.assignee_user_id = ${actor.userId} AND t.status = 'open' AND t.due_at < ${tomorrowIso}::timestamptz
+           GROUP BY m.id ORDER BY k, m.id LIMIT ${FOLLOW_UP_PAGE + 1}),
+        warm AS (
+          SELECT x.id, x.k, row_number() OVER (ORDER BY x.k, x.id) AS rn FROM (
+            SELECT m.id, COALESCE(m.last_human_touch_at, m.since_at) AS k
+              FROM mine m JOIN unnest(${stages}::text[], ${days}::int[]) AS th(stage, days) ON th.stage = m.stage
+             WHERE COALESCE(m.last_human_touch_at, m.since_at) < ${nowIso}::timestamptz - make_interval(days => th.days)
+               AND (${after === null} OR (COALESCE(m.last_human_touch_at, m.since_at), m.id) > (${after?.k ?? nowIso}::timestamptz, ${after?.id ?? actor.userId}::uuid))
+             ORDER BY k, m.id LIMIT ${FOLLOW_UP_PAGE + 1}) x)
+        SELECT m.id, m.display_name, m.stage, m.last_human_touch_at, m.since_at, (d.id IS NOT NULL) AS by_task,
+               w.rn::int AS warm_rn, w.k::text AS warm_k, ((SELECT count(*) FROM due) > ${FOLLOW_UP_PAGE}) AS due_cut
+          FROM mine m LEFT JOIN due d ON d.id = m.id LEFT JOIN warm w ON w.id = m.id
+         WHERE d.id IS NOT NULL OR w.id IS NOT NULL`.execute(tx)
+    ).rows;
+
+  const contexts: FollowUpContexts = { zone: settings.zone, stageLabels: settings.stageLabels, byContact: new Map() };
+  const names = new Map<string, string>();
+  const gates = new Map<string, GateSummary>();
+  const people: FollowUpPersonFacts[] = [];
+  const seenIds = new Set<string>();
+  let after: { k: string; id: string } | null = null;
+  let exhausted = false;
+  let dueCut = false;
+  for (let n = 1; n <= depth; n++) {
+    const rows = await page(after);
+    if (n === 1) dueCut = rows.some((r) => r.due_cut);
+    const warm = rows.filter((r) => r.warm_rn !== null).sort((a, b) => (a.warm_rn as number) - (b.warm_rn as number));
+    const more = warm.length > FOLLOW_UP_PAGE;
+    const last = warm[Math.min(warm.length, FOLLOW_UP_PAGE) - 1];
+    // this page: its warm candidates (the one read past the page only says there is another page) and the task-due people
+    const fresh = rows.filter((r) => (r.by_task || (r.warm_rn !== null && r.warm_rn <= FOLLOW_UP_PAGE)) && !seenIds.has(r.id));
+    const ids = fresh.map((r) => r.id);
+    for (const id of ids) seenIds.add(id);
+    const ctx = await loadFollowUpContext(tx, actor, [...(n === 1 ? alsoContactIds : []), ...ids], now, settings);
+    for (const [id, c] of ctx.byContact) contexts.byContact.set(id, c);
+    for (const [id, g] of (await gateSummaries(tx, ids)) as Map<string, GateSummary>) gates.set(id, g);
+    for (const r of fresh) {
+      names.set(r.id, r.display_name);
+      const c = ctx.byContact.get(r.id);
+      // the SAME instant the plan words its reason from: the system's own last touch, the latest contact the viewer
+      // can see (a logged outside call counts; a manual note never does) and imported history
+      const seen = [r.last_human_touch_at?.getTime() ?? null, c?.lastContactAt ?? null, c?.importedAt ?? null].filter((t): t is number => t !== null);
+      people.push({ contactId: r.id, stage: r.stage, tasks: c?.tasks ?? [], lastContactAt: seen.length > 0 ? (Math.max(...seen) as Instant) : null, sinceAt: r.since_at.getTime() as Instant, gate: gates.get(r.id) });
+    }
+    if (!more || last === undefined || last.warm_k === null) {
+      exhausted = true;
+      break;
+    }
+    after = { k: last.warm_k, id: last.id };
+    // enough people are found: the screen shows the cap, and says more may be due
+    if (planFollowUpToday({ now, zone: settings.zone, people }).total >= FOLLOW_UP_TODAY_CAP) break;
+  }
   const plan = planFollowUpToday({ now, zone: settings.zone, people });
-  return { contexts, plan: { ...plan, totalIsMinimum: cand.rows.some((r) => r.cut) }, names: new Map(cand.rows.map((r) => [r.id, r.display_name])), gates };
+  const complete = exhausted && !dueCut;
+  return { contexts, plan: { ...plan, totalIsMinimum: !complete, checked: seenIds.size, complete }, names, gates };
 }

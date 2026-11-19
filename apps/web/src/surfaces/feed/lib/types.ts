@@ -81,7 +81,11 @@ export interface FeedResponse {
   total: number;
   generatedAt: string;
   /** the daily plan; absent on an answer of a server that does not send it */
-  followUpToday?: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean };
+  /**
+   * `checked` / `complete` (R-TODAY-13): how many people the bounded read looked at, and whether it read every
+   * candidate. Absent on an older server's answer: then `totalIsMinimum` alone says the read was not complete.
+   */
+  followUpToday?: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean; checked?: number; complete?: boolean };
 }
 
 // ---- contacts (GET /contacts/:id, /ponds/:id/cards, /contacts/:id/timeline) ----------------------

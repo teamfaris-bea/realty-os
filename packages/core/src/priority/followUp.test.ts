@@ -155,7 +155,7 @@ describe('R-TODAY-1: the last human contact', () => {
   ];
   it.each(NOT_A_CONTACT)('%s is not a contact', (_name, c) => {
     expect(classifyCandidate(c, NOW)).toBe('none');
-    expect(selectLastContact([c], NOW)).toEqual({ lastTouch: null, lastAutomatic: null, importedHistoryAt: null });
+    expect(selectLastContact([c], NOW)).toEqual({ lastTouch: null, lastContact: null, lastContactAt: null, lastAutomatic: null, importedHistoryAt: null });
   });
 
   it('picks the most recent human contact of any kind; a tie goes to the same one whatever the order', () => {
@@ -169,7 +169,7 @@ describe('R-TODAY-1: the last human contact', () => {
   });
 
   it('a person with no history: no last touch, and the words are "No conversation yet."', () => {
-    expect(selectLastContact([], NOW)).toEqual({ lastTouch: null, lastAutomatic: null, importedHistoryAt: null });
+    expect(selectLastContact([], NOW)).toEqual({ lastTouch: null, lastContact: null, lastContactAt: null, lastAutomatic: null, importedHistoryAt: null });
     expect(NO_CONVERSATION_YET).toBe('No conversation yet.');
   });
 });
@@ -203,7 +203,7 @@ describe('E845: imported history is neither a conversation here nor an automatic
   ];
   it.each(IMPORTED)('%s: no last touch, no automatic line, and the card can say earlier history was imported', (_n, c) => {
     expect(classifyCandidate(c, NOW)).toBe('imported');
-    expect(selectLastContact([c], NOW)).toEqual({ lastTouch: null, lastAutomatic: null, importedHistoryAt: c.at });
+    expect(selectLastContact([c], NOW)).toEqual({ lastTouch: null, lastContact: null, lastContactAt: null, lastAutomatic: null, importedHistoryAt: c.at });
   });
   it('the latest imported entry is the one dated', () => {
     expect(selectLastContact([note({ imported: true, noteSource: 'import', at: ago(9 * DAY_MS) }), msg({ imported: true, initiator: 'import', at: ago(4 * DAY_MS) })], NOW).importedHistoryAt).toBe(ago(4 * DAY_MS));
@@ -274,5 +274,37 @@ describe('R-TODAY-1: which cards are follow-up cards', () => {
     for (const t of ['first_touch_due', 'unanswered_inbound', 'missed_call', 'promise_due', 'task_due', 'reinquiry', 'warm_follow_up']) expect(isFollowUpItemType(t)).toBe(true);
     for (const t of ['lead_offer', 'pond_new', 'deal_date', 'weekly_plan', 'coaching_fix']) expect(isFollowUpItemType(t)).toBe(false);
     expect(new Set(FOLLOW_UP_ITEM_TYPES).size).toBe(FOLLOW_UP_ITEM_TYPES.length);
+  });
+});
+
+// b19 Today fix 1 (M6; R-TODAY-12): the quiet clock counts CONTACT with the person. A manual note is somebody's own
+// words about the person (a Team Lead's housekeeping note, the agent's reminder to themselves): it may be the Last
+// line, labelled as a note, but it is never contact.
+describe('R-TODAY-12: the latest human CONTACT (the quiet clock); a manual note is never one', () => {
+  it('a manual note is the Last line and no contact at all', () => {
+    const r = selectLastContact([note({ at: ago(HOUR_MS) })], NOW);
+    expect(r.lastTouch).toMatchObject({ kind: 'note' });
+    expect(r.lastContactAt).toBeNull();
+    expect(r.lastContact).toBeNull();
+  });
+  it('a note written after a call: the note is the Last line, the call is still the latest contact', () => {
+    const r = selectLastContact([note({ id: 'n2', at: ago(HOUR_MS), byName: 'Tess Lead', body: 'Updated the address on file.' }), call({ at: ago(12 * DAY_MS) })], NOW);
+    expect(r.lastTouch).toMatchObject({ kind: 'note', snippet: 'Updated the address on file.' });
+    expect(r.lastContactAt).toBe(ago(12 * DAY_MS));
+    expect(r.lastContact).toMatchObject({ kind: 'call', at: ago(12 * DAY_MS) });
+  });
+  const CONTACT: [string, ContactCandidate][] = [
+    ['a text the agent sent', msg()],
+    ['their reply', msg({ direction: 'inbound', initiator: 'client', status: 'received', byName: null })],
+    ['a call the app placed', call()],
+    ['a held appointment', appt()],
+    ['a call the agent LOGGED from outside the app (their own report: the brief decided it counts)', note({ noteSource: 'logged_activity', activity: { kind: 'call', direction: 'outbound', outcome: 'left_voicemail' }, bodyIsDefault: true })],
+    ['a logged text', note({ noteSource: 'logged_activity', activity: { kind: 'text', direction: 'outbound', outcome: null } })],
+  ];
+  it.each(CONTACT)('%s is contact', (_n, c) => {
+    expect(selectLastContact([c], NOW).lastContactAt).toBe(c.at);
+  });
+  it('an automated message, imported history and a failed send are not contact either', () => {
+    expect(selectLastContact([msg({ initiator: 'system' }), msg({ id: 'm2', imported: true, initiator: 'import' }), msg({ id: 'm3', status: 'failed' })], NOW).lastContactAt).toBeNull();
   });
 });

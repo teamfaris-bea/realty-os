@@ -70,7 +70,7 @@ async function register(app: FastifyInstance): Promise<void> {
   const feedDeps = () => ({ envelope: app.platform.envelope, ids: app.platform.ids });
 
   // ---- feed ----
-  r.get('/feed', { config: { auth: 'self' }, schema: { response: { 200: S.FeedResponse } } }, async (req) => wsTx(req, (tx, now, actor) => getFeed(tx, actor, feedDeps(), now)));
+  r.get('/feed', { config: { auth: 'self' }, schema: { querystring: S.FeedQuery, response: { 200: S.FeedResponse } } }, async (req) => wsTx(req, (tx, now, actor) => getFeed(tx, actor, feedDeps(), now, { followUpDepth: req.query.followUpDepth })));
   for (const verb of ['done', 'dismiss'] as const) {
     r.post(`/feed/:id/${verb}`, { config: { auth: 'self' }, schema: { params: S.IdParams, response: { 200: S.FeedActionResponse } } }, async (req) => ({
       item: await wsTx(req, (tx, now, actor) => actOnFeedItem(tx, actor, req.params.id, verb, now)),
