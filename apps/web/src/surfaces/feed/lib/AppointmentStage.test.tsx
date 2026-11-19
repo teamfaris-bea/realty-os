@@ -33,7 +33,7 @@ function mount(outcome: unknown) {
     .on('GET /auth/session', { status: 200, body: sessionFixture() })
     .on(`POST /appointments/${IDS.appt}/outcome`, { status: 200, body: outcome })
     .on(`GET /contacts/${C}/details`, { status: 200, body: { details: detailsFixture(C, 'connected') } })
-    .on(`POST /contacts/${C}/stage`, (call) => ({ status: 200, body: { stage: stageFixture((call.body as { stage: string }).stage), previousStage: 'connected', rowVersion: 2, eventId: EV, automation: { started: 'Buyer plan' }, stillRunning: null } }));
+    .on(`POST /contacts/${C}/stage`, (call) => ({ status: 200, body: { stage: stageFixture((call.body as { stage: string }).stage), previousStage: 'connected', rowVersion: 2, eventId: EV, automation: { started: 'Buyer plan' }, automationSentence: 'Buyer plan started.', stillRunning: null } }));
   for (const s of guideFixture()) fake.on(`GET /contacts/${C}/stage/preview?to=${s.key}`, { status: 200, body: { allowed: true, lockedReason: null, sameStage: s.key === 'connected', starts: s.key === 'active' ? { plan: 'Buyer plan', firstStep: null } : null, wontStart: null, keepsRunning: null, stops: [], aiCare: 'unchanged', tasks: 'unchanged' } });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -72,7 +72,7 @@ describe('the appointment outcome sheet and the stage step (R-STG-2)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(fake.callsTo(`POST /contacts/${C}/stage`).map((c) => c.body)).toEqual([{ stage: 'active' }]);
     expect(fake.callsTo(`POST /appointments/${IDS.appt}/outcome`)).toHaveLength(1);
-    expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Active client. Started Buyer plan')).toBeInTheDocument();
+    expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Active client. Buyer plan started')).toBeInTheDocument();
   });
 
   it.each([

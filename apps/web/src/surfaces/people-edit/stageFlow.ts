@@ -40,6 +40,8 @@ export interface StageResponse {
   /** the stage event this change wrote (the Undo names it) */
   eventId?: string | null;
   automation?: StageAutomation;
+  /** E784: `automation` in the server's words, the sentence the panel shows for this change (null: nothing to say) */
+  automationSentence?: string | null;
   /** only on an undo: the plan the person is still in */
   stillRunning?: { enrollmentId: string; plan: string; canStop: boolean } | null;
 }
@@ -177,31 +179,31 @@ export function joinWords(parts: readonly (string | null | undefined)[]): string
 }
 
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
-const SKIP_WORDS: Record<string, string> = {
-  already_in_a_plan: "they're already in a plan",
-  plan_not_approved: "it isn't approved yet",
-  cannot_be_reached: "they can't be messaged",
-  not_visible: 'you can no longer see this person',
-  stage_changed_again: 'the stage changed again',
-  person_removed: 'this person was removed',
-  not_a_person_change: 'only a stage change made by a person starts it',
-  // R-PAR-8: a bulk stage change of a list built on a protected tag never starts a plan
-  protected_audience: 'they were picked by a protected tag, and a plan never starts for such a list',
-  // R-ISA-2 (b12 review B12X-4): the person is in the assistant's ISA care, which never runs beside a plan
-  ai_isa_active: "they're in the assistant's ISA care, and no plan starts while it lasts",
+//
+// b19 fix pass L5 (E784): the words are the SERVER's (StageResponse.automationSentence, the sentence the panel shows
+// for the same change). The web keeps no table of skip words. `automationText` is only the fallback for an answer with
+// no sentence: started, or did not start, and no reason. Two entries remain, and only because batch 18's tests
+// (surfaces/lead-sources, which this batch may not edit) read their words from this function; the API never leaves
+// them to be used, since it always sends its sentence.
+const SOURCE_WORDS: Record<string, string> = {
   // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact
   source_no_automated_contact: 'their lead source is marked "No automated contact for leads from this source"',
   // R-LSRC-9 (owner decision 2026-11-14): an imported person whose source is not reviewed yet
   source_unclassified: 'they came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources)',
-  // R-STG-5: an undo moves the stage back and starts nothing
-  undo: 'this was an undo, and an undo never starts a plan',
 };
 
-/** The sentence after "Stage: Active client." on the toast; '' when no plan is set for that stage. */
+/** The fallback words for an answer that carries no sentence; '' when no plan is set for that stage. */
 export function automationText(a: StageAutomation): string {
   if (!a) return '';
-  if ('started' in a) return `Started ${a.started}`;
-  return `${a.plan} didn't start: ${SKIP_WORDS[a.skipped] ?? 'it could not start'}`;
+  if ('started' in a) return `${a.started} started`;
+  const source = SOURCE_WORDS[a.skipped];
+  return source ? `${a.plan} didn't start: ${source}` : `${a.plan} did not start`;
+}
+
+/** The sentence after "Stage: Active client." on the toast: the server's own; '' when no plan is set for that stage. */
+export function automationWords(r: Pick<StageResponse, 'automation' | 'automationSentence'>): string {
+  if (!r.automation) return '';
+  return typeof r.automationSentence === 'string' && r.automationSentence.trim() !== '' ? r.automationSentence : automationText(r.automation);
 }
 
 // ---- the panel's words (R-STG-4) --------------------------------------------------------------------------------------
@@ -264,9 +266,9 @@ export const UNDO_REFUSED = 'Not undone: the stage has changed again since, so t
  * keeps running (said plainly, with how to end it), and a plan of the stage undone into does not start. Nothing here
  * says or implies that anything the plan already did was taken back.
  */
-export function undoneText(r: Pick<StageResponse, 'stage' | 'automation' | 'stillRunning'>, labelOf: (key: string) => string): string {
+export function undoneText(r: Pick<StageResponse, 'stage' | 'automation' | 'automationSentence' | 'stillRunning'>, labelOf: (key: string) => string): string {
   const back = `Stage back to ${labelOf(r.stage.stage)}.`;
   if (r.stillRunning) return `${back} ${r.stillRunning.plan} is still running; undo does not stop it.`;
-  const plan = automationText(r.automation);
+  const plan = automationWords(r);
   return plan ? `${back} ${plan}` : back;
 }

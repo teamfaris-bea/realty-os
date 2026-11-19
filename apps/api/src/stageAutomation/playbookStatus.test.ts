@@ -254,6 +254,45 @@ describe('what the last stage change did (R-STG-4)', () => {
   });
 });
 
+// b19 fix pass L5: one vocabulary for one decision. The stage route answers the SAME sentence the status then shows
+// for that change (stageAutomation/sentences.ts decisionSentence), so the toast never words a decision its own way.
+describe('L5 (E784): the stage change answers the sentence the panel then shows', () => {
+  const sentenceOf = (r: { body: unknown }) => (r.body as { automationSentence: string | null }).automationSentence;
+
+  it('L5 E784 started, did not start (with the reason), and nothing to say: the answer\'s sentence is the status\'s own; a repeat answers it again', async () => {
+    const c = await newContact(agent);
+    // no plan names "connected": nothing is said
+    const none = await changeStage(agent, c, 'connected');
+    expect(none.body.automation).toBeNull();
+    expect(sentenceOf(none)).toBeNull();
+    // a draft-only plan names "nurture": it did not start, and why
+    const skipped = await changeStage(agent, c, 'nurture');
+    expect(skipped.body.automation).toEqual({ skipped: 'plan_not_approved', plan: 'Nurture plan' });
+    expect(sentenceOf(skipped)).toBe('Nurture plan did not start: it has no approved version yet, and only an approved plan runs.');
+    expect(sentenceOf(skipped)).toBe((await status(agent, c)).body.lastStageChange!.decision!.sentence);
+    // the same stage again (a retry) answers what is stored, in the same words
+    expect(sentenceOf(await changeStage(agent, c, 'nurture'))).toBe(sentenceOf(skipped));
+    // an approved plan names "active": it started
+    const started = await changeStage(agent, c, 'active');
+    expect(started.body.automation).toEqual({ started: 'Buyer plan' });
+    expect(sentenceOf(started)).toBe('Buyer plan started.');
+    expect(sentenceOf(started)).toBe((await status(agent, c)).body.lastStageChange!.decision!.sentence);
+  });
+
+  it('L5 E784 R-PERM-12 the sentence names a plan only as the caller may see it', async () => {
+    const c = await newContact(agent2);
+    expect((await call(agent2, 'POST', `/contacts/${c}/collaborators`, { userId: agent.userId, role: 'co_agent' })).status).toBe(200);
+    const mine = await changeStage(agent2, c, 'closed');
+    expect(sentenceOf(mine)).toBe(`${SECRET_NAME} started.`);
+    // the collaborator posts the same stage again: the stored decision, with the hidden plan's name withheld in both fields
+    const theirs = await changeStage(agent, c, 'closed');
+    expect(theirs.status).toBe(200);
+    expect(JSON.stringify(theirs.body)).not.toContain(SECRET_NAME);
+    expect(theirs.body.automation).toEqual({ started: "the owner's plan" });
+    expect(sentenceOf(theirs)).toBe("The owner's plan started.");
+  });
+});
+
 describe('who may read the status and what they may press (R-STG-4)', () => {
   /** An agent-owned person in a running plan, with the ISA as a collaborator and the TC on their deal. */
   async function fixture(): Promise<{ id: string; enrollmentId: string }> {

@@ -291,7 +291,7 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   expect(await enrollments(dana.id), 'a preview starts nothing').toHaveLength(0);
   await shot(page, info, 'j10', '3-stage-step-will-start');
   await tap(page, s.getByRole('button', { name: 'Change to Connected' }));
-  await expect(peopleToast(page).getByText(`Stage: Connected. Started ${PLAN}`)).toBeVisible({ timeout: 15_000 });
+  await expect(peopleToast(page).getByText(`Stage: Connected. ${PLAN} started`)).toBeVisible({ timeout: 15_000 });
   expect(await decisions(dana.id)).toEqual([expect.objectContaining({ outcome: 'started', reason: null, playbook_id: playbookId, to_stage: 'connected' })]);
   const started = await enrollments(dana.id);
   expect(started).toEqual([expect.objectContaining({ state: 'active', enrolled_by: 'stage_change', playbook_id: playbookId })]);
@@ -374,7 +374,8 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   await expectReachable(page, s, s.getByTestId('stage-step-confirm'), 'the follow-up chips', followUp!);
   await shot(page, info, 'j10', '5a-stage-step-blocked');
   await tap(page, s.getByRole('button', { name: 'Change to Connected' }));
-  await expect(peopleToast(page).getByText(`Stage: Connected. ${PLAN} didn't start: they can't be messaged`)).toBeVisible({ timeout: 15_000 });
+  // L5: the toast, the preview and the panel word the decision with the server's one sentence (will not / did not)
+  await expect(peopleToast(page).getByText(`Stage: Connected. ${why.replace('will not start', 'did not start').replace(/\.$/, '')}`)).toBeVisible({ timeout: 15_000 });
   const row = playbookRow(page);
   await expect(row.getByText('None running')).toBeVisible({ timeout: 15_000 });
   await expect(row.getByText(`${PLAN} did not start: they opted out, are marked do not contact, or have no phone or email this plan could use.`)).toBeVisible();
@@ -397,7 +398,7 @@ test('J10.6: Undo moves the stage back, says the plan is still running and that 
   await callAndLog(page, uma, 'Talked');
   await tap(page, step(page, uma).getByRole('button', { name: 'Change to Connected' }));
   const toast = peopleToast(page);
-  await expect(toast.getByText(`Stage: Connected. Started ${PLAN}`)).toBeVisible({ timeout: 15_000 });
+  await expect(toast.getByText(`Stage: Connected. ${PLAN} started`)).toBeVisible({ timeout: 15_000 });
   const undo = toast.getByRole('button', { name: 'Undo' });
   const box = await undo.boundingBox();
   expect(Math.min(box!.width, box!.height)).toBeGreaterThanOrEqual(44);

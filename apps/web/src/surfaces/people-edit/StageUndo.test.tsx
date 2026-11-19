@@ -12,7 +12,7 @@ import { FakeFetch, err, sessionFixture, tableWith } from '../../shell/testing/f
 import { reachability } from '../feed/lib/testing.js';
 import { StagePill } from './StagePill.js';
 import { ToastProvider } from './hooks.js';
-import { type StageResponse, automationText, undoneText } from './stageFlow.js';
+import { type StageResponse, automationWords, undoneText } from './stageFlow.js';
 import { detailsFixture, guideFixture, stageFixture } from './testing.js';
 
 const C = '01900000-0000-7000-8000-0000000c0001';
@@ -28,7 +28,7 @@ function mount(o: { undo: StageResponse | 'refused'; stop?: 'ok' | 'refused' }) 
   fake.on(`POST /contacts/${C}/stage`, (call) => {
     const b = call.body as { stage: string; undoOf?: string };
     if (b.undoOf) return o.undo === 'refused' ? err(409, 'STAGE_UNDO_INVALID') : { status: 200, body: o.undo };
-    return { status: 200, body: { stage: stageFixture('active'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Buyer plan' }, stillRunning: null } satisfies StageResponse };
+    return { status: 200, body: { stage: stageFixture('active'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Buyer plan' }, automationSentence: 'Buyer plan started.', stillRunning: null } satisfies StageResponse };
   });
   if (o.stop) fake.on(`POST /enrollments/${E}/stop`, o.stop === 'ok' ? { status: 200, body: { enrollment: { id: E, state: 'stopped' } } } : err(404, 'NOT_FOUND'));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -52,7 +52,7 @@ async function changeThenUndo(u: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(active).toBeEnabled());
   await u.click(active);
   const toast = screen.getByTestId('people-toast');
-  expect(await within(toast).findByText('Stage: Active client. Started Buyer plan')).toBeInTheDocument();
+  expect(await within(toast).findByText('Stage: Active client. Buyer plan started')).toBeInTheDocument();
   await u.click(within(toast).getByRole('button', { name: 'Undo' }));
   return toast;
 }
@@ -104,9 +104,10 @@ describe('R-STG-5 undo of a stage change', () => {
   });
 
   it('an undo into a stage that has a plan of its own starts nothing, and says so', async () => {
-    const { u } = mount({ undo: undone({ stillRunning: null, automation: { skipped: 'undo', plan: 'Reach-out plan' } }) });
+    // L5: the words are the server's sentence for the skip reason `undo`
+    const { u } = mount({ undo: undone({ stillRunning: null, automation: { skipped: 'undo', plan: 'Reach-out plan' }, automationSentence: 'Reach-out plan did not start: this change was an undo, and an undo never starts a plan.' }) });
     const toast = await changeThenUndo(u);
-    expect(await within(toast).findByText("Stage back to Trying to reach. Reach-out plan didn't start: this was an undo, and an undo never starts a plan")).toBeInTheDocument();
+    expect(await within(toast).findByText('Stage back to Trying to reach. Reach-out plan did not start: this change was an undo, and an undo never starts a plan.')).toBeInTheDocument();
   });
 
   it('an undo the server refuses (the stage changed again) says nothing was undone', async () => {
@@ -117,7 +118,9 @@ describe('R-STG-5 undo of a stage change', () => {
   });
 
   it('the words: an undo is never said to recall a message, and the skip reason `undo` reads as words', () => {
-    expect(automationText({ skipped: 'undo', plan: 'P' })).toBe("P didn't start: this was an undo, and an undo never starts a plan");
+    // L5: the skip reason `undo` is worded by the server; the web adds no reason of its own
+    expect(automationWords({ automation: { skipped: 'undo', plan: 'P' }, automationSentence: 'P did not start: this change was an undo, and an undo never starts a plan.' })).toBe('P did not start: this change was an undo, and an undo never starts a plan.');
+    expect(automationWords({ automation: { skipped: 'undo', plan: 'P' } })).toBe('P did not start');
     expect(undoneText(undone(), labelOf)).toBe('Stage back to Trying to reach. Buyer plan is still running; undo does not stop it.');
     expect(undoneText(undone({ stillRunning: null }), labelOf)).toBe('Stage back to Trying to reach.');
     // a plan still running is said first, even when the stage undone into has a plan of its own

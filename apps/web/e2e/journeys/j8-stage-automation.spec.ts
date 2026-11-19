@@ -2,7 +2,7 @@
 // app_user, fake providers only), on the phone (iPhone 13) and desktop (1440 px) projects:
 //   the agent's own "Buyer plan" (an agent playbook, created and approved through the API as the agent, set to
 //   start when a person's stage becomes Active) → on the person's page the agent taps the stage pill → Active
-//   (2 taps) → the toast says "Started Buyer plan" → the decision row and a live enrollment (enrolled by the
+//   (2 taps) → the toast says "Buyer plan started" (the server's sentence, b19 fix pass L5) → the decision row and a live enrollment (enrolled by the
 //   stage change) exist → the plan's first step runs on the real worker and its text reaches the fake provider
 //   once, as an assistant message (never a human touch).
 //   A person who texted STOP (through the signed inbound webhook): the same 2 taps change the stage, the toast
@@ -67,7 +67,7 @@ test('J8: Stage → Active starts the Buyer plan; the toast says so; the enrollm
   await signIn(page, stack, agent);
   await toActive(page, amy);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText('Stage: Active client. Started Buyer plan')).toBeVisible({ timeout: 15_000 });
+  await expect(toast.getByText('Stage: Active client. Buyer plan started')).toBeVisible({ timeout: 15_000 });
   await shot(page, info, 'j8', '1-plan-started');
 
   const [d] = await decisions(amy.id);
@@ -104,7 +104,7 @@ test('J8: a person who texted STOP: the stage changes, the toast says why the pl
   await signIn(page, stack, agent);
   await toActive(page, bo);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText("Stage: Active client. Buyer plan didn't start: they can't be messaged")).toBeVisible({ timeout: 15_000 });
+  await expect(toast.getByText('Stage: Active client. Buyer plan did not start: they opted out, are marked do not contact, or have no phone or email this plan could use')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Stage: Active client. Change stage' })).toBeVisible();
   await shot(page, info, 'j8', '2-plan-skipped-optout');
 

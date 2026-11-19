@@ -1,7 +1,8 @@
 // One way to change a person's stage, for the stage pill and the stage step (R-STG-5). The change's toast offers
 // Undo; the Undo names the stage event it undoes (`undoOf`), so the server moves the stage back and never starts a
 // plan for it. What the toast says after each request comes from that request's own answer:
-//   "Stage: Active client. Started Buyer plan"   [Undo] [See what happens next]   the change, and what its entry started;
+//   "Stage: Active client. Buyer plan started"   [Undo] [See what happens next]   the change, and what its entry started
+//                                                 or why not, in the SERVER's sentence (E784: one vocabulary);
 //                                                 the second button scrolls to the page's panel (b19 fix pass M5)
 //   "Stage back to Trying to reach. Buyer plan is still running; undo does not stop it."   + Stop when canStop
 //   "Stopped Buyer plan."                                                    only after the stop route answered
@@ -9,7 +10,7 @@
 import { useCallback } from 'react';
 import { type ActionResult, usePersonAction, useToast } from './hooks.js';
 import { hasNextPanel, showNextPanel } from './NextPanel.js';
-import { type StageResponse, UNDO_REFUSED, automationText, joinWords, undoneText } from './stageFlow.js';
+import { type StageResponse, UNDO_REFUSED, automationWords, joinWords, undoneText } from './stageFlow.js';
 
 /** The stage toast's way to the page's "What happens next" panel. */
 export const SEE_NEXT = 'See what happens next';
@@ -50,7 +51,8 @@ export function useStageChange(contactId: string, labelOf: (key: string) => stri
       const r = await act.run('POST', `/contacts/${contactId}/stage`, { stage: to });
       if (!r.ok || r.data.previousStage === to) return r;
       const prev = r.data.previousStage;
-      const plan = automationText(r.data.automation);
+      // E784: what the entry started, or why it did not, in the server's own sentence
+      const plan = automationWords(r.data);
       const eventId = r.data.eventId ?? null;
       toast({
         text: joinWords([o.lead, `Stage: ${r.data.stage.label}`, plan, o.also]),

@@ -37,6 +37,7 @@ import * as S from './schemas.js';
 import { stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
 import { latestStageEvent, ownLatestStageEvent, stageEvent } from '../stageAutomation/repos.js';
 import { previewStageEntry, runningPlan } from '../stageAutomation/preview.js';
+import { decisionSentence } from '../stageAutomation/sentences.js';
 import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 
 /**
@@ -249,7 +250,10 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
       // R-STG-5: an undo never stops a plan either. The plan still running is named, with whether this caller may stop
       // it themselves (the stop route's own answer), so the screen can say so and offer Stop.
       const stillRunning = undoOf === undefined ? null : await runningPlan(db, viewer, req.params.id);
-      return { ...res, automation, stillRunning };
+      // E784: the same decision in words, by the function the status words it with: one vocabulary for the toast, the
+      // preview and the panel. The plan's name in `automation` is already the one this viewer may see.
+      const automationSentence = automation === null ? null : decisionSentence('started' in automation ? { outcome: 'started', reason: null } : { outcome: 'skipped', reason: automation.skipped }, 'started' in automation ? automation.started : automation.plan);
+      return { ...res, automation, automationSentence, stillRunning };
     },
   );
 

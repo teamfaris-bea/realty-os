@@ -122,7 +122,7 @@ describe('after the confirm the page shows the truth from the server, not what t
     fake.on(`POST /contacts/${C}/stage`, () => {
       // from here on the server knows the plan started
       fake.on(`GET /contacts/${C}/playbook-status`, { status: 200, body: running });
-      return { status: 200, body: { stage: stageFixture('connected'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Stay in touch' }, stillRunning: null } };
+      return { status: 200, body: { stage: stageFixture('connected'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Stay in touch' }, automationSentence: 'Stay in touch started.', stillRunning: null } };
     });
     agentApp(fake, `/contacts/${C}`);
     const u = userEvent.setup();
@@ -134,7 +134,7 @@ describe('after the confirm the page shows the truth from the server, not what t
     const confirm = await within(s).findByRole('button', { name: 'Change to Connected' });
     await waitFor(() => expect(confirm).toBeEnabled());
     await u.click(confirm);
-    expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Connected. Started Stay in touch')).toBeInTheDocument();
+    expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Connected. Stay in touch started')).toBeInTheDocument();
     expect(await within(panel).findByText('Stay in touch')).toBeInTheDocument();
     expect(within(panel).getByText('Running')).toBeInTheDocument();
     expect(within(panel).getByText('Next: text, tomorrow 9:00 AM')).toBeInTheDocument();

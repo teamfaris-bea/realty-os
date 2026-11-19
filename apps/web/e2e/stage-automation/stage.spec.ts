@@ -82,7 +82,7 @@ test('R-PAR-16 Stage → Active starts the buyer plan, shown on the stage toast;
   await tap(page, page.getByRole('button', { name: 'Stage: New lead. Change stage' }), stage);
   await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Active/ }), stage);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText('Stage: Active client. Started Buyer plan')).toBeVisible();
+  await expect(toast.getByText('Stage: Active client. Buyer plan started')).toBeVisible();
   expect(stage.taps).toBe(2);
   // the Undo target on the toast is a real 44 px target
   const undo = toast.getByRole('button', { name: 'Undo' });
@@ -102,6 +102,6 @@ test('R-PAR-16 D1 a person who opted out: the toast says why the plan did not st
   await openContact(page, bo.id, bo.name);
   await page.getByRole('button', { name: 'Stage: New lead. Change stage' }).click();
   await page.getByRole('dialog').getByRole('button', { name: /^Active/ }).click();
-  await expect(page.getByTestId('people-toast').getByText("Stage: Active client. Buyer plan didn't start: they can't be messaged")).toBeVisible();
+  await expect(page.getByTestId('people-toast').getByText('Stage: Active client. Buyer plan did not start: they opted out, are marked do not contact, or have no phone or email this plan could use')).toBeVisible();
   await shot(page, 'stage-skipped');
 });

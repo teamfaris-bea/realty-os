@@ -30,7 +30,9 @@ let openHouses: string;
 const OWNER = 'a.owner';
 const AGENT = 'a.agent0';
 
-const IN_REVIEW_TOAST = "Stage: Active client. Buyer plan didn't start: they came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources)";
+// b19 fix pass L5: the toast is the server's own sentence for the decision (the stage route's automationSentence), the
+// one the contact's "What happens next" panel shows; the web no longer words a skip reason itself
+const IN_REVIEW_TOAST = 'Stage: Active client. Buyer plan did not start. This person came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources), so nothing automatic goes to them. Call, text or email them one to one';
 const STEP = { stepKey: 'check_in', channel: 'sms', delay: { anchor: 'enrollment', offsetSeconds: 0 }, purpose: 'marketing', category: 'nurture_step', intent: 'check_in', template: 'Hi {{first_name}}, checking in on your home search.', personalization: 'none', slots: ['first_name'], maxLength: 640, stopIf: [] };
 
 // child route: a Follow Up Boss account whose three people carry a source label each (one of them none)
@@ -236,7 +238,7 @@ test('Follow Up Boss: the Owner confirms one exact match in Review sources and l
 
   // the person from the label the Owner confirmed is not in review, and the plan starts for them
   await toActive(page, otis);
-  await expect(page.getByTestId('people-toast').getByText('Stage: Active client. Started Buyer plan')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('people-toast').getByText('Stage: Active client. Buyer plan started')).toBeVisible({ timeout: 20_000 });
   expect(await stack.sql("SELECT state, enrolled_by FROM playbook_enrollments WHERE contact_id = $1 AND playbook_id = $2", [otis.id, planId])).toEqual([{ state: 'active', enrolled_by: 'stage_change' }]);
 });
 

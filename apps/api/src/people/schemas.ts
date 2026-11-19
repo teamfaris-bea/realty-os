@@ -124,6 +124,12 @@ export const StageResponse = z.object({
   /** R-STG-5: the stage event this change wrote; for the same stage again, the event that put the person there (null: none) */
   eventId: Id.nullable(),
   automation: AutomationOutcomeSchema,
+  /**
+   * E784: `automation` in words, the sentence the contact's playbook status then shows for this change
+   * (stageAutomation/sentences.ts decisionSentence): "Buyer plan started.", "Buyer plan did not start: …". Null when
+   * `automation` is null. It rides beside `automation` (whose two shapes many callers compare exactly), not inside it.
+   */
+  automationSentence: z.string().nullable(),
   /** R-STG-5: for an undo, the plan the person is still in (an undo never stops it); null otherwise or when none */
   stillRunning: z.object({ enrollmentId: Id, plan: z.string(), canStop: z.boolean() }).nullable(),
 });
