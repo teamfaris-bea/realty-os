@@ -372,6 +372,58 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
   });
 });
 
+describe('R-TEAMQ-24 one definition of "covered now" (review fix L3)', () => {
+  it('R-TEAMQ-24 E888 E889: the source\'s OWNER is suspended: the card says "Not covered" and, in words, that the backup alert still goes to the backup and that the automatic return to the pond is back on, with the TEAM\'s own time (45 minutes here, never a hard-coded 30); the job does exactly what the card says', async () => {
+    const world = (await assistantWorld(h, { agents: 1, teamLead: true })) as CommsWorld;
+    await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
+    const sourceOwner = await h.invite(world.owner, 'agent');
+    const b = await h.invite(world.owner, 'agent');
+    const settings = await call<{ settings: { version: number } }>(world.owner, 'GET', '/settings');
+    expect((await call(world.owner, 'PATCH', '/settings', { version: settings.body.settings.version, firstTouchReleaseSeconds: 2700 })).status).toBe(200);
+    const src = await source('Owner suspended (alert test)', { world, covered: false });
+    await freshReauth(h, world.owner);
+    expect((await call(world.owner, 'PUT', `/lead-sources/${src.id}/coverage`, { ownerUserId: sourceOwner.userId, backupUserId: b.userId, highIntent: false, covered: true })).status).toBe(200);
+    interface Cov {
+      coverage: { covered: boolean; sentence: string; effects: string[]; backup: { name: string | null } };
+    }
+    const covered = (await call<Cov>(world.owner, 'GET', `/lead-sources/${src.id}/coverage`)).body.coverage;
+    const backupName = covered.backup.name!.replace(/\.$/, '');
+    expect([covered.covered, covered.effects]).toEqual([
+      true,
+      [
+        `A new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, ${backupName}.`,
+        'A lead with no first contact is not sent back to the pond after 45 minutes while its own owner is an active member.',
+      ],
+    ]);
+    const lead = await arrive(src);
+    const members = await call<{ members: { userId: string; version: number }[] }>(world.owner, 'GET', '/members');
+    expect((await call(world.owner, 'PATCH', `/members/${sourceOwner.userId}`, { status: 'suspended', version: members.body.members.find((m) => m.userId === sourceOwner.userId)!.version })).status).toBe(200);
+    const cov = (await call<Cov>(world.owner, 'GET', `/lead-sources/${src.id}/coverage`)).body.coverage;
+    expect(cov.covered).toBe(false);
+    expect(cov.sentence).toMatch(/^Not covered: the owner, .+, is suspended\.$/);
+    expect(cov.effects).toEqual([
+      `The backup alert still fires: a new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, ${backupName}.`,
+      'A lead with no first contact goes back to the pond after 45 minutes again, as on any source that is not covered.',
+    ]);
+    // the job: the alert still fires, to the backup, as the card says
+    await minutesPass(lead, 4, world.tenantId);
+    await run();
+    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient])).toEqual([['alerted', b.userId, 'backup']]);
+    // switched off: the card says no alert is sent, and the job sends none
+    await freshReauth(h, world.owner);
+    expect((await call(world.owner, 'PUT', `/lead-sources/${src.id}/coverage`, { ownerUserId: sourceOwner.userId, backupUserId: b.userId, highIntent: false, covered: true })).status).toBe(200);
+    const second = await arrive(src);
+    expect((await call(world.owner, 'PUT', `/lead-sources/${src.id}/coverage`, { ownerUserId: sourceOwner.userId, backupUserId: b.userId, highIntent: false, covered: false })).status).toBe(200);
+    expect((await call<Cov>(world.owner, 'GET', `/lead-sources/${src.id}/coverage`)).body.coverage.effects).toEqual([
+      'No backup alert is sent for this source.',
+      "A lead with no first contact goes back to the pond after 45 minutes, the team's setting.",
+    ]);
+    await minutesPass(second, 4, world.tenantId);
+    await run();
+    expect((await alertRows(second.inquiryId)).map((r) => r.outcome)).toEqual(['source_not_covered']);
+  });
+});
+
 describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)', () => {
   const setBackup = async (world: CommsWorld, sourceId: string, userId: string | null) => {
     await freshReauth(h, world.owner);

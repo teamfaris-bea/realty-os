@@ -40,6 +40,7 @@
 // an Admin alerted in the backup's place gets no grant: they already reach the leads they are told about.
 import type { IdGenerator, Instant, SystemActor } from '@realty/core/foundation';
 import { businessMsBetween, instantFromDate } from '@realty/core/foundation';
+import { coverageNow } from '@realty/core/ownership';
 import { type AlertHolder, BACKUP_GRANT_MS, backupAlertDueAt, backupAlertRecipients, backupAlertText } from '@realty/core/priority';
 import { type Tx, defaultIds, enqueueJob, loadTenantFacts } from '@realty/db';
 import { audit, redactSnapshot } from '../audit.js';
@@ -117,8 +118,12 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   const record = async (outcome: Exclude<BackupAlertOutcome, 'alerted'>): Promise<BackupAlertResult> => ((await repo.insertAlert(tx, row(outcome))) ? { outcome, alertedUserId: null } : { outcome: 'already_decided' });
 
   if (!live) return record('lead_closed');
-  // the source stopped being covered in between: nothing happens (R-TEAMQ-14)
-  if (!q.covered || q.backup_user_id === null) return record('source_not_covered');
+  // R-TEAMQ-24: the ONE definition of covered now (core coverageNow), which the card and the auto-release read too.
+  // The switch was turned off in between: nothing happens (R-TEAMQ-14). While it is on the alert ALWAYS tells someone:
+  // the backup when they are active, else the fallback, also when the source's own owner is unavailable (the card
+  // says so in words); the auto-release is what resumes for a source that is not covered now.
+  const coverage = coverageNow({ setting: q.covered && q.backup_user_id !== null, ownerStatus: q.owner_status, backupStatus: q.backup_status });
+  if (coverage.alert === 'off') return record('source_not_covered');
   if (await repo.humanAttemptSince(tx, person.id, q.arrived_at)) return record('human_attempt');
   if (await repo.answeredCallSince(tx, person.id, inquiryId)) return record('answered_call');
 
@@ -126,7 +131,7 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   // team lead of whoever has it; with no team lead to tell, the team's Owners and Admins. Never the holder themself.
   const to = backupAlertRecipients({
     backupUserId: q.backup_user_id,
-    backupActive: q.backup_status === 'active',
+    backupActive: coverage.alert === 'backup',
     holderUserId,
     holderTeamLeads: holderUserId === null ? [] : (await repo.teamLeadsOf(tx, holderUserId)).map((l) => l.user_id),
     admins: await repo.ownersAndAdmins(tx),

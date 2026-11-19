@@ -61,6 +61,8 @@ describe('R-TEAMQ-10 R-TEAMQ-11 the Coverage card of one source', () => {
     sourcesApp(fake, page, 'owner');
     const c = await card();
     expect(c.getByText(COVERAGE_INTRO)).toBeInTheDocument();
+    // R-TEAMQ-24 (review fix L3): the intro states no release time of its own
+    expect(COVERAGE_INTRO).not.toMatch(/\d+ minutes/);
     expect(c.getByText('Not covered: no owner and no backup are named.')).toBeInTheDocument();
     const warnings = within(c.getByRole('list', { name: 'What to check' })).getAllByRole('listitem').map((li) => li.textContent);
     expect(warnings).toEqual(['No owner is named for this source.', 'No backup is named for this source.']);
@@ -136,6 +138,33 @@ describe('R-TEAMQ-10 R-TEAMQ-11 the Coverage card of one source', () => {
     expect(within(c.getByLabelText('Owner')).queryByRole('option', { name: /Gale S\./ })).toBeNull();
     // the stored switch is still on, and says so beside the state
     expect(c.getByRole('checkbox', { name: 'Covered' })).toBeChecked();
+  });
+
+  it('R-TEAMQ-24 E888 E889 (review fix L3): "What happens now" shows the server\'s own lines: who the backup alert goes to and the team\'s own time before a lead returns to the pond; a server that sends none shows no such list', async () => {
+    const effects = [
+      'The backup alert still fires: a new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, Sam T.',
+      'A lead with no first contact goes back to the pond after 45 minutes again, as on any source that is not covered.',
+    ];
+    const ownerOut = coverage({
+      owner: { userId: gone.userId, name: 'Gale S.', status: 'suspended' },
+      backup: { userId: ID.ava, name: 'Sam T.', status: 'active' },
+      setting: true,
+      covered: false,
+      sentence: 'Not covered: the owner, Gale S., is suspended.',
+      warnings: [{ code: 'OWNER_UNAVAILABLE', sentence: 'The owner, Gale S., is suspended. Nobody was put in their place: name another owner.' }],
+      effects,
+    });
+    sourcesApp(fakeWith(ownerOut), page, 'owner');
+    const c = await card();
+    expect(within(c.getByRole('list', { name: 'What happens now' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(effects);
+    // the page states no time of its own: 45 minutes is the server's, and "30 minutes" appears nowhere
+    expect(c.queryByText(/30 minutes/)).toBeNull();
+  });
+
+  it('R-TEAMQ-24: no "What happens now" list without the server\'s lines', async () => {
+    sourcesApp(fakeWith(NOT_COVERED), page, 'owner');
+    const c = await card();
+    expect(c.queryByRole('list', { name: 'What happens now' })).toBeNull();
   });
 
   it('R-TEAMQ-10: a refused save says why in words, never a code', async () => {

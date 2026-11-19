@@ -25,6 +25,8 @@ export interface SourceCoverage {
   setting: boolean;
   sentence: string;
   warnings: { code: string; sentence: string }[];
+  /** R-TEAMQ-24: what happens to this source's leads now, in the server's words (the alert, then the return to the pond) */
+  effects?: string[];
   changedAt: string | null;
 }
 

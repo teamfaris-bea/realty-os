@@ -76,6 +76,8 @@ export {
   type SourceCoverage,
   sourceRouting,
   sourceCoverage,
+  type CoverageNow,
+  coverageNow,
   coveredNow,
   autoReleaseWaivedNow,
 } from './coverage.js';

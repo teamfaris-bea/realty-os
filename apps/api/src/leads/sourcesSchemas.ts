@@ -25,6 +25,8 @@ export const CoverageView = z.object({
   setting: z.boolean(),
   sentence: z.string(),
   warnings: z.array(z.object({ code: z.enum(COVERAGE_WARNING_CODES), sentence: z.string() })),
+  /** R-TEAMQ-24: what happens to this source's leads now, in words: the minute-three alert, then the automatic return to the pond with the team's own time */
+  effects: z.array(z.string()),
   /** when the owner, the backup, the mark or the switch last changed (null: never set) */
   changedAt: Iso.nullable(),
 });

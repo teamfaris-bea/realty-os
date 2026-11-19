@@ -16,8 +16,11 @@ import { SOURCE_KEYS, useMembers } from './hooks.js';
 import { sentenceFor } from './messages.js';
 import type { CoverageMember, SourceCoverage, SourceOverview } from './types.js';
 
+// R-TEAMQ-24 (review fix L3): the intro promises nothing in numbers: what coverage does for THIS source right now (who
+// the minute-three alert goes to, and the team's own time before an untouched lead returns to the pond) is the
+// server's own list under "What happens now".
 export const COVERAGE_INTRO =
-  "Name who answers for this source's leads and who backs them up. While a source is covered, its backup is alerted when a new lead has had no call, text or email from a person after 3 minutes of staffed time, and an untouched lead is not sent back to the pond after 30 minutes. Naming someone here moves no lead.";
+  "Name who answers for this source's leads and who backs them up. A source is covered while coverage is on and both people are active members. Naming someone here moves no lead.";
 export const COVERED_HINT_READY = 'On only while an owner and a backup are both named.';
 export const COVERED_HINT_NEEDS_BOTH = 'Name an owner and a backup first.';
 
@@ -122,6 +125,18 @@ function CoverageCard({ sourceId, coverage: c }: { sourceId: string; coverage: S
         <p className="font-medium">{c.sentence}</p>
         {c.highIntent ? <p>Marked high intent.</p> : null}
       </Notice>
+      {c.effects && c.effects.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <p id={`coverage-now-${sourceId}`} className="text-[15px] font-medium text-ink">
+            What happens now
+          </p>
+          <ul aria-labelledby={`coverage-now-${sourceId}`} className="list-disc pl-5 text-[15px] text-ink">
+            {c.effects.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {c.warnings.length > 0 ? (
         <div className="flex flex-col gap-1">
           <p id={`coverage-check-${sourceId}`} className="text-[15px] font-medium text-ink">

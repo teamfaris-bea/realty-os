@@ -25,14 +25,17 @@ export interface AlertInquiryRow {
   covered: boolean;
   backup_user_id: string | null;
   backup_status: MembershipStatus | null;
+  /** the status of the source's named owner (core coverageNow reads the switch and both statuses, R-TEAMQ-24) */
+  owner_status: MembershipStatus | null;
 }
 
 export async function inquiryForAlert(tx: Tx, inquiryId: string): Promise<AlertInquiryRow | null> {
   const r = await sql<AlertInquiryRow>`
-    SELECT i.id, i.contact_id, i.lead_source_id, i.received_at, i.created_at, ${ARRIVAL} AS arrived_at, i.outcome, s.name AS source_name, s.covered, s.backup_user_id, bm.status AS backup_status
+    SELECT i.id, i.contact_id, i.lead_source_id, i.received_at, i.created_at, ${ARRIVAL} AS arrived_at, i.outcome, s.name AS source_name, s.covered, s.backup_user_id, bm.status AS backup_status, om.status AS owner_status
       FROM lead_inquiries i
       JOIN lead_sources s ON s.tenant_id = i.tenant_id AND s.id = i.lead_source_id
       LEFT JOIN memberships bm ON bm.tenant_id = s.tenant_id AND bm.user_id = s.backup_user_id
+      LEFT JOIN memberships om ON om.tenant_id = s.tenant_id AND om.user_id = s.owner_user_id
      WHERE i.tenant_id = app.tenant_id() AND i.id = ${inquiryId}::uuid`.execute(tx);
   return r.rows[0] ?? null;
 }

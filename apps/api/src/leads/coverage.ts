@@ -6,7 +6,8 @@
 //   GET /lead-sources/overview         (leads/sources.ts) carries the same `coverage` on every source
 //
 // A source is COVERED only while the switch is on and its owner and its backup are both active members (core
-// sourceCoverage). Suspending or deactivating a named member writes nothing here and cannot fail because of it: the
+// coverageNow: the ONE definition, which the auto-release and the minute-three alert read too, R-TEAMQ-24; the view's
+// `effects` say in words what follows from it right now, with the team's own release time). Suspending or deactivating a named member writes nothing here and cannot fail because of it: the
 // read then flags the source and says it is not covered, and the person stays named. Nothing in this file moves a
 // lead, alerts anyone or sends anything: what coverage changes is decided where it is used (the auto-release in
 // core/ownership decide.ts, the minute-three backup alert in leads/backupAlert.ts). Switching coverage OFF queues one
@@ -54,8 +55,10 @@ export async function coverageBySource(tx: Tx): Promise<Map<string, CoverageView
       sharedWith: rows.filter((o) => o.id !== s.id && o.active && (routing.get(o.id) as SourceRouting).pondId === r.pondId).map((o) => o.name),
       // R-TEAMQ-21: who is offered this source's leads (the backup among them is said on the card)
       rotation: (r.ruleId === null ? [] : (rotations.get(r.ruleId) ?? [])) as UserId[],
+      // R-TEAMQ-24: the team's own release time, so the card never says a hard-coded 30 minutes
+      releaseSeconds: facts.settings.firstTouchReleaseSeconds,
     });
-    out.set(s.id, { owner, backup, highIntent: s.high_intent, covered: c.covered, setting: c.setting, sentence: c.sentence, warnings: c.warnings, changedAt: s.coverage_changed_at ? s.coverage_changed_at.toISOString() : null });
+    out.set(s.id, { owner, backup, highIntent: s.high_intent, covered: c.covered, setting: c.setting, sentence: c.sentence, warnings: c.warnings, effects: c.effects, changedAt: s.coverage_changed_at ? s.coverage_changed_at.toISOString() : null });
   }
   return out;
 }

@@ -51,6 +51,11 @@ export interface SourceCoverageFacts {
   /** the names of the OTHER lead sources whose leads fall back to the same pond */
   sharedWith: readonly string[];
   /**
+   * R-TEAMQ-24: the team's auto-release time for a lead with no first contact (tenant first_touch_release_seconds;
+   * null: the team turned it off). Absent: 1800, the default.
+   */
+  releaseSeconds?: number | null;
+  /**
    * R-TEAMQ-21: the members who receive this source's leads: the rotation of the rule its leads follow (its members,
    * or its one direct member). Absent or empty: nobody is offered them (a pond rule, or no rule).
    */
@@ -65,24 +70,51 @@ export interface SourceCoverage {
   /** the state in words, never a colour alone: "Covered: …" or "Not covered: …" */
   sentence: string;
   warnings: CoverageWarning[];
+  /**
+   * R-TEAMQ-24: what happens to this source's leads NOW, in words, from coverageNow: first the minute-three alert
+   * (who it goes to, or that none is sent), then the automatic return to the pond with the team's own time.
+   */
+  effects: string[];
+}
+
+/** What "covered now" means for a source, in one table (R-TEAMQ-24). */
+export interface CoverageNow {
+  /** the switch is on and the named owner and the named backup are both active members */
+  covered: boolean;
+  /**
+   * the minute-three alert of this source's inquiries: `off` while the switch is off; while it is on the alert always
+   * fires: to the named `backup` when they are an active member, else to the `fallback` (the team lead of whoever has
+   * the lead, else the Owners and Admins: core priority backupAlertRecipients, owner decision 2)
+   */
+  alert: 'backup' | 'fallback' | 'off';
+  /** the tenant's auto-release of an untouched lead: `waived` only while covered (and the lead's own owner is active) */
+  autoRelease: 'waived' | 'on';
 }
 
 /**
- * R-TEAMQ-20: the ONE definition of "covered now" for a lead source: its coverage switch is on (which needs an owner
- * and a backup both named) AND its named owner and its named backup are both active members. The coverage card
- * (sourceCoverage below), the auto-release (autoReleaseWaivedNow) and the minute-three alert all read this.
+ * R-TEAMQ-20, R-TEAMQ-24 (review fixes M1 and L3): the ONE definition of "covered now" and of what follows from it,
+ * read by the coverage card (sourceCoverage below), the auto-release (autoReleaseWaivedNow) and the minute-three
+ * alert (apps/api leads/backupAlert.ts). A source whose named owner or backup is unavailable is NOT covered: its
+ * auto-release is back on. Its alert does not go quiet for that: while the switch is on it still tells someone.
  */
+export function coverageNow(f: { setting: boolean; ownerStatus: MembershipStatus | null; backupStatus: MembershipStatus | null }): CoverageNow {
+  const covered = f.setting && f.ownerStatus === 'active' && f.backupStatus === 'active';
+  return { covered, alert: !f.setting ? 'off' : f.backupStatus === 'active' ? 'backup' : 'fallback', autoRelease: covered ? 'waived' : 'on' };
+}
+
+/** R-TEAMQ-20: covered now (coverageNow's first column). */
 export function coveredNow(f: { setting: boolean; ownerStatus: MembershipStatus | null; backupStatus: MembershipStatus | null }): boolean {
-  return f.setting && f.ownerStatus === 'active' && f.backupStatus === 'active';
+  return coverageNow(f).covered;
 }
 
 /**
- * R-TEAMQ-13, R-TEAMQ-20 (review fix M1): whether a LEAD's auto-release is waived now: its source is covered now AND
- * the lead's own owner is an active member. A lead held by a suspended or deactivating member is released as on an
- * uncovered source: the source's cover does not make up for nobody being there to make the first touch.
+ * R-TEAMQ-13, R-TEAMQ-20 (review fix M1): whether a LEAD's auto-release is waived now: its source's auto-release is
+ * waived (covered now) AND the lead's own owner is an active member. A lead held by a suspended or deactivating
+ * member is released as on an uncovered source: the source's cover does not make up for nobody being there to make
+ * the first touch.
  */
 export function autoReleaseWaivedNow(f: { setting: boolean; ownerStatus: MembershipStatus | null; backupStatus: MembershipStatus | null; leadOwnerStatus: MembershipStatus | null }): boolean {
-  return coveredNow(f) && f.leadOwnerStatus === 'active';
+  return coverageNow(f).autoRelease === 'waived' && f.leadOwnerStatus === 'active';
 }
 
 function cmp(a: string, b: string): number {
@@ -134,12 +166,37 @@ function listed(names: readonly string[]): string {
   return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
 }
 
-/** Whether a source is covered now, the sentence that says so, and its warnings (R-TEAMQ-10, R-TEAMQ-11). */
+/** "30 minutes", "90 seconds", "2 hours": a duration a person set, in the largest unit that is exact. */
+function durationWords(seconds: number): string {
+  const n = (v: number, unit: string) => `${v} ${unit}${v === 1 ? '' : 's'}`;
+  if (seconds % 3600 === 0) return n(seconds / 3600, 'hour');
+  if (seconds % 60 === 0) return n(seconds / 60, 'minute');
+  return n(seconds, 'second');
+}
+
+/** R-TEAMQ-24: what happens to the source's leads now, in words (the alert, then the automatic return to the pond). */
+function coverageEffects(now: CoverageNow, backup: CoverageMember | null, releaseSeconds: number | null): string[] {
+  const alert =
+    now.alert === 'off'
+      ? 'No backup alert is sent for this source.'
+      : now.alert === 'backup'
+        ? `${now.covered ? 'A' : 'The backup alert still fires: a'} new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, ${nameOf(backup as CoverageMember).replace(/\.$/, '')}.`
+        : 'The backup alert still fires: after 3 minutes of staffed time it goes to the team lead of whoever has the lead, or to the Owners and Admins when there is no team lead.';
+  let release: string;
+  if (releaseSeconds === null) release = 'The team has the automatic return to the pond turned off, so an untouched lead stays with its owner.';
+  else if (now.autoRelease === 'waived') release = `A lead with no first contact is not sent back to the pond after ${durationWords(releaseSeconds)} while its own owner is an active member.`;
+  else if (now.alert === 'off') release = `A lead with no first contact goes back to the pond after ${durationWords(releaseSeconds)}, the team's setting.`;
+  else release = `A lead with no first contact goes back to the pond after ${durationWords(releaseSeconds)} again, as on any source that is not covered.`;
+  return [alert, release];
+}
+
+/** Whether a source is covered now, the sentence that says so, its warnings and what happens now (R-TEAMQ-10, R-TEAMQ-11, R-TEAMQ-24). */
 export function sourceCoverage(f: SourceCoverageFacts): SourceCoverage {
   const { owner, backup } = f;
   const ownerOut = owner !== null && owner.status !== 'active';
   const backupOut = backup !== null && backup.status !== 'active';
-  const covered = coveredNow({ setting: f.coveredSetting, ownerStatus: owner?.status ?? null, backupStatus: backup?.status ?? null });
+  const now = coverageNow({ setting: f.coveredSetting, ownerStatus: owner?.status ?? null, backupStatus: backup?.status ?? null });
+  const covered = now.covered;
   const warnings: CoverageWarning[] = [];
   if (owner === null) warnings.push({ code: 'NO_OWNER', sentence: 'No owner is named for this source.' });
   if (backup === null) warnings.push({ code: 'NO_BACKUP', sentence: 'No backup is named for this source.' });
@@ -149,7 +206,7 @@ export function sourceCoverage(f: SourceCoverageFacts): SourceCoverage {
   if (backup !== null && backupOut) {
     warnings.push({
       code: 'BACKUP_UNAVAILABLE',
-      sentence: `The backup, ${nameOf(backup)}, ${unavailableWords(backup.status)}. Nobody was put in their place: until another backup is named, the backup alert goes to the team lead of whoever has the lead.`,
+      sentence: `The backup, ${nameOf(backup)}, ${unavailableWords(backup.status)}. Nobody was put in their place: until another backup is named, the backup alert goes to the team lead of whoever has the lead, or to the Owners and Admins when there is no team lead.`,
     });
   }
   if (owner !== null && backup !== null && owner.userId === backup.userId) {
@@ -175,5 +232,5 @@ export function sourceCoverage(f: SourceCoverageFacts): SourceCoverage {
   else if (ownerOut) sentence = `Not covered: the owner, ${nameOf(owner)}, ${unavailableWords(owner.status)}.`;
   else if (backupOut) sentence = `Not covered: the backup, ${nameOf(backup)}, ${unavailableWords(backup.status)}.`;
   else sentence = `Not covered: ${nameOf(owner)} and ${nameOf(backup)} are named, but coverage is turned off.`;
-  return { covered, setting: f.coveredSetting, sentence, warnings };
+  return { covered, setting: f.coveredSetting, sentence, warnings, effects: coverageEffects(now, backup, f.releaseSeconds === undefined ? 1800 : f.releaseSeconds) };
 }

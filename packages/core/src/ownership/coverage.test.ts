@@ -2,7 +2,7 @@
 // behind "covered" and its warnings. Names here are made up.
 import { describe, expect, it } from 'vitest';
 import type { LeadSourceId, PondId, RuleId, UserId } from '../foundation/index.js';
-import { COVERAGE_WARNING_CODES, type SourceCoverageFacts, sourceCoverage, sourceRouting } from './coverage.js';
+import { COVERAGE_WARNING_CODES, type SourceCoverageFacts, coverageNow, sourceCoverage, sourceRouting } from './coverage.js';
 import type { RuleFacts } from './types.js';
 
 const S1 = '00000000-0000-7000-8000-0000000000a1' as LeadSourceId;
@@ -43,7 +43,7 @@ const codes = (f: SourceCoverageFacts) => sourceCoverage(f).warnings.map((w) => 
 describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who are both on the team', () => {
   it('R-TEAMQ-10: the switch on, an active owner and an active backup: covered, said in words, no warning', () => {
     const c = sourceCoverage(facts());
-    expect(c).toEqual({ covered: true, setting: true, sentence: 'Covered: Jordan P. owns this source and Sam T. is the backup.', warnings: [] });
+    expect(c).toEqual({ covered: true, setting: true, sentence: 'Covered: Jordan P. owns this source and Sam T. is the backup.', warnings: [], effects: expect.any(Array) });
   });
 
   it('R-TEAMQ-10 E833: not covered says why in words: nobody named, no owner, no backup, or coverage turned off', () => {
@@ -60,7 +60,7 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
     const suspendedBackup = sourceCoverage(facts({ backup: { userId: BACKUP, name: 'Sam T.', status: 'suspended' } }));
     expect(suspendedBackup).toMatchObject({ covered: false, setting: true });
     expect(suspendedBackup.sentence).toBe('Not covered: the backup, Sam T., is suspended.');
-    expect(suspendedBackup.warnings).toEqual([{ code: 'BACKUP_UNAVAILABLE', sentence: 'The backup, Sam T., is suspended. Nobody was put in their place: until another backup is named, the backup alert goes to the team lead of whoever has the lead.' }]);
+    expect(suspendedBackup.warnings).toEqual([{ code: 'BACKUP_UNAVAILABLE', sentence: 'The backup, Sam T., is suspended. Nobody was put in their place: until another backup is named, the backup alert goes to the team lead of whoever has the lead, or to the Owners and Admins when there is no team lead.' }]);
     const goneOwner = sourceCoverage(facts({ owner: { userId: OWNER, name: 'Jordan P.', status: 'removed' } }));
     expect(goneOwner).toMatchObject({ covered: false, setting: true, sentence: 'Not covered: the owner, Jordan P., is no longer on the team.' });
     expect(goneOwner.warnings).toEqual([{ code: 'OWNER_UNAVAILABLE', sentence: 'The owner, Jordan P., is no longer on the team. Nobody was put in their place: name another owner.' }]);
@@ -100,6 +100,55 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
     const all = codes(facts({ owner: null, backup: null, coveredSetting: false, routing: { named: false, ruleId: null, ruleName: null, pondId: DEFAULT }, sharedWith: ['Portal'] }));
     expect(all).toEqual(['NO_OWNER', 'NO_BACKUP', 'NO_ROUTING_RULE', 'SHARED_FALLBACK_POND']);
     for (const c of all) expect(COVERAGE_WARNING_CODES).toContain(c);
+  });
+});
+
+describe('R-TEAMQ-24 covered now: ONE definition for the card, the auto-release and the minute-three alert (review fix L3)', () => {
+  it('R-TEAMQ-24 E888: coverageNow is the table all three read: covered, who the minute-three alert goes to, and whether the auto-release is waived', () => {
+    const t = (setting: boolean, ownerStatus: 'active' | 'suspended' | null, backupStatus: 'active' | 'suspended' | null) => coverageNow({ setting, ownerStatus, backupStatus });
+    expect(t(true, 'active', 'active')).toEqual({ covered: true, alert: 'backup', autoRelease: 'waived' });
+    // the source's OWNER is unavailable: not covered, the release is back on, and the alert still goes to the backup
+    expect(t(true, 'suspended', 'active')).toEqual({ covered: false, alert: 'backup', autoRelease: 'on' });
+    // the BACKUP is unavailable: not covered, the release is back on, and the alert goes to the fallback (owner decision 2)
+    expect(t(true, 'active', 'suspended')).toEqual({ covered: false, alert: 'fallback', autoRelease: 'on' });
+    expect(t(true, 'suspended', 'suspended')).toEqual({ covered: false, alert: 'fallback', autoRelease: 'on' });
+    // the switch off (or nobody named): no alert at all
+    expect(t(false, 'active', 'active')).toEqual({ covered: false, alert: 'off', autoRelease: 'on' });
+    expect(t(false, null, null)).toEqual({ covered: false, alert: 'off', autoRelease: 'on' });
+  });
+
+  it('R-TEAMQ-24 E888 E889: the card says in words what happens now, from the same table, with the TEAM\'s own release time (never a hard-coded 30 minutes)', () => {
+    const covered = sourceCoverage(facts({ releaseSeconds: 1800 }));
+    expect(covered.effects).toEqual([
+      'A new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, Sam T.',
+      'A lead with no first contact is not sent back to the pond after 30 minutes while its own owner is an active member.',
+    ]);
+    // a 45-minute team
+    expect(sourceCoverage(facts({ releaseSeconds: 2700 })).effects[1]).toBe('A lead with no first contact is not sent back to the pond after 45 minutes while its own owner is an active member.');
+    // the owner of the SOURCE is suspended: said in words that the alert still fires and the release is back on
+    const ownerOut = sourceCoverage(facts({ releaseSeconds: 1800, owner: { userId: OWNER, name: 'Jordan P.', status: 'suspended' } }));
+    expect(ownerOut.covered).toBe(false);
+    expect(ownerOut.effects).toEqual([
+      'The backup alert still fires: a new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, Sam T.',
+      'A lead with no first contact goes back to the pond after 30 minutes again, as on any source that is not covered.',
+    ]);
+    // the backup is suspended: the fallback, in words
+    const backupOut = sourceCoverage(facts({ releaseSeconds: 1800, backup: { userId: BACKUP, name: 'Sam T.', status: 'suspended' } }));
+    expect(backupOut.effects).toEqual([
+      'The backup alert still fires: after 3 minutes of staffed time it goes to the team lead of whoever has the lead, or to the Owners and Admins when there is no team lead.',
+      'A lead with no first contact goes back to the pond after 30 minutes again, as on any source that is not covered.',
+    ]);
+    // the switch off
+    expect(sourceCoverage(facts({ releaseSeconds: 1800, coveredSetting: false })).effects).toEqual([
+      'No backup alert is sent for this source.',
+      'A lead with no first contact goes back to the pond after 30 minutes, the team\'s setting.',
+    ]);
+    // a team that turned the auto-release off: said, covered or not
+    expect(sourceCoverage(facts({ releaseSeconds: null })).effects[1]).toBe('The team has the automatic return to the pond turned off, so an untouched lead stays with its owner.');
+    expect(sourceCoverage(facts({ releaseSeconds: null, coveredSetting: false })).effects[1]).toBe('The team has the automatic return to the pond turned off, so an untouched lead stays with its owner.');
+    // 90 seconds and 2 hours read as time, not as minutes only
+    expect(sourceCoverage(facts({ releaseSeconds: 90, coveredSetting: false })).effects[1]).toMatch(/after 90 seconds, the team's setting\.$/);
+    expect(sourceCoverage(facts({ releaseSeconds: 7200, coveredSetting: false })).effects[1]).toMatch(/after 2 hours, the team's setting\.$/);
   });
 });
 
