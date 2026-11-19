@@ -115,3 +115,36 @@ describe('R-TODAY-1: a follow-up card on Today', () => {
     expect(r.violations.map((v) => v.id)).toEqual([]);
   });
 });
+
+// b19 Today fix 5 (M8; R-TODAY-16): a card about a person the viewer cannot open (the server sends it undecorated,
+// with the masked name) draws no follow-up line and offers no Log: nothing the server would refuse, nothing it did not say.
+describe('M8 (R-TODAY-16): a card about a person the viewer cannot open', () => {
+  it('W3: the pond member’s task card: the masked name, the task, its reason; no Last, no Next, no Log, no Call or Text', async () => {
+    const c = card({
+      itemType: 'task_due',
+      contact: { id: IDS.jane, name: 'Sol M.' },
+      task: { id: IDS.task, title: 'Chase the paperwork' },
+      reasons: [{ code: 'TASK_OVERDUE', label: 'Overdue by 1 min' }],
+      primaryAction: { kind: 'open_task', label: 'Open task', taskId: IDS.task },
+      alternatives: [{ kind: 'complete_task', label: 'Done', taskId: IDS.task }],
+      subjectType: 'task',
+      subjectId: IDS.task,
+      why: null,
+      stage: null,
+      lastTouch: null,
+      nextPromise: null,
+      quiet: null,
+    });
+    const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([], [c]) }).on('GET /reachability', { status: 200, body: { contacts: [] } });
+    agentApp(fake);
+    const a = await screen.findByRole('article', { name: 'Sol M.' });
+    expect(within(a).getByText('Chase the paperwork')).toBeInTheDocument();
+    expect(within(a).getByText('Overdue by 1 min')).toBeInTheDocument();
+    expect(within(a).queryByTestId('follow-up-lines')).toBeNull();
+    for (const term of ['Last', 'Next', 'Due']) expect(within(a).queryByText(term, { selector: 'dt' })).toBeNull();
+    expect(within(a).queryByText(/No conversation yet|No next step set/)).toBeNull();
+    for (const name of [/^Log/, 'Call', 'Text', 'Email']) expect(within(a).queryByRole('button', { name })).toBeNull();
+    // the name still leads to their card, where what the viewer may do (claim) is said
+    expect(within(a).getByRole('link', { name: 'Sol M.' })).toHaveAttribute('href', `/contacts/${IDS.jane}`);
+  });
+});

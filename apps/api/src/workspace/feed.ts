@@ -206,6 +206,21 @@ export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: st
   };
 }
 
+/** The actions that contact the person: none is offered on a card about someone the viewer cannot open (R-TODAY-16). */
+const CONTACTING_ACTIONS: ReadonlySet<string> = new Set(['call', 'text', 'email', 'send_draft', 'reply_chat']);
+
+/**
+ * A card's actions without the ones that contact the person. When the primary action was one of them, the card's one
+ * tap opens the person's card instead: what the viewer may do there (claim them, or see that they cannot) is that
+ * page's to say.
+ */
+function withoutContacting(a: { primaryAction: OneTapAction; alternatives: OneTapAction[] }, contactId: string): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
+  const alternatives = a.alternatives.filter((x) => !CONTACTING_ACTIONS.has(x.kind));
+  if (!CONTACTING_ACTIONS.has(a.primaryAction.kind)) return { primaryAction: a.primaryAction, alternatives };
+  const open = alternatives.find((x) => x.kind === 'open_contact') ?? ({ kind: 'open_contact', label: 'Open', contactId } as OneTapAction);
+  return { primaryAction: open, alternatives: alternatives.filter((x) => x !== open) };
+}
+
 const NO_LINES: Pick<FeedCard, 'why'> & Lines = { why: null, stage: null, lastTouch: null, lastConversation: null, quiet: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
 
 /** One person of the daily plan, shaped like a card so a screen draws both the same way. `id` is the person's id. */
@@ -697,11 +712,22 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedRe
   // R-TODAY-6: the daily plan is read in the same statements
   const today = await loadFollowUpToday(tx, actor, now, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string), o.followUpDepth === undefined ? {} : { depth: o.followUpDepth });
   const lines = today.contexts;
+  /**
+   * R-TODAY-16: true for a follow-up card about a person the VIEWER cannot open (their detail is not visible to them:
+   * a pond member holding a task on a lead that went back to the pond). Such a card is not decorated: no reason
+   * lines, no last touch, no next step, so the screen draws none of them and offers no Log. It names the lead as the
+   * pond card does, and offers no call, text or email (the server would refuse each).
+   */
+  const notOpenable = (row: ReadRow) => followUp(row) && (lines.byContact.get(row.contact_id as string)?.stage ?? null) === null;
   const card = (row: ReadRow): FeedCard => {
-    const actions = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
+    const closed = notOpenable(row);
+    const stored = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
+    const actions = closed ? withoutContacting(stored, row.contact_id as string) : stored;
     const reasons = row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons);
-    // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards)
-    const name = row.item_type === 'pond_new' && row.contact_name !== null
+    // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards).
+    // R-TODAY-16: so does any follow-up card about a person the viewer cannot open. (The name is read by this file's
+    // older code, before this batch; it is masked here, where the batch decorates the card.)
+    const name = (row.item_type === 'pond_new' || closed) && row.contact_name !== null
       ? maskLastName({ first_name: row.contact_first_name, last_name: row.contact_last_name, display_name: row.contact_name })
       : row.contact_name;
     return {
@@ -717,7 +743,7 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedRe
       subjectId: row.subject_id,
       assistantActionId: row.assistant_action_id,
       createdAt: iso(row.created_at),
-      ...(followUp(row) ? { why: reasons.map((r) => r.label), ...followUpLines(lines.byContact.get(row.contact_id as string), actor.userId) } : NO_LINES),
+      ...(followUp(row) && !closed ? { why: reasons.map((r) => r.label), ...followUpLines(lines.byContact.get(row.contact_id as string), actor.userId) } : NO_LINES),
     };
   };
   const people = today.plan.people.map((e): FollowUpTodayCard => {
