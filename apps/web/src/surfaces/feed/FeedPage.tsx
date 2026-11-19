@@ -26,7 +26,7 @@ import { automaticLine, lastTouchLine, nextPromiseLine } from './lib/followUp.js
 import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } from './lib/format.js';
 import { useMutate, useNow } from './lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
-import type { FeedCard, FeedResponse } from './lib/types.js';
+import type { FeedCard, FeedResponse, FollowUpTodayCard } from './lib/types.js';
 import { AiFeedItem } from '../aiCare/Feed.js'; // module 76 (flagged edit)
 
 export const FEED_KEY = ['feed'] as const;
@@ -76,19 +76,25 @@ function Feed() {
     );
   }
   const shown = data.pinned.length + data.scored.length;
+  // R-TODAY-6: the daily plan. A person due by a task is shown once, in the plan: that task's own card leaves "Next up"
+  // (it is still one of the cards shown, so the count under the page does not change).
+  const plan = data.followUpToday;
+  const inPlan = new Set((plan?.people ?? []).flatMap((p) => p.taskIds));
+  const nextUp = data.scored.filter((c) => !(c.subjectType === 'task' && inPlan.has(c.subjectId)));
   // one reachability request for every card whose one-tap action contacts someone (lane optout-visibility)
-  const contactIds = [...data.pinned, ...data.scored].flatMap((c) => (c.contact && [c.primaryAction, ...c.alternatives].some((a) => CONTACTING.has(a.kind)) ? [c.contact.id] : []));
+  const contactIds = [...new Set([...data.pinned, ...data.scored, ...(plan?.people ?? [])].flatMap((c) => (c.contact && [c.primaryAction, ...c.alternatives].some((a) => CONTACTING.has(a.kind)) ? [c.contact.id] : [])))];
   return (
     <ReachabilityBatch contactIds={contactIds}>
     <div className="flex flex-col gap-6">
       {q.isError ? <Notice tone="warn">Couldn't refresh just now. This is your feed as of {formatTime(data.generatedAt)}.</Notice> : null}
-      {shown === 0 ? (
+      {shown === 0 && (plan?.people.length ?? 0) === 0 ? (
         <EmptyState icon="check" title="You're caught up">
           New leads, replies and anything due will show up here.
         </EmptyState>
       ) : null}
       {data.pinned.length > 0 ? <Band title="Due now" cards={data.pinned} pinned /> : null}
-      {data.scored.length > 0 ? <Band title="Next up" cards={data.scored} pinned={false} /> : null}
+      {plan ? <FollowUpToday plan={plan} /> : null}
+      {nextUp.length > 0 ? <Band title="Next up" cards={nextUp} pinned={false} /> : null}
       <p className="flex flex-wrap gap-x-3 text-[13px] text-ink-muted">
         {data.total > shown ? <Ratio value={shown} of={data.total} label="items shown" /> : null}
         <span>Updated {formatTime(data.generatedAt)}</span>
@@ -114,6 +120,43 @@ function Band({ title, cards, pinned }: { title: string; cards: FeedCard[]; pinn
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/** What the group says when nobody is due (R-TODAY-8): plain words, no tutorial. */
+export const NOBODY_DUE = 'Nobody is due today. People you promise to follow up with will show here.';
+
+/**
+ * "Follow up today" (R-TODAY-6): the people the agent owns who are due by a promise or task today or earlier, or who
+ * have gone quiet in "Connected" or "Long-term follow-up". A list of people with a reason each, most overdue first.
+ * A row is drawn like a card and offers the same one-pass actions; it is not a stored card, so it has nothing to
+ * snooze or dismiss: it leaves when the person is followed up with, or the task is done.
+ */
+function FollowUpToday({ plan }: { plan: NonNullable<FeedResponse['followUpToday']> }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-3">
+      <h2 id={id} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+        Follow up today
+      </h2>
+      {plan.people.length === 0 ? (
+        <p className="rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink-muted">{NOBODY_DUE}</p>
+      ) : (
+        <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {plan.people.map((p: FollowUpTodayCard) => (
+            <li key={p.id}>
+              <FeedCardView card={p} pinned={false} plan />
+            </li>
+          ))}
+        </ul>
+      )}
+      {plan.total > plan.people.length ? (
+        <p className="text-[13px] text-ink-muted">
+          Showing {plan.people.length} of {plan.totalIsMinimum ? 'at least ' : ''}
+          {plan.total} people due
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -149,7 +192,7 @@ export function countdownLabel(card: Pick<FeedCard, 'itemType' | 'contact'>): st
   return card.contact ? `${what} for ${card.contact.name}` : what;
 }
 
-export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean }) {
+export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; pinned: boolean; /** a row of the daily plan: not a stored card, so no Later or Dismiss */ plan?: boolean }) {
   const now = useNow(pinned ? 1000 : 60_000);
   const [why, setWhy] = useState(false);
   const whyId = useId();
@@ -215,7 +258,7 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
             {why ? 'Hide why' : 'Why this'}
           </button>
         )}
-        {!pinned ? <LaterButtons card={card} /> : null}
+        {!pinned && !plan ? <LaterButtons card={card} /> : null}
       </div>
       {why ? (
         <ul id={whyId} className="flex flex-col gap-1 border-t border-line pt-2 text-[15px] text-ink" aria-label={detailsFirst ? 'Details' : 'Why this is in your feed'}>

@@ -16,10 +16,26 @@
 // hidden before the text is cut (portal/shared/redact.ts hideForDisplay), exactly as the person's timeline does.
 import type { IanaZone, Instant, UserActor } from '@realty/core/foundation';
 import { defaultActivityBody, mentionTokens, renderMentions, stageLabel } from '@realty/core/parity/people';
-import { type ContactCandidate, type LastAutomatic, type LastTouch, type NextPromise, type PromiseTask, selectLastContact, selectNextPromise } from '@realty/core/priority';
+import {
+  type ContactCandidate,
+  FOLLOW_UP_TODAY_CAP,
+  type FollowUpPersonFacts,
+  type FollowUpTodayEntry,
+  type GateSummary,
+  type LastAutomatic,
+  type LastTouch,
+  type NextPromise,
+  type PromiseTask,
+  WARM_FOLLOW_UP_DAYS,
+  planFollowUpToday,
+  selectLastContact,
+  selectNextPromise,
+  startOfTomorrow,
+} from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { hideForDisplay } from '../../portal/shared/redact.js';
+import { gateSummaries } from './feedInputs.js';
 
 /** The statements one call sends, however many people it is asked about. */
 export const FOLLOW_UP_CONTEXT_QUERIES = 3;
@@ -34,9 +50,23 @@ export interface FollowUpContext {
   lastTouch: LastTouch | null;
   lastAutomatic: LastAutomatic | null;
   importedHistoryAt: Instant | null;
+  /** the latest imported entry of the person's history, whether or not there is a last touch (the daily plan reads it) */
+  importedAt: Instant | null;
   nextPromise: NextPromise | null;
   /** every open task of the viewer for the person (the daily plan reads them) */
   tasks: PromiseTask[];
+}
+
+/** The team's zone and its own stage labels (one statement). */
+export interface FollowUpSettings {
+  zone: IanaZone;
+  stageLabels: Record<string, string>;
+}
+
+export async function loadFollowUpSettings(tx: Tx): Promise<FollowUpSettings> {
+  const r = await sql<{ zone: string; stage_labels: Record<string, string> | null }>`
+    SELECT default_timezone AS zone, stage_labels FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx);
+  return { zone: (r.rows[0]?.zone ?? 'UTC') as IanaZone, stageLabels: r.rows[0]?.stage_labels ?? {} };
 }
 
 export interface FollowUpContexts {
@@ -105,17 +135,14 @@ function candidateOf(r: HistoryRow): ContactCandidate | null {
  * The follow-up lines of `contactIds` for the viewer, as of `now`. A person whose detail the viewer may not open has
  * an entry with no stage, no history and only the viewer's own tasks.
  */
-export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: readonly string[], now: Instant): Promise<FollowUpContexts> {
+export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: readonly string[], now: Instant, known?: FollowUpSettings): Promise<FollowUpContexts> {
   const ids = [...new Set(contactIds)];
   const byContact = new Map<string, FollowUpContext>();
-  if (ids.length === 0) return { zone: 'UTC' as IanaZone, stageLabels: {}, byContact };
+  if (ids.length === 0) return { zone: known?.zone ?? ('UTC' as IanaZone), stageLabels: known?.stageLabels ?? {}, byContact };
   const nowIso = new Date(now).toISOString();
 
-  // 1. the team's zone and its own stage labels
-  const settings = await sql<{ zone: string; stage_labels: Record<string, string> | null }>`
-    SELECT default_timezone AS zone, stage_labels FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx);
-  const zone = (settings.rows[0]?.zone ?? 'UTC') as IanaZone;
-  const stageLabels = settings.rows[0]?.stage_labels ?? {};
+  // 1. the team's zone and its own stage labels (unless the caller already read them)
+  const { zone, stageLabels } = known ?? (await loadFollowUpSettings(tx));
 
   // 2. per person: the stage, and the newest row of each kind that could be what was last discussed
   const history = await sql<HistoryRow>`
@@ -239,9 +266,82 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
       lastAutomatic: picked.lastAutomatic,
       // only said when there is no last touch
       importedHistoryAt: picked.lastTouch === null ? (importedAt.get(id) ?? null) : null,
+      importedAt: importedAt.get(id) ?? null,
       nextPromise: selectNextPromise(mine, now, zone),
       tasks: mine,
     });
   }
   return { zone, stageLabels, byContact };
+}
+
+// ---- the daily plan: "Follow up today" (R-TODAY-6) -------------------------------------------------
+
+/**
+ * The statements one read of the plan sends when anyone is due, however many are: settings, the candidates, the
+ * history and the tasks of the page (cards and candidates together), and the three of the channel summary.
+ */
+export const FOLLOW_UP_TODAY_QUERIES = 7;
+/** Candidates read per reason: more than the cap, since a logged call or imported history may take some out. */
+const CANDIDATES_READ = FOLLOW_UP_TODAY_CAP * 3;
+
+export interface FollowUpToday {
+  /** the lines of every person asked about: the plan's candidates and `alsoContactIds` (the feed's own cards) */
+  contexts: FollowUpContexts;
+  plan: { people: FollowUpTodayEntry[]; total: number; /** more candidates exist than were read: `total` is a lower bound */ totalIsMinimum: boolean };
+  names: Map<string, string>;
+  gates: Map<string, GateSummary>;
+}
+
+/**
+ * Who the viewer should follow up with today (core planFollowUpToday), read as the viewer. Only people they OWN and
+ * whose record is live: someone closed (as not a lead, or for any reason) or merged away is not owned by anyone, and
+ * another agent's person is not theirs even when a task of theirs names them. A source restriction is not read here:
+ * it limits automated contact, and this is the agent's own one-to-one follow-up. Nothing is written.
+ *
+ * Candidates are found by the system's own last-touch instant, which a logged outside call never moves; the plan
+ * then counts the latest human contact the viewer can see (a logged call and imported history included), so a
+ * candidate may turn out not to be due. `alsoContactIds`: other people whose lines the same statements should read.
+ */
+export async function loadFollowUpToday(tx: Tx, actor: UserActor, now: Instant, alsoContactIds: readonly string[]): Promise<FollowUpToday> {
+  const settings = await loadFollowUpSettings(tx);
+  const nowIso = new Date(now).toISOString();
+  const tomorrowIso = new Date(startOfTomorrow(now, settings.zone)).toISOString();
+  const stages = Object.keys(WARM_FOLLOW_UP_DAYS);
+  const days = stages.map((k) => WARM_FOLLOW_UP_DAYS[k] as number);
+  const cand = await sql<{ id: string; display_name: string; stage: string; last_human_touch_at: Date | null; since_at: Date; by_task: boolean; cut: boolean }>`
+    WITH mine AS MATERIALIZED (
+      SELECT c.id, c.display_name, c.stage, c.last_human_touch_at, COALESCE(c.owned_at, c.created_at) AS since_at
+        FROM contacts c
+       WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${actor.userId}
+         AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL),
+    due AS (
+      SELECT m.id, min(t.due_at) AS k FROM mine m JOIN tasks t ON t.tenant_id = app.tenant_id() AND t.contact_id = m.id
+       WHERE t.assignee_user_id = ${actor.userId} AND t.status = 'open' AND t.due_at < ${tomorrowIso}::timestamptz
+       GROUP BY m.id ORDER BY k, m.id LIMIT ${CANDIDATES_READ + 1}),
+    warm AS (
+      SELECT m.id, COALESCE(m.last_human_touch_at, m.since_at) AS k
+        FROM mine m JOIN unnest(${stages}::text[], ${days}::int[]) AS th(stage, days) ON th.stage = m.stage
+       WHERE COALESCE(m.last_human_touch_at, m.since_at) < ${nowIso}::timestamptz - make_interval(days => th.days)
+       ORDER BY k, m.id LIMIT ${CANDIDATES_READ + 1})
+    SELECT m.id, m.display_name, m.stage, m.last_human_touch_at, m.since_at, (d.id IS NOT NULL) AS by_task,
+           ((SELECT count(*) FROM due) > ${CANDIDATES_READ} OR (SELECT count(*) FROM warm) > ${CANDIDATES_READ}) AS cut
+      FROM mine m LEFT JOIN due d ON d.id = m.id LEFT JOIN warm w ON w.id = m.id
+     WHERE d.id IS NOT NULL OR w.id IS NOT NULL`.execute(tx);
+  const ids = cand.rows.map((r) => r.id);
+  const contexts = await loadFollowUpContext(tx, actor, [...alsoContactIds, ...ids], now, settings);
+  const gates = (await gateSummaries(tx, ids)) as Map<string, GateSummary>;
+  const people: FollowUpPersonFacts[] = cand.rows.map((r) => {
+    const ctx = contexts.byContact.get(r.id);
+    const seen = [r.last_human_touch_at?.getTime() ?? null, ctx?.lastTouch?.at ?? null, ctx?.importedAt ?? null].filter((t): t is number => t !== null);
+    return {
+      contactId: r.id,
+      stage: r.stage,
+      tasks: ctx?.tasks ?? [],
+      lastContactAt: seen.length > 0 ? (Math.max(...seen) as Instant) : null,
+      sinceAt: r.since_at.getTime() as Instant,
+      gate: gates.get(r.id),
+    };
+  });
+  const plan = planFollowUpToday({ now, zone: settings.zone, people });
+  return { contexts, plan: { ...plan, totalIsMinimum: cand.rows.some((r) => r.cut) }, names: new Map(cand.rows.map((r) => [r.id, r.display_name])), gates };
 }

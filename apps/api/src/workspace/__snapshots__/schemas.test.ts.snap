@@ -1445,6 +1445,1369 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "followUpToday": {
+        "additionalProperties": false,
+        "properties": {
+          "people": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "alternatives": {
+                  "items": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "accept_offer",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "offerId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                          "offerId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "decline_offer",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "offerId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                          "offerId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "claim",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "pondId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                          "pondId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "call",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "note": {
+                            "maxLength": 300,
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "draftActionId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "text",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "note": {
+                            "maxLength": 300,
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "draftActionId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "email",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "note": {
+                            "maxLength": 300,
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "reply_chat",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "actionId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "send_draft",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "note": {
+                            "maxLength": 300,
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "actionId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "actionId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "edit_draft",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "actionId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "actionId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "review_handback",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "actionId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "complete_task",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "taskId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "taskId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "open_task",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "taskId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "taskId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "appointmentId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "log_outcome",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "appointmentId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "dealId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "open_deal",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "dealId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "dealDateId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "complete_deal_date",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "dealDateId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "review_search",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "savedSearchId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "savedSearchId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                          "kind": {
+                            "const": "open_contact",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "contactId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "open_listing",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "listingId": {
+                            "minLength": 1,
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "listingId",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "open_plan",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                          "week": {
+                            "pattern": "^\\d{4}-W\\d{2}$",
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                          "week",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "show_details",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "const": "open_coaching_fix",
+                            "type": "string",
+                          },
+                          "label": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "label",
+                        ],
+                        "type": "object",
+                      },
+                    ],
+                  },
+                  "type": "array",
+                },
+                "assistantActionId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "band": {
+                  "enum": [
+                    "pinned",
+                    "scored",
+                  ],
+                  "type": "string",
+                },
+                "contact": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "name": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "createdAt": {
+                  "type": "string",
+                },
+                "dueAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "importedHistoryAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "itemType": {
+                  "type": "string",
+                },
+                "lastAutomatic": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                        },
+                        "bulk": {
+                          "type": "boolean",
+                        },
+                        "kind": {
+                          "enum": [
+                            "text",
+                            "email",
+                            "chat",
+                          ],
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "at",
+                        "bulk",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "lastTouch": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                        },
+                        "byMe": {
+                          "type": "boolean",
+                        },
+                        "byName": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "direction": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "inbound",
+                                "outbound",
+                              ],
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "kind": {
+                          "enum": [
+                            "call",
+                            "text",
+                            "email",
+                            "chat",
+                            "note",
+                            "appointment",
+                          ],
+                          "type": "string",
+                        },
+                        "outcome": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "reported": {
+                          "type": "boolean",
+                        },
+                        "snippet": {
+                          "anyOf": [
+                            {
+                              "maxLength": 140,
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "at",
+                        "byName",
+                        "byMe",
+                        "direction",
+                        "outcome",
+                        "snippet",
+                        "reported",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "nextPromise": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "dueAllDay": {
+                          "type": "boolean",
+                        },
+                        "dueAt": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "kind": {
+                          "type": "string",
+                        },
+                        "overdue": {
+                          "type": "boolean",
+                        },
+                        "taskId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "text": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "taskId",
+                        "text",
+                        "kind",
+                        "dueAt",
+                        "dueAllDay",
+                        "overdue",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "primaryAction": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "accept_offer",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "offerId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                        "offerId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "decline_offer",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "offerId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                        "offerId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "claim",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "pondId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                        "pondId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "call",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "note": {
+                          "maxLength": 300,
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "draftActionId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "text",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "note": {
+                          "maxLength": 300,
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "draftActionId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "email",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "note": {
+                          "maxLength": 300,
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "reply_chat",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actionId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "send_draft",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "note": {
+                          "maxLength": 300,
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "actionId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actionId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "edit_draft",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "actionId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actionId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "review_handback",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "actionId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "complete_task",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "taskId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "taskId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "open_task",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "taskId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "taskId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "appointmentId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "log_outcome",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "appointmentId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "dealId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "open_deal",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "dealId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "dealDateId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "complete_deal_date",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "dealDateId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "review_search",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "savedSearchId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "savedSearchId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "kind": {
+                          "const": "open_contact",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "contactId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "open_listing",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "listingId": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "listingId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "open_plan",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                        "week": {
+                          "pattern": "^\\d{4}-W\\d{2}$",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "week",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "show_details",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "open_coaching_fix",
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                      ],
+                      "type": "object",
+                    },
+                  ],
+                },
+                "reasons": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "code",
+                      "label",
+                    ],
+                    "type": "object",
+                  },
+                  "minItems": 1,
+                  "type": "array",
+                },
+                "stage": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                        },
+                        "label": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "key",
+                        "label",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "subjectId": {
+                  "type": "string",
+                },
+                "subjectType": {
+                  "type": "string",
+                },
+                "task": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "title": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "taskIds": {
+                  "items": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                "why": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "itemType",
+                "band",
+                "dueAt",
+                "contact",
+                "task",
+                "reasons",
+                "primaryAction",
+                "alternatives",
+                "subjectType",
+                "subjectId",
+                "assistantActionId",
+                "createdAt",
+                "why",
+                "stage",
+                "lastTouch",
+                "lastAutomatic",
+                "importedHistoryAt",
+                "nextPromise",
+                "taskIds",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "totalIsMinimum": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "people",
+          "total",
+          "totalIsMinimum",
+        ],
+        "type": "object",
+      },
       "generatedAt": {
         "type": "string",
       },
@@ -2055,6 +3418,9 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "at": {
                       "type": "string",
                     },
+                    "byMe": {
+                      "type": "boolean",
+                    },
                     "byName": {
                       "type": [
                         "string",
@@ -2111,6 +3477,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "kind",
                     "at",
                     "byName",
+                    "byMe",
                     "direction",
                     "outcome",
                     "snippet",
@@ -3386,6 +4753,9 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "at": {
                       "type": "string",
                     },
+                    "byMe": {
+                      "type": "boolean",
+                    },
                     "byName": {
                       "type": [
                         "string",
@@ -3442,6 +4812,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "kind",
                     "at",
                     "byName",
+                    "byMe",
                     "direction",
                     "outcome",
                     "snippet",
@@ -4121,6 +5492,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
       "scored",
       "total",
       "generatedAt",
+      "followUpToday",
     ],
     "type": "object",
   },

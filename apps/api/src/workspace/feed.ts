@@ -71,6 +71,8 @@ import {
   type NextPromise,
   type OneTapAction,
   feedGroupOfItem,
+  followUpActions,
+  followUpTodayReasons,
   isFollowUpItemType,
   parseForeignFeedKey,
   reasonFromCode,
@@ -86,7 +88,7 @@ import { AppError } from '../errors.js';
 import { blockedPondIds, claimStatus } from '../leads/claimable.js';
 import { maskLastName } from '../leads/views.js';
 import { type FeedScope, loadFeedInputsScoped } from './repos/feedInputs.js';
-import { type FollowUpContext, loadFollowUpContext } from './repos/followUp.js';
+import { type FollowUpContext, loadFollowUpToday } from './repos/followUp.js';
 
 /** What a refresh needs besides the transaction: transcript evidence is encrypted; row ids are UUIDv7. */
 export interface FeedDeps {
@@ -176,12 +178,23 @@ export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: st
 
 const NO_LINES: Pick<FeedCard, 'why' | 'stage' | 'lastTouch' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'> = { why: null, stage: null, lastTouch: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
 
+/** One person of the daily plan, shaped like a card so a screen draws both the same way. `id` is the person's id. */
+export type FollowUpTodayCard = FeedCard & {
+  /** the agent's tasks for the person that are due today or earlier, earliest first (their own cards are in `scored`) */
+  taskIds: string[];
+};
+
 export interface FeedView {
   pinned: FeedCard[];
   scored: FeedCard[];
   /** open cards in total (the response shows at most FEED_LIMIT) */
   total: number;
   generatedAt: string;
+  /**
+   * R-TODAY-6: the daily plan. People the viewer owns who are due by a task of theirs today or earlier, or who are
+   * quiet in a warm stage; most overdue first, capped. Read with the feed, never stored; reading it writes nothing.
+   */
+  followUpToday: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean };
 }
 
 interface StoredRow {
@@ -636,7 +649,9 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
           - ${hidden.length > 0 ? sql`(SELECT count(*) ${base} AND f.card IS NOT NULL AND ${pondHidden})` : sql`0`})::int AS n`.execute(tx);
   // R-TODAY-1: what each follow-up card says about its person, read once for the whole page (no per-card query)
   const followUp = (row: ReadRow) => row.contact_id !== null && isFollowUpItemType(row.item_type);
-  const lines = await loadFollowUpContext(tx, actor, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string), now);
+  // R-TODAY-6: the daily plan is read in the same statements
+  const today = await loadFollowUpToday(tx, actor, now, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string));
+  const lines = today.contexts;
   const card = (row: ReadRow): FeedCard => {
     const actions = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
     const reasons = row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons);
@@ -660,7 +675,36 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
       ...(followUp(row) ? { why: reasons.map((r) => r.label), ...followUpLines(lines.byContact.get(row.contact_id as string), actor.userId) } : NO_LINES),
     };
   };
-  return { pinned: pinned.rows.map(card), scored: scored.rows.map(card), total: total.rows[0]?.n ?? 0, generatedAt: iso(now) };
+  const people = today.plan.people.map((e): FollowUpTodayCard => {
+    const ctx = lines.byContact.get(e.contactId);
+    const reasons = followUpTodayReasons(e, { now, stageLabel: ctx?.stage?.label ?? 'Follow-up' }).map(strip);
+    const firstTask = e.taskIds[0] ?? null;
+    const task = firstTask === null ? null : (ctx?.tasks.find((t) => t.taskId === firstTask) ?? null);
+    return {
+      id: e.contactId,
+      itemType: e.reason === 'warm' ? 'warm_follow_up' : e.reason === 'promise' ? 'promise_due' : 'task_due',
+      band: 'scored',
+      dueAt: iso(e.dueAt),
+      contact: { id: e.contactId, name: today.names.get(e.contactId) ?? '' },
+      task: task ? { id: task.taskId, title: task.title } : null,
+      reasons,
+      ...followUpActions(e.contactId as never, today.gates.get(e.contactId), firstTask),
+      subjectType: task ? 'task' : 'contact',
+      subjectId: task ? task.taskId : e.contactId,
+      assistantActionId: null,
+      createdAt: iso(e.dueAt),
+      why: reasons.map((r) => r.label),
+      ...followUpLines(ctx, actor.userId),
+      taskIds: e.taskIds,
+    };
+  });
+  return {
+    pinned: pinned.rows.map(card),
+    scored: scored.rows.map(card),
+    total: total.rows[0]?.n ?? 0,
+    generatedAt: iso(now),
+    followUpToday: { people, total: today.plan.total, totalIsMinimum: today.plan.totalIsMinimum },
+  };
 }
 
 export type FeedVerb = 'done' | 'snooze' | 'dismiss';

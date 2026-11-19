@@ -52,7 +52,15 @@ export const FeedCardSchema = z.object({
   importedHistoryAt: z.string().nullable(),
   nextPromise: NextPromiseSchema.nullable(),
 });
-export const FeedResponse = z.object({ pinned: z.array(FeedCardSchema), scored: z.array(FeedCardSchema), total: z.number().int().min(0), generatedAt: z.string() });
+/** R-TODAY-6: one person of the daily plan, shaped like a card; `id` is the person's id, `taskIds` their due tasks. */
+export const FollowUpTodayCardSchema = FeedCardSchema.extend({ taskIds: z.array(uuid) });
+export const FeedResponse = z.object({
+  pinned: z.array(FeedCardSchema),
+  scored: z.array(FeedCardSchema),
+  total: z.number().int().min(0),
+  generatedAt: z.string(),
+  followUpToday: z.object({ people: z.array(FollowUpTodayCardSchema), total: z.number().int().min(0), totalIsMinimum: z.boolean() }),
+});
 export const SnoozeBody = z.strictObject({ until: isoDate });
 export const FeedActionResponse = z.object({ item: z.object({ id: uuid, state: z.string(), snoozedUntil: z.string().nullable() }) });
 

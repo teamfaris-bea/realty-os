@@ -70,11 +70,16 @@ export interface NextPromiseView {
   overdue: boolean;
 }
 
+/** One person of the daily plan (R-TODAY-6), shaped like a card; `id` is the person's id. */
+export type FollowUpTodayCard = FeedCard & { taskIds: string[] };
+
 export interface FeedResponse {
   pinned: FeedCard[];
   scored: FeedCard[];
   total: number;
   generatedAt: string;
+  /** the daily plan; absent on an answer of a server that does not send it */
+  followUpToday?: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean };
 }
 
 // ---- contacts (GET /contacts/:id, /ponds/:id/cards, /contacts/:id/timeline) ----------------------

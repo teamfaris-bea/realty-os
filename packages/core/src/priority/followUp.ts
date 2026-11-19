@@ -15,9 +15,9 @@
 // so a candidate here is always a row the viewer could open. Nothing here creates a message, a task or a touch, and
 // nothing here is read by scoring, the first-contact clock or a scoreboard: a logged outside call is the agent's own
 // report (`reported: true`) and is never the same thing as a call the system placed.
-import { type IanaZone, type Instant, addLocalDays, startOfLocalDay } from '../foundation/index.js';
-import { clip } from './format.js';
-import type { TaskFacts } from './types.js';
+import { type ContactId, DAY_MS, type IanaZone, type Instant, addLocalDays, instant, startOfLocalDay } from '../foundation/index.js';
+import { clip, textLabels } from './format.js';
+import type { FeedReason, GateSummary, OneTapAction, TaskFacts } from './types.js';
 
 // ---- which cards carry the follow-up lines --------------------------------------------------------
 
@@ -297,4 +297,122 @@ export function selectNextPromise(tasks: readonly PromiseTask[], now: Instant, t
   if (!first) return null;
   const deadline = promiseDeadline(first, teamZone);
   return { taskId: first.taskId, text: first.title, kind: first.kind, dueAt: first.dueAt, dueAllDay: first.dueAllDay, overdue: deadline !== null && now >= deadline };
+}
+
+// ---- the daily plan: "Follow up today" (R-TODAY-6) -------------------------------------------------
+
+/**
+ * How long a person may go without a human contact before they are due again, in days, per stage. Only these two
+ * stages have a threshold: "Connected" (we have talked, not working together yet) and "Long-term follow-up" (months
+ * away, we keep in touch). OWNER QUESTION: 7 and 30 are the values proposed in the brief, not a measured choice.
+ */
+export const WARM_FOLLOW_UP_DAYS: Readonly<Record<string, number>> = { connected: 7, nurture: 30 };
+
+/** The plan lists at most this many people; the total says how many are due in all. */
+export const FOLLOW_UP_TODAY_CAP = 20;
+
+/** The first instant of tomorrow in the team's zone: a task due before it is due "today or earlier". */
+export function startOfTomorrow(now: Instant, teamZone: IanaZone): Instant {
+  return addLocalDays(startOfLocalDay(now, teamZone), 1, teamZone);
+}
+
+const ONE_TO_ONE: readonly ('voice' | 'sms' | 'email')[] = ['voice', 'sms', 'email'];
+
+/**
+ * True when the person opted out of (or is blocked on) every channel the agent could use: no phone, text or email is
+ * open, and at least one of them is closed by a refusal rather than by a missing number or address. A person with no
+ * phone and no email at all has opted out of nothing and is not covered by this.
+ */
+export function optedOutOfEveryChannel(gate: GateSummary | undefined): boolean {
+  if (gate === undefined) return false;
+  const blocks = ONE_TO_ONE.map((ch) => gate[ch]);
+  return blocks.every((b) => b !== undefined) && blocks.some((b) => b?.outcome === 'deny');
+}
+
+/** One person the agent owns, as the plan reads them. The caller passes only people the agent owns and may contact. */
+export interface FollowUpPersonFacts {
+  contactId: string;
+  /** contacts.stage */
+  stage: string;
+  /** every open task of the agent for this person */
+  tasks: readonly PromiseTask[];
+  /** the most recent human contact of any kind the agent can see (a logged outside call and imported history count); null: none */
+  lastContactAt: Instant | null;
+  /** for someone never contacted: since when they are the agent's */
+  sinceAt: Instant;
+  gate: GateSummary | undefined;
+}
+
+export interface FollowUpTodayEntry {
+  contactId: string;
+  /** promise / task: a task of the agent's is due today or earlier; warm: quiet for longer than the stage's threshold */
+  reason: 'promise' | 'task' | 'warm';
+  /** since when they are due: the earliest due task's deadline, or the last contact plus the threshold */
+  dueAt: Instant;
+  /** the tasks due today or earlier, earliest first (empty for warm) */
+  taskIds: string[];
+  /** warm: whole days since the last contact (since they became the agent's when never contacted) */
+  quietDays: number | null;
+  neverContacted: boolean;
+}
+
+/**
+ * Who the agent should follow up with today, most overdue first, capped. A person is in it once: by their earliest
+ * due task, else by being quiet in a warm stage with no dated next step. Never someone who opted out of every channel.
+ */
+export function planFollowUpToday(i: { now: Instant; zone: IanaZone; people: readonly FollowUpPersonFacts[]; cap?: number }): { people: FollowUpTodayEntry[]; total: number } {
+  const { now } = i;
+  const tomorrow = startOfTomorrow(now, i.zone);
+  const out: FollowUpTodayEntry[] = [];
+  for (const p of i.people) {
+    if (optedOutOfEveryChannel(p.gate)) continue;
+    const dated = p.tasks.map((t) => ({ t, deadline: promiseDeadline(t, i.zone) })).filter((x): x is { t: PromiseTask; deadline: Instant } => x.deadline !== null);
+    // due today or earlier: its instant is before tomorrow (an all-day task's own day has started)
+    const due = dated.filter((x) => (x.t.dueAllDay ? (x.t.dueAt as Instant) : x.deadline) < tomorrow).sort((a, b) => a.deadline - b.deadline || a.t.createdAt - b.t.createdAt || (a.t.taskId < b.t.taskId ? -1 : 1));
+    const first = due[0];
+    if (first) {
+      out.push({ contactId: p.contactId, reason: first.t.kind === 'promise' ? 'promise' : 'task', dueAt: first.deadline, taskIds: due.map((x) => x.t.taskId), quietDays: null, neverContacted: false });
+      continue;
+    }
+    const days = WARM_FOLLOW_UP_DAYS[p.stage];
+    // a dated next step is already set: they come due with it, not before
+    if (days === undefined || dated.length > 0) continue;
+    const anchor = p.lastContactAt ?? p.sinceAt;
+    if (!(now - anchor > days * DAY_MS)) continue;
+    out.push({ contactId: p.contactId, reason: 'warm', dueAt: instant(anchor + days * DAY_MS), taskIds: [], quietDays: Math.floor((now - anchor) / DAY_MS), neverContacted: p.lastContactAt === null });
+  }
+  out.sort((a, b) => a.dueAt - b.dueAt || (a.contactId < b.contactId ? -1 : a.contactId > b.contactId ? 1 : 0));
+  return { people: out.slice(0, i.cap ?? FOLLOW_UP_TODAY_CAP), total: out.length };
+}
+
+/** Why a person is in the plan, in words. Never scored: these reasons carry no points. */
+export function followUpTodayReasons(e: FollowUpTodayEntry, o: { now: Instant; stageLabel: string }): FeedReason[] {
+  const f = textLabels(o.now);
+  if (e.reason === 'warm') {
+    if (e.neverContacted) return [{ code: 'WARM_NEVER_CONTACTED', label: `${o.stageLabel}: no conversation yet` }];
+    const d = e.quietDays ?? 0;
+    return [{ code: 'WARM_NO_CONTACT', label: `${o.stageLabel}: no conversation for ${d} day${d === 1 ? '' : 's'}` }];
+  }
+  const overdue = o.now >= e.dueAt;
+  const promise = e.reason === 'promise';
+  const first: FeedReason = promise
+    ? { code: overdue ? 'PROMISE_OVERDUE' : 'PROMISE_DUE', label: overdue ? `You promised this; ${f.since(e.dueAt)} overdue` : `You promised this; due ${f.in(e.dueAt)}` }
+    : { code: overdue ? 'TASK_OVERDUE' : 'TASK_DUE', label: overdue ? `Overdue by ${f.since(e.dueAt)}` : `Due ${f.in(e.dueAt)}` };
+  return e.taskIds.length > 1 ? [first, { code: 'MORE_DUE', label: `${e.taskIds.length} tasks due today or earlier` }] : [first];
+}
+
+/**
+ * What a row of the plan offers: the agent's own call, text or email on a channel that is open, Done for the due
+ * task, and the person's page. Nothing here sends by itself.
+ */
+export function followUpActions(contactId: ContactId, gate: GateSummary | undefined, taskId: string | null): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
+  const usable: OneTapAction[] = [];
+  if (gate?.voice === undefined) usable.push({ kind: 'call', label: 'Call', contactId });
+  if (gate?.sms === undefined) usable.push({ kind: 'text', label: 'Text', contactId });
+  if (gate?.email === undefined) usable.push({ kind: 'email', label: 'Email', contactId });
+  const open: OneTapAction = { kind: 'open_contact', label: 'Open', contactId };
+  const done: OneTapAction[] = taskId === null ? [] : [{ kind: 'complete_task', label: 'Done', taskId: taskId as never }];
+  const [primary, ...rest] = usable;
+  if (primary === undefined) return { primaryAction: open, alternatives: done };
+  return { primaryAction: primary, alternatives: [...rest, ...done, open] };
 }
