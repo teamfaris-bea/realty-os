@@ -81,8 +81,9 @@ export function scopeRecordsSql(scope: PeopleScope) {
 /**
  * The people of a scope, as the CTEs `t` (its records), `gone` and `person` (each record, and for a record merged away
  * since, every record of its person: app.contact_person_ids; only those are walked). A merge stops the merged-away
- * record's plans and moves its drafts and its saved searches' person to the survivor (packages/db ownership/merge.ts),
- * so whatever is live for a person sits on a record in `person`.
+ * record's plans and moves its drafts to the survivor (packages/db ownership/merge.ts), so whatever is live for a
+ * person sits on a record in `person`. A merge moves no saved search: a merged-away record's search is never alerted
+ * (and so never held), and the person's live searches sit on the survivor, which is in `person` too.
  */
 export function scopePeopleCtes(scope: PeopleScope) {
   return sql`t AS MATERIALIZED (${scopeRecordsSql(scope)}),
