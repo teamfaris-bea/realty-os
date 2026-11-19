@@ -1338,6 +1338,251 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
     ],
     "type": "object",
   },
+  "TeamQueueResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "generatedAt": {
+        "type": "string",
+      },
+      "groups": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "atLeast": {
+              "type": "boolean",
+            },
+            "empty": {
+              "type": "string",
+            },
+            "key": {
+              "enum": [
+                "new_lead",
+                "unanswered_reply",
+                "due_promise",
+                "overdue_follow_up",
+                "appointment_outcome",
+              ],
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "more": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "rows": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "contact": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "name": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                    ],
+                    "type": "object",
+                  },
+                  "key": {
+                    "type": "string",
+                  },
+                  "offHours": {
+                    "type": "boolean",
+                  },
+                  "owner": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "owner",
+                          "on_offer",
+                          "pond",
+                          "unassigned",
+                        ],
+                        "type": "string",
+                      },
+                      "label": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "pondId": {
+                        "anyOf": [
+                          {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string",
+                          },
+                          {
+                            "type": "null",
+                          },
+                        ],
+                      },
+                      "userId": {
+                        "anyOf": [
+                          {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string",
+                          },
+                          {
+                            "type": "null",
+                          },
+                        ],
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "userId",
+                      "name",
+                      "pondId",
+                      "label",
+                    ],
+                    "type": "object",
+                  },
+                  "since": {
+                    "type": "string",
+                  },
+                  "source": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "staffedSeconds": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "waitingSeconds": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "why": {
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "key",
+                  "contact",
+                  "source",
+                  "owner",
+                  "why",
+                  "since",
+                  "waitingSeconds",
+                  "staffedSeconds",
+                  "offHours",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "total": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "key",
+            "label",
+            "empty",
+            "rows",
+            "total",
+            "more",
+            "atLeast",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "staffedHours": {
+        "additionalProperties": false,
+        "properties": {
+          "close": {
+            "type": "string",
+          },
+          "open": {
+            "type": "string",
+          },
+          "zone": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "open",
+          "close",
+          "zone",
+        ],
+        "type": "object",
+      },
+      "windows": {
+        "additionalProperties": false,
+        "properties": {
+          "appointmentDays": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "newLeadDays": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "replyDays": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "taskDays": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "newLeadDays",
+          "replyDays",
+          "taskDays",
+          "appointmentDays",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "groups",
+      "staffedHours",
+      "windows",
+      "generatedAt",
+    ],
+    "type": "object",
+  },
   "TeamScoreboardResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -1560,6 +1805,7 @@ exports[`api/accountability route table and schemas > R-PERM-1: every accountabi
   "GET /api/team/exceptions exception.view authorize(exception.view)",
   "GET /api/team/exceptions/:dedupeKey exception.view authorize(exception.view)",
   "GET /api/team/momentum scoreboard.view authorize(scoreboard.view)",
+  "GET /api/team/queue team_queue.view authorize(team_queue.view)",
   "GET /api/team/scoreboard scoreboard.view authorize(scoreboard.view)",
   "POST /api/team/exceptions/:dedupeKey/reassign exception.reassign authorize(exception.reassign)",
   "POST /api/team/exceptions/:dedupeKey/reopen exception.resolve authorize(exception.resolve)",

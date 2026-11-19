@@ -19,13 +19,13 @@ afterAll(async () => {
   await h?.close();
 });
 
-const PREFIXES = ['/api/team/exceptions', '/api/scoreboard', '/api/team/scoreboard', '/api/team/momentum'];
+const PREFIXES = ['/api/team/exceptions', '/api/scoreboard', '/api/team/scoreboard', '/api/team/momentum', '/api/team/queue'];
 const rows = () => h.app.platform.routeTable.filter((r) => PREFIXES.some((p) => r.url === p || r.url.startsWith(`${p}/`)) && r.method !== 'HEAD');
 
 describe('api/accountability route table and schemas', () => {
   it('R-PERM-1: every accountability route declares a core Action and carries authorize(<that action>) (snapshot)', () => {
     const table = rows().map((r) => `${r.method} ${r.url} ${r.auth}${r.authorizes ? ` authorize(${r.authorizes})` : ''}`);
-    expect(table.length).toBe(9);
+    expect(table.length).toBe(10); // 9, and the team work queue (b19, read-only)
     for (const r of rows()) expect(r.authorizes).toBe(r.auth);
     expect(table.sort()).toMatchSnapshot();
   });
@@ -37,6 +37,7 @@ describe('api/accountability route table and schemas', () => {
     expect((await call(tl, 'POST', `/team/exceptions/${key}/resolve`, { note: 'x', tenant_id: w.tenantId })).status).toBe(422);
     expect((await call(tl, 'GET', `/team/exceptions?tenant_id=${w.tenantId}`)).status).toBe(422);
     expect((await call(tl, 'GET', `/scoreboard?tenantId=${w.tenantId}`)).status).toBe(422);
+    expect((await call(tl, 'GET', `/team/queue?tenantId=${w.tenantId}`)).status).toBe(422);
   });
 
   it('R-AST-13 R-TEN-3: response schemas have no confidence* fields, no score, and no tenant id fields (snapshot)', () => {
@@ -56,6 +57,7 @@ describe('api/accountability route table and schemas', () => {
     const anon = h.client();
     expect((await anon.request('GET', '/api/team/exceptions')).statusCode).toBe(401);
     expect((await anon.request('GET', '/api/scoreboard')).statusCode).toBe(401);
+    expect((await anon.request('GET', '/api/team/queue')).statusCode).toBe(401);
     const r = await w.teamLead!.request('POST', `/api/team/exceptions/${encodeURIComponent(`appt:${'0'.repeat(8)}-0000-7000-8000-${'0'.repeat(12)}`)}/verify`, {}, { origin: null });
     expect(r.statusCode).toBe(403);
   });

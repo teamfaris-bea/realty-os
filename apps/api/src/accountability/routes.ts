@@ -9,6 +9,7 @@
 //   GET  /scoreboard?userId=&range=                          scoreboard.view    (agent/ISA: self; TL: team)
 //   GET  /team/scoreboard?range=                             scoreboard.view
 //   GET  /team/momentum                                      scoreboard.view
+//   GET  /team/queue                                         team_queue.view    (Owner/Admin: all; TL: their teams and pond leads; read-only)
 //
 // Authorization: core.can on facts read from RLS-visible rows (DATA_MODEL §3). An item the caller cannot
 // see, or may not act on, is 404 (R-PERM-5). List routes authorize the caller's own scope; RLS decides
@@ -23,11 +24,14 @@ import { accTx, actorOf } from './common.js';
 import { type Verb, actOnException, exceptionFacts, getException, listExceptions, reassignException } from './exceptions.js';
 import * as S from './schemas.js';
 import { scoreboardFor, teamMomentum, teamScoreboard } from './scoreboard.js';
+import { teamQueue } from './teamQueue.js';
 
 const keyOf = (req: FastifyRequest) => (req.params as { dedupeKey: string }).dedupeKey;
 const itemFacts = (req: FastifyRequest) => accTx(req, (tx, _now, actor) => exceptionFacts(tx, actor, keyOf(req)));
 /** list routes: the caller's own scope (RLS / the aggregate functions narrow the rows) */
 const ownScope = () => ({ own: true });
+/** the team routes of b19: the caller asks for their teams' rows (a Team Lead's `team` scope; Owner/Admin need none) */
+const teamScope = () => ({ team: true });
 
 async function register(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -72,6 +76,15 @@ async function register(app: FastifyInstance): Promise<void> {
       if (!out.ok) throw out.error;
       return accTx(req, (tx, now, actor) => getException(tx, actor, envelope(), req.params.dedupeKey, now));
     },
+  );
+
+  // ---- the team work queue (b19 team-queue lane; read-only) ----
+  // team_queue.view: Owner and Admin, and a Team Lead for their teams (the queries and RLS narrow the rows); an
+  // Agent, an ISA and a TC hold no grant, so core answers NOT_FOUND for them whatever the facts say (R-PERM-5).
+  r.get(
+    '/team/queue',
+    { config: { auth: 'team_queue.view' }, preHandler: authorize('team_queue.view', teamScope), schema: { querystring: S.TeamQueueQuery, response: { 200: S.TeamQueueResponse } } },
+    async (req) => accTx(req, (tx, now) => teamQueue(tx, now)),
   );
 
   // ---- scoreboard and momentum ----

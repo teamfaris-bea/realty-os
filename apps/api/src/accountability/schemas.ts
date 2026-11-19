@@ -4,7 +4,7 @@
 // R-AST-13: no response carries a confidence field; exceptions explain themselves with evidence (source,
 // locator, short explanation) and needs-review flags. R-ACC-4: every count travels with its denominator.
 // Snapshot-tested in schemas.test.ts.
-import { EXCEPTION_TYPES } from '@realty/core/priority';
+import { EXCEPTION_TYPES, TEAM_QUEUE_GROUPS } from '@realty/core/priority';
 import { z } from 'zod';
 import { DEDUPE_KEY_PATTERN } from './exceptions.js';
 import { RANGE_KEYS } from './scoreboard.js';
@@ -139,6 +139,46 @@ export const MomentumResponse = z.object({
   generatedAt: z.string(),
 });
 
+// ---- the team work queue (b19 team-queue lane; R-TEAMQ-1..6) -------------------------------------------------
+
+/** GET /team/queue takes no input: the caller's role and teams decide the rows (R-TEN-3: never a tenant id). */
+export const TeamQueueQuery = z.strictObject({});
+
+const QueueOwnerSchema = z.object({
+  kind: z.enum(['owner', 'on_offer', 'pond', 'unassigned']),
+  userId: uuid.nullable(),
+  name: z.string().nullable(),
+  pondId: uuid.nullable(),
+  label: z.string().min(1),
+});
+export const TeamQueueRowSchema = z.object({
+  key: z.string(),
+  contact: z.object({ id: uuid, name: z.string() }),
+  source: z.string().nullable(),
+  owner: QueueOwnerSchema,
+  why: z.string().min(1),
+  since: z.string(),
+  waitingSeconds: count,
+  staffedSeconds: count.nullable(),
+  offHours: z.boolean(),
+});
+export const TeamQueueResponse = z.object({
+  groups: z.array(
+    z.object({
+      key: z.enum(TEAM_QUEUE_GROUPS as unknown as ['new_lead', 'unanswered_reply', 'due_promise', 'overdue_follow_up', 'appointment_outcome']),
+      label: z.string(),
+      empty: z.string(),
+      rows: z.array(TeamQueueRowSchema),
+      total: count,
+      more: count,
+      atLeast: z.boolean(),
+    }),
+  ),
+  staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
+  windows: z.object({ newLeadDays: count, replyDays: count, taskDays: count, appointmentDays: count }),
+  generatedAt: z.string(),
+});
+
 /** Every response schema of the module (snapshot-tested: no confidence, no tenant id). */
 export const ACCOUNTABILITY_RESPONSE_SCHEMAS = {
   QueueResponse,
@@ -146,4 +186,5 @@ export const ACCOUNTABILITY_RESPONSE_SCHEMAS = {
   ScoreboardResponse,
   TeamScoreboardResponse,
   MomentumResponse,
+  TeamQueueResponse,
 } as const;
