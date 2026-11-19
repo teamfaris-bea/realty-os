@@ -10,8 +10,8 @@
 //
 // After a text or email went out, the same sheet shows the stage step. The send route answers no stage suggestion,
 // so the step reads the signal ("we sent a text, no reply yet") by core's own table against the person's fresh
-// details (StageStep.tsx). A message that is only SCHEDULED has not been sent: it suggests nothing, and the step
-// says when it will go. A reply in the website chat suggests nothing either (the table reads texts and emails).
+// details (StageStep.tsx). A message that is only SCHEDULED or only QUEUED has not been sent: it suggests nothing, and
+// the step says when it will go, or that it is being sent (E783). A reply in the website chat suggests nothing either (the table reads texts and emails).
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonLink, Dialog } from '../../design/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
@@ -21,9 +21,13 @@ import type { ContactFullView } from '../feed/lib/types.js';
 import { TemplatePicker } from '../templates/TemplatePicker.js';
 import { StageStep, type StageSignal } from './StageStep.js';
 
-/** What a send that went out says about the stage: a text or email actually handed over is a try; anything else, nothing. */
+/**
+ * What a send says about the stage: a text or email the API reports SENT is a try; anything else, nothing. A message
+ * that is only queued has not gone out yet (the send-time check and the provider still decide), so it suggests
+ * nothing and is never worded as sent (E783): the step says "Sending to Jane." and keeps the stage.
+ */
 export function signalOfSend(result: string, channel: string): StageSignal | null {
-  if (result !== 'sent' && result !== 'queued') return null;
+  if (result !== 'sent') return null;
   if (channel === 'sms') return { kind: 'message', channel: 'text', direction: 'outbound' };
   if (channel === 'email') return { kind: 'message', channel: 'email', direction: 'outbound' };
   return null;

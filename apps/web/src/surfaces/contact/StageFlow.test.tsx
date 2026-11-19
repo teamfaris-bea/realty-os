@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeFetch, IDS, agentApp, allow, decision, fullContact, iso, reachability } from '../feed/lib/testing.js';
 import { detailsFixture, guideFixture, stageFixture } from '../people-edit/testing.js';
+import { signalOfSend } from '../people-edit/TextSheet.js';
 
 const C = IDS.jane;
 const EV = '01900000-0000-7000-8000-0000000e0002';
@@ -220,6 +221,30 @@ describe('one sheet, no navigation: text → stage step', () => {
     expect(suggested).toHaveAccessibleDescription(/You sent a text and they have not replied yet\./);
     expect(fake.callsTo(`POST /contacts/${C}/messages`)).toHaveLength(1);
     expect(router.state.location.pathname).toBe(`/contacts/${C}`);
+  });
+
+  it('L4 (E783): a text the API only QUEUED has not been sent yet: the step says "Sending to Jane.", never "sent", and suggests no stage', async () => {
+    const fake = page().on(`POST /contacts/${C}/messages`, { status: 200, body: { message: message('queued'), decision: decision({}), result: 'queued' } });
+    agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    await u.click(await within(await bar()).findByRole('button', { name: 'Text Jane Doe' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Text Jane Doe' });
+    await u.type(await within(sheet).findByRole('textbox', { name: 'Text message' }), 'On my way');
+    const send = within(sheet).getByRole('button', { name: 'Send' });
+    await waitFor(() => expect(send).toBeEnabled());
+    await u.click(send);
+    const s = await step();
+    expect(within(s).getByRole('status')).toHaveTextContent(/^Sending to Jane\.$/);
+    const group = await within(s).findByRole('radiogroup', { name: 'Stage' });
+    // nothing is suggested on the strength of a text that has not gone out: only "Keep", preselected
+    expect(within(group).getAllByRole('radio')).toHaveLength(1);
+    expect(within(group).getByRole('radio', { name: 'Keep New lead' })).toBeChecked();
+    expect(s.textContent).not.toMatch(/You sent a text|Sent to/);
+    expect(signalOfSend('queued', 'sms')).toBeNull();
+    expect(signalOfSend('queued', 'email')).toBeNull();
+    expect(signalOfSend('sent', 'sms')).toEqual({ kind: 'message', channel: 'text', direction: 'outbound' });
+    expect(signalOfSend('sent', 'email')).toEqual({ kind: 'message', channel: 'email', direction: 'outbound' });
+    for (const r of ['scheduled', 'dispatch_unknown', 'delivery_unconfirmed', 'failed', 'blocked', 'noop']) expect(signalOfSend(r, 'sms'), r).toBeNull();
   });
 
   it('a text that is only scheduled has not been sent: the step says when it goes and suggests no stage', async () => {
