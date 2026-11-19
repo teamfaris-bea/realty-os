@@ -204,10 +204,10 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
     const c = await newContact(agent, { phones: [phone] });
     expect((await inboundSms(h, phone, w.mainNumber, 'STOP')).statusCode).toBeLessThan(300);
     const p = await preview(agent, c, 'active');
-    expect(p.body.wontStart).toMatchObject({ reason: 'cannot_be_reached', sentence: 'Buyer plan will not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.' });
+    expect(p.body.wontStart).toMatchObject({ reason: 'cannot_be_reached', sentence: 'Buyer plan will not start: they texted STOP or otherwise opted out.' });
     const r = await changeStage(agent, c, 'active');
     expect(r.body.automation).toEqual({ skipped: 'cannot_be_reached', plan: 'Buyer plan' });
-    const did = 'Buyer plan did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.';
+    const did = 'Buyer plan did not start: they texted STOP or otherwise opted out.';
     expect(r.body.automationSentence).toBe(did);
     const st = await call<{ lastStageChange: { decision: { reason: string; sentence: string } } }>(agent, 'GET', `/contacts/${c}/playbook-status`);
     expect(st.body.lastStageChange.decision).toMatchObject({ reason: 'cannot_be_reached', sentence: did });
@@ -244,7 +244,7 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
     await reconcileAsJob(h, w.tenantId, ev);
     expect((await h.su.query('SELECT reason, unreachable_cause FROM stage_automation_decisions WHERE stage_event_id = $1', [ev])).rows).toEqual([{ reason: 'cannot_be_reached', unreachable_cause: 'opted_out' }]);
     const st = await call<{ lastStageChange: { decision: { sentence: string } } }>(agent, 'GET', `/contacts/${c}/playbook-status`);
-    expect(st.body.lastStageChange.decision.sentence).toBe('Buyer plan did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.');
+    expect(st.body.lastStageChange.decision.sentence).toBe('Buyer plan did not start: they texted STOP or otherwise opted out.');
   });
 
   it('L6 E787 the cause is the pure reading of the channels the plan messages on; a decision stored without one keeps the three-way sentence, and the database refuses a cause on any other reason', async () => {

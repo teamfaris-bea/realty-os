@@ -136,8 +136,9 @@ function OwnToast({ children }: { children: ReactNode }) {
       <InToastCtx.Provider value={true}>
         <ToastSlotCtx.Provider value={slot}>{children}</ToastSlotCtx.Provider>
       </InToastCtx.Provider>
-      <div data-testid="toast-stack" className={`pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center gap-2 px-4 ${TOAST_STACK_POS}`}>
-        <div ref={setSlot} className="flex w-full flex-col items-center empty:hidden" />
+      {/* no gap of its own: empty, the stack has no height (a fixed box with any height would count as a bar on the page) */}
+      <div data-testid="toast-stack" className={`pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center px-4 ${TOAST_STACK_POS}`}>
+        <div ref={setSlot} className="flex w-full flex-col items-center" />
       <div data-testid="people-toast" className="flex w-full justify-center">
         {toast ? (
           <div className="pointer-events-auto flex max-w-md flex-wrap items-center justify-end gap-x-3 rounded-xl bg-ink px-4 py-2 text-[15px] font-medium text-surface shadow-lg">

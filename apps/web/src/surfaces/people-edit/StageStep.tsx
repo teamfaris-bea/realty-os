@@ -73,7 +73,7 @@ export function suggestionFromSignal(details: Pick<Details, 'stage'>, signal: St
 
 export function Saved({ text }: { text: string }) {
   return (
-    <p role="status" data-testid="stage-step-saved" className="rounded-xl bg-ok-soft px-3 py-1.5 text-[15px] font-medium text-ink [overflow-wrap:anywhere]">
+    <p role="status" data-testid="stage-step-saved" className="rounded-xl bg-ok-soft px-3 py-1 text-[15px] font-medium text-ink [overflow-wrap:anywhere]">
       {text}
     </p>
   );

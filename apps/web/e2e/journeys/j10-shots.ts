@@ -3,6 +3,8 @@
 // "iPhone 13" device descriptor on Chromium, as the e2e phone project uses it. That is an EMULATED phone: it is not a
 // real iPhone and not Safari, and the "keyboard" shot only SIMULATES an on-screen keyboard by standing a shorter
 // window.visualViewport in (Chromium's emulation has no on-screen keyboard); the grey band says so in the picture.
+// b19 fix pass: retaken after the sheet's redesign, with two more views on each target: the Log sheet with the stage
+// step in place (8) and the stage step after a sent text (9).
 // Run: pnpm --filter @realty/web exec tsx e2e/journeys/j10-shots.ts <outDir>
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
@@ -118,14 +120,16 @@ try {
     await toastGone();
     await shot('3-stage-step-preview-will-start-a-plan');
     if (phone) {
-      // the same step scrolled to its full preview and the follow-up chips
-      await step.getByRole('group', { name: 'Follow-up' }).scrollIntoViewIfNeeded();
+      // the same step scrolled to its end: the follow-up and the footnote under it (at open the follow-up is already
+      // on screen; only the footnote is under the fold)
+      await step.getByTestId('stage-never-note').scrollIntoViewIfNeeded();
       await shot('3b-stage-step-full-preview-and-follow-up');
     }
     await press(step.getByRole('button', { name: 'Change to Connected' }));
     await panel.getByTestId('plan-state').getByText('Running').waitFor({ timeout: 20_000 });
     await toastGone();
-    await scrollTo(panel);
+    // (on the phone the stage and its chips stay in view above the panel, clear of the top bar)
+    await scrollTo(panel, phone ? 135 : 90);
     await shot('1-contact-with-what-happens-next-panel');
     if (!phone) {
       // the whole person page, so the panel is seen in its place under the stage, its chips and the details
@@ -139,7 +143,8 @@ try {
     // Stop, and what the panel says after
     await press(panel.getByRole('button', { name: `Stop ${PLAN}` }));
     await panel.getByTestId('plan-state').getByText('Stopped').waitFor({ timeout: 20_000 });
-    await scrollTo(panel);
+    // (on the phone the stage and its chips stay in view above the panel, clear of the top bar)
+    await scrollTo(panel, phone ? 135 : 90);
     await shot('5-panel-after-stop');
 
     // ---- a person who texted STOP: the reason, before the save ----
@@ -150,6 +155,31 @@ try {
     await page.getByRole('dialog', { name: `Stage for ${omar.name}` }).getByTestId('stage-step-effect').getByText(/will not start/).waitFor({ timeout: 20_000 });
     await toastGone();
     await shot('4-stage-step-blocked-reason-texted-stop');
+
+    // ---- the Log sheet with the stage step in place: Log → outcome → ONE button ----
+    const noor = await assignedLead(stack, 'Noor', phone ? 'Castellanos' : 'Abernathy');
+    await open(noor);
+    await press(phone ? page.getByTestId('person-phone-bar').getByRole('button', { name: 'Log', exact: true }) : page.getByRole('button', { name: 'Log', exact: true }));
+    const log = page.getByRole('dialog', { name: `Log for ${noor.name}` });
+    await press(log.getByRole('group', { name: 'Outcome' }).getByRole('button', { name: 'Left voicemail' }));
+    await log.getByRole('radio', { name: 'Trying to reach Suggested' }).waitFor({ timeout: 20_000 });
+    await log.getByTestId('stage-step-effect').getByText('No plan starts on this stage.').waitFor({ timeout: 20_000 });
+    await shot('8-log-sheet-stage-step-in-place');
+    await press(log.getByRole('button', { name: 'Close' }));
+
+    // ---- the stage step after a text sent from the text sheet (the fake SMS provider takes it) ----
+    const tess = await assignedLead(stack, 'Tess', phone ? 'Wainwright' : 'Bergstrom');
+    await open(tess);
+    await press(phone ? page.getByTestId('person-phone-bar').getByRole('button', { name: `Text ${tess.name}` }) : page.getByRole('button', { name: 'Text', exact: true }));
+    const texting = page.getByRole('dialog', { name: `Text ${tess.name}` });
+    await texting.getByRole('textbox', { name: 'Text message' }).fill(`Hi ${tess.first}, this is your agent. Is now a good time to talk about your search?`);
+    await press(texting.getByRole('button', { name: 'Send', exact: true }));
+    const after = page.getByRole('dialog', { name: `Stage for ${tess.name}` });
+    await after.getByRole('radio', { name: 'Trying to reach Suggested' }).waitFor({ timeout: 20_000 });
+    await after.getByTestId('stage-step-effect').getByText('No plan starts on this stage.').waitFor({ timeout: 20_000 });
+    await toastGone();
+    await shot('9-text-sheet-stage-step');
+    await press(after.getByRole('button', { name: 'Close' }));
 
     if (phone) {
       // ---- the Text sheet with the on-screen keyboard SIMULATED: a visual viewport KEYBOARD_PX shorter ----

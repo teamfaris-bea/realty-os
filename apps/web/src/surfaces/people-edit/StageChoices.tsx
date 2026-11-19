@@ -61,7 +61,7 @@ export function StageRow({ stage, current = false, locked = false, lockedBy, bad
       aria-describedby={describedBy}
       disabled={locked || disabled}
       onClick={onPick}
-      className={`flex min-h-tap w-full flex-col justify-center gap-0.5 rounded-xl border px-3 py-2 text-left ${on ? 'border-accent bg-accent-soft' : 'border-transparent'} ${mode === 'select' && !on ? 'border-line' : ''} disabled:opacity-70`}
+      className={`flex min-h-tap w-full flex-col justify-center gap-0.5 rounded-xl border px-3 ${compact ? 'py-1.5' : 'py-2'} text-left ${on ? 'border-accent bg-accent-soft' : 'border-transparent'} ${mode === 'select' && !on ? 'border-line' : ''} disabled:opacity-70`}
     >
       <span className="flex w-full items-start justify-between gap-3">
         <span id={`${id}-l`} className={`min-w-0 text-[17px] text-ink [overflow-wrap:anywhere] ${on ? 'font-semibold' : 'font-medium'}`}>

@@ -146,20 +146,6 @@ async function expectAtOpen(page: Page, sheet: Locator, primary: Locator, what: 
   expect(b.y + b.height, 'the primary button is on screen').toBeLessThanOrEqual(view.height + 0.5);
   expect(b.y, 'the primary button is under the body, not over it').toBeGreaterThanOrEqual(frame.y + frame.height - 0.5);
 }
-/**
- * M4, the longer case (a refusal sentence of several lines): `l` is not on screen when the step opens, but it is
- * reached by scrolling the sheet's body alone, with the primary button still wholly on screen.
- */
-async function expectReachable(page: Page, sheet: Locator, primary: Locator, name: string, l: Locator) {
-  const body = sheet.getByTestId('dialog-body');
-  await l.evaluate((el) => el.scrollIntoView({ block: 'end' }));
-  const frame = (await body.boundingBox())!;
-  const r = (await l.boundingBox())!;
-  expect(r.y, `${name}: top inside the sheet's visible body after scrolling it`).toBeGreaterThanOrEqual(frame.y - 0.5);
-  expect(r.y + r.height, `${name}: bottom inside the sheet's visible body after scrolling it`).toBeLessThanOrEqual(frame.y + frame.height + 0.5);
-  await expect(primary).toBeInViewport({ ratio: 1 });
-  await body.evaluate((el) => el.scrollTo(0, 0));
-}
 const stepParts = (s: Locator, suggested: string) => ({ 'what was logged': s.getByTestId('stage-step-saved'), 'the suggested choice': s.getByRole('radio', { name: `${suggested} Suggested` }), 'the effect line': s.getByTestId('stage-step-effect'), 'the follow-up chips': s.getByRole('group', { name: 'Follow-up' }) });
 
 async function axeViolations(page: Page): Promise<string[]> {
@@ -361,17 +347,14 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   const s = step(page, omar);
   await expect(s.getByRole('radio', { name: 'Connected Suggested' })).toBeChecked();
   const preview = s.getByTestId('stage-preview');
-  const why = `${PLAN} will not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.`;
+  const why = `${PLAN} will not start: they texted STOP or otherwise opted out.`;
   await expect(preview.getByText(why)).toBeVisible({ timeout: 15_000 });
   await expect(s.getByText(/Will start/)).toHaveCount(0);
   await expect(s.getByTestId('stage-step-effect')).toHaveText(why);
   await expect(s.getByText(why)).toHaveCount(1);
   await expect(s.getByTestId('stage-step-effect')).toBeInViewport({ ratio: 1 });
-  // the refusal is a longer sentence: what was logged, the suggested choice and the reason are on screen at open; the
-  // follow-up is one scroll of the sheet's body away, with the button still on screen
-  const { 'the follow-up chips': followUp, ...above } = stepParts(s, 'Connected');
-  await expectAtOpen(page, s, s.getByTestId('stage-step-confirm'), above);
-  await expectReachable(page, s, s.getByTestId('stage-step-confirm'), 'the follow-up chips', followUp!);
+  // with the refusal's reason on two lines the whole step is still on screen at open
+  await expectAtOpen(page, s, s.getByTestId('stage-step-confirm'), stepParts(s, 'Connected'));
   await shot(page, info, 'j10', '5a-stage-step-blocked');
   await tap(page, s.getByRole('button', { name: 'Change to Connected' }));
   // L5: the toast, the preview and the panel word the decision with the server's one sentence (will not / did not)
@@ -387,7 +370,7 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   }
   const row = playbookRow(page);
   await expect(row.getByText('None running')).toBeVisible({ timeout: 15_000 });
-  await expect(row.getByText(`${PLAN} did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.`)).toBeVisible();
+  await expect(row.getByText(`${PLAN} did not start: they texted STOP or otherwise opted out.`)).toBeVisible();
   await expect(row.getByRole('button')).toHaveCount(0);
   await shot(page, info, 'j10', '5b-panel-blocked');
   expect(await stageOf(omar.id)).toBe('connected');

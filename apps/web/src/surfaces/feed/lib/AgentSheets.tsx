@@ -104,7 +104,7 @@ function AnnounceToast({ text }: { text: string | null }) {
   const slot = useToastSlot();
   const el = (
     <div aria-hidden="true" data-testid="toast" className="flex w-full justify-center">
-      {text ? <p className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{text}</p> : null}
+      {text ? <p className="pointer-events-auto mb-2 max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{text}</p> : null}
     </div>
   );
   // before the stack is on the page (the first render) the toast is empty, and is kept in the tree where it is

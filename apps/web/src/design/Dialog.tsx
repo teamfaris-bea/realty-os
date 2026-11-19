@@ -149,7 +149,7 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
         tabIndex={-1}
         className={`pb-safe pointer-events-auto relative flex ${closeButton ? 'max-h-[94%]' : 'max-h-[90%]'} w-full flex-col rounded-t-2xl bg-surface shadow-xl outline-none ${placement === 'side' ? 'md:h-full md:max-h-none md:max-w-md md:rounded-none md:border-l md:border-line' : 'md:max-w-lg md:rounded-2xl'}`}
       >
-        <div className={`px-5 ${closeButton ? 'pt-3' : 'pt-5'}`}>
+        <div className={`px-5 ${closeButton ? 'pt-2' : 'pt-5'}`}>
           {closeButton ? (
             <div className="flex items-start justify-between gap-3">
               <h2 id={`${id}-t`} className="min-w-0 pt-2 text-[20px] font-semibold text-ink [overflow-wrap:anywhere]">
@@ -170,7 +170,7 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
             </p>
           ) : null}
         </div>
-        <div data-testid="dialog-body" className={`min-h-0 flex-1 overflow-y-auto px-5 ${closeButton ? 'pb-4 pt-2' : 'pb-5 pt-4'}`}>
+        <div data-testid="dialog-body" className={`min-h-0 flex-1 overflow-y-auto px-5 ${closeButton ? 'pb-4 pt-1' : 'pb-5 pt-4'}`}>
           {children}
         </div>
         {footer ? <div className="border-t border-line px-5 py-3">{footer}</div> : null}

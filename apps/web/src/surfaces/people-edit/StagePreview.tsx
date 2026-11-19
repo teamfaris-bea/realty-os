@@ -59,7 +59,7 @@ export function StagePreviewBlock({ contactId, to, effectId }: { contactId: stri
   const [stopped, setStopped] = useState<string | null>(null);
   const p = q.data;
   return (
-    <div className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[15px] text-ink" data-testid="stage-preview">
+    <div className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-1.5 text-[15px] text-ink" data-testid="stage-preview">
       <p id={effectId} data-testid="stage-step-effect" className={`leading-snug [overflow-wrap:anywhere] ${p?.allowed && p.starts ? 'font-semibold' : ''} ${!p && q.isPending ? 'text-ink-muted' : ''}`}>
         {p ? effectLine(p) : q.isError ? PREVIEW_FAILED : PREVIEW_LOADING}
       </p>

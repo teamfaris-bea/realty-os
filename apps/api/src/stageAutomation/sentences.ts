@@ -28,7 +28,7 @@ const WHY: Record<Exclude<SkipReason, 'source_no_automated_contact' | 'source_un
  * was kept) the sentence names all of them, as it always did.
  */
 const UNREACHABLE: Record<UnreachableCause, string> = {
-  opted_out: 'they texted STOP or otherwise opted out, and a plan never messages over an opt-out.',
+  opted_out: 'they texted STOP or otherwise opted out.',
   do_not_contact: 'they are marked do not contact.',
   wrong_number: 'their number was reported as a wrong number.',
   no_address: 'they have no phone or email this plan could use.',
