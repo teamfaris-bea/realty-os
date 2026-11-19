@@ -1,7 +1,7 @@
 // The Add follow-up (a task) and Add appointment dialogs of the person's page (PARITY_PLAN §1: the APIs exist; no
 // screen switch). They open from the "What happens next" panel's first row (NextPanel.tsx), and the follow-up
 // dialog also from the phone bar's Next (R-STG-4).
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { firstNameOf } from './api.js';
 import { selectClass, usePersonAction, useToast } from './hooks.js';
@@ -31,8 +31,10 @@ export function TaskDialog({ contactId, name, onClose }: { contactId: string; na
   const dueId = useId();
   const act = usePersonAction(contactId);
   const toast = useToast();
+  // R-STG-6: one id for this dialog's task: a second tap, or a retry after a lost answer, answers the same task
+  const taskId = useRef<string>(globalThis.crypto.randomUUID());
   const addTask = async () => {
-    const r = await act.run('POST', '/tasks', { title: title.trim(), kind: 'follow_up', contactId, dueAt: new Date(due).toISOString() });
+    const r = await act.run('POST', '/tasks', { id: taskId.current, title: title.trim(), kind: 'follow_up', contactId, dueAt: new Date(due).toISOString() });
     if (r.ok) {
       toast({ text: 'Task added' });
       onClose();

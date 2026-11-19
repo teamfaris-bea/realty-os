@@ -105,6 +105,39 @@ describe('one sheet, no navigation: call → outcome → confirm the stage', () 
   });
 });
 
+describe('after the confirm the page shows the truth from the server, not what the sheet hoped', () => {
+  it('the "What happens next" panel is asked again after the stage change and says what the server says: the plan that started, running, with its next step', async () => {
+    const fake = page('attempting').on(`POST /calls/${IDS.call}/outcome`, { status: 200, body: { callId: IDS.call, outcome: 'connected', recordedAs: 'call', suggestedStage: { stage: 'connected', why: 'You talked with them. That is a two-way conversation.', locked: false, alsoOffer: [{ stage: 'nurture', locked: false }] } } });
+    const next = new Date(Date.now() + 86_400_000);
+    next.setHours(9, 0, 0, 0);
+    const running = {
+      plan: { enrollmentId: '01900000-0000-7000-8000-0000000e0001', name: 'Stay in touch', state: 'active', startedBy: { how: 'stage_change', userId: IDS.me, displayName: 'Ava Agent' }, startedAt: iso(0), next: { kind: 'message', channel: 'sms', dueAt: next.toISOString() }, blocked: null, deliveryUnconfirmed: null, canPause: true, canResume: false, canStop: true },
+      lastStageChange: { eventId: EV, to: 'connected', at: iso(0), pending: false, decision: { outcome: 'started', plan: 'Stay in touch', reason: null, sentence: 'Stay in touch started.' } },
+    };
+    fake.on(`POST /contacts/${C}/stage`, () => {
+      // from here on the server knows the plan started
+      fake.on(`GET /contacts/${C}/playbook-status`, { status: 200, body: running });
+      return { status: 200, body: { stage: stageFixture('connected'), previousStage: 'attempting', rowVersion: 2, eventId: EV, automation: { started: 'Stay in touch' }, stillRunning: null } };
+    });
+    agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    const panel = await screen.findByRole('region', { name: 'What happens next' });
+    expect(await within(panel).findByText('None running')).toBeInTheDocument();
+    await u.click(await within(await bar()).findByRole('button', { name: 'Call Jane Doe' }));
+    await u.click(await within(await screen.findByRole('dialog', { name: 'Call Jane Doe' })).findByRole('button', { name: 'Talked' }));
+    const s = await step();
+    const confirm = await within(s).findByRole('button', { name: 'Change to Connected' });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await u.click(confirm);
+    expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Connected. Started Stay in touch')).toBeInTheDocument();
+    expect(await within(panel).findByText('Stay in touch')).toBeInTheDocument();
+    expect(within(panel).getByText('Running')).toBeInTheDocument();
+    expect(within(panel).getByText('Next: text, tomorrow 9:00 AM')).toBeInTheDocument();
+    expect(within(panel).getByText('Started when you moved them to Connected')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Stop Stay in touch' })).toBeInTheDocument();
+  });
+});
+
 describe('one sheet, no navigation: log → stage step', () => {
   const activity = (over: Record<string, unknown> = {}) => ({ status: 201, body: { note: { id: 'n1' }, taskId: null, suggestDoNotContact: false, suggestedStage: VOICEMAIL, replayed: false, ...over } });
 
