@@ -1,13 +1,14 @@
 // The person-page sections module 58 adds through contact/sections.ts (PARITY_PLAN §5):
-// - the stage pill under the name, and on a phone a sticky Note · Log bar (Note → Save = 2 taps, Log →
-//   outcome → Save = 3 taps); on desktop an always-visible note box (type → ⌘↵ = 1) and a Log button;
+// - the stage pill under the name, and on a phone the working bar Call · Text · Log · Next · Note (PhoneBar.tsx;
+//   Note → Save = 2 taps, Log → outcome → Save = 3 taps); on desktop an always-visible note box (type → ⌘↵ = 1)
+//   and a Log button;
 // - buyer or seller and texting permission as their own chips beside the stage (R-STG-1);
 // - Notes, Details and "What happens next" (R-STG-4: the next task with Add follow-up / Add appointment, the
 //   automated playbook's status, and AI follow-up).
 import { type ReactNode, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Dialog, Notice, useStickyBottom } from '../../design/index.js';
+import { Button, Card, Dialog, Notice } from '../../design/index.js';
 import type { ContactFullView } from '../feed/lib/types.js';
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { LogSheet } from '../notes/LogSheet.js';
@@ -16,6 +17,7 @@ import { NotesList } from '../notes/NotesSection.js';
 import { useDetails } from './api.js';
 import { DetailsSection } from './DetailsSection.js';
 import { NextPanel, PersonChips } from './NextPanel.js';
+import { PhoneBar, usePhoneBarRef } from './PhoneBar.js';
 import { AppointmentDialog, TaskDialog } from './PlanSection.js';
 import { StagePill } from './StagePill.js';
 import { ToastProvider, useIsDesktop } from './hooks.js';
@@ -35,8 +37,7 @@ function Section({ title, children, action }: { title: string; children: ReactNo
   );
 }
 
-/** The Note · Log bar's own height on <html>: a bar stacked above it on the person page (AI care) offsets by it. */
-export const PERSON_BAR_VAR = '--person-bar-h';
+export { PERSON_BAR_VAR } from './PhoneBar.js';
 
 function Inner({ contact }: { contact: ContactFullView }) {
   const d = useDetails(contact.id);
@@ -44,8 +45,8 @@ function Inner({ contact }: { contact: ContactFullView }) {
   const navigate = useNavigate();
   const { call } = useAgentSheets();
   const [sheet, setSheet] = useState<'note' | 'log' | 'task' | 'appointment' | null>(null);
-  // b13 review F3-ui: the AI care bar (aiCare/Person.tsx) stacks above this one by its height (PERSON_BAR_VAR)
-  const stickyRef = useStickyBottom<HTMLDivElement>({ stackVar: PERSON_BAR_VAR });
+  // b13 review F3-ui: the AI care bar (aiCare/Person.tsx) stacks above the phone bar by its height (PERSON_BAR_VAR)
+  const barRef = usePhoneBarRef();
   if (d.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (d.isError) return <Notice tone="error">{d.error.message}</Notice>;
   const details = d.data.details;
@@ -76,17 +77,18 @@ function Inner({ contact }: { contact: ContactFullView }) {
 
       <NextPanel contact={contact} onAddTask={() => setSheet('task')} onAddAppointment={() => setSheet('appointment')} />
 
-      {/* the page's end clears the sticky Note · Log bar: a spacer at the end of <main>, not mid-page */}
+      {/* the page's end clears the phone bar: a spacer at the end of <main>, not mid-page */}
       {!desktop && typeof document !== 'undefined' && document.querySelector('main') ? createPortal(<div aria-hidden="true" data-sticky-spacer className="h-16" />, document.querySelector('main')!) : null}
       {!desktop ? (
-        <div ref={stickyRef} data-sticky data-testid="person-phone-bar" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-20 border-t border-line bg-surface/95 px-4 py-2 backdrop-blur md:hidden">
-          <div className="mx-auto grid max-w-2xl grid-cols-2 gap-2">
-            <Button onClick={() => setSheet('note')}>Note</Button>
-            <Button variant="secondary" onClick={() => setSheet('log')}>
-              Log
-            </Button>
-          </div>
-        </div>
+        <PhoneBar
+          contact={contact}
+          barRef={barRef}
+          onCall={() => call({ id: contact.id, name: contact.displayName })}
+          onText={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)}
+          onLog={() => setSheet('log')}
+          onNext={() => setSheet('task')}
+          onNote={() => setSheet('note')}
+        />
       ) : null}
       {sheet === 'note' ? (
         <Dialog title={`Note on ${contact.displayName}`} onClose={() => setSheet(null)} footer={<Button block variant="secondary" onClick={() => setSheet(null)}>Close</Button>}>
