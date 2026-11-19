@@ -329,6 +329,20 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     }
   });
 
+  it('R-TODAY-9: left at "Just now", the log carries the instant of the save, to the second (not the minute the sheet opened)', async () => {
+    const { fake, tap } = mount();
+    const s = await sheet();
+    await tap(within(s).getByRole('button', { name: 'No answer' }));
+    const save = primary(s);
+    await waitFor(() => expect(save).toBeEnabled());
+    const before = Date.now();
+    await tap(save);
+    await waitFor(() => expect(logPosts(fake)).toHaveLength(1));
+    const at = Date.parse((logPosts(fake)[0]!.body as { at: string }).at);
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
+  });
+
   it('R-TODAY-9: the quick times are all today and never ahead: now; an hour ago unless that was yesterday; this morning once it is past 10', () => {
     const at = (h: number, m = 0) => new Date(2026, 10, 19, h, m, 0, 0);
     const keys = (d: Date) => whenPresets(d).map((p) => p.key);

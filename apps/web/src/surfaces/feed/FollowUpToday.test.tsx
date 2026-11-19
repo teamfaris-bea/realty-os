@@ -63,6 +63,25 @@ describe('"Follow up today" on Today', () => {
     expect(within(screen.getByRole('region', { name: 'Next up' })).getAllByRole('article')).toHaveLength(1);
   });
 
+  it('a person in the plan is shown once even when another task of theirs has a card (the follow-up just set for tomorrow): that card leaves "Next up" too', async () => {
+    const tomorrow: FeedCard = card({ itemType: 'task_due', contact: { id: IDS.jane, name: 'Dana Reyes' }, task: { id: IDS.task, title: 'Follow up with Dana' }, reasons: [{ code: 'TASK_DUE', label: 'Due in 14 h' }], primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane }, subjectType: 'task', subjectId: IDS.task });
+    // a card about the same person that is not a task (their reply is waiting) stays: it is other work
+    const reply: FeedCard = card({ contact: { id: IDS.jane, name: 'Dana Reyes' }, reasons: [{ code: 'CLIENT_WAITING', label: 'They texted 5 min ago; no reply yet' }], primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane } });
+    open(withPlan(feed([], [tomorrow, reply]), [person()]));
+    await group();
+    const next = within(screen.getByRole('region', { name: 'Next up' })).getAllByRole('article');
+    expect(next).toHaveLength(1);
+    expect(within(next[0]!).getByText('They texted 5 min ago; no reply yet')).toBeInTheDocument();
+    expect(screen.queryByText('Due in 14 h')).toBeNull();
+  });
+
+  it('a row of the warm kind is headed "Gone quiet", never the generic "For you"', async () => {
+    open(withPlan(feed(), [person()]));
+    const row = within(await group()).getByRole('article', { name: 'Dana Reyes' });
+    expect(within(row).getByText('Gone quiet')).toBeInTheDocument();
+    expect(within(row).queryByText('For you')).toBeNull();
+  });
+
   it('when "Next up" holds only cards the group already shows, there is no empty "Next up" heading', async () => {
     const taskCard: FeedCard = card({ itemType: 'task_due', contact: { id: IDS.jane, name: 'Dana Reyes' }, task: { id: IDS.task, title: 'Send the comps' }, primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane }, subjectType: 'task', subjectId: IDS.task });
     open(withPlan(feed([], [taskCard]), [person({ taskIds: [IDS.task] })]));

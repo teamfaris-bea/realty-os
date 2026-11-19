@@ -56,7 +56,9 @@ describe('a follow-up card on Today', () => {
     // the stage, with the team's own label, beside the kind of card
     const stage = within(await screen.findByRole('article', { name: 'Dana Reyes' })).getByTestId('card-stage');
     expect(stage).toHaveTextContent('Connected');
-    expect(stage.parentElement).toHaveTextContent(/^You promised this · Connected$/);
+    expect(stage.parentElement!.parentElement).toHaveTextContent(/^You promised this· Connected$/);
+    // the kind of card is still its own element, found by its exact words
+    expect(within(await screen.findByRole('article', { name: 'Dana Reyes' })).getByText('You promised this')).toBeInTheDocument();
     // the reason is said once, not also as the old loose line under the name
     expect(screen.getAllByText('You promised this; due in 3 h')).toHaveLength(1);
   });

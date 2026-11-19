@@ -9,7 +9,7 @@
 //   person's page → the client's feed card closes.
 // Every step is checked in the database (ownership projection + ledger, messages, tasks, feed rows) and in
 // the fake provider's record of sends, not only on screen.
-import { expect, test } from 'playwright/test';
+import { type Page, expect, test } from 'playwright/test';
 import { feedCard, isPhone, pollSends, pollSql, shot, signIn, tap, toast } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
 
@@ -17,6 +17,9 @@ test.describe.configure({ mode: 'serial' });
 
 let stack: JourneyStack;
 let w: WorldInfo;
+
+/** What a send from Today's text sheet did, as the stage step that follows it says in its first line. */
+const sentLine = (page: Page, name: string) => page.getByRole('dialog', { name: `Stage for ${name}` }).getByTestId('stage-step-saved');
 
 test.beforeAll(async () => {
   test.setTimeout(300_000);
@@ -67,7 +70,9 @@ test('J1: a webhook lead is offered, accepted on this device, answered within it
   await box.fill(`Hi ${tag}, yes, 12 Oak St is available. Want to see it Saturday?`);
   await shot(page, info, 'j1', '2-first-text');
   await tap(page, page.getByRole('button', { name: 'Send', exact: true }));
-  await expect(toast(page).getByText(/^(Sent to Priya\.|Sending to Priya\.)$/)).toBeVisible({ timeout: 15_000 });
+  // b19 warm follow-up (R-TODAY-7): Text on a follow-up card is the text sheet on Today; after the send the same sheet
+  // goes on to the stage step, whose first line says what the send did (the toast said it before)
+  await expect(sentLine(page, name)).toHaveText(/^(Sent to Priya\.|Sending to Priya\.)$/, { timeout: 15_000 });
   const first = await pollSends(stack, (s) => s.sms.filter((m) => m.to === phone), (m) => m.length >= 1);
   expect(first).toHaveLength(1);
   expect(first[0]!.from).toBe(w.mainNumber);
@@ -96,7 +101,7 @@ test('J1: a webhook lead is offered, accepted on this device, answered within it
   await expect(box).toBeVisible({ timeout: 15_000 });
   await box.fill('Of course, see you both at 11.');
   await tap(page, page.getByRole('button', { name: 'Send', exact: true }));
-  await expect(toast(page).getByText(/^(Sent to Priya\.|Sending to Priya\.)$/)).toBeVisible({ timeout: 15_000 });
+  await expect(sentLine(page, name)).toHaveText(/^(Sent to Priya\.|Sending to Priya\.)$/, { timeout: 15_000 });
   const both = await pollSends(stack, (s) => s.sms.filter((m) => m.to === phone), (m) => m.length >= 2);
   expect(both.map((m) => m.body)).toEqual([expect.stringContaining('12 Oak St is available'), 'Of course, see you both at 11.']);
 

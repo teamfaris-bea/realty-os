@@ -91,6 +91,8 @@ export const ITEM_LABEL: Record<string, string> = {
   pond_new: 'New in the pond',
   saved_search_review: 'Saved search to review',
   missed_call: 'Missed call',
+  // a row of the daily plan (R-TODAY-6): quiet in a warm stage for longer than the stage's threshold
+  warm_follow_up: 'Gone quiet',
   // Phase 2/3 cards, written by their owning modules (core/priority FOREIGN_CARD_LABEL, module 18a)
   seller_update: 'Seller update to review',
   marketing_review: 'Marketing to review',

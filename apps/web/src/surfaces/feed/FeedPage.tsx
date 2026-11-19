@@ -82,8 +82,12 @@ function Feed() {
   // R-TODAY-6: the daily plan. A person due by a task is shown once, in the plan: that task's own card leaves "Next up"
   // (it is still one of the cards shown, so the count under the page does not change).
   const plan = data.followUpToday;
+  // The same goes for any other task card of a person in the plan (the follow-up just set for tomorrow comes into the
+  // feed a day ahead): their row is where their tasks are followed. Cards that are other work (a reply waiting, a
+  // draft to review) stay.
   const inPlan = new Set((plan?.people ?? []).flatMap((p) => p.taskIds));
-  const nextUp = data.scored.filter((c) => !(c.subjectType === 'task' && inPlan.has(c.subjectId)));
+  const planPeople = new Set((plan?.people ?? []).map((p) => p.contact?.id));
+  const nextUp = data.scored.filter((c) => !(c.subjectType === 'task' && (inPlan.has(c.subjectId) || (c.contact !== null && planPeople.has(c.contact.id)))));
   // one reachability request for every card whose one-tap action contacts someone (lane optout-visibility)
   const contactIds = [...new Set([...data.pinned, ...data.scored, ...(plan?.people ?? [])].flatMap((c) => (c.contact && [c.primaryAction, ...c.alternatives].some((a) => CONTACTING.has(a.kind)) ? [c.contact.id] : [])))];
   return (
@@ -229,15 +233,16 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
     <Card as="article" aria-labelledby={titleId} className={`flex flex-col gap-3 ${pinned ? 'border-accent/50' : ''}`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted [overflow-wrap:anywhere]">
-            {itemLabel(card.itemType)}
+          {/* the kind of card and, on a follow-up card, the person's stage: two elements, so each reads (and is found) whole */}
+          <div className="flex flex-wrap gap-x-1.5 text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+            <p>{itemLabel(card.itemType)}</p>
             {follow && card.stage ? (
-              <>
-                {' · '}
+              <p className="[overflow-wrap:anywhere]">
+                <span aria-hidden="true">· </span>
                 <span data-testid="card-stage">{card.stage.label}</span>
-              </>
+              </p>
             ) : null}
-          </p>
+          </div>
           {/* a name stays on one line; a card without a contact is headed by its first line, which wraps (it is the content) */}
           <h3 id={titleId} className={`text-[19px] font-semibold text-ink ${card.contact ? 'truncate' : 'break-words'}`}>
             {card.contact ? (

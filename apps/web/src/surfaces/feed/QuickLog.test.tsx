@@ -76,7 +76,7 @@ describe('"Log a call or conversation" from any screen', () => {
   });
 
   it('the entry → a recent person → an outcome → the one button = 4 taps, on a page that is not Today; saved as a logged call with a client id; the result is said once', async () => {
-    const { notes, tasks, fake, n, tap } = open('/search');
+    const { notes, tasks, fake, n, tap, u } = open('/search');
     await tap(await entry()); // 1
     const p = await picker();
     // most recent people first, in the server's order, before anything is typed
@@ -91,6 +91,7 @@ describe('"Log a call or conversation" from any screen', () => {
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 3
     const save = await within(sheet).findByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
     await waitFor(() => expect(save).toBeEnabled());
+    const readsBefore = fake.callsTo('GET /people?sort=last_activity_desc').length;
     await tap(save); // 4
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(n.taps).toBe(4);
@@ -102,6 +103,11 @@ describe('"Log a call or conversation" from any screen', () => {
     expect(screen.getByTestId('people-toast').textContent).toMatch(/^Call logged \(left voicemail\)\. Stage: Trying to reach\. Follow-up saved for .+ 9:00 AM/);
     // still on the page the agent was on
     expect(screen.getByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument();
+    // the lists behind the sheet are read again once it closes (the People page showed the old stage under a toast
+    // that said the new one): the people list the picker and the People page read
+    await u.click(await entry());
+    await within(await picker()).findAllByRole('button', { name: /^Log for / });
+    await waitFor(() => expect(fake.callsTo('GET /people?sort=last_activity_desc').length).toBeGreaterThan(readsBefore));
   });
 
   it('typing a name searches (from 2 letters); a person the viewer sees only as a card is not offered', async () => {

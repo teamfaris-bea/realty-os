@@ -12,9 +12,11 @@ import { useEffect, useId, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { LogSheet } from '../notes/LogSheet.js';
+import { PEOPLE_KEY } from '../people/api.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
 import type { SearchResponse } from './lib/types.js';
 
+const RECENT_KEY = ['quick-log', 'recent'];
 const MIN_QUERY = 2;
 const DEBOUNCE_MS = 150;
 const SHOWN = 8;
@@ -35,8 +37,9 @@ export default function QuickLogSheet({ title, onClose }: { /** the entry's own 
         // one pass: the follow-up the outcome suggests is preselected, and the closing toast says the whole result
         onePass={{}}
         onClose={() => {
-          // Today's card for this person (their last touch, their next step) is read again when the agent returns to it
-          void qc.invalidateQueries({ queryKey: ['feed'] });
+          // what the page behind shows about this person is read again: Today's card (their last touch, their next
+          // step), the People list (their stage), the task list, and this picker's own recent people
+          for (const key of [['feed'], PEOPLE_KEY, ['tasks'], RECENT_KEY]) void qc.invalidateQueries({ queryKey: key });
           onClose();
         }}
       />
@@ -56,7 +59,7 @@ function PersonPicker({ title, onPick, onClose }: { title: string; onPick: (w: W
   }, [text]);
   const searching = q.length >= MIN_QUERY;
   const recent = useQuery<{ people: { id: string; displayName: string }[] }, ApiError>({
-    queryKey: ['quick-log', 'recent'],
+    queryKey: RECENT_KEY,
     queryFn: ({ signal }) => api.get('/people?sort=last_activity_desc', { signal }),
     staleTime: 30_000,
   });

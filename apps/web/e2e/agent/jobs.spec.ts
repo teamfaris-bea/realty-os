@@ -103,7 +103,13 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(priyaCall.getByText("Your phone will ring first. Answer it and you're connected to Priya.")).toBeVisible({ timeout: 15_000 });
   await expect(priyaCall.getByRole('button', { name: 'Call anyway' })).toHaveCount(0);
   await priyaCall.getByRole('button', { name: 'No answer' }).click();
-  await expect(toast(page).getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
+  // b19 warm follow-up (R-TODAY-7): from a follow-up card on Today the outcome's tap goes on to the stage step in the
+  // same sheet, as on the person's page; its first line says what was saved (no toast says it over that line). A lead
+  // reassigned during the call has no stage step: the toast says the outcome became a task for the new owner.
+  const priyaStep = page.getByRole('dialog', { name: 'Stage for Priya Shah' });
+  await expect(priyaStep.getByRole('status').getByText('No answer logged').or(toast(page).getByText(/saved as a task for the new owner/))).toBeVisible();
+  if (await priyaStep.isVisible()) await priyaStep.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // text a lead: Text → the assistant's draft is prefilled → Send = 2 taps
   const text = { taps: 0 };
@@ -112,9 +118,16 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   const box = page.getByRole('textbox', { name: 'Text message' });
   await expect(box).not.toHaveValue('', { timeout: 15_000 });
   await expect(page.getByText('Drafted by the assistant.')).toBeVisible();
-  await tap(page, page.getByRole('button', { name: 'Send' }), text);
-  await expect(toast(page).getByText(/^(Sent to Jane\.|Sending to Jane\.|Sends .+)$/)).toBeVisible({ timeout: 15_000 });
+  // (R-TODAY-7: Text on a follow-up card opens the text sheet on Today, with the same compose box and the same draft)
+  await expect(page.getByRole('dialog', { name: 'Text Jane Doe' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
+  await tap(page, page.getByRole('dialog', { name: 'Text Jane Doe' }).getByRole('button', { name: 'Send', exact: true }), text);
+  // the same sheet goes on to the stage step, whose first line says what the send did (where the toast said it before)
+  const janeStep = page.getByRole('dialog', { name: 'Stage for Jane Doe' });
+  await expect(janeStep.getByTestId('stage-step-saved')).toHaveText(/^(Sent to Jane\.|Sending to Jane\.|Sends .+)$/, { timeout: 15_000 });
   expect(text.taps).toBe(2);
+  await janeStep.getByRole('button', { name: /^(Close|Done)$/ }).first().click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // approve an assistant draft: 1 tap on its card (Approvals is a tab / sidebar entry away)
   if (isPhone(page)) await page.getByRole('navigation', { name: 'Main tabs' }).getByRole('link', { name: 'Approvals' }).tap();

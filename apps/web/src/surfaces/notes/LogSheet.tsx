@@ -64,6 +64,9 @@ export function LogSheet({ contactId, contactName, onClose, onePass }: { contact
   const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
   const [outcome, setOutcome] = useState<(typeof CALL_OUTCOMES)[number] | null>(null);
   const [when, setWhen] = useState(() => localInputValue(new Date()));
+  // false: the agent left "when" at now, so the log carries the instant of the save itself. (The field holds whole
+  // minutes: sent as it reads, a call logged "just now" would be dated before a note written seconds earlier.)
+  const [whenChosen, setWhenChosen] = useState(false);
   const [body, setBody] = useState('');
   const [remind, setRemind] = useState(0);
   // the chips shown again after an outcome folded them into one line
@@ -114,7 +117,7 @@ export function LogSheet({ contactId, contactName, onClose, onePass }: { contact
         const r = await act.run('POST', `/contacts/${contactId}/activities`, {
           kind,
           direction,
-          at: at.toISOString(),
+          at: (whenChosen ? at : new Date()).toISOString(),
           ...(kind === 'call' && outcome ? { outcome } : {}),
           ...(body.trim() ? { body: body.trim() } : {}),
           ...(reminding ? { remindInDays: remind } : {}),
@@ -274,12 +277,30 @@ export function LogSheet({ contactId, contactName, onClose, onePass }: { contact
               <div role="group" aria-label="When, quickly" className="flex flex-wrap gap-2">
                 {presets.map((p) => (
                   // (pressed while the field still holds that time, give or take the minute that may have turned since)
-                  <Chip key={p.key} selected={Math.abs(new Date(when).getTime() - p.at.getTime()) < 90_000} disabled={working} onClick={() => setWhen(localInputValue(p.at))}>
+                  <Chip
+                    key={p.key}
+                    selected={Math.abs(new Date(when).getTime() - p.at.getTime()) < 90_000}
+                    disabled={working}
+                    onClick={() => {
+                      setWhen(localInputValue(p.at));
+                      setWhenChosen(p.key !== 'now');
+                    }}
+                  >
                     {p.label}
                   </Chip>
                 ))}
               </div>
-              <input id={ids.when} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={selectClass} aria-invalid={future || undefined} />
+              <input
+                id={ids.when}
+                type="datetime-local"
+                value={when}
+                onChange={(e) => {
+                  setWhen(e.target.value);
+                  setWhenChosen(true);
+                }}
+                className={selectClass}
+                aria-invalid={future || undefined}
+              />
               {future ? <p className="text-[14px] font-medium text-danger">That time is in the future.</p> : null}
             </div>
             <div className="flex flex-col gap-1.5">
