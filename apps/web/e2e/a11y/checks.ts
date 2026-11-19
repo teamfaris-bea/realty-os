@@ -124,3 +124,91 @@ export async function clippedText(page: Page): Promise<string[]> {
     return [...new Set(out)];
   });
 }
+
+/**
+ * A toast that is showing (the page's ONE stack of toasts, surfaces/people-edit/hooks.tsx: the stage toasts and the
+ * agent sheets' announce toast) hides nothing a person cannot get back. Call it while the toast is on screen.
+ * - the stack holds a toast, is marked data-sticky (so obscuredFocus above knows it), and its room is in the page's
+ *   scroll padding (--toast-stack-h);
+ * - it overlaps no bar that stays on screen (the top bar, the tab bar, any other data-sticky bar), so a control of
+ *   a bar is never under it, and it is wholly on screen itself;
+ * - every control of <main>, brought into view the way a browser does it (the nearest edge, honouring the scroll
+ *   padding), is wholly clear of it: the control's whole box, not only its centre, the last control of the page too.
+ * Boxes are compared with the toast's own box (the dark pill a person sees), not the full-width row it sits in.
+ * What this does NOT say is underToast() below: the stricter question of what is under the toast before anything
+ * is scrolled.
+ */
+export async function toastProblems(page: Page): Promise<string[]> {
+  return page.evaluate(
+    ({ CONTROLS }) => {
+      const out: string[] = [];
+      const label = (e: Element) => (e.getAttribute('aria-label') ?? (e as HTMLElement).innerText ?? e.getAttribute('name') ?? e.tagName).trim().replace(/\s+/g, ' ').slice(0, 40) || e.tagName.toLowerCase();
+      const visible = (e: Element) => {
+        const r = e.getBoundingClientRect();
+        const s = getComputedStyle(e);
+        return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+      };
+      const stack = document.querySelector<HTMLElement>('[data-testid="toast-stack"]');
+      if (!stack) return ['no toast stack on this page'];
+      // the pills: the direct children of the two toast boxes in the stack
+      const pills = [...stack.querySelectorAll<HTMLElement>('[data-testid="toast"] > *, [data-testid="people-toast"] > *')].filter(visible);
+      if (pills.length === 0) return ['no toast is showing'];
+      if (!stack.hasAttribute('data-sticky')) out.push('the toast stack shows a toast but is not marked data-sticky');
+      const reserved = parseFloat(document.documentElement.style.getPropertyValue('--toast-stack-h') || '0');
+      if (!(reserved >= stack.getBoundingClientRect().height)) out.push(`the toast's room is not in the scroll padding (--toast-stack-h is ${reserved}px for a ${Math.round(stack.getBoundingClientRect().height)}px stack)`);
+      const boxes = () => pills.map((p) => p.getBoundingClientRect());
+      const over = (r: DOMRect) => boxes().some((t) => r.left < t.right - 0.5 && r.right > t.left + 0.5 && r.top < t.bottom - 0.5 && r.bottom > t.top + 0.5);
+      for (const t of boxes()) {
+        if (t.top < 0 || t.bottom > window.innerHeight || t.left < 0 || t.right > window.innerWidth) out.push(`the toast is not wholly on screen (${Math.round(t.left)},${Math.round(t.top)} to ${Math.round(t.right)},${Math.round(t.bottom)} in ${window.innerWidth}×${window.innerHeight})`);
+      }
+      for (const bar of document.querySelectorAll<HTMLElement>('header, nav[aria-label="Main tabs"], [data-sticky]')) {
+        if (bar === stack || !visible(bar) || bar.closest('[role="dialog"]')) continue;
+        const pos = getComputedStyle(bar).position;
+        if (pos !== 'sticky' && pos !== 'fixed') continue;
+        if (over(bar.getBoundingClientRect())) out.push(`the toast is over ${bar.tagName === 'HEADER' ? 'the top bar' : bar.tagName === 'NAV' ? 'the tab bar' : `the bar "${label(bar)}"`}`);
+      }
+      const controls = [...document.querySelectorAll<HTMLElement>('main ' + CONTROLS.split(', ').join(', main '))].filter((e) => visible(e) && !stack.contains(e) && !e.closest('[aria-hidden="true"], .sr-only, [inert]'));
+      // each control brought into view, from above and from below
+      const startY = window.scrollY;
+      for (const pass of ['down', 'up'] as const) {
+        window.scrollTo(0, pass === 'down' ? 0 : document.documentElement.scrollHeight);
+        const list = pass === 'down' ? controls : [...controls].reverse();
+        for (const e of list) {
+          if (e.closest('[data-sticky]')) continue; // a bar's own controls: the bar is checked whole, above
+          e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          if (over(e.getBoundingClientRect())) out.push(`"${label(e)}" cannot be brought clear of the toast (scrolled into view from ${pass === 'down' ? 'above' : 'below'})`);
+        }
+      }
+      window.scrollTo(0, startY);
+      return [...new Set(out)];
+    },
+    { CONTROLS },
+  );
+}
+
+/**
+ * The strict question toastProblems() leaves open: the controls of <main> that are under the showing toast AS THE
+ * PAGE STANDS, before anything is scrolled (the whole box of each against the toast's own box). A toast floats over
+ * the scrolling page, as every bar does, so this is empty only when no control happens to be at that place on the
+ * screen: see the GAP test in journeys/toast-clear.spec.ts.
+ */
+export async function underToast(page: Page): Promise<string[]> {
+  return page.evaluate(
+    ({ CONTROLS }) => {
+      const label = (e: Element) => (e.getAttribute('aria-label') ?? (e as HTMLElement).innerText ?? e.getAttribute('name') ?? e.tagName).trim().replace(/\s+/g, ' ').slice(0, 40) || e.tagName.toLowerCase();
+      const visible = (e: Element) => {
+        const r = e.getBoundingClientRect();
+        const s = getComputedStyle(e);
+        return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+      };
+      const stack = document.querySelector<HTMLElement>('[data-testid="toast-stack"]');
+      const pills = stack ? [...stack.querySelectorAll<HTMLElement>('[data-testid="toast"] > *, [data-testid="people-toast"] > *')].filter(visible) : [];
+      if (!stack || pills.length === 0) return ['no toast is showing'];
+      const boxes = pills.map((p) => p.getBoundingClientRect());
+      const over = (r: DOMRect) => boxes.some((t) => r.left < t.right - 0.5 && r.right > t.left + 0.5 && r.top < t.bottom - 0.5 && r.bottom > t.top + 0.5);
+      const controls = [...document.querySelectorAll<HTMLElement>('main ' + CONTROLS.split(', ').join(', main '))].filter((e) => visible(e) && !stack.contains(e) && !e.closest('[aria-hidden="true"], .sr-only, [inert], [data-sticky]'));
+      return [...new Set(controls.filter((e) => over(e.getBoundingClientRect())).map((e) => `"${label(e)}" is under the toast as the page stands`))];
+    },
+    { CONTROLS },
+  );
+}

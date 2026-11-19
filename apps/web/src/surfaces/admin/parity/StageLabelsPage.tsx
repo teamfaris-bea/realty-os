@@ -8,18 +8,10 @@ import { Button, Notice, TextField } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { useMutate } from '../../feed/lib/hooks.js';
 import { AgentSheetsProvider, useAgentSheets } from '../../feed/lib/AgentSheets.js';
-import { LEAD_STAGE_LABEL } from '../../people/api.js';
+import { DEFAULT_GUIDE, STAGE_LABELS_KEY, type StageLabelsResponse } from '../../people/stageGuide.js';
 import { LISTS_ERROR_MESSAGES } from '../../people/messages.js';
 
-export const STAGE_KEYS = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'] as const;
-
-/** module 57's StageLabelsResponse (apps/api/src/people/schemas.ts) */
-interface StageLabelsResponse {
-  labels: Record<string, string>;
-  stages: { key: string; label: string }[];
-}
-
-export const STAGE_LABELS_KEY = ['settings', 'stage-labels'] as const;
+export { STAGE_LABELS_KEY };
 
 export default function StageLabelsPage() {
   return (
@@ -44,6 +36,7 @@ function StageLabels() {
       {q.isError ? <Notice tone="error">{messageFor(q.error, LISTS_ERROR_MESSAGES)}</Notice> : null}
       {q.isSuccess ? (
         <form
+          aria-label="Stage labels"
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
             e.preventDefault();
@@ -55,8 +48,13 @@ function StageLabels() {
             }
           }}
         >
-          {STAGE_KEYS.map((k) => (
-            <TextField key={k} label={LEAD_STAGE_LABEL[k]!} value={current[k] ?? ''} placeholder={LEAD_STAGE_LABEL[k]} maxLength={24} onChange={(e) => setLabels({ ...current, [k]: e.target.value })} />
+          {/* R-STG-1: each field is named by the stage's own (default) label and says what the stage means: a new name
+              changes how it reads, never what it is. The name is core's default, not the team's label and not what is
+              being typed, so it stays the same while the field is edited and after a rename is saved; the definition
+              is the field's description (TextField hint), and the form is named, so a screen reader moving through it
+              hears "Stage labels, form", then "New lead", then what the stage means. */}
+          {DEFAULT_GUIDE.map((s) => (
+            <TextField key={s.key} label={s.label} hint={s.definition} value={current[s.key] ?? ''} placeholder={s.label} maxLength={24} onChange={(e) => setLabels({ ...current, [s.key]: e.target.value })} />
           ))}
           <Button type="submit" className="self-start" disabled={save.pending}>
             Save labels

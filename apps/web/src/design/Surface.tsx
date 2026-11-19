@@ -2,7 +2,7 @@
 import type { ReactNode } from 'react';
 import { Icon, type IconName } from './Icon.js';
 
-export function Card({ children, className = '', as: As = 'section', ...rest }: { children: ReactNode; className?: string; as?: 'section' | 'div' | 'article' | 'li'; 'aria-labelledby'?: string }) {
+export function Card({ children, className = '', as: As = 'section', ...rest }: { children: ReactNode; className?: string; as?: 'section' | 'div' | 'article' | 'li'; 'aria-labelledby'?: string; id?: string }) {
   return (
     <As className={`rounded-2xl border border-line bg-surface p-4 ${className}`} {...rest}>
       {children}

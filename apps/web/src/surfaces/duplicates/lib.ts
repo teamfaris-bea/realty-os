@@ -76,17 +76,6 @@ export function optOutSentence(p: DupPair): string {
   return 'Every opt-out on either record stays. If either person asked not to be texted or emailed, the merged person won’t be either.';
 }
 
-export const STAGE_LABEL: Record<string, string> = {
-  new: 'New',
-  attempting: 'Attempting',
-  connected: 'Connected',
-  nurture: 'Nurture',
-  active: 'Active',
-  under_contract: 'Under contract',
-  closed: 'Closed',
-  lost: 'Lost',
-};
-
 export const DUPLICATE_DECIDED_TEXT = 'Someone already decided this one. The list is up to date now.';
 
 export const DUPLICATES_MESSAGES: Record<string, string> = {

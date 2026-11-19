@@ -31,6 +31,7 @@ import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actionView, approveAction, inbox, rejectAction, reviewClaim } from './drafts.js';
 import { enrollContact, enrollmentContact, pauseEnrollment, resumeEnrollment, stopEnrollment } from './enrollments.js';
+import { enrollmentSendFacts } from './enrollmentStatus.js';
 import { approveVersion, createPlaybook, createVersion, listPlaybooks, playbookFacts, playbookView, revokeVersion, versionPlaybookId } from './playbooks.js';
 import { runAssistant } from './runs.js';
 import { activateSearch, approveSearch, pauseSearch, previewSearch, searchContact } from './searches.js';
@@ -83,7 +84,9 @@ async function register(app: FastifyInstance): Promise<void> {
         return id ? playbookFacts(tx, id) : null;
       }),
     );
-  const enrollmentAuth = authorize('comms.send', (req) => factsTx(req, async (tx) => sendFacts(tx, await enrollmentContact(tx, idOf(req)), 'marketing')));
+  // the facts of pause, resume and stop: enrollmentStatus.ts enrollmentSendFacts, the one function the playbook status
+  // reads canPause, canResume and canStop with (R-STG-4), so a button is offered exactly when its route would answer
+  const enrollmentAuth = authorize('comms.send', (req) => factsTx(req, async (tx) => enrollmentSendFacts(tx, await enrollmentContact(tx, idOf(req)))));
   const searchAuth = authorize('comms.send', (req) => factsTx(req, async (tx) => sendFacts(tx, await searchContact(tx, idOf(req)), 'marketing')));
 
   // ---- inbox and cards ----
@@ -156,9 +159,9 @@ async function register(app: FastifyInstance): Promise<void> {
       return { enrollment };
     },
   );
-  r.post('/enrollments/:id/pause', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentResponse } } }, async (req) => ({ enrollment: await pauseEnrollment(actorOf(req), req.params.id, deps()) }));
-  r.post('/enrollments/:id/resume', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentResponse } } }, async (req) => ({ enrollment: await resumeEnrollment(actorOf(req), req.params.id, deps()) }));
-  r.post('/enrollments/:id/stop', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentResponse } } }, async (req) => ({ enrollment: await stopEnrollment(actorOf(req), req.params.id, deps()) }));
+  r.post('/enrollments/:id/pause', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentChangeResponse } } }, async (req) => pauseEnrollment(actorOf(req), req.params.id, deps()));
+  r.post('/enrollments/:id/resume', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentChangeResponse } } }, async (req) => resumeEnrollment(actorOf(req), req.params.id, deps()));
+  r.post('/enrollments/:id/stop', { config: { auth: 'comms.send' }, preHandler: enrollmentAuth, schema: { params: IdParams, response: { 200: S.EnrollmentChangeResponse } } }, async (req) => stopEnrollment(actorOf(req), req.params.id, deps()));
 
   // ---- saved searches ----
   r.get(

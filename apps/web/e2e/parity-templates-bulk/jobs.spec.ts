@@ -86,7 +86,9 @@ test('a template text from the person\'s page in 4 taps (3 from the composer); t
   await expect(page.getByRole('textbox', { name: 'Text message' })).toHaveValue('Hi Jane, how was the showing today?');
   const before = (await stack.fixture<{ sms: { to: string; body: string }[] }>('/sent')).sms.length;
   await tap(page, page.getByRole('button', { name: 'Send', exact: true }), c);
-  await expect(page.getByTestId('toast')).toContainText('Jane');
+  // b19 fix pass (M3, M4): Text opened the text sheet on the person's page, and after the send the same flow shows the
+  // stage step, whose first line says what the send did; no toast says it a second time over that line
+  await expect(page.getByRole('dialog', { name: 'Stage for Jane Doe' }).getByRole('status')).toContainText('Jane');
   const sent = (await stack.fixture<{ sms: { to: string; body: string }[] }>('/sent')).sms;
   expect(sent.length).toBe(before + 1);
   expect(sent.at(-1)!.body).toContain('Hi Jane, how was the showing today?');

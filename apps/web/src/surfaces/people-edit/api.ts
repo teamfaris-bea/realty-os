@@ -2,10 +2,14 @@
 // import @realty/api), and the queries the people surfaces share.
 import { useQuery } from '@tanstack/react-query';
 import { type ApiError, useApi } from '../../shell/index.js';
+import type { StageGuideRow } from '../people/stageGuide.js';
 
 export interface StageInfo {
   stage: string;
   label: string;
+  /** R-STG-1: what is true of a person in this stage, and what the stage does not mean */
+  definition: string;
+  notThis: string;
   locked: string[];
   lockedReason: string | null;
 }
@@ -58,6 +62,8 @@ export interface Details {
   doNotContact: boolean;
   stage: StageInfo;
   stageLabels: Record<string, string>;
+  /** R-STG-1: the eight stages in order, each with the label shown (the team's, else the default) and its two lines */
+  stageGuide: StageGuideRow[];
   addresses: AddressView[];
   collaborators: CollaboratorView[];
   relationships: RelationshipView[];
@@ -97,7 +103,10 @@ export const notesKey = (id: string) => ['people', 'notes', id] as const;
 export const pointsKey = (id: string) => ['people', 'points', id] as const;
 
 /** Everything a page refreshes after an edit of this person. */
-export const personKeys = (id: string) => [detailsKey(id), notesKey(id), pointsKey(id), ['contact', id], ['timeline', id], ['contact-timeline', id], ['reachability', id], ['tasks', 'contact', id]];
+/** R-STG-3, R-STG-4: what a stage change would do, and the person's plan status, are asked again after any edit */
+export const stagePreviewKey = (id: string) => ['people', 'stage-preview', id] as const;
+export const playbookStatusKey = (id: string) => ['people', 'playbook-status', id] as const;
+export const personKeys = (id: string) => [detailsKey(id), notesKey(id), pointsKey(id), ['contact', id], ['timeline', id], ['contact-timeline', id], ['reachability', id], ['tasks', 'contact', id], stagePreviewKey(id), playbookStatusKey(id)];
 
 export function useDetails(contactId: string) {
   const api = useApi();
@@ -114,9 +123,8 @@ export function useCandidates(contactId: string, enabled: boolean) {
   return useQuery<{ members: Candidate[] }, ApiError>({ queryKey: ['people', 'mention-candidates', contactId], enabled, staleTime: 60_000, queryFn: ({ signal }) => api.get(`/contacts/${contactId}/mention-candidates`, { signal }) });
 }
 
-export const STAGE_KEYS = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'] as const;
-export const DEFAULT_STAGE_LABEL: Record<string, string> = { new: 'New', attempting: 'Attempting', connected: 'Connected', nurture: 'Nurture', active: 'Active', under_contract: 'Under contract', closed: 'Closed', lost: 'Lost' };
-export const stageLabelOf = (key: string, labels: Record<string, string>) => labels[key] ?? DEFAULT_STAGE_LABEL[key] ?? key.replace(/_/g, ' ');
+// stage keys, labels and definitions: people/stageGuide.ts (the web's one source, R-STG-1)
+export { STAGE_KEYS, type StageGuideRow, guideOf, labelIn } from '../people/stageGuide.js';
 
 export const RELATIONSHIP_LABEL: Record<string, string> = { spouse_partner: 'Spouse / partner', family: 'Family', household: 'Household', co_buyer: 'Co-buyer', co_seller: 'Co-seller', referred_by: 'Referred by', other: 'Other' };
 
@@ -125,7 +133,12 @@ export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   STALE_CONTACT: 'Someone else changed this person a moment ago. Your view was refreshed; try again.',
   FIELD_NOT_EDITABLE: 'That field can’t be changed here.',
   // R-PAR-14: owner decision D8 made a reply in the website chat first contact too (R-OWN-14)
+  // R-STG-5: the undo names a stage event that is no longer the person's latest
+  STAGE_UNDO_INVALID: 'Not undone: the stage has changed again since, so there is nothing to take back.',
   STAGE_NEEDS_CONTACT: 'Reach them first (a call, text, email or reply in their website chat), or close the lead.',
+  // R-STG-4: the pause, resume and stop routes' refusals (assistant/enrollments.ts), in the panel's words
+  ENROLLMENT_NOT_LIVE: 'This plan has already ended, so there is nothing to pause or resume.',
+  ENROLLMENT_NOT_RESUMABLE: 'This plan can’t be resumed: it was paused for a reason a person can’t clear here (an opt-out, a wrong number, or its approval being withdrawn).',
   POINT_EXISTS: 'That number or email is already on this person.',
   POINT_UNCHANGED: 'That is the same number or email.',
   POINT_REMOVED: 'That number or email was already removed.',

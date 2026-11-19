@@ -146,7 +146,10 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   expect(callTaps.taps).toBe(1);
   const outcome = { taps: 0 };
   await tap(page, sheet.getByRole('button', { name: 'No answer' }), outcome);
-  await expect(toast(page).getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
+  // b19 fix pass (M4): on the person's page the outcome's tap goes on to the stage step in the same sheet, whose first
+  // line says what was saved; no toast says it a second time over that line. (A lead reassigned during the call has no
+  // stage step: the toast says the outcome was saved as a task for the new owner, as before.)
+  await expect(page.getByRole('dialog', { name: 'Stage for Marco Silva' }).getByRole('status').getByText('No answer logged').or(toast(page).getByText(/saved as a task for the new owner/))).toBeVisible();
   expect(outcome.taps).toBe(1);
 
   // an opt-out is said plainly where the buttons are, before any tap, and the action is disabled

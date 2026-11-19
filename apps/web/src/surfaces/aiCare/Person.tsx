@@ -14,7 +14,7 @@ import { Button, ButtonLink, Card, Dialog, Notice, announce, useStickyBottom } f
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
 import { type ApiError, useApi } from '../../shell/index.js';
-import { type PanelHandoff, type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useMe, usePanel } from './api.js';
+import { type PanelHandoff, type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useIsaVisible, useMe, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './AiCareControls.js';
 import { capsWords, localDate, localTime, PAUSE_EXPIRY_MS, scheduledWords, zonesWords } from './time.js';
 import {
@@ -126,13 +126,48 @@ function HandoffLink({ handoffId, viewer, ownerUserId, currentOwner, tookOver }:
 
 // ---- the panel section ----------------------------------------------------------------------------------------------
 
+/** Whether the AI care section is on the person's page for this panel (the "What happens next" row links to it then). */
+export function aiPanelShown(p: PanelResponse | null): boolean {
+  if (!p) return false;
+  const showStart = p.canStart || (p.startRefusal !== null && p.assignment?.endedAt !== null);
+  return !!p.assignment || showStart || !!p.block || !!p.earlierHandoff;
+}
+
+/** The id of the AI care section on the person's page (a `#ai-care` link scrolls to it). */
+export const AI_CARE_SECTION_ID = 'ai-care';
+
+/**
+ * R-STG-4: AI follow-up in one honest line, from the same panel data and the same words as the strip above: on,
+ * paused (nobody is following up automatically, and why), ended (why), or not on. Nothing here starts or changes it.
+ */
+export function aiFollowUpLine(p: PanelResponse | null, o: { visible: boolean; pending: boolean }): string {
+  if (!o.visible) return 'Not shown for your role.';
+  if (o.pending) return 'Loading';
+  const state = p ? stateOfPanel(p) : null;
+  if (!p || !state || !p.assignment) {
+    // E791: the true reason it is not on. A team-wide condition (the assistant is off for the team, its policy is not
+    // approved, counsel has not cleared it) is said as that, in the AI care card's own words, never as "this person"
+    const team = p?.startRefusal && TEAM_REFUSALS.has(p.startRefusal.code) ? isaMessage(p.startRefusal.code) : null;
+    return team ? `Not on: ${team.charAt(0).toLowerCase()}${team.slice(1)}` : 'Not on for this person.';
+  }
+  if (state === 'live') return 'On: the AI assistant is handling this conversation.';
+  if (state === 'paused') return `Paused: nobody is following up automatically. ${pauseWords(p.assignment.pauseReason)}`;
+  return `Ended: ${endWords(p.assignment.endReason)}`;
+}
+
+/** The line and whether the AI care section exists to link to, for one person. */
+export function useAiFollowUp(contactId: string): { line: string; linked: boolean } {
+  const visible = useIsaVisible();
+  const q = usePanel(contactId);
+  const p = q.data ?? null;
+  return { line: aiFollowUpLine(p, { visible, pending: visible && q.isPending }), linked: aiPanelShown(p) };
+}
+
 export function AiCarePanelSection({ contact }: { contact: ContactFullView }) {
   const { p, viewer } = useContactPanel(contact);
-  if (!p) return null;
-  const showStart = p.canStart || (p.startRefusal !== null && p.assignment?.endedAt !== null);
-  if (!p.assignment && !showStart && !p.block && !p.earlierHandoff) return null;
+  if (!p || !aiPanelShown(p)) return null;
   return (
-    <Card className="flex flex-col gap-3" aria-labelledby="ai-care-title">
+    <Card id={AI_CARE_SECTION_ID} className="flex scroll-mt-20 flex-col gap-3" aria-labelledby="ai-care-title">
       <h2 id="ai-care-title" className="text-[19px] font-semibold text-ink">
         AI care
       </h2>

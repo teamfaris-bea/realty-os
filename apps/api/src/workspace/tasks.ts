@@ -115,15 +115,52 @@ export async function assertRefsVisible(tx: Tx, refs: { contactId?: string | nul
 }
 
 export async function createTask(tx: Tx, actor: UserActor, ids: IdGenerator, b: z.infer<typeof CreateTaskBody>): Promise<string> {
+  return (await createTaskOnce(tx, actor, ids, b)).id;
+}
+
+/** The task a client id already names for this caller's RLS: who made it and for whom (null: none visible). */
+async function taskOrigin(tx: Tx, id: string): Promise<{ kind: string; userId: string | null; contactId: string | null } | null> {
+  const r = await sql<{ created_by_kind: string; created_by_user_id: string | null; contact_id: string | null }>`
+    SELECT created_by_kind, created_by_user_id, contact_id FROM tasks WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+  const x = r.rows[0];
+  return x ? { kind: x.created_by_kind, userId: x.created_by_user_id, contactId: x.contact_id } : null;
+}
+
+/**
+ * Creates a task, once per client-generated id (R-STG-6; the noteId replay pattern of people/notes.ts). `b.id` is
+ * optional: without it the server makes the id and every call is a new task. With it:
+ *   - the same id again by the same person, for the same contact, is a replay: nothing is written and the stored task
+ *     is the answer (the retried body is not compared and never rewrites it);
+ *   - an id that already names a task this person did not make (another member's, the system's, an import's), or
+ *     their own task for another contact, is refused COMMAND_ID_REUSED, whether or not they can see that task: the id
+ *     never reads and never overwrites it;
+ *   - another tenant's task with the same id is another row (the key is tenant_id + id) and is never seen.
+ * The insert is ON CONFLICT DO NOTHING, so two identical requests at the same moment make one row and neither fails.
+ */
+export async function createTaskOnce(tx: Tx, actor: UserActor, ids: IdGenerator, b: z.infer<typeof CreateTaskBody>): Promise<{ id: string; replayed: boolean }> {
+  const replay = (prior: { kind: string; userId: string | null; contactId: string | null }, id: string): { id: string; replayed: boolean } => {
+    if (prior.kind !== 'user' || prior.userId !== actor.userId || prior.contactId !== (b.contactId ?? null)) throw new AppError('COMMAND_ID_REUSED');
+    return { id, replayed: true };
+  };
+  if (b.id !== undefined) {
+    const prior = await taskOrigin(tx, b.id);
+    if (prior) return replay(prior, b.id);
+  }
   await assertRefsVisible(tx, b);
   const assignee = b.assigneeUserId ?? actor.userId;
   await assertAssignable(tx, actor, assignee);
-  const id = ids.next<'TaskId'>();
-  await sql`
+  const id = b.id ?? ids.next<'TaskId'>();
+  const r = await sql`
     INSERT INTO tasks (tenant_id, id, assignee_user_id, contact_id, deal_id, listing_id, kind, title, notes, due_at, due_all_day, due_tz, created_by_kind, created_by_user_id)
     VALUES (app.tenant_id(), ${id}, ${assignee}, ${b.contactId ?? null}, ${b.dealId ?? null}, ${b.listingId ?? null}, ${b.kind ?? 'todo'}, ${b.title},
-            ${b.notes ?? null}, ${b.dueAt ?? null}::timestamptz, ${b.dueAllDay ?? false}, ${b.dueTz ?? null}, 'user', ${actor.userId})`.execute(tx);
-  return id;
+            ${b.notes ?? null}, ${b.dueAt ?? null}::timestamptz, ${b.dueAllDay ?? false}, ${b.dueTz ?? null}, 'user', ${actor.userId})
+    ON CONFLICT (tenant_id, id) DO NOTHING`.execute(tx);
+  if (Number(r.numAffectedRows ?? 0n) === 1) return { id, replayed: false };
+  // the id is taken: by this caller's own identical request a moment ago (now committed and visible: a replay), or by
+  // a task they cannot see or did not make (refused; nothing about it is read back)
+  const prior = await taskOrigin(tx, id);
+  if (prior) return replay(prior, id);
+  throw new AppError('COMMAND_ID_REUSED');
 }
 
 export async function updateTask(tx: Tx, actor: UserActor, id: string, b: z.infer<typeof UpdateTaskBody>, now: Instant): Promise<void> {
