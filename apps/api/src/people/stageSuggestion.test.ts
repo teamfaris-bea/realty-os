@@ -14,7 +14,7 @@ let agent: TestClient;
 let agent2: TestClient;
 let tc: TestClient;
 
-type Suggested = { stage: string; why: string; locked: boolean } | null;
+type Suggested = { stage: string; why: string; locked: boolean; alsoOffer: { stage: string; locked: boolean }[] } | null;
 type ActivityRes = { note: { id: string }; replayed: boolean; suggestedStage: Suggested };
 type OutcomeRes = { callId: string; outcome: string; recordedAs: string; suggestedStage: Suggested };
 
@@ -62,7 +62,7 @@ describe('POST /contacts/:id/activities answers the suggested stage (R-STG-2)', 
     const c = await ownedContact(agent, { consent: false });
     const r = await log(agent, c.id, { kind: 'call', outcome: 'left_voicemail' });
     expect(r.status).toBe(201);
-    expect(r.body.suggestedStage).toEqual({ stage: 'attempting', why: expect.stringMatching(/voicemail/i), locked: false });
+    expect(r.body.suggestedStage).toEqual({ stage: 'attempting', why: expect.stringMatching(/voicemail/i), locked: false, alsoOffer: [] });
     // the route never changes the stage: no stage write, no stage event
     expect(await stageOf(c.id)).toBe('new');
     expect(await stageEvents(c.id)).toBe(0);
@@ -122,18 +122,18 @@ describe('POST /contacts/:id/activities answers the suggested stage (R-STG-2)', 
   it('R-STG-2 E761 R-PAR-14 a suggestion the stage rule would refuse is marked locked (a logged outside call never unlocks a routed, untouched lead)', async () => {
     const lead = await routedUntouched();
     const talked = await log(lead.owner, lead.id, { kind: 'call', outcome: 'connected' });
-    expect(talked.body.suggestedStage).toEqual({ stage: 'connected', why: expect.any(String), locked: true });
+    expect(talked.body.suggestedStage).toEqual({ stage: 'connected', why: expect.any(String), locked: true, alsoOffer: [{ stage: 'nurture', locked: true }] });
     // locked says exactly what the stage route would do with it
     const refuse = await setStage(lead.owner, lead.id, 'connected');
     expect(refuse.status).toBe(409);
     expect(refuse.code).toBe('STAGE_NEEDS_CONTACT');
     // "attempting" is always open, so that suggestion is not locked, and the route takes it
     const tried = await log(lead.owner, lead.id, { kind: 'call', outcome: 'left_voicemail' });
-    expect(tried.body.suggestedStage).toEqual({ stage: 'attempting', why: expect.any(String), locked: false });
+    expect(tried.body.suggestedStage).toEqual({ stage: 'attempting', why: expect.any(String), locked: false, alsoOffer: [] });
     expect((await setStage(lead.owner, lead.id, 'attempting')).status).toBe(200);
     // a Team Lead is not held by the rule: the same suggestion is not locked for them
     const tl = await log(w.teamLead!, lead.id, { kind: 'call', outcome: 'connected' });
-    expect(tl.body.suggestedStage).toEqual({ stage: 'connected', why: expect.any(String), locked: false });
+    expect(tl.body.suggestedStage).toEqual({ stage: 'connected', why: expect.any(String), locked: false, alsoOffer: [{ stage: 'nurture', locked: false }] });
   });
 
   it('R-STG-2 E766 a replay of the same log (a double tap) answers the same suggestion until the stage is confirmed, then none', async () => {
@@ -151,6 +151,37 @@ describe('POST /contacts/:id/activities answers the suggested stage (R-STG-2)', 
   });
 });
 
+describe('a two-way conversation also offers "Long-term follow-up" (R-STG-2)', () => {
+  type Offer = { suggestedStage: { stage: string; alsoOffer: { stage: string; locked: boolean }[] } | null };
+  it('R-STG-2 a logged conversation or reply offers nurture beside connected; a voicemail and a callback request offer nothing more; the stage is never changed', async () => {
+    const fresh = async () => (await ownedContact(agent, { consent: false })).id;
+    const talked = await fresh();
+    const a = await call<Offer>(agent, 'POST', `/contacts/${talked}/activities`, { kind: 'call', outcome: 'connected', at: new Date().toISOString() });
+    expect(a.body.suggestedStage).toMatchObject({ stage: 'connected', alsoOffer: [{ stage: 'nurture', locked: false }] });
+    const replied = await fresh();
+    const b = await call<Offer>(agent, 'POST', `/contacts/${replied}/activities`, { kind: 'text', direction: 'inbound', at: new Date().toISOString() });
+    expect(b.body.suggestedStage).toMatchObject({ stage: 'connected', alsoOffer: [{ stage: 'nurture', locked: false }] });
+    const tried = await fresh();
+    const c = await call<Offer>(agent, 'POST', `/contacts/${tried}/activities`, { kind: 'call', outcome: 'left_voicemail', at: new Date().toISOString() });
+    expect(c.body.suggestedStage).toMatchObject({ stage: 'attempting', alsoOffer: [] });
+    // through the call route too
+    const d = (await dialAndLog(agent, await fresh(), 'connected')).body as unknown as Offer;
+    expect(d.suggestedStage).toMatchObject({ stage: 'connected', alsoOffer: [{ stage: 'nurture', locked: false }] });
+    const e = (await dialAndLog(agent, await fresh(), 'callback_requested')).body as unknown as Offer;
+    expect(e.suggestedStage).toMatchObject({ stage: 'connected', alsoOffer: [] });
+    for (const id of [talked, replied, tried]) expect(await stageOf(id)).toBe('new');
+  });
+
+  it('R-STG-2 E761 R-PAR-14 the extra offer is locked exactly when the stage rule would refuse it', async () => {
+    const lead = await routedUntouched();
+    const r = await call<Offer>(lead.owner, 'POST', `/contacts/${lead.id}/activities`, { kind: 'call', outcome: 'connected', at: new Date().toISOString() });
+    expect(r.body.suggestedStage).toMatchObject({ stage: 'connected', alsoOffer: [{ stage: 'nurture', locked: true }] });
+    expect((await setStage(lead.owner, lead.id, 'nurture')).code).toBe('STAGE_NEEDS_CONTACT');
+    const tl = await call<Offer>(w.teamLead!, 'POST', `/contacts/${lead.id}/activities`, { kind: 'call', outcome: 'connected', at: new Date().toISOString() });
+    expect(tl.body.suggestedStage).toMatchObject({ stage: 'connected', alsoOffer: [{ stage: 'nurture', locked: false }] });
+  });
+});
+
 describe('POST /calls/:id/outcome answers the suggested stage (R-STG-2)', () => {
   it('R-STG-2 E759 a voicemail suggests "attempting", a conversation "connected", a callback request "connected"; the stage does not change', async () => {
     const got: Record<string, string | null> = {};
@@ -160,7 +191,7 @@ describe('POST /calls/:id/outcome answers the suggested stage (R-STG-2)', () => 
       expect(r.status, outcome).toBe(200);
       expect(r.body).toMatchObject({ outcome, recordedAs: 'call' });
       got[outcome] = r.body.suggestedStage?.stage ?? null;
-      if (r.body.suggestedStage) expect(r.body.suggestedStage).toEqual({ stage: expect.any(String), why: expect.any(String), locked: false });
+      if (r.body.suggestedStage) expect(r.body.suggestedStage).toEqual({ stage: expect.any(String), why: expect.any(String), locked: false, alsoOffer: outcome === 'connected' ? [{ stage: 'nurture', locked: false }] : [] });
       expect(await stageOf(c.id), outcome).toBe('new');
       expect(await stageEvents(c.id), outcome).toBe(0);
     }
@@ -194,7 +225,7 @@ describe('who a stage is suggested to (R-STG-2)', () => {
     const c = await ownedContact(agent, { consent: false });
     const signal = { kind: 'call' as const, outcome: 'connected' as const };
     const as = (who: TestClient) => withTenantTx(who.actor(), (tx) => suggestedStageInTx(tx, who.actor(), c.id, signal), { db: h.database });
-    expect(await as(agent)).toEqual({ stage: 'connected', why: expect.any(String), locked: false });
+    expect(await as(agent)).toEqual({ stage: 'connected', why: expect.any(String), locked: false, alsoOffer: [{ stage: 'nurture', locked: false }] });
     expect(await as(agent2)).toBeNull();
     // a TC on the person's deal sees the detail (and may call for the deal) but has no contact.edit
     const deal = await call<{ deal: { id: string } }>(agent, 'POST', '/deals', { primaryContactId: c.id, side: 'buy', name: 'Elm St purchase' });

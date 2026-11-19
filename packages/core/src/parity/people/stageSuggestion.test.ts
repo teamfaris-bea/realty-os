@@ -82,6 +82,26 @@ describe('core/parity-people: the stage an outcome suggests (R-STG-2)', () => {
     expect(suggestStageFromOutcome({ current: 'connected', signal: call('connected') })).toBeNull();
   });
 
+  it('R-STG-2 a two-way conversation (a connected call, the person\'s own reply) also offers "nurture" beside "connected"; nothing else offers anything more', () => {
+    const twoWay = new Set(['call connected', 'text reply', 'email reply']);
+    for (const { name, signal } of ALL_SIGNALS) {
+      for (const current of STAGES) {
+        const got = suggestStageFromOutcome({ current, signal });
+        if (got === null) continue;
+        // someone who talked but is months away: the screen offers "Long-term follow-up" next to "Connected"
+        expect(got.alsoOffer, `${name} ${current}`).toEqual(twoWay.has(name) ? ['nurture'] : []);
+        // the suggested stage itself is still never nurture
+        expect(got.stage, `${name} ${current}`).not.toBe('nurture');
+      }
+    }
+    expect(suggestStageFromOutcome({ current: 'new', signal: call('connected') })).toMatchObject({ stage: 'connected', alsoOffer: ['nurture'] });
+    // a callback request reached them, but nobody has talked about their plans yet: nothing more is offered
+    expect(suggestStageFromOutcome({ current: 'new', signal: call('callback_requested') })).toMatchObject({ stage: 'connected', alsoOffer: [] });
+    // a try is not a conversation, and a signed agreement is not "months away"
+    expect(suggestStageFromOutcome({ current: 'new', signal: call('left_voicemail') })).toMatchObject({ stage: 'attempting', alsoOffer: [] });
+    expect(suggestStageFromOutcome({ current: 'connected', signal: appt('agreement_signed') })).toMatchObject({ stage: 'active', alsoOffer: [] });
+  });
+
   it('R-STG-2 a wrong number, a bad number and a do-not-call request suggest nothing from any stage', () => {
     for (const o of ['wrong_number', 'bad_number', 'do_not_call_request'] as const) {
       for (const current of STAGES) expect(suggestStageFromOutcome({ current, signal: call(o) }), `${o} ${current}`).toBeNull();
@@ -124,6 +144,10 @@ describe('property: the stage an outcome suggests (R-STG-2)', () => {
         const got = suggestStageFromOutcome({ current, signal });
         if (got === null) return;
         expect(['attempting', 'connected', 'active']).toContain(got.stage);
+        // what is offered beside it is "nurture" or nothing, only next to "connected", and never a step back either
+        expect(got.alsoOffer.every((s) => s === 'nurture')).toBe(true);
+        if (got.alsoOffer.length > 0) expect(got.stage).toBe('connected');
+        for (const s of got.alsoOffer) expect(STAGES.indexOf(s)).toBeGreaterThan(STAGES.indexOf(current));
       }),
       { numRuns: 2000 },
     );

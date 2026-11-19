@@ -169,6 +169,35 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
           {
             "additionalProperties": false,
             "properties": {
+              "alsoOffer": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "locked": {
+                      "type": "boolean",
+                    },
+                    "stage": {
+                      "enum": [
+                        "new",
+                        "attempting",
+                        "connected",
+                        "nurture",
+                        "active",
+                        "under_contract",
+                        "closed",
+                        "lost",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "stage",
+                    "locked",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
               "locked": {
                 "type": "boolean",
               },
@@ -193,6 +222,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
               "stage",
               "why",
               "locked",
+              "alsoOffer",
             ],
             "type": "object",
           },

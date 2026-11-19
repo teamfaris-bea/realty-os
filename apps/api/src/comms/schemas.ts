@@ -140,7 +140,7 @@ export const OutcomeBody = z.strictObject({
   outcome: z.enum(['connected', 'left_voicemail', 'no_answer', 'wrong_number', 'bad_number', 'do_not_call_request', 'callback_requested']),
 });
 /** R-STG-2: the stage the outcome suggests, to confirm (null: nothing); `locked`: the stage route would refuse it now. */
-export const SuggestedStageSchema = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean() });
+export const SuggestedStageSchema = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean(), alsoOffer: z.array(z.object({ stage: z.enum(STAGES), locked: z.boolean() })) });
 export const OutcomeResponse = z.object({ callId: z.uuid(), outcome: z.string(), recordedAs: z.enum(['call', 'task_for_current_owner']), suggestedStage: SuggestedStageSchema.nullable() });
 
 export const ConsentBody = z.strictObject({

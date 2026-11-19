@@ -14,6 +14,9 @@
 //   appointment result "agreement_signed"              active         new, attempting, connected, nurture
 //   any other appointment result                       nothing        (any)
 //
+// A two-way conversation (a connected call, the person's own reply) also carries `alsoOffer: ['nurture']`: the
+// screen offers "Long-term follow-up" beside "Connected". The suggested stage itself is still "connected".
+//
 // So: a voicemail is not a conversation (it never suggests "connected"); a reply does not make someone an active
 // client (only a signed agreement suggests "active"); a suggestion never moves a person to an earlier stage; and
 // nurture, under_contract, closed and lost are never the suggested stage: those are judgements about the
@@ -45,6 +48,12 @@ export interface StageSuggestion {
   stage: Stage;
   /** one plain sentence saying why, for the screen */
   why: string;
+  /**
+   * Stages the screen offers beside the suggested one. Only `['nurture']`, and only for a two-way conversation that
+   * suggests "connected": someone who talked but is months away is "Long-term follow-up", and only the agent who
+   * was in the conversation knows which. Empty otherwise. `stage` itself is never nurture.
+   */
+  alsoOffer: Stage[];
 }
 
 type SignalClass = 'tried' | 'talked' | 'agreement' | 'none';
@@ -64,6 +73,15 @@ function classOf(signal: StageSignal): SignalClass {
   }
   if (s.kind === 'appointment') return s.result === 'agreement_signed' ? 'agreement' : 'none';
   return 'none';
+}
+
+/**
+ * A two-way conversation: a call that connected, or the person's own reply. A callback request reached them, but
+ * nobody has talked about their plans yet, so it is not one.
+ */
+function twoWayConversation(signal: StageSignal): boolean {
+  if (signal.kind === 'call') return signal.outcome === 'connected';
+  return signal.kind === 'message' && signal.direction === 'inbound';
 }
 
 const RULES: Record<Exclude<SignalClass, 'none'>, { to: Stage; from: readonly Stage[] }> = {
@@ -107,5 +125,5 @@ export function suggestStageFromOutcome(i: { current: Stage; signal: StageSignal
   if (!rule.from.includes(i.current)) return null;
   // never demotes: every `from` stage of the table is earlier than its `to` (kept as a check, not an assumption)
   if (STAGES.indexOf(rule.to) <= at) return null;
-  return { stage: rule.to, why: whyOf(i.signal) };
+  return { stage: rule.to, why: whyOf(i.signal), alsoOffer: rule.to === 'connected' && twoWayConversation(i.signal) ? ['nurture'] : [] };
 }

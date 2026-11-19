@@ -21,6 +21,8 @@ export interface SuggestedStage {
   why: string;
   /** the stage route would refuse this stage for this actor now (STAGE_NEEDS_CONTACT) */
   locked: boolean;
+  /** stages offered beside it (only "nurture", after a two-way conversation), each with its own `locked` */
+  alsoOffer: { stage: Stage; locked: boolean }[];
 }
 
 /**
@@ -48,5 +50,6 @@ export async function suggestedStageInTx(tx: Tx, actor: UserActor, contactId: st
   const facts = stageFactsOf(row);
   const s = suggestStageFromOutcome({ current: facts.stage, signal });
   if (s === null) return null;
-  return { stage: s.stage, why: s.why, locked: !stageChangeAllowed(facts, { kind: 'user', role: actor.role }, s.stage).ok };
+  const locked = (to: Stage) => !stageChangeAllowed(facts, { kind: 'user', role: actor.role }, to).ok;
+  return { stage: s.stage, why: s.why, locked: locked(s.stage), alsoOffer: s.alsoOffer.map((to) => ({ stage: to, locked: locked(to) })) };
 }
