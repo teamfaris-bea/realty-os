@@ -23,7 +23,7 @@ import { ReachabilityBatch } from '../../reasons/index.js';
 import { ActionButton, LogButton } from './ActionButton.js';
 import { OnePassProvider } from './OnePass.js';
 import { AgentSheetsProvider, useAgentSheets } from './lib/AgentSheets.js';
-import { automaticLine, lastTouchLine, nextPromiseLine } from './lib/followUp.js';
+import { automaticLine, lastLine, nextPromiseLine } from './lib/followUp.js';
 import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } from './lib/format.js';
 import { useMutate, useNow } from './lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
@@ -359,23 +359,28 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
 
 /**
  * Why the person is due, what was last discussed and the next promise (R-TODAY-1), each on its own labelled line.
- * An automated message is never the Last line: it is its own line under it (R-TODAY-2). Everything wraps; nothing is
+ * An automated message is never the Last line: it is its own line under it (R-TODAY-2). The Due line of a quiet row
+ * and the Last line are worded from one story (R-TODAY-14, lib/followUp.ts lastLine), so they cannot disagree. Everything wraps; nothing is
  * cut off (a team's own 24-character stage label, a 140-character snippet).
  */
 export function FollowUpLines({ card, now }: { card: FeedCard; now: number }) {
   const line = 'flex gap-2';
   const term = 'w-11 shrink-0 text-[13px] font-semibold uppercase leading-[22px] tracking-wide text-ink-muted';
   const said = 'min-w-0 flex-1 [overflow-wrap:anywhere]';
+  const last = lastLine(card, now);
   return (
     <dl data-testid="follow-up-lines" className="flex flex-col gap-1 text-[15px] leading-[22px] text-ink">
       <div className={line}>
         <dt className={term}>Due</dt>
         <dd className={said}>{card.why?.[0]}</dd>
       </div>
-      <div className={line}>
-        <dt className={term}>Last</dt>
-        <dd className={said}>{lastTouchLine(card.lastTouch, now, card.importedHistoryAt)}</dd>
-      </div>
+      {/* R-TODAY-14: worded from the same story as the Due line; absent when the Due line already says there is none */}
+      {last !== null ? (
+        <div className={line}>
+          <dt className={term}>Last</dt>
+          <dd className={said}>{last}</dd>
+        </div>
+      ) : null}
       {card.lastAutomatic ? (
         <div className={line}>
           <dt className="sr-only">Also</dt>

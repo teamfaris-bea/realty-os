@@ -24,10 +24,13 @@ import {
   type GateSummary,
   type LastAutomatic,
   type LastTouch,
+  type QuietStory,
   type NextPromise,
   type PromiseTask,
   WARM_FOLLOW_UP_DAYS,
   planFollowUpToday,
+  quietStory,
+  selectLastAttempt,
   selectLastContact,
   selectNextPromise,
   startOfTomorrow,
@@ -50,6 +53,12 @@ export interface FollowUpContext {
   lastTouch: LastTouch | null;
   /** the most recent human CONTACT (never a manual note: R-TODAY-12): what the quiet clock counts from */
   lastContactAt: Instant | null;
+  /** that contact, when the Last line is something newer that is not contact (a manual note); null otherwise */
+  lastConversation: LastTouch | null;
+  /** the system's own last-touch instant for the person (contacts.last_human_touch_at); null: none counted */
+  touchAt: Instant | null;
+  /** R-TODAY-14: what stands at the ONE instant the Due line and the Last line are worded from; null: the viewer may not open the person */
+  quiet: QuietStory | null;
   lastAutomatic: LastAutomatic | null;
   importedHistoryAt: Instant | null;
   /** the latest imported entry of the person's history, whether or not there is a last touch (the daily plan reads it) */
@@ -79,7 +88,7 @@ export interface FollowUpContexts {
 
 interface HistoryRow {
   contact_id: string;
-  source: 'stage' | 'message' | 'automatic' | 'call' | 'note' | 'logged' | 'appointment' | 'imported';
+  source: 'stage' | 'message' | 'automatic' | 'attempt' | 'call' | 'dial' | 'note' | 'logged' | 'appointment' | 'imported';
   id: string | null;
   at: Date | null;
   by_user: string | null;
@@ -96,6 +105,7 @@ function candidateOf(r: HistoryRow): ContactCandidate | null {
   switch (r.source) {
     case 'message':
     case 'automatic':
+    case 'attempt':
       return {
         ...base,
         source: 'message',
@@ -110,6 +120,7 @@ function candidateOf(r: HistoryRow): ContactCandidate | null {
         body: r.source === 'message' ? hideForDisplay(str(f.body)).text : null,
       };
     case 'call':
+    case 'dial':
       return { ...base, source: 'call', direction: f.direction as never, initiator: f.initiator as never, imported: f.imported === true, status: str(f.status) ?? '', answered: f.answered === true, handledBy: f.handledBy as never, outcome: str(f.outcome), talkSeconds: typeof f.talkSeconds === 'number' ? f.talkSeconds : null };
     case 'note':
     case 'logged': {
@@ -150,11 +161,12 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
   // 2. per person: the stage, and the newest row of each kind that could be what was last discussed
   const history = await sql<HistoryRow>`
     WITH p AS MATERIALIZED (
-      SELECT c.tenant_id, c.id, c.stage FROM contacts c
+      SELECT c.tenant_id, c.id, c.stage, c.last_human_touch_at FROM contacts c
        WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${ids}::uuid[]) AND c.deleted_at IS NULL
          AND app.contact_detail_visible(c.tenant_id, c.id)),
     rows AS (
-      SELECT p.id AS contact_id, 'stage'::text AS source, NULL::uuid AS id, NULL::timestamptz AS at, NULL::uuid AS by_user, jsonb_build_object('stage', p.stage) AS facts FROM p
+      -- (the instant of this row is the system's own last-touch instant for the person)
+      SELECT p.id AS contact_id, 'stage'::text AS source, NULL::uuid AS id, p.last_human_touch_at AS at, NULL::uuid AS by_user, jsonb_build_object('stage', p.stage) AS facts FROM p
       UNION ALL
       SELECT p.id, 'message', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (
         SELECT m.id, m.occurred_at AS at, m.initiated_by_user_id AS by_user,
@@ -177,6 +189,27 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
            AND m.direction = 'outbound' AND m.status IN ('sent','delivered')
            AND (m.initiator IN ('assistant','system') OR m.bulk_action_id IS NOT NULL OR m.marketing_piece_id IS NOT NULL)
          ORDER BY m.occurred_at DESC, m.id DESC LIMIT 1) x
+      UNION ALL
+      -- R-TODAY-14: the agent's newest text or email that did not reach the person (never contact, never quoted)
+      SELECT p.id, 'attempt', x.id, x.at, NULL::uuid, x.facts FROM p CROSS JOIN LATERAL (
+        SELECT m.id, m.occurred_at AS at,
+               jsonb_build_object('channel', m.channel, 'direction', m.direction, 'initiator', m.initiator, 'imported', m.imported, 'bulk', false,
+                                  'autoReply', false, 'status', m.status) AS facts
+          FROM messages m
+         WHERE m.tenant_id = p.tenant_id AND m.contact_id = p.id AND m.occurred_at <= ${nowIso}::timestamptz AND NOT m.imported
+           AND m.bulk_action_id IS NULL AND m.marketing_piece_id IS NULL
+           AND m.direction = 'outbound' AND m.initiator = 'human' AND m.status IN ('failed','undelivered','bounced')
+         ORDER BY m.occurred_at DESC, m.id DESC LIMIT 1) x
+      UNION ALL
+      -- … and their newest dial that never connected
+      SELECT p.id, 'dial', x.id, x.at, NULL::uuid, x.facts FROM p CROSS JOIN LATERAL (
+        SELECT k.id, k.started_at AS at,
+               jsonb_build_object('direction', k.direction, 'initiator', k.initiator, 'imported', k.imported, 'status', k.status,
+                                  'answered', false, 'handledBy', k.handled_by, 'outcome', NULL, 'talkSeconds', NULL) AS facts
+          FROM calls k
+         WHERE k.tenant_id = p.tenant_id AND k.contact_id = p.id AND k.started_at <= ${nowIso}::timestamptz AND NOT k.imported
+           AND k.direction = 'outbound' AND k.initiator = 'human' AND k.answered_at IS NULL AND k.outcome IS NULL AND k.status IN ('failed','canceled')
+         ORDER BY k.started_at DESC, k.id DESC LIMIT 1) x
       UNION ALL
       SELECT p.id, 'call', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (
         SELECT k.id, k.started_at AS at, k.agent_user_id AS by_user,
@@ -233,12 +266,14 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
      ORDER BY due_at NULLS LAST, created_at, id LIMIT ${TASKS_READ}`.execute(tx);
 
   const stageOf = new Map<string, string>();
+  const touchAt = new Map<string, Instant>();
   const candidates = new Map<string, ContactCandidate[]>();
   const importedAt = new Map<string, Instant>();
   for (const r of history.rows) {
     if (r.source === 'stage') {
       const s = str(r.facts.stage);
       if (s) stageOf.set(r.contact_id, s);
+      if (r.at !== null) touchAt.set(r.contact_id, r.at.getTime() as Instant);
       continue;
     }
     if (r.source === 'imported') {
@@ -275,14 +310,20 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
     const stage = stageOf.get(id) ?? null;
     const picked = selectLastContact(candidates.get(id) ?? [], now);
     const mine = tasksOf.get(id) ?? [];
+    const imported = importedAt.get(id) ?? null;
+    const touched = touchAt.get(id) ?? null;
     byContact.set(id, {
       stage: stage === null ? null : { key: stage, label: stageLabel(stage as never, stageLabels) },
       lastTouch: picked.lastTouch,
       lastContactAt: picked.lastContactAt,
+      lastConversation: picked.lastContact !== null && picked.lastContact !== picked.lastTouch ? picked.lastContact : null,
+      touchAt: touched,
+      // one story for both lines, from the very instants the daily plan reads
+      quiet: stage === null ? null : quietStory({ lastContactAt: picked.lastContactAt, touchAt: touched, importedAt: imported, attempt: selectLastAttempt(candidates.get(id) ?? [], now) }),
       lastAutomatic: picked.lastAutomatic,
       // only said when there is no last touch
-      importedHistoryAt: picked.lastTouch === null ? (importedAt.get(id) ?? null) : null,
-      importedAt: importedAt.get(id) ?? null,
+      importedHistoryAt: picked.lastTouch === null ? imported : null,
+      importedAt: imported,
       nextPromise: selectNextPromise(mine, now, zone),
       tasks: mine,
     });

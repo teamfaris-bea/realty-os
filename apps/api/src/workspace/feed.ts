@@ -66,9 +66,11 @@
 import {
   type FeedItem,
   type FeedReason,
+  type LastAttempt,
   type LastAutomatic,
   type LastTouch,
   type NextPromise,
+  type QuietStory,
   type OneTapAction,
   feedGroupOfItem,
   followUpActions,
@@ -157,7 +159,17 @@ export interface FeedCard {
   importedHistoryAt: string | null;
   /** the viewer's earliest open task for the person, worded as written */
   nextPromise: NextPromiseView | null;
+  /** the latest human CONTACT, only when `lastTouch` is something newer that is not contact (a manual note): R-TODAY-12 */
+  lastConversation: LastTouchView | null;
+  /**
+   * R-TODAY-14: what stands at the ONE instant the Due line and the Last line are worded from (core quietStory), so a
+   * screen can never write "no conversation yet" under "no conversation for 9 days". Null: not a follow-up card, or
+   * the viewer may not open the person.
+   */
+  quiet: QuietView | null;
 }
+
+export type QuietView = { basis: QuietStory['basis']; at: string | null; attempt: { kind: LastAttempt['kind']; at: string; what: LastAttempt['what'] } | null };
 
 /** `byMe`: the viewer's own call, message, note or log (the teammate's id itself is not sent). */
 export type LastTouchView = Omit<LastTouch, 'at' | 'byUserId'> & { at: string; byMe: boolean };
@@ -170,19 +182,29 @@ function promiseView(p: NextPromise): NextPromiseView {
 }
 
 /** The follow-up lines of one card, as GET /feed sends them (instants as ISO strings). */
-export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: string): Pick<FeedCard, 'stage' | 'lastTouch' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'> {
-  if (!ctx) return { stage: null, lastTouch: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
-  const { byUserId, ...touch } = ctx.lastTouch ?? { byUserId: null };
+type Lines = Pick<FeedCard, 'stage' | 'lastTouch' | 'lastConversation' | 'quiet' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'>;
+
+function touchView(t: LastTouch | null, viewerUserId: string): LastTouchView | null {
+  if (t === null) return null;
+  const { byUserId, ...touch } = t;
+  return { ...touch, at: iso(t.at), byMe: byUserId !== null && byUserId === viewerUserId };
+}
+
+export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: string): Lines {
+  if (!ctx) return { stage: null, lastTouch: null, lastConversation: null, quiet: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
+  const q = ctx.quiet;
   return {
     stage: ctx.stage,
-    lastTouch: ctx.lastTouch ? { ...(touch as Omit<LastTouch, 'byUserId'>), at: iso(ctx.lastTouch.at), byMe: byUserId !== null && byUserId === viewerUserId } : null,
+    lastTouch: touchView(ctx.lastTouch, viewerUserId),
+    lastConversation: touchView(ctx.lastConversation, viewerUserId),
+    quiet: q === null ? null : { basis: q.basis, at: q.at === null ? null : iso(q.at), attempt: q.attempt === null ? null : { kind: q.attempt.kind, at: iso(q.attempt.at), what: q.attempt.what } },
     lastAutomatic: ctx.lastAutomatic ? { ...ctx.lastAutomatic, at: iso(ctx.lastAutomatic.at) } : null,
     importedHistoryAt: ctx.importedHistoryAt === null ? null : iso(ctx.importedHistoryAt),
     nextPromise: ctx.nextPromise ? promiseView(ctx.nextPromise) : null,
   };
 }
 
-const NO_LINES: Pick<FeedCard, 'why' | 'stage' | 'lastTouch' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'> = { why: null, stage: null, lastTouch: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
+const NO_LINES: Pick<FeedCard, 'why'> & Lines = { why: null, stage: null, lastTouch: null, lastConversation: null, quiet: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
 
 /** One person of the daily plan, shaped like a card so a screen draws both the same way. `id` is the person's id. */
 export type FollowUpTodayCard = FeedCard & {
@@ -692,7 +714,8 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedRe
   };
   const people = today.plan.people.map((e): FollowUpTodayCard => {
     const ctx = lines.byContact.get(e.contactId);
-    const reasons = followUpTodayReasons(e, { now, stageLabel: ctx?.stage?.label ?? 'Follow-up' }).map(strip);
+    // R-TODAY-14: a quiet person's Due line is worded from the same story as their Last line
+    const reasons = followUpTodayReasons(e, { now, stageLabel: ctx?.stage?.label ?? 'Follow-up', story: ctx?.quiet ?? undefined }).map(strip);
     const firstTask = e.taskIds[0] ?? null;
     const task = firstTask === null ? null : (ctx?.tasks.find((t) => t.taskId === firstTask) ?? null);
     return {

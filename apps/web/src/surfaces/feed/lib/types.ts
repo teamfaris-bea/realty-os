@@ -42,6 +42,16 @@ export interface FeedCard {
   lastAutomatic?: LastAutomaticView | null;
   importedHistoryAt?: string | null;
   nextPromise?: NextPromiseView | null;
+  /** the latest human CONTACT, only when `lastTouch` is something newer that is not contact (a manual note) */
+  lastConversation?: LastTouchView | null;
+  /** R-TODAY-14: what stands at the one instant the Due line and the Last line are worded from (the server's story) */
+  quiet?: QuietView | null;
+}
+
+export interface QuietView {
+  basis: 'contact' | 'undelivered' | 'failed_dial' | 'touch_only' | 'imported' | 'never';
+  at: string | null;
+  attempt: { kind: 'text' | 'email' | 'call'; at: string; what: 'undelivered' | 'failed_dial' } | null;
 }
 
 /** The most recent HUMAN contact with the person the viewer may see (never an automated message). */

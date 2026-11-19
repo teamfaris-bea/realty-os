@@ -7,7 +7,7 @@
 // A logged activity always starts "Logged by …": it is the agent's own report and is never worded as a call the system
 // placed or a message it sent. An automated message is never the "Last" line; it is said on its own line.
 // Times are the viewer's own (the browser's zone), like every other time on the feed.
-import type { LastAutomaticView, LastTouchView, NextPromiseView } from './types.js';
+import type { FeedCard, LastAutomaticView, LastTouchView, NextPromiseView } from './types.js';
 
 export const NO_CONVERSATION_YET = 'No conversation yet.';
 export const NO_NEXT_STEP = 'No next step set.';
@@ -99,6 +99,51 @@ export function lastTouchLine(t: LastTouchView | null | undefined, nowMs: number
   const v = VERB[t.kind] ?? VERB.note!;
   const head = t.direction === 'inbound' ? `${v.theirs} ${whenWords(t.at, nowMs)}` : `${v.mine} ${whenWords(t.at, nowMs)}${!t.byMe && t.byName ? ` by ${t.byName}` : ''}`;
   return `${head}${t.outcome ? `, ${t.outcome}` : ''}${quoted(t.snippet)}`;
+}
+
+/** Ends a sentence that does not end one yet ("Call Nov 10, talked 6 min" → "….", a quoted snippet is left as it is). */
+const stop = (s: string) => (/[.!?”"]$/.test(s) ? s : `${s}.`);
+
+/**
+ * The "Last" line of a follow-up card, worded from the SAME story as its Due line (R-TODAY-14: the server's `quiet`,
+ * core quietStory), so the two can never disagree. By what stands at the story's instant:
+ *
+ *   contact       the conversation itself, dated ("Call Nov 10, talked 6 min"); under a newer note, the note first and
+ *                 then "Last conversation: …" (the Due line counts from the conversation, never from the note)
+ *   undelivered   "No conversation is recorded. The last text (Nov 10) was not delivered."   (after an older
+ *   failed_dial    conversation: that conversation, then "The text after it (Mon) was not delivered.")
+ *   touch_only    "No conversation is recorded for the contact counted Nov 10."
+ *   imported      "Imported history only (latest entry Nov 1). No conversation in Realty OS yet."
+ *   never         a note when there is one; otherwise NOTHING on a quiet row (its Due line already says "no
+ *                 conversation yet": one sentence, not two) and "No conversation yet." on any other card
+ *
+ * Null: the card shows no Last line. Without a story (an older server's answer) it is the last touch as before, and a
+ * quiet row with none says nothing rather than risk the contradiction.
+ */
+export function lastLine(c: Pick<FeedCard, 'itemType' | 'lastTouch' | 'lastConversation' | 'quiet' | 'importedHistoryAt'>, nowMs: number): string | null {
+  const quietRow = c.itemType === 'warm_follow_up';
+  const said = c.lastTouch ? lastTouchLine(c.lastTouch, nowMs) : null;
+  const q = c.quiet;
+  if (!q) return said ?? (quietRow ? null : lastTouchLine(null, nowMs, c.importedHistoryAt));
+  // a note is the newest thing said about the person; the conversation the clock counts from follows it
+  const told = said !== null && c.lastConversation ? `${stop(said)} Last conversation: ${lastTouchLine(c.lastConversation, nowMs)}` : said;
+  const when = q.at ? whenWords(q.at, nowMs) : '';
+  switch (q.basis) {
+    case 'contact':
+      return told;
+    case 'undelivered':
+    case 'failed_dial': {
+      const what = q.attempt?.kind ?? (q.basis === 'failed_dial' ? 'call' : 'text');
+      const failed = q.basis === 'failed_dial' ? 'did not connect' : 'was not delivered';
+      return told ? `${stop(told)} The ${what} after it (${when}) ${failed}.` : `No conversation is recorded. The last ${what} (${when}) ${failed}.`;
+    }
+    case 'touch_only':
+      return told ? `${stop(told)} Nothing is recorded for the later contact counted ${when}.` : `No conversation is recorded for the contact counted ${when}.`;
+    case 'imported':
+      return `${told ? `${stop(told)} ` : ''}Imported history only (latest entry ${when}). No conversation in Realty OS yet.`;
+    case 'never':
+      return told ?? (quietRow ? null : NO_CONVERSATION_YET);
+  }
 }
 
 const AUTOMATIC: Record<string, string> = { text: 'text', email: 'email', chat: 'chat reply' };

@@ -10,8 +10,8 @@
 //      stage and the follow-up for tomorrow the sheet preselects: Log → outcome → the one button = 3 taps, every tap
 //      counted, without leaving Today. The row updates in place ("Logged by you: called from your phone, left a
 //      voicemail"); one note, no call record, one task, one stage event;
-//   3. a person whose only message was automatic says "No conversation yet." and, on its own line, "Automatic text
-//      sent …"; the automatic text's words are nowhere on the page;
+//   3. a person whose only message was automatic says it once ("Connected: no conversation yet", and no Last line under
+//      it) and, on its own line, "Automatic text sent …"; the automatic text's words are nowhere on the page;
 //   4. from the People page the header's "Log a call or conversation" logs a conversation for another person: the
 //      entry → the person → "Talked" → the one button = 4 taps, and a double tap on that button makes one record;
 //   6. (fix 1, H1 and M3; R-TODAY-11) a card about an overdue "Follow up with …" task: from Log "Talked", Log "Left
@@ -69,9 +69,9 @@ const ROUTES = String.raw`
     await suFixture(h, [{ text: "UPDATE messages SET initiator = 'system', initiated_by_user_id = NULL, occurred_at = clock_timestamp() - ($2::int * interval '1 day'), dispatched_at = clock_timestamp() - ($2::int * interval '1 day') WHERE id = $1", values: [r.body.message.id, b.daysAgo] }]);
     return { messageId: r.body.message.id };
   },
-  /** { contactId, stage, days } in the stage, last verified touch that many days ago, theirs for 90 days */
+  /** { contactId, stage, days } in the stage, last verified touch that many days ago (null: the system never counted one), theirs for 90 days */
   async '/j11/quiet'(b) {
-    await suFixture(h, [{ text: "UPDATE contacts SET stage = $2, owned_at = clock_timestamp() - interval '90 days', last_human_touch_at = clock_timestamp() - ($3::int * interval '1 day') - interval '1 hour' WHERE id = $1", values: [b.contactId, b.stage, b.days] }]);
+    await suFixture(h, [{ text: "UPDATE contacts SET stage = $2, owned_at = clock_timestamp() - interval '90 days', last_human_touch_at = CASE WHEN $3::int IS NULL THEN NULL ELSE clock_timestamp() - ($3::int * interval '1 day') - interval '1 hour' END WHERE id = $1", values: [b.contactId, b.stage, b.days ?? null] }]);
     return { ok: true };
   },
 `;
@@ -115,9 +115,10 @@ test.beforeAll(async () => {
   const t = await must(stack.api<{ task: { id: string } }>('a.agent0', 'POST', '/tasks', { title: PROMISE, contactId: dana.id, dueAt: new Date(Date.now() + 3_600_000).toISOString() }), 'task');
   promiseTaskId = t.task.id;
   await stack.fixture('/j11/promise', { taskId: promiseTaskId, overdueMinutes: 10 });
-  // Ines: "Connected", quiet for 9 days, and the only message is one a plan sent 2 days ago
+  // Ines: "Connected", theirs for 90 days, and the only message ever is one a plan sent 2 days ago (no human contact
+  // at all: the system's own clock counted none either)
   await stack.fixture('/j11/automatic-text', { as: 'a.agent0', contactId: ines.id, body: AUTOMATIC, daysAgo: 2 });
-  await stack.fixture('/j11/quiet', { contactId: ines.id, stage: 'connected', days: 9 });
+  await stack.fixture('/j11/quiet', { contactId: ines.id, stage: 'connected', days: null });
 });
 test.afterAll(async () => {
   await stack?.stop();
@@ -250,11 +251,14 @@ test('J11.2 a call made outside the app, from the row: Log → "Left voicemail" 
   expect((await stack.sends()).sms.filter((m) => m.body.includes('Follow up'))).toEqual([]);
 });
 
-test('J11.3 a person whose only message was automatic: "No conversation yet." and the automatic text on its own line', async ({ page }, info) => {
+test('J11.3 a person whose only message was automatic: ONE sentence ("Connected: no conversation yet"), no Last line to contradict or repeat it, and the automatic text on its own line', async ({ page }, info) => {
   await openToday(page);
   await expect(row(page, ines)).toBeVisible({ timeout: 20_000 });
-  await expect(line(page, ines, 'Due')).toHaveText('Connected: no conversation for 9 days');
-  await expect(line(page, ines, 'Last')).toHaveText('No conversation yet.');
+  // (fix 1, M5 / R-TODAY-14: this test used to assert "no conversation for 9 days" beside "No conversation yet."; the
+  // two lines now come from one story. The whole truth table is tested in core, the API and the web's lib.)
+  await expect(line(page, ines, 'Due')).toHaveText('Connected: no conversation yet');
+  await expect(line(page, ines, 'Last')).toHaveCount(0);
+  await expect(lines(page, ines).getByText(/no conversation yet/i)).toHaveCount(1);
   await expect(lines(page, ines).getByText(/^Automatic text sent (Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/)).toBeVisible();
   await expect(line(page, ines, 'Next')).toHaveText('No next step set.');
   // the automatic text's own words are nowhere on the page

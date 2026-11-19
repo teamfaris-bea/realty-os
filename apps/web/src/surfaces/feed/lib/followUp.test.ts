@@ -1,7 +1,7 @@
 // R-TODAY-1 / R-TODAY-4 (web): the words of a follow-up card's "Last" and "Next" lines, and of a logged outside
 // call wherever it is shown. Written against local dates, so they hold under any TZ the suite runs in.
 import { describe, expect, it } from 'vitest';
-import { NO_CONVERSATION_YET, automaticLine, lastTouchLine, loggedWords, nextPromiseLine, whenWords } from './followUp.js';
+import { NO_CONVERSATION_YET, automaticLine, lastLine, lastTouchLine, loggedWords, nextPromiseLine, whenWords } from './followUp.js';
 import type { LastTouchView, NextPromiseView } from './types.js';
 
 // Thursday Nov 19 2026, 10:00 local
@@ -102,5 +102,58 @@ describe('the Next line', () => {
   });
   it('nothing next: "No next step set."', () => {
     expect(nextPromiseLine(null, NOW)).toBe('No next step set.');
+  });
+});
+
+// b19 Today fix 1 (M5; R-TODAY-14): the Last line is worded from the SAME story as the Due line (the server's
+// `quiet`), so the two can never disagree. The truth table, by evidence; the Due sentences are the server's
+// (packages/core quietStory.test.ts and apps/api followUpTruthTable.test.ts test the same table from their side).
+describe('R-TODAY-14: lastLine, the Last line of the truth table', () => {
+  const D10 = local(10); // Tue Nov 10
+  type C = Parameters<typeof lastLine>[0];
+  const warm = (o: Partial<C>): C => ({ itemType: 'warm_follow_up', lastTouch: null, lastConversation: null, importedHistoryAt: null, quiet: null, ...o });
+  const task = (o: Partial<C>): C => ({ ...warm(o), itemType: 'task_due' });
+  const q = (basis: NonNullable<C['quiet']>['basis'], at: string | null, attempt: NonNullable<C['quiet']>['attempt'] = null) => ({ basis, at, attempt });
+  const call = touch({ at: local(10), outcome: 'talked 6 min' });
+  const logged = touch({ at: local(10), outcome: 'talked', reported: true });
+  const reply = touch({ kind: 'text', at: local(11), direction: 'inbound', byName: null, byMe: false, outcome: null, snippet: 'Can we see it Saturday?' });
+  const note = touch({ kind: 'note', at: local(19, 9, 5), direction: null, outcome: null, snippet: 'Ask about the school district.' });
+
+  // evidence, the server's Due line for a Connected person, the card's facts, the Last line on a quiet row, and on any other follow-up card
+  const TABLE: [string, string, Partial<C>, string | null, string][] = [
+    ['none', 'Connected: no conversation yet', { quiet: q('never', null) }, null, 'No conversation yet.'],
+    ['automated only', 'Connected: no conversation yet', { quiet: q('never', null) }, null, 'No conversation yet.'],
+    ['bulk only', 'Connected: no conversation yet', { quiet: q('never', null) }, null, 'No conversation yet.'],
+    ['an undelivered attempt', 'Connected, but the last text was not delivered', { quiet: q('undelivered', D10, { kind: 'text', at: D10, what: 'undelivered' }) }, 'No conversation is recorded. The last text (Nov 10) was not delivered.', 'No conversation is recorded. The last text (Nov 10) was not delivered.'],
+    ['a failed dial', 'Connected, but the last call did not connect', { quiet: q('failed_dial', D10, { kind: 'call', at: D10, what: 'failed_dial' }) }, 'No conversation is recorded. The last call (Nov 10) did not connect.', 'No conversation is recorded. The last call (Nov 10) did not connect.'],
+    ['a logged outside call', 'Connected: no conversation for 9 days', { quiet: q('contact', D10), lastTouch: logged }, 'Logged by you: called from your phone, talked (Nov 10, 2:10 PM)', 'Logged by you: called from your phone, talked (Nov 10, 2:10 PM)'],
+    ['a verified call', 'Connected: no conversation for 9 days', { quiet: q('contact', D10), lastTouch: call }, 'Call Nov 10, talked 6 min', 'Call Nov 10, talked 6 min'],
+    ['their reply', 'Connected: no conversation for 8 days', { quiet: q('contact', local(11)), lastTouch: reply }, 'They texted Nov 11: “Can we see it Saturday?”', 'They texted Nov 11: “Can we see it Saturday?”'],
+    ['imported only', 'Connected: only imported history, the latest 40 days ago', { quiet: q('imported', local(1)), importedHistoryAt: local(1) }, 'Imported history only (latest entry Nov 1). No conversation in Realty OS yet.', 'Imported history only (latest entry Nov 1). No conversation in Realty OS yet.'],
+    ['a touch on record with nothing readable', 'Connected: no conversation for 9 days', { quiet: q('touch_only', D10) }, 'No conversation is recorded for the contact counted Nov 10.', 'No conversation is recorded for the contact counted Nov 10.'],
+    ['a conversation, then an undelivered text', 'Connected, but the last text was not delivered', { quiet: q('undelivered', local(16), { kind: 'text', at: local(16), what: 'undelivered' }), lastTouch: call }, 'Call Nov 10, talked 6 min. The text after it (Mon) was not delivered.', 'Call Nov 10, talked 6 min. The text after it (Mon) was not delivered.'],
+    ['a conversation, then a touch with nothing readable', 'Connected: no conversation for 3 days', { quiet: q('touch_only', local(16)), lastTouch: call }, 'Call Nov 10, talked 6 min. Nothing is recorded for the later contact counted Mon.', 'Call Nov 10, talked 6 min. Nothing is recorded for the later contact counted Mon.'],
+    ['a note on top of a conversation', 'Connected: no conversation for 9 days', { quiet: q('contact', D10), lastTouch: note, lastConversation: call }, 'Note today 9:05 AM: “Ask about the school district.” Last conversation: Call Nov 10, talked 6 min', 'Note today 9:05 AM: “Ask about the school district.” Last conversation: Call Nov 10, talked 6 min'],
+    ['only a note', 'Connected: no conversation yet', { quiet: q('never', null), lastTouch: note }, 'Note today 9:05 AM: “Ask about the school district.”', 'Note today 9:05 AM: “Ask about the school district.”'],
+  ];
+  it.each(TABLE)('%s', (_n, _due, facts, onQuietRow, onOtherCard) => {
+    expect(lastLine(warm(facts), NOW)).toBe(onQuietRow);
+    expect(lastLine(task(facts), NOW)).toBe(onOtherCard);
+  });
+
+  it('no row of the table can read "no conversation yet" under a Due line that counts days, nor say the same sentence twice', () => {
+    for (const [name, due, facts, onQuietRow] of TABLE) {
+      if (/\d+ days?/.test(due)) expect(onQuietRow ?? '', name).not.toMatch(/No conversation yet/i);
+      if (/no conversation yet/.test(due)) expect(onQuietRow ?? '', name).not.toMatch(/No conversation yet\.$/);
+      // one instant: a line that counts days from a conversation names something dated at the story's instant
+      if (facts.quiet?.basis === 'contact') expect((facts.lastConversation ?? facts.lastTouch)!.at, name).toBe(facts.quiet.at);
+    }
+  });
+
+  it('an older server’s answer (no story): a quiet row with no last touch says nothing rather than "No conversation yet." under a day count; other cards say it as before', () => {
+    expect(lastLine({ itemType: 'warm_follow_up', lastTouch: null }, NOW)).toBeNull();
+    expect(lastLine({ itemType: 'task_due', lastTouch: null }, NOW)).toBe('No conversation yet.');
+    expect(lastLine({ itemType: 'task_due', lastTouch: null, importedHistoryAt: local(12) }, NOW)).toBe('No conversation yet in Realty OS. Earlier history was imported (latest entry Nov 12).');
+    expect(lastLine({ itemType: 'warm_follow_up', lastTouch: call }, NOW)).toBe('Call Nov 10, talked 6 min');
   });
 });

@@ -51,6 +51,15 @@ export const FeedCardSchema = z.object({
   lastAutomatic: z.object({ kind: z.enum(['text', 'email', 'chat']), at: z.string(), bulk: z.boolean() }).nullable(),
   importedHistoryAt: z.string().nullable(),
   nextPromise: NextPromiseSchema.nullable(),
+  // R-TODAY-12 / R-TODAY-14: the conversation under a newer note, and the one story both lines are worded from
+  lastConversation: LastTouchSchema.nullable(),
+  quiet: z
+    .object({
+      basis: z.enum(['contact', 'undelivered', 'failed_dial', 'touch_only', 'imported', 'never']),
+      at: z.string().nullable(),
+      attempt: z.object({ kind: z.enum(['text', 'email', 'call']), at: z.string(), what: z.enum(['undelivered', 'failed_dial']) }).nullable(),
+    })
+    .nullable(),
 });
 /** R-TODAY-6: one person of the daily plan, shaped like a card; `id` is the person's id, `taskIds` their due tasks. */
 export const FollowUpTodayCardSchema = FeedCardSchema.extend({ taskIds: z.array(uuid) });

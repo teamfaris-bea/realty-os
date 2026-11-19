@@ -4,9 +4,14 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
+import { whenWords } from './lib/followUp.js';
 import { FakeFetch, IDS, agentApp, card, err, feed, offerCard, reachability } from './lib/testing.js';
 import type { FeedCard, FeedResponse, FollowUpTodayCard } from './lib/types.js';
 
+// (far enough back to read as a date, not a weekday; WHEN is that date as the page words it, whenever the suite runs)
+const NINE_DAYS_AGO = new Date(Date.now() - 30 * 86_400_000).toISOString();
+const WHEN = whenWords(NINE_DAYS_AGO, Date.now());
+const WHEN_RE = WHEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const NOBODY = 'Nobody is due today. People you promise to follow up with will show here.';
 
 function person(over: Partial<FollowUpTodayCard> = {}): FollowUpTodayCard {
@@ -22,6 +27,9 @@ function person(over: Partial<FollowUpTodayCard> = {}): FollowUpTodayCard {
       subjectId: IDS.jane,
       why: ['Connected: no conversation for 9 days'],
       stage: { key: 'connected', label: 'Connected' },
+      // the story both lines are worded from: a call nine days before
+      lastTouch: { kind: 'call', at: NINE_DAYS_AGO, byName: 'Ava Agent', byMe: true, direction: 'outbound', outcome: 'talked 6 min', snippet: null, reported: false },
+      quiet: { basis: 'contact', at: NINE_DAYS_AGO, attempt: null },
     }),
     taskIds: [],
     ...over,
@@ -46,7 +54,9 @@ describe('R-TODAY-6: "Follow up today" on Today', () => {
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Due now', 'Follow up today', 'Next up']);
     const row = within(g).getByRole('article', { name: 'Dana Reyes' });
     expect(within(row).getByText('Connected: no conversation for 9 days')).toBeInTheDocument();
-    expect(within(row).getByText('No conversation yet.')).toBeInTheDocument();
+    // (M5, R-TODAY-14: the Last line is worded from the same story as the Due line; the whole table is in lib/followUp.test.ts)
+    expect(within(row).getByText(`Call ${WHEN}, talked 6 min`)).toBeInTheDocument();
+    expect(within(row).queryByText('No conversation yet.')).toBeNull();
     expect(within(row).getByText('No next step set.')).toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Call' })).toBeEnabled();
     // a row of the plan is not a stored card: nothing to snooze or dismiss
@@ -196,5 +206,39 @@ describe('M4 (R-TODAY-13): "nobody is due" only after a complete read', () => {
     await group();
     expect(screen.queryByText(NOBODY)).toBeNull();
     expect(within(await group()).getByText('Nobody is due among the people checked so far. There are more to check.')).toBeInTheDocument();
+  });
+});
+
+describe('M5 (R-TODAY-14): the two lines of a quiet row never disagree', () => {
+  const quietRow = (over: Partial<FollowUpTodayCard>) => person({ lastTouch: null, quiet: null, ...over });
+  const linesOf = async () => within(within(await group()).getByRole('article', { name: 'Dana Reyes' })).getByTestId('follow-up-lines');
+
+  it('never contacted: ONE sentence. The Due line says it and there is no Last line to say it again', async () => {
+    open(withPlan(feed(), [quietRow({ why: ['Connected: no conversation yet'], reasons: [{ code: 'WARM_NEVER_CONTACTED', label: 'Connected: no conversation yet' }], quiet: { basis: 'never', at: null, attempt: null } })]));
+    const l = await linesOf();
+    expect(within(l).getByText('Connected: no conversation yet')).toBeInTheDocument();
+    expect(within(l).queryByText('Last')).toBeNull();
+    expect(within(l).queryByText(/No conversation yet\./)).toBeNull();
+    expect(within(l).getAllByText(/no conversation yet/i)).toHaveLength(1);
+  });
+
+  it('automated only: still one sentence, and the automatic text keeps its own line', async () => {
+    open(withPlan(feed(), [quietRow({ why: ['Connected: no conversation yet'], quiet: { basis: 'never', at: null, attempt: null }, lastAutomatic: { kind: 'text', at: NINE_DAYS_AGO, bulk: false } })]));
+    const l = await linesOf();
+    expect(within(l).queryByText('Last')).toBeNull();
+    expect(within(l).getByText(`Automatic text sent ${WHEN}`)).toBeInTheDocument();
+  });
+
+  it('the reviewer’s case, an undelivered text that had been counted as a touch: what is true on both lines', async () => {
+    open(withPlan(feed(), [quietRow({ why: ['Connected, but the last text was not delivered'], quiet: { basis: 'undelivered', at: NINE_DAYS_AGO, attempt: { kind: 'text', at: NINE_DAYS_AGO, what: 'undelivered' } } })]));
+    const l = await linesOf();
+    expect(l).toHaveTextContent(new RegExp(`^Due\\s*Connected, but the last text was not delivered\\s*Last\\s*No conversation is recorded\\. The last text \\(${WHEN_RE}\\) was not delivered\\.\\s*Next`));
+    expect(within(l).queryByText(/no conversation for \d+ days|No conversation yet/)).toBeNull();
+  });
+
+  it('imported history: both lines say imported', async () => {
+    open(withPlan(feed(), [quietRow({ why: ['Connected: only imported history, the latest 40 days ago'], quiet: { basis: 'imported', at: NINE_DAYS_AGO, attempt: null }, importedHistoryAt: NINE_DAYS_AGO })]));
+    const l = await linesOf();
+    expect(l).toHaveTextContent(new RegExp(`^Due\\s*Connected: only imported history, the latest 40 days ago\\s*Last\\s*Imported history only \\(latest entry ${WHEN_RE}\\)\\. No conversation in Realty OS yet\\.\\s*Next`));
   });
 });

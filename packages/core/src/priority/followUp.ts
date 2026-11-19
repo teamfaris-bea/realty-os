@@ -15,7 +15,7 @@
 // so a candidate here is always a row the viewer could open. Nothing here creates a message, a task or a touch, and
 // nothing here is read by scoring, the first-contact clock or a scoreboard: a logged outside call is the agent's own
 // report (`reported: true`) and is never the same thing as a call the system placed.
-import { type ContactId, DAY_MS, type IanaZone, type Instant, addLocalDays, instant, startOfLocalDay } from '../foundation/index.js';
+import { type ContactId, DAY_MS, type IanaZone, type Instant, MINUTE_MS, addLocalDays, instant, startOfLocalDay } from '../foundation/index.js';
 import { clip, textLabels } from './format.js';
 import type { FeedReason, GateSummary, OneTapAction, TaskFacts } from './types.js';
 
@@ -274,6 +274,87 @@ export function selectLastContact(candidates: readonly ContactCandidate[], now: 
   return { lastTouch, lastContact, lastContactAt: lastContact?.at ?? null, lastAutomatic, importedHistoryAt: lastTouch === null ? importedAt : null };
 }
 
+// ---- one instant, two lines (R-TODAY-14) ----------------------------------------------------------
+
+/**
+ * An attempt that did not reach the person: a text or email of the agent's that failed, bounced or came back
+ * undelivered, or a dial that never connected. It is never contact; it is what the card says instead of pretending a
+ * conversation happened at that moment.
+ */
+export interface LastAttempt {
+  kind: 'text' | 'email' | 'call';
+  at: Instant;
+  what: 'undelivered' | 'failed_dial';
+}
+
+/** The message statuses that mean it did not reach the person. */
+const NOT_DELIVERED: ReadonlySet<string> = new Set(['failed', 'undelivered', 'bounced']);
+
+/** The newest attempt of the agent's own that did not reach the person, among the candidates; null: none. */
+export function selectLastAttempt(candidates: readonly ContactCandidate[], now: Instant): LastAttempt | null {
+  let best: LastAttempt | null = null;
+  for (const c of candidates) {
+    if (!(c.at <= now)) continue;
+    let a: LastAttempt | null = null;
+    if (c.source === 'message' && !c.imported && c.direction === 'outbound' && c.initiator === 'human' && !c.bulk && NOT_DELIVERED.has(c.status)) {
+      const kind = MESSAGE_KIND[c.channel];
+      if (kind === 'text' || kind === 'email') a = { kind, at: c.at, what: 'undelivered' };
+    } else if (c.source === 'call' && !c.imported && c.direction === 'outbound' && c.initiator === 'human' && classifyCandidate(c, now) === 'none' && (c.status === 'failed' || c.status === 'canceled')) {
+      a = { kind: 'call', at: c.at, what: 'failed_dial' };
+    }
+    if (a && (best === null || a.at > best.at)) best = a;
+  }
+  return best;
+}
+
+/**
+ * What stands at the instant the quiet clock is worded from:
+ *   contact       a conversation or message the viewer can read (a verified call, their reply, a delivered text, a
+ *                 held appointment, a call the agent logged from outside the app)
+ *   undelivered   the latest thing is a text or email of the agent's that did not reach the person
+ *   failed_dial   the latest thing is a dial that never connected
+ *   touch_only    the system counted a contact then, and nothing the viewer can read stands behind it
+ *   imported      only imported history
+ *   never         nothing at all (an automated or bulk message is never any of the above)
+ */
+export type QuietBasis = 'contact' | 'undelivered' | 'failed_dial' | 'touch_only' | 'imported' | 'never';
+
+export interface QuietStory {
+  basis: QuietBasis;
+  /** the ONE instant the Due line and the Last line are both worded from; null: never */
+  at: Instant | null;
+  /** set for `undelivered` and `failed_dial` */
+  attempt: LastAttempt | null;
+}
+
+/** The system's own touch instant and the row it was recorded for are the same event when they are this close. */
+export const TOUCH_SLACK_MS = 5 * MINUTE_MS;
+
+/**
+ * The story of a person's quiet clock (R-TODAY-14), from the same facts the daily plan reads: the latest of a readable
+ * contact, an attempt that did not reach them, a touch the system counted with nothing readable behind it, and (only
+ * when there is no readable contact) imported history. A tie goes to the contact, then the attempt, then imported
+ * history. Both lines of a card are worded from this one answer, so they cannot disagree.
+ */
+export function quietStory(i: { lastContactAt: Instant | null; touchAt: Instant | null; importedAt: Instant | null; attempt: LastAttempt | null }): QuietStory {
+  const c = i.lastContactAt;
+  // an attempt older than the last conversation is history, not the story
+  const attempt = i.attempt !== null && (c === null || i.attempt.at > c) ? i.attempt : null;
+  // the system's touch is its own event only when neither a readable contact nor the attempt explains it
+  const explained = (t: Instant) => (c !== null && t <= c + TOUCH_SLACK_MS) || (attempt !== null && Math.abs(t - attempt.at) <= TOUCH_SLACK_MS) || (attempt !== null && t <= attempt.at);
+  const touch = i.touchAt !== null && !explained(i.touchAt) ? i.touchAt : null;
+  const imported = c === null ? i.importedAt : null;
+  const options: QuietStory[] = [];
+  if (c !== null) options.push({ basis: 'contact', at: c, attempt: null });
+  if (attempt !== null) options.push({ basis: attempt.what === 'failed_dial' ? 'failed_dial' : 'undelivered', at: attempt.at, attempt });
+  if (imported !== null) options.push({ basis: 'imported', at: imported, attempt: null });
+  if (touch !== null) options.push({ basis: 'touch_only', at: touch, attempt: null });
+  // the latest wins; `options` is already in tie order
+  let best: QuietStory | null = null;
+  for (const o of options) if (best === null || (o.at as Instant) > (best.at as Instant)) best = o;
+  return best ?? { basis: 'never', at: null, attempt: null };
+}
+
 // ---- the next promise -----------------------------------------------------------------------------
 
 export type PromiseTask = Pick<TaskFacts, 'kind' | 'dueAt' | 'dueAllDay' | 'dueTz' | 'createdAt'> & { taskId: string; title: string };
@@ -414,13 +495,47 @@ export function planFollowUpToday(i: { now: Instant; zone: IanaZone; people: rea
   return { people: out.slice(0, i.cap ?? FOLLOW_UP_TODAY_CAP), total: out.length };
 }
 
-/** Why a person is in the plan, in words. Never scored: these reasons carry no points. */
-export function followUpTodayReasons(e: FollowUpTodayEntry, o: { now: Instant; stageLabel: string }): FeedReason[] {
+const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+const ATTEMPT_WORD: Readonly<Record<LastAttempt['kind'], string>> = { text: 'text', email: 'email', call: 'call' };
+
+/**
+ * The Due line of a quiet person (R-TODAY-14), stage by evidence. It is worded from the story's ONE instant, and the
+ * Last line under it is worded from the same story (apps/web feed/lib/followUp.ts lastLine), so the two cannot
+ * disagree:
+ *
+ *   never                    "<Stage>: no conversation yet"                           (and no Last line repeats it)
+ *   contact, touch_only      "<Stage>: no conversation for N days"                     (N counted from that instant)
+ *   undelivered              "<Stage>, but the last text was not delivered"
+ *   failed_dial              "<Stage>, but the last call did not connect"
+ *   imported                 "<Stage>: only imported history, the latest N days ago"
+ */
+export function warmReason(story: QuietStory, o: { now: Instant; stageLabel: string }): FeedReason {
+  const n = story.at === null ? 0 : Math.max(0, Math.floor((o.now - story.at) / DAY_MS));
+  switch (story.basis) {
+    case 'never':
+      return { code: 'WARM_NEVER_CONTACTED', label: `${o.stageLabel}: no conversation yet` };
+    case 'undelivered':
+      return { code: 'WARM_NOT_DELIVERED', label: `${o.stageLabel}, but the last ${ATTEMPT_WORD[story.attempt?.kind ?? 'text']} was not delivered` };
+    case 'failed_dial':
+      return { code: 'WARM_CALL_FAILED', label: `${o.stageLabel}, but the last call did not connect` };
+    case 'imported':
+      return { code: 'WARM_IMPORTED_ONLY', label: `${o.stageLabel}: only imported history, the latest ${days(n)} ago` };
+    case 'contact':
+    case 'touch_only':
+      return { code: 'WARM_NO_CONTACT', label: `${o.stageLabel}: no conversation for ${days(n)}` };
+  }
+}
+
+/**
+ * Why a person is in the plan, in words. Never scored: these reasons carry no points. `story` (R-TODAY-14): the
+ * person's quiet story, which words a warm row; without it the entry's own facts word it as before.
+ */
+export function followUpTodayReasons(e: FollowUpTodayEntry, o: { now: Instant; stageLabel: string; story?: QuietStory | undefined }): FeedReason[] {
   const f = textLabels(o.now);
   if (e.reason === 'warm') {
+    if (o.story) return [warmReason(o.story, o)];
     if (e.neverContacted) return [{ code: 'WARM_NEVER_CONTACTED', label: `${o.stageLabel}: no conversation yet` }];
-    const d = e.quietDays ?? 0;
-    return [{ code: 'WARM_NO_CONTACT', label: `${o.stageLabel}: no conversation for ${d} day${d === 1 ? '' : 's'}` }];
+    return [{ code: 'WARM_NO_CONTACT', label: `${o.stageLabel}: no conversation for ${days(e.quietDays ?? 0)}` }];
   }
   const overdue = o.now >= e.dueAt;
   const promise = e.reason === 'promise';

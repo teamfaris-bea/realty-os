@@ -2055,6 +2055,86 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     },
                   ],
                 },
+                "lastConversation": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                        },
+                        "byMe": {
+                          "type": "boolean",
+                        },
+                        "byName": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "direction": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "inbound",
+                                "outbound",
+                              ],
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "kind": {
+                          "enum": [
+                            "call",
+                            "text",
+                            "email",
+                            "chat",
+                            "note",
+                            "appointment",
+                          ],
+                          "type": "string",
+                        },
+                        "outcome": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "reported": {
+                          "type": "boolean",
+                        },
+                        "snippet": {
+                          "anyOf": [
+                            {
+                              "maxLength": 140,
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "at",
+                        "byName",
+                        "byMe",
+                        "direction",
+                        "outcome",
+                        "snippet",
+                        "reported",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
                 "lastTouch": {
                   "anyOf": [
                     {
@@ -2685,6 +2765,77 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     },
                   ],
                 },
+                "quiet": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "attempt": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "at": {
+                                  "type": "string",
+                                },
+                                "kind": {
+                                  "enum": [
+                                    "text",
+                                    "email",
+                                    "call",
+                                  ],
+                                  "type": "string",
+                                },
+                                "what": {
+                                  "enum": [
+                                    "undelivered",
+                                    "failed_dial",
+                                  ],
+                                  "type": "string",
+                                },
+                              },
+                              "required": [
+                                "kind",
+                                "at",
+                                "what",
+                              ],
+                              "type": "object",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "basis": {
+                          "enum": [
+                            "contact",
+                            "undelivered",
+                            "failed_dial",
+                            "touch_only",
+                            "imported",
+                            "never",
+                          ],
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "basis",
+                        "at",
+                        "attempt",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
                 "reasons": {
                   "items": {
                     "additionalProperties": false,
@@ -2801,6 +2952,8 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 "lastAutomatic",
                 "importedHistoryAt",
                 "nextPromise",
+                "lastConversation",
+                "quiet",
                 "taskIds",
               ],
               "type": "object",
@@ -3427,6 +3580,86 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 },
               ],
             },
+            "lastConversation": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "byMe": {
+                      "type": "boolean",
+                    },
+                    "byName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "inbound",
+                            "outbound",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "kind": {
+                      "enum": [
+                        "call",
+                        "text",
+                        "email",
+                        "chat",
+                        "note",
+                        "appointment",
+                      ],
+                      "type": "string",
+                    },
+                    "outcome": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "reported": {
+                      "type": "boolean",
+                    },
+                    "snippet": {
+                      "anyOf": [
+                        {
+                          "maxLength": 140,
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "byName",
+                    "byMe",
+                    "direction",
+                    "outcome",
+                    "snippet",
+                    "reported",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "lastTouch": {
               "anyOf": [
                 {
@@ -4057,6 +4290,77 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 },
               ],
             },
+            "quiet": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "attempt": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "at": {
+                              "type": "string",
+                            },
+                            "kind": {
+                              "enum": [
+                                "text",
+                                "email",
+                                "call",
+                              ],
+                              "type": "string",
+                            },
+                            "what": {
+                              "enum": [
+                                "undelivered",
+                                "failed_dial",
+                              ],
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "kind",
+                            "at",
+                            "what",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "basis": {
+                      "enum": [
+                        "contact",
+                        "undelivered",
+                        "failed_dial",
+                        "touch_only",
+                        "imported",
+                        "never",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "basis",
+                    "at",
+                    "attempt",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "reasons": {
               "items": {
                 "additionalProperties": false,
@@ -4165,6 +4469,8 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
             "lastAutomatic",
             "importedHistoryAt",
             "nextPromise",
+            "lastConversation",
+            "quiet",
           ],
           "type": "object",
         },
@@ -4769,6 +5075,86 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 },
               ],
             },
+            "lastConversation": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "byMe": {
+                      "type": "boolean",
+                    },
+                    "byName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "inbound",
+                            "outbound",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "kind": {
+                      "enum": [
+                        "call",
+                        "text",
+                        "email",
+                        "chat",
+                        "note",
+                        "appointment",
+                      ],
+                      "type": "string",
+                    },
+                    "outcome": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "reported": {
+                      "type": "boolean",
+                    },
+                    "snippet": {
+                      "anyOf": [
+                        {
+                          "maxLength": 140,
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "byName",
+                    "byMe",
+                    "direction",
+                    "outcome",
+                    "snippet",
+                    "reported",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "lastTouch": {
               "anyOf": [
                 {
@@ -5399,6 +5785,77 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 },
               ],
             },
+            "quiet": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "attempt": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "at": {
+                              "type": "string",
+                            },
+                            "kind": {
+                              "enum": [
+                                "text",
+                                "email",
+                                "call",
+                              ],
+                              "type": "string",
+                            },
+                            "what": {
+                              "enum": [
+                                "undelivered",
+                                "failed_dial",
+                              ],
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "kind",
+                            "at",
+                            "what",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "basis": {
+                      "enum": [
+                        "contact",
+                        "undelivered",
+                        "failed_dial",
+                        "touch_only",
+                        "imported",
+                        "never",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "basis",
+                    "at",
+                    "attempt",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "reasons": {
               "items": {
                 "additionalProperties": false,
@@ -5507,6 +5964,8 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
             "lastAutomatic",
             "importedHistoryAt",
             "nextPromise",
+            "lastConversation",
+            "quiet",
           ],
           "type": "object",
         },
