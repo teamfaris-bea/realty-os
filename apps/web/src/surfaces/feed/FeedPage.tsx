@@ -127,6 +127,8 @@ function Band({ title, cards, pinned }: { title: string; cards: FeedCard[]; pinn
   );
 }
 
+/** What the group is, in one line under its heading. */
+export const FOLLOW_UP_TODAY_WHAT = 'People you promised to get back to, and people you have talked with who have gone quiet.';
 /** What the group says when nobody is due (R-TODAY-8): plain words, no tutorial. */
 export const NOBODY_DUE = 'Nobody is due today. People you promise to follow up with will show here.';
 
@@ -139,10 +141,18 @@ export const NOBODY_DUE = 'Nobody is due today. People you promise to follow up 
 function FollowUpToday({ plan }: { plan: NonNullable<FeedResponse['followUpToday']> }) {
   const id = useId();
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-3">
-      <h2 id={id} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
-        Follow up today
-      </h2>
+    <section aria-labelledby={id} aria-describedby={plan.people.length > 0 ? `${id}-what` : undefined} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5">
+        <h2 id={id} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+          Follow up today
+        </h2>
+        {/* R-TODAY-8: what the group is, said where it is (no tour): the empty state says the same another way */}
+        {plan.people.length > 0 ? (
+          <p id={`${id}-what`} className="text-[14px] text-ink-muted">
+            {FOLLOW_UP_TODAY_WHAT}
+          </p>
+        ) : null}
+      </div>
       {plan.people.length === 0 ? (
         <p className="rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink-muted">{NOBODY_DUE}</p>
       ) : (
