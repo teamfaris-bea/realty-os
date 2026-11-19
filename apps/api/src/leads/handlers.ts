@@ -18,7 +18,7 @@ import type { OwnershipCommand, TimerFence } from '@realty/core/ownership';
 import { applyOwnershipCommandInTx, derivedCommandId } from '@realty/db';
 import { TIMER_KIND_OF, TimerPayload } from '../worker/contracts.js';
 import type { JobHandler, TxJobHandler } from '../worker/types.js';
-import { backupAlertHandler } from './backupAlert.js';
+import { backupAlertHandler, backupAlertSweepHandler } from './backupAlert.js';
 import { deactivationHandler } from './deactivation.js';
 import { releaseRecheckHandler } from './releaseRecheck.js';
 
@@ -52,6 +52,8 @@ export const leadsHandlers: JobHandler<unknown>[] = [
   deactivationHandler() as unknown as JobHandler<unknown>,
   // b19 R-TEAMQ-14: the minute-three backup alert of a covered source's inquiry (alerts only)
   backupAlertHandler() as unknown as JobHandler<unknown>,
+  // b19 R-TEAMQ-28: every five minutes, the minute-three job of an inquiry that lost its job is re-issued
+  backupAlertSweepHandler() as unknown as JobHandler<unknown>,
   // b19 R-TEAMQ-20: a waived auto-release comes back when its source stops being covered or its owner stops being active
   releaseRecheckHandler() as unknown as JobHandler<unknown>,
 ];

@@ -54,6 +54,8 @@ export interface InquiryResponseRow extends HolderColumns {
   backup_alert_name: string | null;
   backup_alert_recipient: 'backup' | 'team_lead' | 'admins' | null;
   automated_at: Date | null;
+  /** R-TEAMQ-28: the person has since been deleted (soft-deleted): left out of the measure and counted apart */
+  deleted: boolean;
   /** R-TEAMQ-22: the first inbound call of the lead a person answered since the arrival (or the call that is this inquiry), and who answered */
   answered_call_at: Date | null;
   answered_call_by: string | null;
@@ -73,7 +75,7 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
              AND i.outcome <> 'duplicate_ignored'
            ORDER BY ${ARRIVAL} DESC LIMIT ${cap + 1}) i
        WHERE s.tenant_id = app.tenant_id())
-    SELECT i.id, i.contact_id, i.arrived_at, i.source_id, i.source_name, ${HOLDER_COLUMNS},
+    SELECT i.id, i.contact_id, i.arrived_at, i.source_id, i.source_name, ${HOLDER_COLUMNS}, c.deleted_at IS NOT NULL AS deleted,
            h.at AS attempt_at, h.kind AS attempt_kind, h.channel AS attempt_channel, h.by_user AS attempt_by, hu.display_name AS attempt_by_name, h.failed AS attempt_failed,
            (SELECT e.owner_user_id FROM lead_ownership_events e
              WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.occurred_at <= h.at
@@ -110,7 +112,8 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
       LEFT JOIN users acu ON acu.id = ac.agent_user_id
       LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = c.tenant_id AND ba.inquiry_id = i.id AND ba.outcome = 'alerted'
       LEFT JOIN users bau ON bau.id = ba.alerted_user_id
-     WHERE c.deleted_at IS NULL AND ${TEAM_SCOPE}
+     -- a deleted person's inquiry is read too (R-TEAMQ-28): it is never measured, and it is counted as left out
+     WHERE ${TEAM_SCOPE}
      ORDER BY i.arrived_at DESC, i.id DESC
      LIMIT ${cap + 1}`.execute(tx);
   return r.rows;

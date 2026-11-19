@@ -425,8 +425,9 @@ export interface DecisionContext {
   /** The actor is a live collaborator on the contact (touch). */
   actorIsCollaborator?: boolean;
   /**
-   * touch only (b19 R-TEAMQ-16): a time-boxed `backup` collaborator grant is live on the contact (the minute-three
-   * backup alert gave it). The owner's own human attempt ends it.
+   * b19 R-TEAMQ-16, R-TEAMQ-28: a time-boxed `backup` collaborator grant is live on the contact (the minute-three
+   * backup alert gave it). The owner's own human attempt ends it (touch), and so does the lead leaving its owner
+   * (db loads it for the commands that can take an owned lead from its owner).
    */
   backupAccessLive?: boolean;
   /**
@@ -508,8 +509,11 @@ export type Effect =
   /** memberships.consecutive_missed_offers: +1 on a missed/declined offer, 0 on accept (R-OWN-12). */
   | { kind: 'missedOfferCounter'; userId: UserId; op: 'increment' | 'reset' }
   | { kind: 'addCollaborator'; userId: UserId; role: 'isa'; expiresAt: Instant }
-  /** b19 R-TEAMQ-16: the owner made a human attempt: live `backup` collaborator grants on the contact end now. */
-  | { kind: 'endBackupAccess' }
+  /**
+   * b19 R-TEAMQ-16: the owner made a human attempt: live `backup` collaborator grants on the contact end now.
+   * R-TEAMQ-28 (`ownerChanged`): the lead left its owner (reassigned, released, auto-released, closed): they end too.
+   */
+  | { kind: 'endBackupAccess'; ownerChanged?: boolean }
   | { kind: 'rehomeHandbacks'; toUserId: UserId | null }
   | { kind: 'route' }
   /** Stored inactivity deadlines (non-guarded columns; must be null outside `owned`). */

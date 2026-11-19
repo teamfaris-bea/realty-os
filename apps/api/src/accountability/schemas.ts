@@ -258,6 +258,8 @@ export const LeadResponseResponse = z.object({
   inquiriesMore: count,
   imports: z.object({ people: count }),
   closedExcluded: count,
+  /** R-TEAMQ-28: inquiries of people since deleted: left out of the measure */
+  deletedExcluded: count,
   truncated: z.boolean(),
   generatedAt: z.string(),
 });

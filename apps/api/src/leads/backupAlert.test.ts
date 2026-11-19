@@ -18,7 +18,8 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { type CommsWorld, ownedContact, randomEmail, sendText, telephonyWebhook } from '../comms/testing.js';
 import { marketingReady } from '../bulk/testing.js';
 import { systemActor } from '../worker/systemActor.js';
-import { BACKUP_ALERT_JOB, decideBackupAlert } from './backupAlert.js';
+import { BACKUP_ALERT_JOB, BACKUP_ALERT_SWEEP_JOB, decideBackupAlert, sweepLostBackupAlerts } from './backupAlert.js';
+import { leadsHandlers } from './handlers.js';
 import { call, command, contactState, freshReauth, importedUnassigned, jobs, ledger, leadsWorker, leadsWorld, postIntake, randomPhone, registerPush, suFixture } from './testing.js';
 
 let h: ApiHarness;
@@ -859,6 +860,89 @@ describe('R-TEAMQ-17 once per inquiry', () => {
     const dupId = (dup.json() as { inquiryId: string; outcome: string });
     expect(dupId.outcome).toBe('duplicate_ignored');
     expect(await alertJobs(w.tenantId, dupId.inquiryId)).toEqual([]);
+  });
+});
+
+describe('R-TEAMQ-28 smaller fixes of the review (L7)', () => {
+  const sweep = () => withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => sweepLostBackupAlerts(tx, now as Instant), { db: h.database });
+
+  it('R-TEAMQ-28 E894: a LOST alert job is re-issued by the sweep, once: the inquiry is decided and its backup alerted; an inquiry not yet due, one already decided, one with its job alive and one of an uncovered source get nothing new', async () => {
+    const src = await source('Lost job (alert test)');
+    const lost = await arrive(src);
+    const alive = await arrive(src);
+    const early = await arrive(src);
+    const plain = await source('Lost job, uncovered (alert test)', { covered: false });
+    const uncovered = await arrive(plain);
+    // the job of `lost` and of `early` disappears (a purge, a bad deploy); four minutes pass for `lost` and `alive`
+    await h.su.query(`DELETE FROM jobs WHERE kind = $1 AND payload->>'inquiryId' = ANY ($2::text[])`, [BACKUP_ALERT_JOB.kind, [lost.inquiryId, early.inquiryId]]);
+    await minutesPass(lost);
+    await minutesPass(alive);
+    expect(await alertJobs(w.tenantId, lost.inquiryId)).toEqual([]);
+    const first = await sweep();
+    expect(first.reissued).toBeGreaterThanOrEqual(1);
+    expect((await alertJobs(w.tenantId, lost.inquiryId)).map((j) => j.status)).toEqual(['pending']);
+    // the live job of `alive` is left alone (one job, never two); nothing for the one not yet due or the uncovered source
+    expect(await alertJobs(w.tenantId, alive.inquiryId)).toHaveLength(1);
+    expect(await alertJobs(w.tenantId, early.inquiryId)).toEqual([]);
+    expect(await alertJobs(w.tenantId, uncovered.inquiryId)).toEqual([]);
+    // swept again before the worker ran: still one job
+    await sweep();
+    expect(await alertJobs(w.tenantId, lost.inquiryId)).toHaveLength(1);
+    await run();
+    expect((await alertRows(lost.inquiryId)).map((r) => [r.outcome, r.alerted_user_id])).toEqual([['alerted', backup.userId]]);
+    expect(await alertNotes(lost.inquiryId)).toHaveLength(1);
+    // decided: the sweep has nothing more to do for it
+    const before = (await alertJobs(w.tenantId, lost.inquiryId)).length;
+    await sweep();
+    expect((await alertJobs(w.tenantId, lost.inquiryId)).length).toBe(before);
+    expect(await alertRows(lost.inquiryId)).toHaveLength(1);
+    // the sweep is a registered periodic job of the team's worker
+    expect(leadsHandlers.find((x) => x.kind === BACKUP_ALERT_SWEEP_JOB.kind)).toMatchObject({ every: { ms: 5 * 60_000 } });
+  });
+
+  it('R-TEAMQ-28 E895: the backup\'s grant ends when the lead changes owner: a reassignment by the Owner, and the owner\'s own release to the pond', async () => {
+    const src = await source('Owner changes (alert test)');
+    const a = await arrive(src);
+    const ownerA = await accept(a);
+    const b = await arrive(src);
+    const ownerB = await accept(b);
+    for (const lead of [a, b]) await minutesPass(lead);
+    await run();
+    for (const lead of [a, b]) expect((await grantOf(lead.contactId, backup.userId))!.live).toBe(true);
+    // reassigned by the Owner to the other agent
+    const other = w.agents.find((x) => x.userId !== ownerA.userId)!;
+    expect((await command(w.owner, a.contactId, 'reassign', { toUserId: other.userId })).status).toBe(200);
+    await run();
+    expect((await grantOf(a.contactId, backup.userId))!).toMatchObject({ live: false, removed_at: null, role: 'backup' });
+    expect((await call(backup, 'GET', `/contacts/${a.contactId}`)).status).toBe(404);
+    // released to the pond by its own owner (an agent: the grant is ended for them by the follow-up job, as the system)
+    expect((await command(ownerB, b.contactId, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+    await run();
+    // (the lead is a pond lead now: what the backup can see of it is what any member of that pond sees, not the grant)
+    expect((await grantOf(b.contactId, backup.userId))!).toMatchObject({ live: false, removed_at: null, role: 'backup' });
+    expect((await holding(b.contactId)).state).toBe('in_pond');
+  });
+
+  it('R-TEAMQ-28 E896: a backup grant is always time-boxed (the database refuses a `backup` row with no expiry); a manual share of that member is an explicit, audited change to the role the sharer chose, never a silent permanent "backup"', async () => {
+    const src = await source('Shared by hand (alert test)');
+    const lead = await arrive(src);
+    const owner = await accept(lead);
+    await minutesPass(lead);
+    await run();
+    expect(await grantOf(lead.contactId, backup.userId)).toMatchObject({ role: 'backup', live: true });
+    // no path can make a backup row permanent: the database itself refuses
+    await expect(h.su.query(`UPDATE contact_collaborators SET expires_at = NULL WHERE contact_id = $1 AND user_id = $2`, [lead.contactId, backup.userId])).rejects.toThrow(/contact_collaborators_backup_time_boxed/);
+    // the owner shares the person with that member by hand, as a co-agent: an explicit choice with its own audit row
+    expect((await call(owner, 'POST', `/contacts/${lead.contactId}/collaborators`, { userId: backup.userId, role: 'co_agent' })).status).toBe(200);
+    expect(await grantOf(lead.contactId, backup.userId)).toMatchObject({ role: 'co_agent', expires_at: null, live: true });
+    const audits = (await h.su.query<{ actor_kind: string; actor_user_id: string | null; reason: string | null }>(`SELECT actor_kind, actor_user_id, reason FROM audit_log WHERE action = 'collaborator.added' AND entity_id = $1 ORDER BY seq`, [lead.contactId])).rows;
+    expect(audits).toEqual([
+      { actor_kind: 'system', actor_user_id: null, reason: 'BACKUP_ALERT' },
+      { actor_kind: 'user', actor_user_id: owner.userId, reason: null },
+    ]);
+    // it is the owner's deliberate share now: their own attempt does not end it
+    await humanText(owner, lead.contactId);
+    expect((await grantOf(lead.contactId, backup.userId))!.live).toBe(true);
   });
 });
 

@@ -52,6 +52,7 @@ import {
   loadPond,
   loadRoutingSnapshot,
   loadAutoReleaseWaived,
+  loadBackupAccessLive,
   loadReleaseWaivedInPeriod,
   loadCommandFacts,
   lockMemberships,
@@ -315,6 +316,12 @@ async function buildContext(
     default:
       break;
   }
+  // b19 R-TEAMQ-28: a live `backup` grant ends when the lead leaves its owner. Read only for the commands that can take
+  // an OWNED lead from its owner (one statement on the collaborator rows of this contact); the touch read it above.
+  const leavesOwner =
+    cmd.kind === 'release' || cmd.kind === 'assign' || cmd.kind === 'reassign' || cmd.kind === 'isa_handoff' || cmd.kind === 'close' || cmd.kind === 'soft_delete' || cmd.kind === 'deactivate_owner' ||
+    (cmd.kind === 'timer' && (cmd.deadline === 'auto_release' || cmd.deadline === 'inactivity_release'));
+  if (leavesOwner && state?.state === 'owned') ctx.backupAccessLive = await loadBackupAccessLive(tx, contactId, now);
   // Offer expiry: the offeree's missed-offer counter (R-OWN-12) is written by this command.
   const writeUsers: string[] = [];
   if (cmd.kind === 'timer' && cmd.deadline === 'offer_expiry' && state?.state === 'offered' && state.offeredToUserId) {

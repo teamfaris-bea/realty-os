@@ -33,6 +33,10 @@
 --        One grant: SELECT on lead_backup_alerts to app_definer (the NOLOGIN definer role that owns that function;
 --        0001 granted it SELECT on the tables that existed then, and this table is newer). app_user's grants on the
 --        table are unchanged (SELECT, INSERT; never UPDATE or DELETE).
+--   4. (L7, R-TEAMQ-28) contact_collaborators_backup_time_boxed: a `backup` collaborator row always has an expiry.
+--      The alerted backup's access is time-boxed by construction (0108); this makes it a rule of the database, so no
+--      path can turn a `backup` row permanent. A person's manual share of that member writes another role (isa, tc,
+--      co_agent: the API's own choices) with its own audit entry, which this check does not touch.
 --   No table, no policy and no retention change: the new columns of part 2 are read and written under
 --   lead_backup_alerts' existing policies.
 
@@ -181,5 +185,16 @@ BEGIN
   END IF;
   IF has_function_privilege('public', 'app.scoreboard_backup_first_touches(uuid[], timestamptz, timestamptz)', 'EXECUTE') THEN
     RAISE EXCEPTION '0109: app.scoreboard_backup_first_touches must not be executable by PUBLIC';
+  END IF;
+END $$;
+
+-- 4. a backup grant is always time-boxed
+ALTER TABLE contact_collaborators ADD CONSTRAINT contact_collaborators_backup_time_boxed CHECK (role <> 'backup' OR expires_at IS NOT NULL);
+
+-- Self-check: the constraint is there and validated (no existing backup row was permanent).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.contact_collaborators'::regclass AND conname = 'contact_collaborators_backup_time_boxed' AND convalidated) THEN
+    RAISE EXCEPTION '0109: contact_collaborators_backup_time_boxed is missing';
   END IF;
 END $$;

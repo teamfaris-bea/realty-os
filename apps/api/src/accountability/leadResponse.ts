@@ -19,8 +19,8 @@
 // credits whoever actually made the attempt.
 //
 // Kept out of the measure, and said so: imports (not inquiries; counted apart), people a member typed in, ignored
-// duplicate deliveries, and inquiries of people since closed (spam, not a lead, do not contact, merged), which are
-// counted apart. READ-ONLY: nothing here writes, sends, alerts or reassigns.
+// duplicate deliveries, and inquiries of people since closed (spam, not a lead, do not contact, merged) or since
+// deleted, each counted apart (R-TEAMQ-28). READ-ONLY: nothing here writes, sends, alerts or reassigns.
 import type { ContactId, Instant, LeadSourceId, UserId } from '@realty/core/foundation';
 import { businessCalendar } from '@realty/core/foundation';
 import {
@@ -84,6 +84,8 @@ export interface LeadResponseView {
   imports: { people: number };
   /** inquiries of people since closed (spam, not a lead, do not contact, merged): left out of the measure */
   closedExcluded: number;
+  /** R-TEAMQ-28: inquiries of people since deleted: left out of the measure, and said so */
+  deletedExcluded: number;
   /** the period holds more inquiries than one report reads: the numbers cover the newest ones only */
   truncated: boolean;
   generatedAt: string;
@@ -111,7 +113,9 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
   const [hours, rows, imported] = await Promise.all([staffedHours(tx), repo.inquiryResponses(tx, b.from, b.to, repo.RESPONSE_READ_CAP), repo.importedPeople(tx, b.from, b.to)]);
   const truncated = rows.length > repo.RESPONSE_READ_CAP;
   const read = rows.slice(0, repo.RESPONSE_READ_CAP);
-  const open = read.filter((r) => r.ownership_state !== 'closed');
+  // left out, each counted: a person since deleted (R-TEAMQ-28), else a person since closed
+  const deleted = read.filter((r) => r.deleted);
+  const open = read.filter((r) => !r.deleted && r.ownership_state !== 'closed');
   const names = new Map(open.map((r) => [r.contact_id, r.contact_name] as const));
   const attemptNames = new Map<string, string | null>();
   const facts: ResponseInquiryFacts[] = open.map((r) => {
@@ -174,7 +178,8 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
     inquiries: listed.map(view),
     inquiriesMore: rolled.measured.length - listed.length,
     imports: { people: imported },
-    closedExcluded: read.length - open.length,
+    closedExcluded: read.length - open.length - deleted.length,
+    deletedExcluded: deleted.length,
     truncated,
     generatedAt: iso(now),
   };

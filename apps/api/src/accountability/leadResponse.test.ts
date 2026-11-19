@@ -53,6 +53,7 @@ interface ReportT {
   inquiriesMore: number;
   imports: { people: number };
   closedExcluded: number;
+  deletedExcluded: number;
   truncated: boolean;
   generatedAt: string;
 }
@@ -235,6 +236,27 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
     expect(r.rules).toEqual({ within5Seconds: 300, within15Seconds: 900, medianMinSample: 5, p90MinSample: 10 });
     expect(r.totals.attempted + r.totals.waiting).toBe(r.totals.inquiries);
     expect(r.totals.inquiries).toBe(r.sources.reduce((n, x) => n + x.inquiries, 0));
+  });
+
+  it('R-TEAMQ-28 E897 (review fix L7): the inquiry of a person since DELETED is left out of the measure and counted in its own "left out" number, never dropped without a word; a closed person\'s is counted as closed, as before', async () => {
+    const src = await source('Juniper Row portal (test)');
+    const kept = await acceptedFrom(src, { fullName: 'Kit Kept' });
+    const deleted = await acceptedFrom(src, { fullName: 'Del Deleted' });
+    const closed = await acceptedFrom(src, { fullName: 'Clo Closed' });
+    const before = await report(w.owner);
+    expect(before.sources.find((s) => s.sourceId === src.id)).toMatchObject({ inquiries: 3 });
+    expect((await command(w.owner, deleted.contactId, 'delete')).status).toBe(200);
+    const seq = Number((await contactState(h, closed.contactId)).ownership_seq);
+    expect((await command(w.owner, closed.contactId, 'close', { reason: 'spam', expectedSeq: seq })).status).toBe(200);
+    const r = await report(w.owner);
+    expect(r.sources.find((s) => s.sourceId === src.id)).toMatchObject({ inquiries: 1 });
+    expect(r.inquiries.map((i) => i.contact.id)).toContain(kept.contactId);
+    expect(r.inquiries.map((i) => i.contact.id)).not.toContain(deleted.contactId);
+    expect(r.deletedExcluded).toBe(before.deletedExcluded + 1);
+    expect(r.closedExcluded).toBe(before.closedExcluded + 1);
+    expect(JSON.stringify(r)).not.toContain('Del Deleted');
+    // every inquiry read is in exactly one place: measured, closed or deleted
+    expect(r.totals.inquiries + r.closedExcluded + r.deletedExcluded).toBe(before.totals.inquiries + before.closedExcluded + before.deletedExcluded);
   });
 
   it('R-TEAMQ-8 E832 R-IMPORT-6: an imported person is absent from the measure and counted apart; a deliberately ignored duplicate delivery is not an arrival', async () => {

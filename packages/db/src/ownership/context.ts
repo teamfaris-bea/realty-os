@@ -317,6 +317,18 @@ export async function loadCollaboration(tx: Tx, contactId: ContactId, userId: Us
   return { actorIsCollaborator: r.rows[0]?.ok ?? false, backupAccessLive: r.rows[0]?.backup ?? false };
 }
 
+/**
+ * b19 R-TEAMQ-28: whether a time-boxed `backup` grant is live on the contact. Read for the commands that can take an
+ * owned lead from its owner (the grant then ends); contact_collaborators' primary key prefix.
+ */
+export async function loadBackupAccessLive(tx: Tx, contactId: ContactId, now: Instant): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM contact_collaborators
+                    WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND role = 'backup' AND removed_at IS NULL
+                      AND expires_at > ${toIso(now)}::timestamptz) AS x`.execute(tx);
+  return r.rows[0]?.x === true;
+}
+
 // ---- routing (system actor only) -----------------------------------------------------------------
 
 interface RuleRow {

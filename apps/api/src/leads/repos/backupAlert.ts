@@ -201,3 +201,22 @@ export async function claimAlert(tx: Tx, a: Omit<AlertInsert, 'grantExpiresAt'>,
   await sql`RELEASE SAVEPOINT backup_alert_claim`.execute(tx);
   return { won: true, granted };
 }
+
+/**
+ * R-TEAMQ-28 (review fix L7): the inquiries of covered sources (the switch on) that reached the team in
+ * (since, before] and have no decision row yet: the ones whose minute-three job may have been lost. Newest first per
+ * source, at most `perSource` each (lead_inquiries_source_arrival_idx, then lead_backup_alerts_inquiry_once).
+ */
+export async function undecidedInquiries(tx: Tx, since: Date, before: Date, perSource: number): Promise<{ id: string; received_at: Date; created_at: Date }[]> {
+  const r = await sql<{ id: string; received_at: Date; created_at: Date }>`
+    SELECT i.id, i.received_at, i.created_at
+      FROM lead_sources s
+      CROSS JOIN LATERAL (
+        SELECT i.id, i.received_at, i.created_at FROM lead_inquiries i
+         WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id AND i.outcome <> 'duplicate_ignored'
+           AND ${ARRIVAL} > ${since.toISOString()}::timestamptz AND ${ARRIVAL} <= ${before.toISOString()}::timestamptz
+         ORDER BY ${ARRIVAL} DESC LIMIT ${perSource}) i
+     WHERE s.tenant_id = app.tenant_id() AND s.covered
+       AND NOT EXISTS (SELECT 1 FROM lead_backup_alerts a WHERE a.tenant_id = s.tenant_id AND a.inquiry_id = i.id)`.execute(tx);
+  return r.rows;
+}

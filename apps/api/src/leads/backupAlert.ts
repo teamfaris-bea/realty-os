@@ -26,6 +26,7 @@
 //   no_recipient         the team has nobody but the person holding the lead
 //
 // A run that loses the claim on the inquiry to a concurrent run commits nothing (repos claimAlert: a savepoint).
+// A LOST job (its row gone) is re-issued by the periodic `leads.backup_alert_sweep` below (R-TEAMQ-28).
 //
 // WHAT IT NEVER DOES: it never changes the owner, the offer or the pond (no ownership command is issued here), never
 // sends, drafts or queues anything for the client (it does not import the send path at all), never decides twice for
@@ -177,6 +178,52 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     await notifyUser(tx, ids, { userId, kind: 'first_touch_due', priority: 'critical', title: text.title, body: text.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
   }
   return { outcome: 'alerted', alertedUserId: first };
+}
+
+// ---- the sweep for a lost job (R-TEAMQ-28, review fix L7) ----------------------------------------------------------
+
+export const BACKUP_ALERT_SWEEP_JOB = { kind: 'leads.backup_alert_sweep' as const, queue: 'default' as const, everyMs: 5 * 60_000 };
+/** How far back the sweep looks: an inquiry still undecided after two days is no longer a "minute-three" matter. */
+export const BACKUP_ALERT_SWEEP_WINDOW_MS = 2 * 24 * 60 * 60_000;
+/** A job this late is taken to be lost (the worker runs a due job within seconds). */
+export const BACKUP_ALERT_SWEEP_GRACE_MS = 60_000;
+const SWEEP_PER_SOURCE = 500;
+
+/**
+ * Re-issues the minute-three job of every inquiry of a covered source whose job should have run and left no decision
+ * row: the job row was lost (a purge, a failed deploy, a dead job). The one job of an inquiry is keyed on the inquiry
+ * (BACKUP_ALERT_JOB.dedupeKey), so an inquiry whose job is still alive gets no second one, and a re-issued job that
+ * finds a row decides nothing twice. It alerts nobody itself. Idempotent.
+ */
+export async function sweepLostBackupAlerts(tx: Tx, now: Instant): Promise<{ undecided: number; reissued: number }> {
+  const rows = await repo.undecidedInquiries(tx, new Date(now - BACKUP_ALERT_SWEEP_WINDOW_MS), new Date(now), SWEEP_PER_SOURCE);
+  if (rows.length === 0) return { undecided: 0, reissued: 0 };
+  const { calendar } = await loadTenantFacts(tx);
+  let reissued = 0;
+  for (const q of rows) {
+    const dueAt = backupAlertDueAt(instantFromDate(q.received_at), instantFromDate(q.created_at), calendar);
+    if (now < dueAt + BACKUP_ALERT_SWEEP_GRACE_MS) continue; // not due yet, or due just now: its own job has it
+    const queued = await enqueueJob(tx, { queue: BACKUP_ALERT_JOB.queue, kind: BACKUP_ALERT_JOB.kind, priority: BACKUP_ALERT_JOB.priority, payload: { inquiryId: q.id }, dedupeKey: BACKUP_ALERT_JOB.dedupeKey(q.id), runAt: now });
+    if (queued) reissued++;
+  }
+  return { undecided: rows.length, reissued };
+}
+
+/** The periodic `leads.backup_alert_sweep` job: one per team, every five minutes (worker maintenance keeps it alive). */
+export function backupAlertSweepHandler(): TxJobHandler<Record<string, never>> {
+  return {
+    kind: BACKUP_ALERT_SWEEP_JOB.kind,
+    queue: BACKUP_ALERT_SWEEP_JOB.queue,
+    via: 'worker',
+    schema: jobPayload({}),
+    every: { ms: BACKUP_ALERT_SWEEP_JOB.everyMs, offsetMs: 70_000 },
+    periodicPayload: {},
+    async run(ctx) {
+      const r = await sweepLostBackupAlerts(ctx.tx, ctx.now);
+      if (r.reissued > 0) ctx.log.info('backup alert jobs re-issued', { reissued: r.reissued, undecided: r.undecided });
+      return undefined;
+    },
+  };
 }
 
 /** The `leads.backup_alert` job. An early wake goes back to sleep until the inquiry's stored due time. */

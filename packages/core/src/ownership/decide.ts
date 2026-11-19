@@ -384,8 +384,23 @@ function pondArrival(b: Builder): void {
 
 // ---- results ---------------------------------------------------------------------------------------
 
+/**
+ * R-TEAMQ-28 (b19 review fix L7): the backup's time-boxed access was given for a lead waiting on its owner. When this
+ * decision takes the lead from that owner (to another owner, a pond, unassigned or closed), a live `backup` grant
+ * ends with it. Not on a merge: there the merge step carries a live grant to the surviving record (R-TEAMQ-26).
+ */
+function ownerChangeEndsBackupAccess(b: Builder): void {
+  const was = b.initial;
+  if (b.ctx.backupAccessLive !== true || !was || was.state !== 'owned' || was.ownerUserId === null) return;
+  if (b.events.some((e) => e.type === 'merged_away' || e.type === 'merged_in')) return;
+  const now = b.state;
+  if (now.state === 'owned' && now.ownerUserId === was.ownerUserId) return;
+  b.effect({ kind: 'endBackupAccess', ownerChanged: true });
+}
+
 function accepted(b: Builder, auditAction: AuditAction | null, auditAlways = false): Decision {
   pondArrival(b);
+  ownerChangeEndsBackupAccess(b);
   const effects = finalize(b, auditAction, auditAlways);
   return { ok: true, events: b.events, next: b.state, effects };
 }
@@ -1175,7 +1190,10 @@ export function effectPlacement(e: Effect, actor: Actor): 'inline' | 'followup' 
     case 'membershipAutoPause':
     case 'missedOfferCounter':
       return e.userId === actor.userId ? 'inline' : 'followup';
-    case 'endBackupAccess': // only ever emitted for the owner's own touch: their own lead's collaborator rows
+    case 'endBackupAccess':
+      // the owner's own touch: their own lead's collaborator rows, inline. The lead left its owner (R-TEAMQ-28): an
+      // Owner, an Admin or a Team Lead may write the rows inline; an agent who just gave the lead up no longer may
+      return e.ownerChanged === true && !(actor.role === 'owner' || actor.role === 'admin' || actor.role === 'team_lead') ? 'followup' : 'inline';
     case 'enqueueTimer':
     case 'cancelTimers':
     case 'notify':

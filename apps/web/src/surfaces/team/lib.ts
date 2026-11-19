@@ -322,6 +322,8 @@ export interface LeadResponseReport {
   inquiriesMore: number;
   imports: { people: number };
   closedExcluded: number;
+  /** R-TEAMQ-28: inquiries of people since deleted: left out of the measure */
+  deletedExcluded?: number;
   truncated: boolean;
   generatedAt: string;
 }
@@ -406,7 +408,7 @@ export function responseInquiryLine(i: ResponseInquiry): string {
 }
 
 /** The lines under the report: imports and closed people apart, and the rules of the measure. */
-export function responseFootnotes(r: Pick<LeadResponseReport, 'imports' | 'closedExcluded' | 'staffedHours' | 'rules'>): string[] {
+export function responseFootnotes(r: Pick<LeadResponseReport, 'imports' | 'closedExcluded' | 'deletedExcluded' | 'staffedHours' | 'rules'>): string[] {
   const out = [
     r.imports.people > 0
       ? `${plural(r.imports.people, 'person', 'people')} came in by import in this period. They are not inquiries and are not measured here.`
@@ -419,6 +421,9 @@ export function responseFootnotes(r: Pick<LeadResponseReport, 'imports' | 'close
         : `${r.closedExcluded} inquiries from people since closed (spam, not a lead, do not contact or merged) are left out.`,
     );
   }
+  // R-TEAMQ-28: a deleted person's inquiry is left out too, and said
+  const deleted = r.deletedExcluded ?? 0;
+  if (deleted > 0) out.push(deleted === 1 ? '1 inquiry from a person since deleted is left out.' : `${deleted} inquiries from people since deleted are left out.`);
   out.push(
     `Minutes are staffed time: ${clock12(r.staffedHours.open)} to ${clock12(r.staffedHours.close)} (${r.staffedHours.zone}). A lead that arrives outside those hours is counted from opening. A median is shown from ${plural(r.rules.medianMinSample, 'attempt')} and a 90th percentile from ${r.rules.p90MinSample}.`,
   );

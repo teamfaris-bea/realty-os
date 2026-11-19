@@ -9,7 +9,7 @@ import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { ID, FakeFetch, board, err, leadAdminApp } from '../admin/lib/testing.js';
-import { type LeadResponseReport, type ResponseInquiry, type ResponseRollup, responseLines } from './lib.js';
+import { type LeadResponseReport, type ResponseInquiry, type ResponseRollup, responseFootnotes, responseLines } from './lib.js';
 
 const range = (key: string, days = 7) => ({ key, from: '2026-11-03T08:00:00.000Z', to: '2026-11-10T08:00:00.000Z', days, zone: 'America/Los_Angeles' });
 const momentum = { rule: { factor: 1.5, minSample: 5, windowDays: 180 }, norms: [], agents: [], generatedAt: new Date().toISOString() };
@@ -214,6 +214,14 @@ describe('Lead response report', () => {
     expect(within(region).getByText('1 inquiry from a person since closed (spam, not a lead, do not contact or merged) is left out.')).toBeInTheDocument();
     expect(within(region).getByText('Minutes are staffed time: 8:00 AM to 9:00 PM (America/Los_Angeles). A lead that arrives outside those hours is counted from opening. A median is shown from 5 attempts and a 90th percentile from 10.')).toBeInTheDocument();
     expect(within(region).queryByText(/newest/)).toBeNull();
+  });
+
+  it('R-TEAMQ-28 E897: inquiries of people since deleted are said as left out, with their number; with none, no such line', async () => {
+    leadAdminApp(fake(report({ deletedExcluded: 2 })), '/team/scoreboard', 'team_lead');
+    const region = await section();
+    expect(await within(region).findByText('2 inquiries from people since deleted are left out.')).toBeInTheDocument();
+    expect(responseFootnotes({ ...report({ deletedExcluded: 1 }) })).toContain('1 inquiry from a person since deleted is left out.');
+    expect(responseFootnotes(report()).join(' ')).not.toMatch(/since deleted/);
   });
 
   it('a capped read says the numbers cover only the newest inquiries', async () => {
