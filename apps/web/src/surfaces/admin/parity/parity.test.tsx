@@ -4,6 +4,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { STAGES, STAGE_GUIDE } from '@realty/core/parity/people';
 import { FakeFetch, err, renderApp, sessionFixture, tableWith } from '../../../shell/testing/fakeApi.js';
 import { surface } from './index.js';
 
@@ -111,6 +112,36 @@ describe('Admin → Stage labels (R-PAR-13)', () => {
     await waitFor(() => expect(screen.getByTestId('toast')).toHaveTextContent('Stage labels saved'));
     expect(screen.queryByText(/can't be saved yet/)).toBeNull();
     expect(fake.callsTo('GET /settings/stage-labels')).toHaveLength(0);
+  });
+
+  it('R-STG-1 (b19 F4): each field is named by the stage\'s default label, whatever the team calls the stage and whatever is typed into it; its description is what the stage means; the form is named', async () => {
+    // the team already renamed two stages: the fields are still found by the stages' own names
+    const fake = new FakeFetch().on('GET /stage-labels', { status: 200, body: stages({ new: 'Fresh lead', attempting: 'Chasing' }) });
+    app(fake, '/admin/stage-labels');
+    const user = userEvent.setup();
+    const form = await screen.findByRole('form', { name: 'Stage labels' });
+    const fields = within(form).getAllByRole('textbox');
+    expect(fields).toHaveLength(STAGES.length);
+    for (const key of STAGES) {
+      const field = within(form).getByRole('textbox', { name: STAGE_GUIDE[key].label });
+      expect(field).toHaveAccessibleDescription(STAGE_GUIDE[key].definition);
+      expect(field).toHaveAttribute('placeholder', STAGE_GUIDE[key].label);
+    }
+    // every name is different, and none is a raw key or carries one
+    const names = STAGES.map((k) => STAGE_GUIDE[k].label);
+    expect(new Set(names).size).toBe(STAGES.length);
+    for (const f of fields) expect(f).not.toHaveAccessibleName(/attempting|under_contract|\bkey\b/);
+    const first = within(form).getByRole('textbox', { name: 'New lead' });
+    expect(first).toHaveValue('Fresh lead');
+    expect(within(form).getByRole('textbox', { name: 'Trying to reach' })).toHaveValue('Chasing');
+    // typing a new label changes the value, never the name or the description
+    await user.clear(first);
+    await user.type(first, 'Just in');
+    expect(within(form).getByRole('textbox', { name: 'New lead' })).toBe(first);
+    expect(first).toHaveValue('Just in');
+    expect(first).toHaveAccessibleDescription(STAGE_GUIDE.new.definition);
+    expect(within(form).queryByRole('textbox', { name: 'Just in' })).toBeNull();
+    expect(within(form).queryByRole('textbox', { name: 'Fresh lead' })).toBeNull();
   });
 
   it('R-PAR-13: a refused label says why in plain words', async () => {

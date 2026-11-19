@@ -158,11 +158,21 @@ test('R-PAR-13: an Admin saves stage labels (module 57\'s /stage-labels) and the
   await expect(page.getByRole('heading', { level: 1, name: 'Stage labels' })).toBeVisible();
   await expect(page.getByText(/can't be saved yet/)).toHaveCount(0);
   const label = isPhone(page) ? 'Fresh lead' : 'New lead (desk)';
-  await page.getByLabel('New', { exact: true }).fill(label);
+  // R-STG-1: each field is named by the stage's own default label ("New lead"), which never changes: not while the
+  // team's label is typed into it, and not after a rename is saved. Its description says what the stage means.
+  const form = page.getByRole('form', { name: 'Stage labels' });
+  const field = form.getByRole('textbox', { name: 'New lead', exact: true });
+  await expect(form.getByRole('textbox')).toHaveCount(8);
+  await expect(field).toHaveAccessibleDescription('They just came in and nobody has tried to reach them yet.');
+  await field.fill(label);
+  await expect(field).toHaveValue(label); // the same field, by the same name, with the new label in it
   await page.getByRole('button', { name: 'Save labels' }).click();
   await expect(page.getByTestId('toast')).toHaveText('Stage labels saved');
   await page.reload();
-  await expect(page.getByLabel('New', { exact: true })).toHaveValue(label);
+  await expect(field).toHaveValue(label);
+  await expect(field).toHaveAccessibleDescription('They just came in and nobody has tried to reach them yet.');
+  // the old default word is no field's name any more (the header and the pill read the label, never the key)
+  await expect(page.getByLabel('New', { exact: true })).toHaveCount(0);
 });
 
 test('R-PAR-13: the saved label is shown on the person\'s stage pill', async ({ page }) => {
