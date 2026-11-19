@@ -214,7 +214,7 @@ describe('M11 (R-TODAY-18): "Recent people" is the caller’s own recent activit
     expect(within(p).getByText('People you logged for, noted or called most recently.')).toBeInTheDocument();
   });
 
-  it('someone who is not recent is found by typing: the entry, typing, the person, an outcome, the one button = 4 taps and typing', async () => {
+  it('E893: someone who is not recent is found by typing: the entry, typing, the person, an outcome, the one button = 4 taps and typing', async () => {
     const { u, n, tap } = open('/', 'agent', { people: 'empty' });
     await tap(await entry()); // 1
     const p = await picker();

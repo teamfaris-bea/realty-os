@@ -185,7 +185,7 @@ describe('M10 (R-TODAY-19): an all-day task is said in its own zone', () => {
     expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 17, 9))).toBe('Send lender intro, Thu');
     expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 10, 9))).toBe('Send lender intro, Nov 19');
   });
-  it('W4 (the reviewer’s case): a New York task due today, read at noon New York time, is "today" for every viewer (it used to be "yesterday" in Los Angeles and Tokyo)', () => {
+  it('E889 W4 (the reviewer’s case): a New York task due today, read at noon New York time, is "today" for every viewer (it used to be "yesterday" in Los Angeles and Tokyo)', () => {
     const [zone, dueAt] = ZONES[1]!;
     const noonNY = Date.UTC(2026, 10, 19, 17, 0);
     expect(nextPromiseLine(allDay(dueAt, zone), noonNY)).toBe('Send lender intro, today');
@@ -216,7 +216,7 @@ describe('L12 (R-TODAY-4): a logged outside call says "not verified" on Today’
 });
 
 describe('L16 (R-TODAY-21): a teammate’s call never reads as the viewer’s own', () => {
-  it('W4: a teammate’s call whose name the viewer cannot see says "by a teammate"; the viewer’s own says nobody', () => {
+  it('E892 W4: a teammate’s call whose name the viewer cannot see says "by a teammate"; the viewer’s own says nobody', () => {
     expect(lastTouchLine(touch({ byMe: false, byName: null }), NOW)).toBe('Call Tue by a teammate, talked 6 min');
     expect(lastTouchLine(touch({ byMe: false, byName: 'Sam Lee' }), NOW)).toBe('Call Tue by Sam Lee, talked 6 min');
     expect(lastTouchLine(touch({ byMe: true }), NOW)).toBe('Call Tue, talked 6 min');

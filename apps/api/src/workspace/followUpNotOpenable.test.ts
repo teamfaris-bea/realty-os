@@ -22,7 +22,7 @@ afterAll(async () => {
 type Card = Record<string, unknown> & { itemType: string; contact: { id: string; name: string } | null; primaryAction: { kind: string }; alternatives: { kind: string }[] };
 
 describe('M8 (R-TODAY-16): a card about a person the viewer cannot open', () => {
-  it('a pond member holding a task on a pond lead: the masked name, no follow-up lines, no contacting action; the lead’s history is not said, and logging on them is refused as before', async () => {
+  it('E887: a pond member holding a task on a pond lead: the masked name, no follow-up lines, no contacting action; the lead’s history is not said, and logging on them is refused as before', async () => {
     const { contactId, owner } = await acceptedLead(h, w, { fullName: 'Sol Marchetti' });
     const other = w.agents.find((a) => a.userId !== owner.userId) as TestClient;
     // the owner talks with the lead (a conversation the pond member must never be told about) and releases them

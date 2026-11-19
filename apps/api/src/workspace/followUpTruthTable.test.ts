@@ -86,7 +86,7 @@ describe('R-TODAY-14: Connected × evidence: the Due line and the Last line’s 
     expect(row).toMatchObject({ quiet: { basis: 'never' }, lastTouch: null, lastAutomatic: { kind: 'text', bulk: true } });
   });
 
-  it('M5, the reviewer’s case: a text that was counted as a touch and came back undelivered: "but the last text was not delivered", never "no conversation for 9 days" beside "no conversation yet"', async () => {
+  it('E885 M5, the reviewer’s case: a text that was counted as a touch and came back undelivered: "but the last text was not delivered", never "no conversation for 9 days" beside "no conversation yet"', async () => {
     const c = await person('Undelivered');
     const id = await sentText(c.id, 9);
     // the send had moved the system's clock; the carrier then reported it undelivered

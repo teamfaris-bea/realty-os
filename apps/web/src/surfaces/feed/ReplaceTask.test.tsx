@@ -107,7 +107,7 @@ async function logFromCard(u: ReturnType<typeof userEvent.setup>, outcome: 'Talk
 }
 
 describe('H1 (R-TODAY-11): what the tap will add and close is named in the pinned footer, beside the one button, before the tap', () => {
-  it('Log → "Talked": the button is short, and under it, inside the footer: "Adds: … Marks done: Follow up with Dana (was due …)"', async () => {
+  it('E880: Log → "Talked": the button is short, and under it, inside the footer: "Adds: … Marks done: Follow up with Dana (was due …)"', async () => {
     const { u, fake } = open(taskCard());
     const { sheet, save } = await logFromCard(u, 'Talked');
     expect(save).toHaveTextContent(/^Save and change to Connected$/);
@@ -160,7 +160,7 @@ describe('H1 (R-TODAY-11): what the tap will add and close is named in the pinne
 });
 
 describe('M3 (R-TODAY-11): a task that is not due is never closed; the sheet says the person will have two follow-ups', () => {
-  it('a follow-up due tomorrow: left open, and said before the tap', async () => {
+  it('E881: a follow-up due tomorrow: left open, and said before the tap', async () => {
     const { u, fake, tasks } = open(taskCard({ dueIn: 18 * HOUR }));
     const { sheet, save } = await logFromCard(u, 'Left voicemail');
     expect(effects(sheet)).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\. Dana will have two follow-ups: “Follow up with Dana” \(due .+\) stays open\.$/);
@@ -211,7 +211,7 @@ describe('M2 (R-TODAY-11): a partial save says exactly what was saved and what w
     expect(fake.callsTo(`PATCH /tasks/${OLD}`)).toHaveLength(1);
   });
 
-  it('the log and the follow-up saved and the stage answer was lost (a 500): "not confirmed", the old task is NOT closed, and nothing says "it wasn’t saved"', async () => {
+  it('E882: the log and the follow-up saved and the stage answer was lost (a 500): "not confirmed", the old task is NOT closed, and nothing says "it wasn’t saved"', async () => {
     const { u, fake, tasks } = open(taskCard(), { stage: (n) => (n === 1 ? { status: 500, body: { error: { code: 'INTERNAL_ERROR', requestId: 'r' } } } : 'ok') });
     const { sheet, save } = await logFromCard(u, 'Left voicemail');
     await u.click(save);

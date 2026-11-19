@@ -90,7 +90,7 @@ async function explain(o: { seqscan: boolean }): Promise<{ nodes: Node[]; ms: nu
 }
 
 describe('M9 (R-TODAY-17): the follow-up history read at volume', () => {
-  it(`with ${APPOINTMENTS} appointments in the tenant and ${NOTES} notes on one person, every appointments and notes read is an index read: no scan of the tenant's appointments, no sort of the person's notes`, async () => {
+  it(`E888: with ${APPOINTMENTS} appointments in the tenant and ${NOTES} notes on one person, every appointments and notes read is an index read: no scan of the tenant's appointments, no sort of the person's notes`, async () => {
     const p = await explain({ seqscan: true });
     if (process.env['FOLLOW_UP_PRINT_PLAN']) console.log(`${p.text}\nExecution Time: ${p.ms} ms`);
     const on = (rel: string) => p.nodes.filter((n) => n['Relation Name'] === rel);

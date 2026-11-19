@@ -35,7 +35,7 @@ const logCall = async (c: TestClient, contactId: string) => {
 };
 
 describe('M11 (R-TODAY-18): GET /activities/recent-people', () => {
-  it('a call just logged from a personal phone puts the person FIRST; a person only the system saw activity for (their inbound text) is not in it', async () => {
+  it('E890: a call just logged from a personal phone puts the person FIRST; a person only the system saw activity for (their inbound text) is not in it', async () => {
     const first = await ownedContact(a, { firstName: 'Ada' });
     const second = await ownedContact(a, { firstName: 'Bea' });
     const systemOnly = await ownedContact(a, { firstName: 'Cyd' });

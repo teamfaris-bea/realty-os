@@ -335,7 +335,7 @@ describe('L17 (R-TODAY-20): a log dated up to 5 minutes ahead is shown immediate
   it('the slack is the log route’s own', () => {
     expect(LOGGED_AHEAD_MS).toBe(ACTIVITY_MAX_AHEAD_MS);
   });
-  it('a logged call dated 4 minutes ahead is the last touch and the latest contact now', () => {
+  it('E891: a logged call dated 4 minutes ahead is the last touch and the latest contact now', () => {
     const r = selectLastContact([loggedAt(4 * MINUTE_MS), call({ at: ago(3 * DAY_MS) })], NOW);
     expect(r.lastTouch).toMatchObject({ kind: 'call', reported: true, outcome: 'talked', at: NOW + 4 * MINUTE_MS });
     expect(r.lastContactAt).toBe(NOW + 4 * MINUTE_MS);

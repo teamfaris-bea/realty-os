@@ -79,7 +79,7 @@ describe('M4 (R-TODAY-13): a truly quiet person is never hidden behind people wh
     expect([FOLLOW_UP_PAGE, FOLLOW_UP_DEPTH_DEFAULT, FOLLOW_UP_DEPTH_MAX]).toEqual([60, 2, 10]);
   });
 
-  it('GET /feed finds the quiet person behind the 61, and says the read was complete: 62 checked, 1 due', async () => {
+  it('E883: GET /feed finds the quiet person behind the 61, and says the read was complete: 62 checked, 1 due', async () => {
     const p = await planOf(agent);
     expect(p.people.map((x) => x.contact?.id)).toEqual([lonely]);
     expect(p.people[0]!.reasons[0]).toEqual({ code: 'WARM_NO_CONTACT', label: 'Connected: no conversation for 9 days' });
@@ -152,7 +152,7 @@ describe('M6 (R-TODAY-12): a manual note is never contact for the quiet clock', 
   });
   const rowOf = async (id: string) => (await planOf(agent)).people.find((p) => p.contact?.id === id);
 
-  it('a Team Lead’s housekeeping note leaves a quiet person in the plan, and the row may say the note as a note', async () => {
+  it('E884: a Team Lead’s housekeeping note leaves a quiet person in the plan, and the row may say the note as a note', async () => {
     const c = await contactOf(agent, { firstName: 'Odile' });
     await quiet(c.id, 'connected', 12);
     expect(await rowOf(c.id)).toBeDefined();

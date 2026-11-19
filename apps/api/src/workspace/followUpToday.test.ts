@@ -152,7 +152,7 @@ describe('R-TODAY-6: who is in "Follow up today"', () => {
 
 // b19 Today fix 4 (M7; R-TODAY-15): a due promise is never hidden behind an earlier routine task
 describe('M7 (R-TODAY-15): a due promise leads the row', () => {
-  it('the reviewer’s case: a follow-up overdue 2 h and a promise overdue 1 h: the row is the promise (its own time), names the follow-up in "Also due", and its Next line is the promise', async () => {
+  it('E886: the reviewer’s case: a follow-up overdue 2 h and a promise overdue 1 h: the row is the promise (its own time), names the follow-up in "Also due", and its Next line is the promise', async () => {
     const c = await contactOf(a, { firstName: 'Dana' });
     const followUp = await task(a, c.id, 'Follow up with Dana', { dueInMs: -2 * 3_600_000 - 60_000 });
     const promise = await task(a, c.id, 'Send lender intro', { kind: 'promise', dueInMs: -3_600_000 - 60_000 });
