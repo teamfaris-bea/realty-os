@@ -7,8 +7,9 @@
 // Only real <meta name="lead_..." content="..."> elements are read: never text that entity decoding produces (an
 // escaped &lt;meta ...&gt; is text, not a tag), never a text/plain part, never anything inside <!-- -->, <script>,
 // <style>, <textarea> or <title>. The content attribute is entity-decoded only after the tag is recognised, then
-// cleaned. An unknown version is not read. A lead_* name appearing twice with different values is a conflict (the
-// email is held PARTIAL_FORMAT). lead_source is read (for the conflict check) but never changes the lead source.
+// cleaned. A tag whose attribute region is not clean is never read (the rule is stated at the scanner). An unknown
+// version is not read. A lead_* name appearing twice with different values is a conflict (the email is held
+// PARTIAL_FORMAT). lead_source is read (for the conflict check) but never changes the lead source.
 // The values are prepended to the normalized body as "lead_name: …" lines (index.ts), so every span points into it.
 import { cleanField } from './fields.js';
 import { cutAt, decodeEntities } from './html.js';
@@ -42,7 +43,7 @@ export interface LeadMetadata {
   declared: boolean;
   /** non-empty values of the names we read, in LEAD_META_NAMES order; conflicting names are left out */
   values: { name: LeadMetaName; value: string }[];
-  /** names that appeared twice with different values */
+  /** names that appeared twice with different values, or that a tag that is not clean claimed */
   conflicts: string[];
 }
 
@@ -63,6 +64,34 @@ function matchesCI(src: string, at: number, name: string): boolean {
     if (c !== name.charCodeAt(k)) return false;
   }
   return true;
+}
+
+/**
+ * True when src[from, to) holds an entity for '<' or '>': &lt &gt, &#60 &#62, &#x3c &#x3e, in any letter case, with
+ * leading zeros, with or without the ';'. Linear in to - from.
+ */
+function hasEscapedAngle(src: string, from: number, to: number): boolean {
+  for (let k = from; k < to; k++) {
+    if (src.charCodeAt(k) !== 38 /* & */) continue;
+    let q = k + 1;
+    const c = src.charCodeAt(q) | 32; // ASCII lower case
+    const lOrG = c === 108 || c === 103;
+    if (lOrG && q + 1 < to && (src.charCodeAt(q + 1) | 32) === 116 /* t */) return true;
+    if (src.charCodeAt(q) !== 35 /* # */) continue;
+    q++;
+    const hex = (src.charCodeAt(q) | 32) === 120; /* x */
+    if (hex) q++;
+    let cp = 0;
+    for (; q < to && cp <= 0x10ffff; q++) {
+      const d = src.charCodeAt(q);
+      const lower = d | 32;
+      if (isDigit(d)) cp = cp * (hex ? 16 : 10) + (d - 48);
+      else if (hex && lower >= 97 && lower <= 102) cp = cp * 16 + (lower - 87);
+      else break;
+    }
+    if (cp === 60 || cp === 62) return true;
+  }
+  return false;
 }
 
 /** The value of a meta content attribute: entity-decoded (after the tag was recognised), NFKC, cleaned, capped. */
@@ -107,6 +136,13 @@ export function scanLeadMetadata(html: unknown): LeadMetadata {
     const name = p - j <= MAX_TAG_NAME ? src.slice(j, p).toLowerCase() : '';
     const collect = !closing && name === 'meta';
     const attrs = new Map<string, string>();
+    // The clean-tag rule (R-LEM-10, E331). A <meta> tag is read only when its attribute region is clean: every
+    // attribute name is a plain name (a letter, then letters, digits, '-', '_', ':'), `name` and `content` appear at
+    // most once each, and no unquoted value contains '<', a quote, or an entity-escaped angle bracket (&lt; &gt;
+    // &#60; &#x3c; …, any letter case, with or without the semicolon). A tag that breaks the rule is never read (it
+    // declares nothing and gives no value), and the lead_* name it claims becomes a conflict, so a declared email is
+    // held (PARTIAL_FORMAT) instead of being read from the tags that remain.
+    let clean = true;
 
     // attributes: name[=value], value quoted ('…' or "…") or unquoted; the first of a repeated name wins
     for (;;) {
@@ -116,9 +152,11 @@ export function scanLeadMetadata(html: unknown): LeadMetadata {
       while (p < n) {
         const c = src.charCodeAt(p);
         if (isSpace(c) || c === 47 || c === 62 || c === 61 /* = */) break;
+        if (collect && !isNameChar(c)) clean = false;
         p++;
       }
       const an = p - as <= MAX_ATTR_NAME ? src.slice(as, p).toLowerCase() : '';
+      if (collect && (an === '' || !isAlpha(an.charCodeAt(0)))) clean = false;
       while (p < n && isSpace(src.charCodeAt(p))) p++;
       let value = '';
       if (p < n && src.charCodeAt(p) === 61) {
@@ -135,11 +173,21 @@ export function scanLeadMetadata(html: unknown): LeadMetadata {
           p = e + 1;
         } else {
           const vs = p;
-          while (p < n && !isSpace(src.charCodeAt(p)) && src.charCodeAt(p) !== 62) p++;
+          let amp = false;
+          while (p < n && !isSpace(src.charCodeAt(p)) && src.charCodeAt(p) !== 62) {
+            const c = src.charCodeAt(p);
+            if (c === 60 /* < */ || c === 34 /* " */ || c === 39 /* ' */) clean = false;
+            else if (c === 38 /* & */) amp = true;
+            p++;
+          }
+          if (collect && amp && hasEscapedAngle(src, vs, p)) clean = false;
           if (collect) value = src.slice(vs, Math.min(p, vs + MAX_RAW_ATTR));
         }
       }
-      if (collect && an !== '' && !attrs.has(an)) attrs.set(an, value);
+      if (collect && an !== '') {
+        if (!attrs.has(an)) attrs.set(an, value);
+        else if (an === 'name' || an === 'content') clean = false;
+      }
     }
     if (p >= n) break; // unterminated tag: nothing more is read
     i = p + 1;
@@ -168,6 +216,10 @@ export function scanLeadMetadata(html: unknown): LeadMetadata {
     if (!metaName.startsWith('lead_') || !attrs.has('content')) continue;
     metas++;
     if (metaName !== LEAD_META_VERSION_NAME && !KNOWN.has(metaName)) continue;
+    if (!clean) {
+      conflicts.add(metaName);
+      continue;
+    }
     let value = metaValue(attrs.get('content')!);
     if (metaName === 'lead_email') value = value.toLowerCase();
     if (metaName === LEAD_META_VERSION_NAME && value === LEAD_META_VERSION) declaredV1 = true;
