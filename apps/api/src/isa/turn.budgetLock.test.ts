@@ -9,7 +9,8 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { inboundSms } from '../comms/testing.js';
 import { systemActor } from '../worker/systemActor.js';
-import { aiMessages, assignmentOf, type IsaLead, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
+import { lockModelBudget } from './spend.js';
+import { aiMessages, assignmentOf, call, type IsaLead, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
 import { runTurn, type TurnResult } from './turn.js';
 
 let h: ApiHarness;
@@ -206,6 +207,54 @@ it('R-ISA-20: a provider failure keeps its reservation, recorded as failed with 
   expect(w.ai.calls.length).toBe(before + 1);
   expect(await heldCodes(b!.assignmentId)).toEqual([{ status: 'deferred', code: 'ISA_MODEL_TENANT_DAILY_LIMIT' }]);
   expect(await teamRuns(w.tenantId)).toBe(1000);
+});
+
+it('R-ISA-20 R-ISA-4 R-ISA-31: a reservation waiting for the team lock holds none of the person\'s own locks: their STOP is recorded and a pause applies while it waits', async () => {
+  const { w, people: [a, b] } = await team(2);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let holding!: () => void;
+  const held = new Promise<void>((r) => { holding = r; });
+  // someone else in the team is inside the reservation moment (the test holds the team lock open)
+  const other = withTenantTx(systemActor(w.tenantId as never, 'assistant'), async (tx) => {
+    await lockModelBudget(tx);
+    holding();
+    await gate;
+  }, { db: h.database });
+  await held;
+  const before = w.ai.calls.length;
+  const sentBefore = (await aiMessages(h, a!.lead.id)).length;
+  let aSettled = false;
+  const runA = a!.turn().finally(() => { aSettled = true; });
+  const runB = b!.turn();
+  try {
+    // TX-A does not need the team lock: both turns are decided (their rows are `deciding`) and now wait to reserve
+    const deadline = Date.now() + WAIT_MS;
+    const deciding = async () => (await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_isa_turns WHERE assignment_id = ANY ($1::uuid[]) AND trigger_kind = 'inbound' AND status = 'deciding'`, [[a!.assignmentId, b!.assignmentId]])).rows[0]!.n;
+    while ((await deciding()) < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+    expect(await deciding()).toBe(2);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(aSettled).toBe(false);
+    expect(w.ai.calls.length).toBe(before);
+    expect(await teamRuns(w.tenantId)).toBe(0);
+    // A's STOP (lock 1, lock 2, the assignment FOR SHARE) and B's pause (lock 2, the assignment row) do not wait
+    const stop = await within(inboundSms(h, a!.lead.phone, w.mainNumber, 'STOP'));
+    expect(stop).toMatchObject({ statusCode: 200 });
+    expect((await h.su.query(`SELECT reason FROM ai_isa_stop_signals WHERE tenant_id = $1`, [w.tenantId])).rows).toEqual([{ reason: 'opted_out' }]);
+    const pause = await within(call(w.agents[0]!, 'POST', `/contacts/${b!.lead.id}/ai-isa/pause`, {}));
+    expect(pause).toMatchObject({ status: 200 });
+    expect((await assignmentOf(h, b!.lead.id))!.paused_at).not.toBeNull();
+  } finally {
+    release();
+    await other;
+  }
+  const [ra, rb] = await Promise.all([runA, runB]);
+  // neither answer is used: A said STOP and B's care was paused while their calls waited
+  expect([ra.kind, rb.kind]).toEqual(['done', 'done']);
+  expect(ra).not.toMatchObject({ code: 'QUEUED' });
+  expect(rb).not.toMatchObject({ code: 'QUEUED' });
+  expect((await aiMessages(h, a!.lead.id)).length).toBe(sentBefore);
+  expect((await aiMessages(h, b!.lead.id)).filter((m) => m.status === 'queued' || m.status === 'scheduled')).toEqual([]);
 });
 
 it('R-ISA-20: a held call resumes on the retry of the job that owns its turn, also when that job is the start job that read the first inbound', async () => {

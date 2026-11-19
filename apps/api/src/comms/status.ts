@@ -9,7 +9,7 @@
 //   - opens and clicks are behaviour SIGNALS, never facts (R-CONSENT-19: Apple MPP prefetches opens)
 import type { ContactId, Instant, SystemActor, TenantId } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
-import { type Tx, hmacBytes, lockContact, recordConsentEvent, withTenantTx } from '@realty/db';
+import { type Tx, hmacBytes, lockAddress, lockContact, recordConsentEvent, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { emitSendResultInTx, isAiIsaMessage } from '../isa/send.js';
@@ -83,6 +83,13 @@ export async function applyMessageStatus(actor: SystemActor, e: StatusEvent, dep
 async function applyInTx(tx: Tx, actor: SystemActor, e: StatusEvent, now: Instant, deps: CommsDeps): Promise<StatusResult> {
   const peek = 'id' in e.message ? await msgs.messageById(tx, e.message.id) : await msgs.messageByProviderRef(tx, e.message.providerRef);
   if (!peek || peek.direction !== 'outbound') return { kind: 'unknown_message' };
+  // Global lock order (ARCHITECTURE §10; review D8-R5): a carrier opt-out code records a consent revoke for the
+  // recipient's address below, so that address is locked BEFORE the contact, the order inbound ingestion takes them
+  // (never the contact held while waiting for an address the person's own STOP holds). recordConsentEvent's own
+  // address lock is then a no-op.
+  const optOutReport = (e.mapped === 'failed' || e.mapped === 'undelivered') && !!e.errorCode && PROVIDER_OPT_OUT_CODES.has(e.errorCode);
+  const recipientHmac = optOutReport ? Buffer.from(await deps.envelope.inTx(tx, actor.tenantId as TenantId).hmacAddress(actor.tenantId as TenantId, peek.toAddress)).toString('hex') : null;
+  if (recipientHmac !== null) await lockAddress(tx, recipientHmac);
   await lockContact(tx, peek.contactId as ContactId);
   const m = (await msgs.lockMessage(tx, peek.id))!;
   const inserted = await msgs.insertStatusEvent(tx, {
@@ -121,9 +128,8 @@ async function applyInTx(tx: Tx, actor: SystemActor, e: StatusEvent, now: Instan
   if (next && (e.mapped === 'failed' || e.mapped === 'undelivered') && channel === 'sms' && isSenderNotVerified(e.errorCode)) {
     await markSenderNotVerified(tx, actor, deps, m.phoneNumberId, e.errorCode!, m.id, now);
   }
-  if ((e.mapped === 'failed' || e.mapped === 'undelivered') && e.errorCode && PROVIDER_OPT_OUT_CODES.has(e.errorCode)) {
-    const env = deps.envelope.inTx(tx, actor.tenantId as TenantId);
-    const hmac = Buffer.from(await env.hmacAddress(actor.tenantId as TenantId, m.toAddress)).toString('hex');
+  if (recipientHmac !== null) {
+    const hmac = recipientHmac;
     await recordConsentEvent(tx, {
       id: deps.ids.next<'ConsentEventId'>(), addressKind: channel === 'email' ? 'email' : 'phone', addressHmac: hmac, addressHint: hint(m.toAddress),
       channel, purpose: 'all', eventType: 'revoke', level: 'none', source: 'provider_report', occurredAt: now, contactId: m.contactId,
