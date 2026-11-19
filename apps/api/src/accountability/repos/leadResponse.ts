@@ -1,8 +1,9 @@
 // Reads of the lead response report (b19 team-queue lane; DATA_MODEL R-TEAMQ-6..9). READ-ONLY, in the caller's
 // transaction: RLS and the team scope of repos/teamQueue.ts decide which inquiries exist for them.
 //
-// One row per inbound inquiry received in [from, to) (lead_inquiries; an ignored duplicate delivery is not an
-// arrival; imports and people a member typed in never write lead_inquiries), with:
+// One row per inbound inquiry that ARRIVED in [from, to) (repos/teamQueue.ts ARRIVAL, R-TEAMQ-19: the one arrival
+// instant, never the source's claimed time alone; an ignored duplicate delivery is not an arrival; imports and people
+// a member typed in never write lead_inquiries), with:
 //   - the FIRST human attempt on the person at or after the arrival, by ANYONE: exactly the scoreboard's touch
 //     (repos/teamQueue.ts HUMAN_MESSAGE / HUMAN_CALL, migration 0053), with who made it;
 //   - that person's role to the lead AT THAT MOMENT: `owner` when the ledger's latest event at or before the
@@ -17,7 +18,7 @@ import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { iso } from '../common.js';
-import { AUTOMATED_MESSAGE, HOLDER_COLUMNS, HOLDER_JOINS, HUMAN_CALL, HUMAN_MESSAGE, type HolderColumns, TEAM_SCOPE } from './teamQueue.js';
+import { ARRIVAL, AUTOMATED_MESSAGE, HOLDER_COLUMNS, HOLDER_JOINS, HUMAN_CALL, HUMAN_MESSAGE, type HolderColumns, TEAM_SCOPE } from './teamQueue.js';
 
 /** Inquiries one report reads at most (the newest); a period that holds more says so (`truncated`). */
 export const RESPONSE_READ_CAP = 5000;
@@ -25,7 +26,8 @@ export const RESPONSE_READ_CAP = 5000;
 export interface InquiryResponseRow extends HolderColumns {
   id: string;
   contact_id: string;
-  received_at: Date;
+  /** the arrival (ARRIVAL) */
+  arrived_at: Date;
   source_id: string;
   source_name: string;
   attempt_at: Date | null;
@@ -50,16 +52,16 @@ export interface InquiryResponseRow extends HolderColumns {
 export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: number): Promise<InquiryResponseRow[]> {
   const r = await sql<InquiryResponseRow>`
     WITH inq AS (
-      SELECT i.id, i.contact_id, i.received_at, s.id AS source_id, s.name AS source_name
+      SELECT i.id, i.contact_id, i.arrived_at, s.id AS source_id, s.name AS source_name
         FROM lead_sources s
         CROSS JOIN LATERAL (
-          SELECT i.id, i.contact_id, i.received_at FROM lead_inquiries i
+          SELECT i.id, i.contact_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
            WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id
-             AND i.received_at >= ${iso(from)}::timestamptz AND i.received_at < ${iso(to)}::timestamptz
+             AND ${ARRIVAL} >= ${iso(from)}::timestamptz AND ${ARRIVAL} < ${iso(to)}::timestamptz
              AND i.outcome <> 'duplicate_ignored'
-           ORDER BY i.received_at DESC LIMIT ${cap + 1}) i
+           ORDER BY ${ARRIVAL} DESC LIMIT ${cap + 1}) i
        WHERE s.tenant_id = app.tenant_id())
-    SELECT i.id, i.contact_id, i.received_at, i.source_id, i.source_name, ${HOLDER_COLUMNS},
+    SELECT i.id, i.contact_id, i.arrived_at, i.source_id, i.source_name, ${HOLDER_COLUMNS},
            h.at AS attempt_at, h.kind AS attempt_kind, h.channel AS attempt_channel, h.by_user AS attempt_by, hu.display_name AS attempt_by_name,
            (SELECT e.owner_user_id FROM lead_ownership_events e
              WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.occurred_at <= h.at
@@ -71,25 +73,25 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
            COALESCE(ba.alerted_user_id = h.by_user AND h.at >= ba.decided_at, false) AS backup_then,
            ba.decided_at AS backup_alert_at, ba.alerted_user_id AS backup_alert_user, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
            (SELECT min(m.dispatched_at) FROM messages m
-             WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.received_at) AS automated_at
+             WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at
       FROM inq i
       JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = i.contact_id
       ${HOLDER_JOINS}
       LEFT JOIN LATERAL (
         SELECT x.at, x.kind, x.channel, x.by_user FROM (
           (SELECT m.dispatched_at AS at, 'message' AS kind, m.channel, m.initiated_by_user_id AS by_user FROM messages m
-            WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.received_at
+            WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.arrived_at
             ORDER BY m.dispatched_at ASC LIMIT 1)
           UNION ALL
           (SELECT k.started_at, 'call', 'voice', k.agent_user_id FROM calls k
-            WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND ${HUMAN_CALL} AND k.started_at >= i.received_at
+            WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND ${HUMAN_CALL} AND k.started_at >= i.arrived_at
             ORDER BY k.started_at ASC LIMIT 1)) x
          ORDER BY x.at ASC LIMIT 1) h ON true
       LEFT JOIN users hu ON hu.id = h.by_user
       LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = c.tenant_id AND ba.inquiry_id = i.id AND ba.outcome = 'alerted'
       LEFT JOIN users bau ON bau.id = ba.alerted_user_id
      WHERE c.deleted_at IS NULL AND ${TEAM_SCOPE}
-     ORDER BY i.received_at DESC, i.id DESC
+     ORDER BY i.arrived_at DESC, i.id DESC
      LIMIT ${cap + 1}`.execute(tx);
   return r.rows;
 }

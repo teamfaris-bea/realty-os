@@ -193,7 +193,7 @@ export const ResponseInquirySchema = z.object({
   contact: z.object({ id: uuid, name: z.string() }),
   sourceId: uuid,
   sourceName: z.string().nullable(),
-  receivedAt: z.string(),
+  arrivedAt: z.string(),
   offHours: z.boolean(),
   countedFrom: z.string(),
   attempt: Waited.extend({

@@ -21,11 +21,11 @@ const SIGN = 'b0000000-0000-7000-8000-000000000002' as LeadSourceId;
 let n = 0;
 const inq = (o: Partial<ResponseInquiryFacts> = {}): ResponseInquiryFacts => {
   n += 1;
-  return { inquiryId: inquiry(n), contactId: contact(n), sourceId: WEB, sourceName: 'Website form', receivedAt: t(-hours(2)), firstAttempt: null, automatedReplyAt: null, ...o };
+  return { inquiryId: inquiry(n), contactId: contact(n), sourceId: WEB, sourceName: 'Website form', arrivedAt: t(-hours(2)), firstAttempt: null, automatedReplyAt: null, ...o };
 };
 const tried = (afterSeconds: number, o: Partial<ResponseInquiryFacts> = {}, who: Partial<NonNullable<ResponseInquiryFacts['firstAttempt']>> = {}): ResponseInquiryFacts => {
-  const receivedAt = o.receivedAt ?? t(-hours(2));
-  return inq({ ...o, receivedAt, firstAttempt: { at: (receivedAt + afterSeconds * 1000) as never, kind: 'call', byUserId: user(1), role: 'owner', ...who } });
+  const arrivedAt = o.arrivedAt ?? t(-hours(2));
+  return inq({ ...o, arrivedAt, firstAttempt: { at: (arrivedAt + afterSeconds * 1000) as never, kind: 'call', byUserId: user(1), role: 'owner', ...who } });
 };
 
 describe('the rules of the measure', () => {
@@ -51,7 +51,7 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
   });
 
   it('R-TEAMQ-7 E827: an automated reply is reported apart and is never an attempt: the inquiry is still waiting', () => {
-    const m = measureInquiry(inq({ receivedAt: t(-min(30)), automatedReplyAt: t(-min(29)) }), NOW, CAL);
+    const m = measureInquiry(inq({ arrivedAt: t(-min(30)), automatedReplyAt: t(-min(29)) }), NOW, CAL);
     expect(m.attempt).toBeNull();
     expect(m.waiting).toEqual({ wallSeconds: 1800, staffedSeconds: 1800 });
     expect([m.within5, m.within15, m.automatedReplyAt]).toEqual([false, false, t(-min(29))]);
@@ -59,7 +59,7 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
 
   it('R-TEAMQ-7 E829: an off-hours arrival is counted from opening and marked: a call three minutes after opening is within 5 minutes', () => {
     const night = at('2026-11-10T07:00:00Z'); // 02:00 New York; opens 08:00 (13:00Z)
-    const m = measureInquiry(inq({ receivedAt: night, firstAttempt: { at: at('2026-11-10T13:03:00Z'), kind: 'text', byUserId: user(1), role: 'owner' } }), NOW, CAL);
+    const m = measureInquiry(inq({ arrivedAt: night, firstAttempt: { at: at('2026-11-10T13:03:00Z'), kind: 'text', byUserId: user(1), role: 'owner' } }), NOW, CAL);
     expect([m.offHours, m.countedFrom, m.attempt?.staffedSeconds, m.attempt?.wallSeconds, m.within5]).toEqual([true, at('2026-11-10T13:00:00Z'), 180, 6 * 3600 + 180, true]);
     // a daytime arrival is counted from itself
     const day = measureInquiry(tried(60), NOW, CAL);
@@ -88,8 +88,8 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
   });
 
   it('R-TEAMQ-8: the inquiries not within 5 minutes are listed under their source: the ones still waiting first (longest first), then the slowest', () => {
-    const waitingLong = inq({ receivedAt: t(-hours(5)) });
-    const waitingShort = inq({ receivedAt: t(-min(2)) });
+    const waitingLong = inq({ arrivedAt: t(-hours(5)) });
+    const waitingShort = inq({ arrivedAt: t(-min(2)) });
     const slow = tried(1000);
     const slower = tried(4000);
     const r = rollUpResponses([tried(60), slow, waitingShort, slower, waitingLong], NOW, CAL);
@@ -106,8 +106,8 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
   });
 
   it('R-TEAMQ-8 E830: two inquiries from one person are two arrivals, each with its own first attempt after it', () => {
-    const first = tried(120, { contactId: contact(900), receivedAt: t(-min(100)) });
-    const second = inq({ contactId: contact(900), receivedAt: t(-min(10)) });
+    const first = tried(120, { contactId: contact(900), arrivedAt: t(-min(100)) });
+    const second = inq({ contactId: contact(900), arrivedAt: t(-min(10)) });
     const r = rollUpResponses([first, second], NOW, CAL);
     expect([r.totals.inquiries, r.totals.attempted, r.totals.within5, r.totals.waiting]).toEqual([2, 1, 1, 1]);
     expect(r.measured.map((m) => [m.inquiryId, m.attempt?.staffedSeconds ?? null, m.waiting?.wallSeconds ?? null])).toEqual(
@@ -134,7 +134,7 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
 
   it('R-TEAMQ-8: percentiles are over staffed time of attempted inquiries only; a waiting inquiry is never a sample', () => {
     const night = at('2026-11-10T07:00:00Z');
-    const offHours = Array.from({ length: 5 }, () => inq({ receivedAt: night, firstAttempt: { at: at('2026-11-10T13:02:00Z'), kind: 'call', byUserId: user(1), role: 'owner' } }));
+    const offHours = Array.from({ length: 5 }, () => inq({ arrivedAt: night, firstAttempt: { at: at('2026-11-10T13:02:00Z'), kind: 'call', byUserId: user(1), role: 'owner' } }));
     const s = rollUpResponses([...offHours, inq(), inq()], NOW, CAL).totals;
     expect([s.sample, s.medianStaffedSeconds, s.within5, s.inquiries]).toEqual([5, 120, 5, 7]);
   });

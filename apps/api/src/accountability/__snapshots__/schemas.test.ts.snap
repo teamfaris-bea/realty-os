@@ -495,6 +495,9 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
         "items": {
           "additionalProperties": false,
           "properties": {
+            "arrivedAt": {
+              "type": "string",
+            },
             "attempt": {
               "anyOf": [
                 {
@@ -659,9 +662,6 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "offHours": {
               "type": "boolean",
             },
-            "receivedAt": {
-              "type": "string",
-            },
             "sourceId": {
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -712,7 +712,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "contact",
             "sourceId",
             "sourceName",
-            "receivedAt",
+            "arrivedAt",
             "offHours",
             "countedFrom",
             "attempt",
@@ -844,6 +844,9 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "items": {
                 "additionalProperties": false,
                 "properties": {
+                  "arrivedAt": {
+                    "type": "string",
+                  },
                   "attempt": {
                     "anyOf": [
                       {
@@ -1008,9 +1011,6 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                   "offHours": {
                     "type": "boolean",
                   },
-                  "receivedAt": {
-                    "type": "string",
-                  },
                   "sourceId": {
                     "format": "uuid",
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -1061,7 +1061,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                   "contact",
                   "sourceId",
                   "sourceName",
-                  "receivedAt",
+                  "arrivedAt",
                   "offHours",
                   "countedFrom",
                   "attempt",

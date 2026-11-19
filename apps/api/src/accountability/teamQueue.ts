@@ -156,7 +156,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
       inquiryId: q.id as never,
       contactId: q.contact_id as ContactId,
       sourceName: q.source_name,
-      receivedAt: ms(q.received_at),
+      arrivedAt: ms(q.arrived_at),
       holder,
       humanAttemptAt: null, // the read keeps only inquiries with no human attempt at or after the arrival
       automatedReplyAt: q.automated_at === null ? null : ms(q.automated_at),

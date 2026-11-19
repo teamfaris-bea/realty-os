@@ -2,13 +2,14 @@
 //
 // When a covered source's inbound inquiry has had no human attempt after three minutes of STAFFED time, the source's
 // backup is alerted (apps/api leads/backupAlert.ts decides and writes; this file holds what is pure):
-//   - when it is due: three minutes of staffed time after the arrival, counted from opening for an off-hours
-//     arrival, and never before the lead actually reached the team (a source may back-date its arrival);
+//   - when it is due: three minutes of staffed time after the ARRIVAL (arrival.ts: the one arrival instant, which a
+//     source can neither back-date nor date ahead), counted from opening for an off-hours arrival;
 //   - the words: who, from which source, how long, who it is with. The TITLE is what a push notification and the
 //     alert text to the member's phone carry, so it holds the whole alert in at most 120 characters (the column's
 //     limit); the body (in-app) adds that nobody has called, texted or emailed and what the recipient can do.
 // An alert is to a member of the team. It is never a message to the client, and it changes no owner.
-import { type BusinessCalendar, DAY_MS, HOUR_MS, type Instant, MINUTE_MS, SECOND_MS, addBusinessDuration, maxInstant } from '../foundation/index.js';
+import { type BusinessCalendar, DAY_MS, HOUR_MS, type Instant, MINUTE_MS, SECOND_MS, addBusinessDuration } from '../foundation/index.js';
+import { arrivalInstant } from './arrival.js';
 import { clip } from './format.js';
 
 /** Three minutes of staffed time. */
@@ -20,11 +21,11 @@ export const ALERT_TITLE_MAX = 120;
 export const ALERT_BODY_MAX = 240;
 
 /**
- * When the backup alert of an inquiry is due: BACKUP_ALERT_AFTER_SECONDS of staffed time after the later of the
- * arrival the source reported (`receivedAt`) and the moment the lead reached the team (`reachedAt`).
+ * When the backup alert of an inquiry is due: BACKUP_ALERT_AFTER_SECONDS of staffed time after its arrival
+ * (arrivalInstant of the time the source claims, `claimedAt`, and the moment the lead reached the team, `reachedAt`).
  */
-export function backupAlertDueAt(receivedAt: Instant, reachedAt: Instant, calendar: BusinessCalendar): Instant {
-  return addBusinessDuration(maxInstant(receivedAt, reachedAt), BACKUP_ALERT_AFTER_SECONDS, calendar);
+export function backupAlertDueAt(claimedAt: Instant, reachedAt: Instant, calendar: BusinessCalendar): Instant {
+  return addBusinessDuration(arrivalInstant(claimedAt, reachedAt), BACKUP_ALERT_AFTER_SECONDS, calendar);
 }
 
 /** Who has the lead when the alert is raised. Names are members' or ponds' names, never the client's. */

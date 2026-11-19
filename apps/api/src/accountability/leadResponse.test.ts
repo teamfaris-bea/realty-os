@@ -23,7 +23,7 @@ interface InquiryT {
   contact: { id: string; name: string };
   sourceId: string;
   sourceName: string | null;
-  receivedAt: string;
+  arrivedAt: string;
   offHours: boolean;
   countedFrom: string;
   attempt: { at: string; kind: string; by: { userId: string; name: string | null } | null; role: 'owner' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
@@ -62,7 +62,7 @@ async function report(c: TestClient, range = '7d'): Promise<ReportT> {
   if (r.status !== 200) throw new Error(`lead response: ${r.status} ${JSON.stringify(r.body)}`);
   return r.body;
 }
-const inquiriesOf = (r: ReportT, contactId: string) => r.inquiries.filter((i) => i.contact.id === contactId).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+const inquiriesOf = (r: ReportT, contactId: string) => r.inquiries.filter((i) => i.contact.id === contactId).sort((a, b) => a.arrivedAt.localeCompare(b.arrivedAt));
 
 /** A made-up lead source of its own, so a test's numbers are only its own inquiries. */
 async function source(name: string): Promise<{ id: string; token: string }> {
@@ -93,8 +93,9 @@ async function humanText(by: TestClient, contactId: string): Promise<void> {
   if (r.body.result !== 'sent') throw new Error(`text not sent: ${JSON.stringify(r.body)}`);
 }
 
-/** clock fixture: the person's inquiries arrived `minutes` ago */
-const arrivedAgo = (contactId: string, minutes: number) => h.su.query(`UPDATE lead_inquiries SET received_at = now() - ($2::int * interval '1 minute') WHERE contact_id = $1`, [contactId, minutes]);
+/** clock fixture: the person's inquiries arrived (were claimed, and reached the team: R-TEAMQ-19) `minutes` ago */
+const arrivedAgo = (contactId: string, minutes: number) =>
+  h.su.query(`UPDATE lead_inquiries SET received_at = now() - ($2::int * interval '1 minute'), created_at = now() - ($2::int * interval '1 minute') WHERE contact_id = $1`, [contactId, minutes]);
 
 beforeAll(async () => {
   h = await createApiHarness({ logLevel: 'error' });
@@ -170,7 +171,7 @@ describe('R-TEAMQ-7 one inquiry, from arrival to the first human attempt', () =>
       const r = await report(w.owner);
       const [inq] = inquiriesOf(r, lead.contactId);
       expect(inq!.offHours).toBe(true);
-      expect(new Date(inq!.countedFrom).getTime()).toBeGreaterThan(new Date(inq!.receivedAt).getTime() + 2 * 3600_000);
+      expect(new Date(inq!.countedFrom).getTime()).toBeGreaterThan(new Date(inq!.arrivedAt).getTime() + 2 * 3600_000);
       expect(inq!.attempt!.wallSeconds).toBeGreaterThanOrEqual(3 * 3600);
       // about half an hour of staffed time (the opening is on a minute boundary), never the three hours
       expect(inq!.attempt!.staffedSeconds).toBeGreaterThanOrEqual(29 * 60);
@@ -206,7 +207,7 @@ describe('R-TEAMQ-7 one inquiry, from arrival to the first human attempt', () =>
     [a, b] = inquiriesOf(r, lead.contactId);
     expect(a!.attempt!.at).toBe(firstAttemptAt);
     expect(b!.attempt).not.toBeNull();
-    expect(new Date(b!.attempt!.at).getTime()).toBeGreaterThanOrEqual(new Date(b!.receivedAt).getTime());
+    expect(new Date(b!.attempt!.at).getTime()).toBeGreaterThanOrEqual(new Date(b!.arrivedAt).getTime());
     expect(b!.attempt!.at).not.toBe(firstAttemptAt);
     expect(b).toMatchObject({ within5: true });
     expect(r.sources.find((s) => s.sourceId === first.id)).toMatchObject({ inquiries: 1, attempted: 1, within5: 0, within15: 0 });

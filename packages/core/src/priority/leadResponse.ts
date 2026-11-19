@@ -1,6 +1,6 @@
 // The lead response report (b19 team-queue lane; DATA_MODEL R-TEAMQ-7..9, E827..E832).
 //
-// Response time measured from the moment a lead ARRIVES (lead_inquiries.received_at), not from when an agent
+// Response time measured from the moment a lead ARRIVES (the one arrival instant, arrival.ts), not from when an agent
 // accepted it: per inbound inquiry, the first HUMAN attempt after the arrival by ANYONE (the scoreboard's touch),
 // who made it and in what role to the lead at that moment, in wall-clock and in staffed time. An automated reply
 // is reported apart and is never an attempt. Rolled up by lead source with every denominator.
@@ -36,8 +36,8 @@ export interface ResponseInquiryFacts {
   contactId: ContactId;
   sourceId: LeadSourceId;
   sourceName: string | null;
-  /** the arrival */
-  receivedAt: Instant;
+  /** the arrival: the one arrival instant (arrival.ts, R-TEAMQ-19) */
+  arrivedAt: Instant;
   /** the first human attempt on the person at or after the arrival, by anyone; null: none yet */
   firstAttempt: { at: Instant; kind: AttemptKind; byUserId: UserId | null; role: AttemptRole } | null;
   /** the first automated message sent to the person after the arrival; never an attempt */
@@ -95,7 +95,7 @@ export interface SourceResponseRollup extends ResponseRollup {
 /** One inquiry measured from its arrival: to its first human attempt, or to `now` while it waits. */
 export function measureInquiry(f: ResponseInquiryFacts, now: Instant, calendar: BusinessCalendar): MeasuredInquiry {
   const { firstAttempt, backupAlert, ...rest } = f;
-  const m = measureFromArrival(f.receivedAt, firstAttempt?.at ?? now, calendar);
+  const m = measureFromArrival(f.arrivedAt, firstAttempt?.at ?? now, calendar);
   const attempt = firstAttempt === null ? null : { ...firstAttempt, wallSeconds: m.wallSeconds, staffedSeconds: m.staffedSeconds };
   return {
     ...rest,
@@ -142,8 +142,8 @@ const byId = (a: MeasuredInquiry, b: MeasuredInquiry): number => (a.inquiryId < 
 /** Still waiting first (the longest wait first), then the slowest attempts. */
 function slowestFirst(a: MeasuredInquiry, b: MeasuredInquiry): number {
   if ((a.attempt === null) !== (b.attempt === null)) return a.attempt === null ? -1 : 1;
-  if (a.waiting !== null && b.waiting !== null) return a.receivedAt - b.receivedAt || byId(a, b);
-  return (b.attempt?.staffedSeconds ?? 0) - (a.attempt?.staffedSeconds ?? 0) || a.receivedAt - b.receivedAt || byId(a, b);
+  if (a.waiting !== null && b.waiting !== null) return a.arrivedAt - b.arrivedAt || byId(a, b);
+  return (b.attempt?.staffedSeconds ?? 0) - (a.attempt?.staffedSeconds ?? 0) || a.arrivedAt - b.arrivedAt || byId(a, b);
 }
 
 /** The report: every inquiry measured, rolled up by lead source (most inquiries first) and in total. */

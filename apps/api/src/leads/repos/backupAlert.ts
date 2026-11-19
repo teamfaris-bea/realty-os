@@ -6,15 +6,18 @@
 import type { MembershipStatus } from '@realty/core/ownership';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { HUMAN_CALL, HUMAN_MESSAGE } from '../../accountability/repos/teamQueue.js';
+import { ARRIVAL, HUMAN_CALL, HUMAN_MESSAGE } from '../../accountability/repos/teamQueue.js';
 
 export interface AlertInquiryRow {
   id: string;
   contact_id: string;
   lead_source_id: string;
+  /** the time the source claims (kept as said; it decides nothing here) */
   received_at: Date;
   /** when the inquiry row was written: when the lead reached the team */
   created_at: Date;
+  /** R-TEAMQ-19: THE arrival (accountability/repos/teamQueue.ts ARRIVAL), which every "since the arrival" below reads */
+  arrived_at: Date;
   outcome: string;
   source_name: string;
   /** the source's coverage switch, now */
@@ -25,7 +28,7 @@ export interface AlertInquiryRow {
 
 export async function inquiryForAlert(tx: Tx, inquiryId: string): Promise<AlertInquiryRow | null> {
   const r = await sql<AlertInquiryRow>`
-    SELECT i.id, i.contact_id, i.lead_source_id, i.received_at, i.created_at, i.outcome, s.name AS source_name, s.covered, s.backup_user_id, bm.status AS backup_status
+    SELECT i.id, i.contact_id, i.lead_source_id, i.received_at, i.created_at, ${ARRIVAL} AS arrived_at, i.outcome, s.name AS source_name, s.covered, s.backup_user_id, bm.status AS backup_status
       FROM lead_inquiries i
       JOIN lead_sources s ON s.tenant_id = i.tenant_id AND s.id = i.lead_source_id
       LEFT JOIN memberships bm ON bm.tenant_id = s.tenant_id AND bm.user_id = s.backup_user_id

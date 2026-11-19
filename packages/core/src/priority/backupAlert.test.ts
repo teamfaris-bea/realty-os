@@ -21,10 +21,10 @@ describe('R-TEAMQ-14 backupAlertDueAt: three minutes of staffed time after the a
     expect(backupAlertDueAt(late, late, CAL)).toBe(at('2026-11-11T08:02:00-05:00'));
   });
 
-  it('R-TEAMQ-14 E846: a source that back-dates its arrival still gives people three staffed minutes from when the lead reached the team; one dated ahead waits for its own time', () => {
+  it('R-TEAMQ-14 R-TEAMQ-19 E846 E871: a source that back-dates its arrival still gives people three staffed minutes from when the lead reached the team; one dated AHEAD (a fast clock) does too: a lead cannot arrive after the team has it (review fix M3: this line used to wait for the claimed time, 10:05)', () => {
     const reached = at('2026-11-10T10:00:00-05:00');
     expect(backupAlertDueAt(at('2026-11-09T15:00:00-05:00'), reached, CAL)).toBe(at('2026-11-10T10:03:00-05:00'));
-    expect(backupAlertDueAt(at('2026-11-10T10:02:00-05:00'), reached, CAL)).toBe(at('2026-11-10T10:05:00-05:00'));
+    expect(backupAlertDueAt(at('2026-11-10T10:02:00-05:00'), reached, CAL)).toBe(at('2026-11-10T10:03:00-05:00'));
   });
 
   it('the access a backup is given lasts 24 hours', () => {

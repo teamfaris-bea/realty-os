@@ -28,7 +28,7 @@ const inq = (o: Partial<QueueInquiryFacts> = {}): QueueInquiryFacts => ({
   inquiryId: inquiry(1),
   contactId: contact(1),
   sourceName: 'Website form',
-  receivedAt: t(-min(12)),
+  arrivedAt: t(-min(12)),
   holder: OFFER,
   humanAttemptAt: null,
   automatedReplyAt: null,
@@ -53,7 +53,7 @@ describe('R-TEAMQ-1 the queue has five groups, always, in one order', () => {
   });
 
   it('R-TEAMQ-1 E826: a group shows its longest-waiting rows first, at most the cap, and says how many more there are', () => {
-    const many = Array.from({ length: TEAM_QUEUE_GROUP_CAP + 7 }, (_, n) => inq({ inquiryId: inquiry(n + 1), contactId: contact(n + 1), receivedAt: t(-min(n + 1)) }));
+    const many = Array.from({ length: TEAM_QUEUE_GROUP_CAP + 7 }, (_, n) => inq({ inquiryId: inquiry(n + 1), contactId: contact(n + 1), arrivedAt: t(-min(n + 1)) }));
     const g = group(inputs({ inquiries: many }), 'new_lead');
     expect([g.rows.length, g.total, g.more]).toEqual([TEAM_QUEUE_GROUP_CAP, TEAM_QUEUE_GROUP_CAP + 7, 7]);
     expect(g.rows[0]!.contactId).toBe(contact(TEAM_QUEUE_GROUP_CAP + 7)); // the oldest arrival
@@ -91,27 +91,27 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
   });
 
   it('R-TEAMQ-2: an inquiry older than the window is not listed; one just inside it is', () => {
-    const old = inq({ receivedAt: t(-TEAM_QUEUE_NEW_LEAD_WINDOW_MS - 1) });
-    const edge = inq({ inquiryId: inquiry(2), contactId: contact(2), receivedAt: t(-TEAM_QUEUE_NEW_LEAD_WINDOW_MS + min(1)) });
+    const old = inq({ arrivedAt: t(-TEAM_QUEUE_NEW_LEAD_WINDOW_MS - 1) });
+    const edge = inq({ inquiryId: inquiry(2), contactId: contact(2), arrivedAt: t(-TEAM_QUEUE_NEW_LEAD_WINDOW_MS + min(1)) });
     expect(group(inputs({ inquiries: [old, edge] }), 'new_lead').rows.map((r) => r.contactId)).toEqual([contact(2)]);
   });
 
   it('R-TEAMQ-2 E822: one person who asked twice is one row, counted from the first unanswered arrival', () => {
-    const g = group(inputs({ inquiries: [inq({ receivedAt: t(-hours(1)) }), inq({ inquiryId: inquiry(2), receivedAt: t(-min(5)), sourceName: 'Open house sign-in' })] }), 'new_lead');
+    const g = group(inputs({ inquiries: [inq({ arrivedAt: t(-hours(1)) }), inq({ inquiryId: inquiry(2), arrivedAt: t(-min(5)), sourceName: 'Open house sign-in' })] }), 'new_lead');
     expect(g.total).toBe(1);
     expect(g.rows[0]!.why).toBe('Arrived 1 h ago from Website form. Asked again 5 min ago (2 inquiries). On offer to Jordan P. Nobody has called, texted or emailed yet. No automatic reply has gone out.');
     expect(g.rows[0]!.since).toBe(t(-hours(1)));
   });
 
   it('R-TEAMQ-2 E822: an earlier inquiry a person answered does not count; the later unanswered one does, from its own arrival', () => {
-    const g = group(inputs({ inquiries: [inq({ receivedAt: t(-hours(3)), humanAttemptAt: t(-hours(2)) }), inq({ inquiryId: inquiry(2), receivedAt: t(-min(5)) })] }), 'new_lead');
+    const g = group(inputs({ inquiries: [inq({ arrivedAt: t(-hours(3)), humanAttemptAt: t(-hours(2)) }), inq({ inquiryId: inquiry(2), arrivedAt: t(-min(5)) })] }), 'new_lead');
     expect(g.rows.map((r) => [r.since, r.waitingSeconds])).toEqual([[t(-min(5)), 300]]);
   });
 
   it('R-TEAMQ-2 E823: time since arrival is given in wall-clock and in staffed time; an arrival outside staffed hours is counted from opening and says so', () => {
     // arrived 02:00 New York; staffed hours open 08:00; now 10:00
     const night = at('2026-11-10T07:00:00Z');
-    const g = group(inputs({ inquiries: [inq({ receivedAt: night })] }), 'new_lead');
+    const g = group(inputs({ inquiries: [inq({ arrivedAt: night })] }), 'new_lead');
     expect([g.rows[0]!.waitingSeconds, g.rows[0]!.staffedSeconds, g.rows[0]!.offHours]).toEqual([8 * 3600, 2 * 3600, true]);
     expect(g.rows[0]!.why).toBe('Arrived 8 h ago from Website form, outside staffed hours (2 h of staffed time since opening). On offer to Jordan P. Nobody has called, texted or emailed yet. No automatic reply has gone out.');
     // a daytime arrival: both the same, nothing extra said
@@ -120,7 +120,7 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
   });
 
   it('R-TEAMQ-2: an automatic reply sent on an earlier day is dated by how long ago, never by a bare clock time; no source name is said plainly', () => {
-    expect(whys(inputs({ inquiries: [inq({ receivedAt: t(-hours(26)), automatedReplyAt: t(-hours(26) + min(1)), sourceName: null })] }), 'new_lead')[0]).toMatch(/^Arrived 26 h ago from a source with no name\. .* An automatic reply went out 25 h ago\.$/);
+    expect(whys(inputs({ inquiries: [inq({ arrivedAt: t(-hours(26)), automatedReplyAt: t(-hours(26) + min(1)), sourceName: null })] }), 'new_lead')[0]).toMatch(/^Arrived 26 h ago from a source with no name\. .* An automatic reply went out 25 h ago\.$/);
   });
 });
 
@@ -261,7 +261,7 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
   });
 
   it('R-TEAMQ-18 E857: the fallback and "nobody could be alerted" are said in words; an alert on another day says how long ago', () => {
-    const line = (o: NonNullable<QueueInquiryFacts['backupAlert']>, receivedAt = t(-min(12))) => group(inputs({ inquiries: [inq({ receivedAt, backupAlert: o })] }), 'new_lead').rows[0]!.backupAlert;
+    const line = (o: NonNullable<QueueInquiryFacts['backupAlert']>, arrivedAt = t(-min(12))) => group(inputs({ inquiries: [inq({ arrivedAt, backupAlert: o })] }), 'new_lead').rows[0]!.backupAlert;
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead' })).toEqual({ at: t(-min(9)), alerted: true, line: 'The source\'s backup is unavailable: the team lead, Taylor L., was alerted at 9:51 AM.' });
     expect(line({ at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null })).toEqual({ at: t(-min(9)), alerted: false, line: 'Nobody could be alerted at 9:51 AM: the source\'s backup is unavailable and whoever has this lead has no team lead.' });
     expect(line({ at: t(-hours(26)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' }, t(-hours(27)))!.line).toBe('Backup alerted 26 h ago: Sam T.');
@@ -270,7 +270,7 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
 
   it('R-TEAMQ-18 E858: the group counts the rows whose backup was alerted over every waiting row (its denominator), also beyond the rows shown; a person who asked twice shows the latest alert', () => {
     const many = Array.from({ length: TEAM_QUEUE_GROUP_CAP + 3 }, (_, n) =>
-      inq({ inquiryId: inquiry(n + 1), contactId: contact(n + 1), receivedAt: t(-min(n + 5)), ...(n % 2 === 0 ? { backupAlert: { at: t(-min(n + 2)), outcome: 'alerted' as const, name: 'Sam Torres', recipient: 'backup' as const } } : {}) }),
+      inq({ inquiryId: inquiry(n + 1), contactId: contact(n + 1), arrivedAt: t(-min(n + 5)), ...(n % 2 === 0 ? { backupAlert: { at: t(-min(n + 2)), outcome: 'alerted' as const, name: 'Sam Torres', recipient: 'backup' as const } } : {}) }),
     );
     const g = group(inputs({ inquiries: many }), 'new_lead');
     expect([g.backupAlerted, g.total]).toEqual([Math.ceil((TEAM_QUEUE_GROUP_CAP + 3) / 2), TEAM_QUEUE_GROUP_CAP + 3]);
@@ -280,8 +280,8 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     const twice = group(
       inputs({
         inquiries: [
-          inq({ inquiryId: inquiry(1), receivedAt: t(-min(40)), backupAlert: { at: t(-min(37)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
-          inq({ inquiryId: inquiry(2), receivedAt: t(-min(10)), backupAlert: { at: t(-min(7)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
+          inq({ inquiryId: inquiry(1), arrivedAt: t(-min(40)), backupAlert: { at: t(-min(37)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
+          inq({ inquiryId: inquiry(2), arrivedAt: t(-min(10)), backupAlert: { at: t(-min(7)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } }),
         ],
       }),
       'new_lead',

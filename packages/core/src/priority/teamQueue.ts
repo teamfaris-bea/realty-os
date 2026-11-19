@@ -159,8 +159,8 @@ export interface QueueInquiryFacts {
   contactId: ContactId;
   /** the inquiry's own lead source (lead_sources.name) */
   sourceName: string | null;
-  /** when it arrived (lead_inquiries.received_at) */
-  receivedAt: Instant;
+  /** when it arrived: the one arrival instant (arrival.ts, R-TEAMQ-19), never the source's claim alone */
+  arrivedAt: Instant;
   holder: QueueHolder;
   /**
    * The first HUMAN attempt on the person at or after the arrival, by anyone: the scoreboard's touch (a human
@@ -289,23 +289,23 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
   const open = new Map<ContactId, QueueInquiryFacts[]>();
   for (const q of i.inquiries) {
     // R-TEAMQ-2: inside the window, arrived, and no HUMAN attempt at or after the arrival
-    if (q.receivedAt > now || now - q.receivedAt > TEAM_QUEUE_NEW_LEAD_WINDOW_MS) continue;
-    if (q.humanAttemptAt !== null && q.humanAttemptAt >= q.receivedAt) continue;
+    if (q.arrivedAt > now || now - q.arrivedAt > TEAM_QUEUE_NEW_LEAD_WINDOW_MS) continue;
+    if (q.humanAttemptAt !== null && q.humanAttemptAt >= q.arrivedAt) continue;
     const list = open.get(q.contactId);
     if (list === undefined) open.set(q.contactId, [q]);
     else list.push(q);
   }
   const rows: TeamQueueRow[] = [];
   for (const [contactId, list] of open) {
-    list.sort((a, b) => a.receivedAt - b.receivedAt || (a.inquiryId < b.inquiryId ? -1 : 1));
+    list.sort((a, b) => a.arrivedAt - b.arrivedAt || (a.inquiryId < b.inquiryId ? -1 : 1));
     const first = list[0] as QueueInquiryFacts;
     const latest = list[list.length - 1] as QueueInquiryFacts;
-    const m = measureFromArrival(first.receivedAt, now, i.calendar);
+    const m = measureFromArrival(first.arrivedAt, now, i.calendar);
     const from = first.sourceName !== null && first.sourceName.trim() !== '' ? clip(first.sourceName, 60) : 'a source with no name';
     const offHours = m.offHours ? `, outside staffed hours (${formatDuration(m.staffedSeconds * SECOND_MS)} of staffed time since opening)` : '';
-    const again = list.length > 1 ? ` Asked again ${ago(now, latest.receivedAt)} (${list.length} inquiries).` : '';
+    const again = list.length > 1 ? ` Asked again ${ago(now, latest.arrivedAt)} (${list.length} inquiries).` : '';
     // the automatic reply said is the first one after the FIRST unanswered arrival
-    const auto = list.map((q) => q.automatedReplyAt).filter((a): a is Instant => a !== null && a >= first.receivedAt).sort((a, b) => a - b)[0] ?? null;
+    const auto = list.map((q) => q.automatedReplyAt).filter((a): a is Instant => a !== null && a >= first.arrivedAt).sort((a, b) => a - b)[0] ?? null;
     // R-TEAMQ-18: the latest backup alert among the person's waiting inquiries
     const alert = list.map((q) => q.backupAlert ?? null).filter((a): a is NonNullable<QueueInquiryFacts['backupAlert']> => a !== null).sort((a, b) => b.at - a.at)[0] ?? null;
     rows.push({
@@ -315,8 +315,8 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
       sourceName: first.sourceName,
       holder: latest.holder,
       ownerLabel: holderLabel(latest.holder),
-      why: `Arrived ${ago(now, first.receivedAt)} from ${from}${offHours}.${again} ${holderSentence(latest.holder)} Nobody has called, texted or emailed yet. ${automatedSentence(now, auto, i.calendar)}`,
-      since: first.receivedAt,
+      why: `Arrived ${ago(now, first.arrivedAt)} from ${from}${offHours}.${again} ${holderSentence(latest.holder)} Nobody has called, texted or emailed yet. ${automatedSentence(now, auto, i.calendar)}`,
+      since: first.arrivedAt,
       waitingSeconds: m.wallSeconds,
       staffedSeconds: m.staffedSeconds,
       offHours: m.offHours,

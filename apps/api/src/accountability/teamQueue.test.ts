@@ -157,8 +157,8 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
 
   it('R-TEAMQ-2 E823: the wait is counted from ARRIVAL, not from when an agent accepted', async () => {
     const lead = await acceptedLead(h, w);
-    // clock fixture: the inquiry arrived 3 hours ago; the agent accepted just now
-    await h.su.query(`UPDATE lead_inquiries SET received_at = now() - interval '3 hours' WHERE contact_id = $1`, [lead.contactId]);
+    // clock fixture: the inquiry arrived (was claimed, and reached the team: R-TEAMQ-19) 3 hours ago; the agent accepted just now
+    await h.su.query(`UPDATE lead_inquiries SET received_at = now() - interval '3 hours', created_at = now() - interval '3 hours' WHERE contact_id = $1`, [lead.contactId]);
     const row = (await rowOf(w.owner, 'new_lead', lead.contactId))!;
     expect(row.waitingSeconds).toBeGreaterThanOrEqual(3 * 3600);
     expect(row.waitingSeconds).toBeLessThan(3 * 3600 + 120);

@@ -53,8 +53,9 @@ export type BackupAlertPayload = { inquiryId: string };
 export const backupAlertNoteKey = (inquiryId: string) => `backup_alert:${inquiryId}`;
 
 /**
- * Queues the one job of an inquiry, in the caller's (intake) transaction. `receivedAt` is the arrival the source
- * reported, `reachedAt` the moment the lead reached the team: the later of the two starts the three staffed minutes.
+ * Queues the one job of an inquiry, in the caller's (intake) transaction. `receivedAt` is the time the source claims,
+ * `reachedAt` the moment the lead reached the team: their one arrival instant (core arrivalInstant, R-TEAMQ-19)
+ * starts the three staffed minutes.
  */
 export async function queueBackupAlert(tx: Tx, a: { inquiryId: string; receivedAt: Instant; reachedAt: Instant }): Promise<void> {
   const facts = await loadTenantFacts(tx);
@@ -78,8 +79,9 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   if (!q || q.outcome === 'duplicate_ignored') return { outcome: 'no_inquiry' };
   if (await repo.alreadyDecided(tx, inquiryId)) return { outcome: 'already_decided' };
   const { calendar } = await loadTenantFacts(tx);
-  const arrivedAt = instantFromDate(q.received_at);
-  const dueAt = backupAlertDueAt(arrivedAt, instantFromDate(q.created_at), calendar);
+  // R-TEAMQ-19: ONE arrival instant: the due time, "an attempt since", the wait in the alert and the row all read it
+  const arrivedAt = instantFromDate(q.arrived_at);
+  const dueAt = backupAlertDueAt(instantFromDate(q.received_at), instantFromDate(q.created_at), calendar);
   if (now < dueAt) return { outcome: 'not_due', dueAt };
 
   const person = await repo.personNow(tx, q.contact_id);
@@ -90,7 +92,7 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     id: ids.next<'BackupAlertId'>(),
     inquiryId,
     leadSourceId: q.lead_source_id,
-    arrivedAt: q.received_at,
+    arrivedAt: q.arrived_at,
     dueAt: new Date(dueAt),
     decidedAt: new Date(now),
     outcome,
@@ -107,8 +109,8 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   if (!live) return record('lead_closed');
   // the source stopped being covered in between: nothing happens (R-TEAMQ-14)
   if (!q.covered || q.backup_user_id === null) return record('source_not_covered');
-  if (await repo.humanAttemptSince(tx, person.id, q.received_at)) return record('human_attempt');
-  if (await repo.answeredCallSince(tx, person.id, q.received_at)) return record('answered_call');
+  if (await repo.humanAttemptSince(tx, person.id, q.arrived_at)) return record('human_attempt');
+  if (await repo.answeredCallSince(tx, person.id, q.arrived_at)) return record('answered_call');
 
   // owner decision 2: the named backup; absent or suspended, the team lead of whoever has the lead
   let to: { userId: string; kind: 'backup' | 'team_lead' } | null = null;

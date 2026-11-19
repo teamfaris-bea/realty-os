@@ -85,6 +85,7 @@ export {
   measureInquiry,
   rollUpResponses,
 } from './leadResponse.js';
+export { arrivalInstant } from './arrival.js';
 export {
   BACKUP_ALERT_AFTER_SECONDS,
   BACKUP_GRANT_MS,

@@ -47,7 +47,8 @@ export interface ResponseInquiryView {
   contact: { id: string; name: string };
   sourceId: string;
   sourceName: string | null;
-  receivedAt: string;
+  /** the arrival: the one arrival instant (R-TEAMQ-19), never the source's claimed time alone */
+  arrivedAt: string;
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` (the next opening) */
   offHours: boolean;
   countedFrom: string;
@@ -109,7 +110,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
       contactId: r.contact_id as ContactId,
       sourceId: r.source_id as LeadSourceId,
       sourceName: r.source_name,
-      receivedAt: ms(r.received_at),
+      arrivedAt: ms(r.arrived_at),
       firstAttempt: r.attempt_at === null ? null : { at: ms(r.attempt_at), kind: kindOf(r), byUserId: r.attempt_by as UserId | null, role: roleOf(r) },
       automatedReplyAt: r.automated_at === null ? null : ms(r.automated_at),
       backupAlert: r.backup_alert_at === null || r.backup_alert_user === null || r.backup_alert_recipient === null ? null : { at: ms(r.backup_alert_at), byUserId: r.backup_alert_user as UserId, recipient: r.backup_alert_recipient },
@@ -122,7 +123,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
     contact: { id: m.contactId, name: names.get(m.contactId) ?? '' },
     sourceId: m.sourceId,
     sourceName: m.sourceName,
-    receivedAt: iso(m.receivedAt),
+    arrivedAt: iso(m.arrivedAt),
     offHours: m.offHours,
     countedFrom: iso(m.countedFrom),
     attempt:

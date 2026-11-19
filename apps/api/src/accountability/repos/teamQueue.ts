@@ -19,9 +19,14 @@
 // An AUTOMATED REPLY is an outbound message with initiator 'assistant' or 'system' that was sent or delivered. It
 // is reported apart and is never an attempt.
 //
-// Bounded reads and the EXISTING index that serves each (no migration):
-//   inquiries of a window        lead_inquiries_source_received_idx (tenant_id, lead_source_id, received_at DESC),
-//                                one range scan per lead source (LATERAL), newest first, capped
+// ARRIVAL (R-TEAMQ-19, review fix M3): one instant per inquiry, the SQL twin of core arrivalInstant: the moment the
+// inquiry reached the team (lead_inquiries.created_at). The time its source claims (received_at) can be minutes
+// ahead or days behind and never decides anything counted "from arrival": the window an inquiry falls in, "a human
+// attempt since the arrival", the wait, the report's times. The backup alert job reads the same fragment.
+//
+// Bounded reads and the index that serves each:
+//   inquiries of a window        lead_inquiries_source_arrival_idx (tenant_id, lead_source_id, created_at DESC)
+//                                (migration 0109), one range scan per lead source (LATERAL), capped
 //   a person's human messages    messages_contact_idx (tenant_id, contact_id, occurred_at DESC), its
 //                                (tenant_id, contact_id) prefix; dispatched_at is filtered
 //   a person's human calls       calls_contact_idx (tenant_id, contact_id, started_at DESC)
@@ -56,6 +61,13 @@ export const TEAM_SCOPE: RawBuilder<unknown> = sql`((SELECT app.is_tenant_wide()
         OR c.owner_user_id = ANY (${MY_MEMBERS})
         OR c.offered_to_user_id = ANY (${MY_MEMBERS})
         OR c.ownership_state = 'in_pond')`;
+
+/**
+ * R-TEAMQ-19: THE arrival of a lead_inquiries row aliased `i` (core arrivalInstant: the later of the source's claim
+ * and the reach, a claim ahead of the reach counting as the reach, which is the reach). Every "since arrival" in the
+ * queue, the report and the backup alert job is written with this fragment.
+ */
+export const ARRIVAL: RawBuilder<Date> = sql<Date>`i.created_at`;
 
 /** The scoreboard's human text, email or chat reply, for a messages row aliased `m` (0053). */
 export const HUMAN_MESSAGE: RawBuilder<unknown> = sql`(m.direction = 'outbound' AND m.initiator = 'human' AND NOT m.imported
@@ -107,7 +119,8 @@ export async function staffedHours(tx: Tx): Promise<StaffedHoursRow> {
 export interface WaitingInquiryRow extends HolderColumns {
   id: string;
   contact_id: string;
-  received_at: Date;
+  /** the arrival (ARRIVAL) */
+  arrived_at: Date;
   source_name: string;
   automated_at: Date | null;
   /** b19 R-TEAMQ-18: this inquiry's backup decision when it alerted someone or found nobody to alert (else null) */
@@ -118,21 +131,21 @@ export interface WaitingInquiryRow extends HolderColumns {
 }
 
 /**
- * Inbound inquiries received in (since, now] whose person has had no human attempt at or after the arrival,
- * longest waiting first, at most `cap` + 1 (the extra row says the cap was reached). An ignored duplicate
+ * Inbound inquiries that arrived in (since, now] (ARRIVAL) whose person has had no human attempt at or after the
+ * arrival, longest waiting first, at most `cap` + 1 (the extra row says the cap was reached). An ignored duplicate
  * (a replayed delivery) is not an arrival. Imports and people a member typed in never write lead_inquiries.
  */
 export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap: number): Promise<WaitingInquiryRow[]> {
   const r = await sql<WaitingInquiryRow>`
-    SELECT i.id, i.contact_id, i.received_at, s.name AS source_name, ${HOLDER_COLUMNS},
+    SELECT i.id, i.contact_id, i.arrived_at, s.name AS source_name, ${HOLDER_COLUMNS},
            (SELECT min(m.dispatched_at) FROM messages m
-             WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.received_at) AS automated_at,
+             WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
            ba.decided_at AS backup_alert_at, ba.outcome AS backup_alert_outcome, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient
       FROM lead_sources s
       CROSS JOIN LATERAL (
-        SELECT i.id, i.contact_id, i.received_at FROM lead_inquiries i
+        SELECT i.id, i.contact_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
          WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id
-           AND i.received_at > ${iso(since)}::timestamptz AND i.received_at <= ${iso(now)}::timestamptz
+           AND ${ARRIVAL} > ${iso(since)}::timestamptz AND ${ARRIVAL} <= ${iso(now)}::timestamptz
            AND i.outcome <> 'duplicate_ignored'
            -- no LIMIT here: the window is the bound, and the longest-waiting rows are the oldest ones
         ) i
@@ -142,9 +155,9 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
       LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = s.tenant_id AND ba.inquiry_id = i.id AND ba.outcome IN ('alerted', 'no_recipient')
       LEFT JOIN users bau ON bau.id = ba.alerted_user_id
      WHERE s.tenant_id = app.tenant_id() AND c.deleted_at IS NULL AND c.ownership_state <> 'closed' AND ${TEAM_SCOPE}
-       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.received_at)
-       AND NOT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${HUMAN_CALL} AND k.started_at >= i.received_at)
-     ORDER BY i.received_at ASC, i.id ASC
+       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.arrived_at)
+       AND NOT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${HUMAN_CALL} AND k.started_at >= i.arrived_at)
+     ORDER BY i.arrived_at ASC, i.id ASC
      LIMIT ${cap + 1}`.execute(tx);
   return r.rows;
 }

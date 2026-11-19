@@ -233,7 +233,7 @@ export interface ResponseInquiry {
   contact: { id: string; name: string };
   sourceId: string;
   sourceName: string | null;
-  receivedAt: string;
+  arrivedAt: string;
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
   offHours: boolean;
   countedFrom: string;
@@ -319,7 +319,7 @@ const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], stri
 function backupAlertSentence(i: ResponseInquiry): string {
   const b = i.backupAlert;
   if (!b) return '';
-  const after = formatAge(Math.max(0, Math.round((Date.parse(b.at) - Date.parse(i.receivedAt)) / 1000)));
+  const after = formatAge(Math.max(0, Math.round((Date.parse(b.at) - Date.parse(i.arrivedAt)) / 1000)));
   const who = b.to.name ?? 'a former member';
   return b.recipient === 'team_lead' ? ` The source's backup was unavailable, so the team lead, ${who}, was alerted ${after} after it arrived.` : ` The backup, ${who}, was alerted ${after} after it arrived.`;
 }

@@ -22,7 +22,7 @@ const inquiry = (o: Partial<ResponseInquiry> = {}): ResponseInquiry => ({
   contact: { id: P.wren, name: 'Wren Waiting' },
   sourceId: SRC.web,
   sourceName: 'Website form',
-  receivedAt: '2026-11-09T18:00:00.000Z',
+  arrivedAt: '2026-11-09T18:00:00.000Z',
   offHours: false,
   countedFrom: '2026-11-09T18:00:00.000Z',
   attempt: null,
@@ -117,7 +117,7 @@ describe('Lead response report', () => {
   });
 
   it('R-TEAMQ-7 E829: an off-hours arrival says it is counted from opening, with the wall-clock time beside it', async () => {
-    const offHours = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, offHours: true, countedFrom: '2026-11-09T16:00:00.000Z', receivedAt: '2026-11-09T10:00:00.000Z', attempt: { at: '2026-11-09T16:20:00.000Z', kind: 'text', by: { userId: ID.ava, name: 'Ava Agent' }, role: 'owner', wallSeconds: 22_800, staffedSeconds: 1200 }, waiting: null, automatedReplyAt: null });
+    const offHours = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, offHours: true, countedFrom: '2026-11-09T16:00:00.000Z', arrivedAt: '2026-11-09T10:00:00.000Z', attempt: { at: '2026-11-09T16:20:00.000Z', kind: 'text', by: { userId: ID.ava, name: 'Ava Agent' }, role: 'owner', wallSeconds: 22_800, staffedSeconds: 1200 }, waiting: null, automatedReplyAt: null });
     leadAdminApp(fake(report({ sources: [{ sourceId: SRC.web, sourceName: 'Website form', ...rollup(), notWithin5: [offHours], notWithin5More: 0 }] })), '/team/scoreboard', 'team_lead');
     const region = await section();
     const row = (await within(region).findByRole('link', { name: 'Nia Night' })).closest('li')!;
