@@ -17,7 +17,7 @@ describe('P2C imported source suggestions', () => {
     });
   });
 
-  it.each(['Northgate', 'LeadRouter', 'Northgate  Referrals', 'Northgate-Referrals', 'Northgate Referral', 'Partner'])('does not infer a source for %s', (label) => {
+  it.each(['Northgate', 'Routing Desk', 'Northgate  Referrals', 'Northgate-Referrals', 'Northgate Referral', 'Partner'])('does not infer a source for %s', (label) => {
     expect(suggestLeadSource(label, sources)).toEqual({ status: 'no_match' });
   });
 

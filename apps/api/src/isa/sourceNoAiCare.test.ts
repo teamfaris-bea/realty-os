@@ -259,7 +259,7 @@ describe('B18S-1: "No AI care for leads from this source" covers an inquiry atta
   it('E727 (b18 round 3 item 4): turning the setting on counts only this source\'s live AI care; in a mixed set, another marked source\'s care still waiting to pause is not counted, and a person from no marked source keeps their care', async () => {
     const made = async (name: string) => (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name, kind: 'portal' })).body.source.id;
     const hillside = await made('Hillside Referrals (test)');
-    const router = await made('LeadRouter (test)');
+    const router = await made('Routing Desk (test)');
     const cared = async (src: string | null) => {
       const l = await isaLead(h, w.agents[0]!);
       if (src) await fromSource(l.id, src);

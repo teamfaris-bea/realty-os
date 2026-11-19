@@ -167,7 +167,7 @@ describe('R-LSRC-8 B18S-5: "No automated contact for leads from this source" (ow
     });
     const made = async (name: string) => (await call<{ source: { id: string }; ingestToken: string }>(w.owner, 'POST', '/lead-sources', { name, kind: 'portal' })).body;
     const hillside = await made('Hillside Referrals (test)');
-    const router = await made('LeadRouter (test)');
+    const router = await made('Routing Desk (test)');
     const turnOn = async (id: string) => {
       await freshReauth(h, w.owner);
       return call<{ pausing: number; stopping: number }>(w.owner, 'PUT', `/lead-sources/${id}/ai-care`, { noAiCare: true });

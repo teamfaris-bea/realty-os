@@ -90,7 +90,7 @@ async function planDraft(plan: ApprovedPlaybook = confirmPlan): Promise<{ c: Tes
 
 describe('R-LSRC-8 B18S-5 round 3 item 3: a plan-step draft made before the mark does not outlive it', () => {
   it('E727 OQ-B18-S6: turning the setting on withdraws the pending plan-step drafts of that source\'s people and closes their cards; the answer counts them; another source\'s person keeps theirs and it still sends on a tap; a late tap on a withdrawn draft says why', async () => {
-    const late = await newSource('LeadRouter (test)');
+    const late = await newSource('Routing Desk (test)');
     const a = await planDraft();
     const b = await planDraft();
     await fromSource(a.c.id, late.source.id);

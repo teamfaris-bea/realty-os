@@ -90,7 +90,7 @@ describe('R-LSRC-8 B18S-5 round 3 item 3: a module 26 trigger draft made before 
     const agent = w.agents[0]!;
     const a = await triggerDraft(agent);
     const b = await triggerDraft(agent);
-    const late = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'LeadRouter (test)', kind: 'portal' })).body.source.id;
+    const late = (await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Routing Desk (test)', kind: 'portal' })).body.source.id;
     await fromSource(a.id, late);
     await freshReauth(h, w.owner);
     const on = await call<{ withdrawn: number }>(w.owner, 'PUT', `/lead-sources/${late}/ai-care`, { noAiCare: true });

@@ -124,12 +124,12 @@ describe('R-LSRC-9 A1: who is unclassified (app.person_source_refusal, 0101)', (
   it('a label two lead sources hold is ambiguous: its people stay unclassified until one source holds it', async () => {
     const { stageId } = await importBatch();
     const p = await person();
-    await record(stageId, p, { label: 'LeadRouter' });
+    await record(stageId, p, { label: 'Routing Desk' });
     const one = await source('Router one (0101 test)');
     const two = await source('Router two (0101 test)');
-    await setLabels(one, ['LeadRouter']);
+    await setLabels(one, ['Routing Desk']);
     expect(await refusal(p)).toBeNull();
-    await setLabels(two, ['LeadRouter']);
+    await setLabels(two, ['Routing Desk']);
     expect(await refusal(p)).toBe('SOURCE_UNCLASSIFIED');
     await setLabels(one, []);
     expect(await refusal(p)).toBeNull();
