@@ -14,6 +14,7 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { type CommsWorld, commsWorld, inboundSms, ownedContact, sendText } from '../comms/testing.js';
 import { suFixture } from '../leads/testing.js';
 import { SIGNIN_TOKEN_HIDDEN, SIGNIN_TOKEN_PLACEHOLDER } from '../portal/shared/redact.js';
+import { followUpLines } from './feed.js';
 import { FOLLOW_UP_CONTEXT_QUERIES, loadFollowUpContext } from './repos/followUp.js';
 import { acceptedLead, call, command, contactOf, taskDueNow } from './testing.js';
 
@@ -50,7 +51,7 @@ interface Card {
   lastTouch?: Touch | null;
   lastAutomatic?: { kind: string; at: string; bulk: boolean } | null;
   importedHistoryAt?: string | null;
-  nextPromise?: { taskId: string; text: string; dueAt: string | null; dueAllDay: boolean; overdue: boolean } | null;
+  nextPromise?: { taskId: string; text: string; dueAt: string | null; dueAllDay: boolean; dueZone?: string | null; overdue: boolean } | null;
 }
 
 async function cards(c: TestClient): Promise<Card[]> {
@@ -296,5 +297,12 @@ describe('R-TODAY-3: overdue is decided in the team’s time zone', () => {
     // Friday 12:30 AM in New York: overdue
     const earlyFriday = await readAs(agent, [c.id], Date.parse('2027-01-15T05:30:00Z'));
     expect(earlyFriday.byContact.get(c.id)?.nextPromise).toMatchObject({ overdue: true });
+    // b19 Today fix 6 (M10, R-TODAY-19): the answer names the zone the day is in (the team's here), and GET /feed sends
+    // it with the date, so a viewer in any zone words the same day
+    expect(lateThursday.byContact.get(c.id)?.nextPromise).toMatchObject({ dueZone: 'America/New_York' });
+    expect(followUpLines(lateThursday.byContact.get(c.id), agent.userId!).nextPromise).toMatchObject({ dueAllDay: true, dueZone: 'America/New_York', dueAt: '2027-01-14T05:00:00.000Z' });
+    // a task with a zone of its own keeps it
+    await h.su.query(`UPDATE tasks SET due_tz = 'Pacific/Auckland' WHERE id = $1`, [t.body.task.id]);
+    expect((await readAs(agent, [c.id])).byContact.get(c.id)?.nextPromise).toMatchObject({ dueZone: 'Pacific/Auckland' });
   });
 });

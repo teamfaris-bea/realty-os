@@ -2261,6 +2261,12 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                             "null",
                           ],
                         },
+                        "dueZone": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
                         "kind": {
                           "type": "string",
                         },
@@ -2282,6 +2288,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                         "kind",
                         "dueAt",
                         "dueAllDay",
+                        "dueZone",
                         "deadlineAt",
                         "overdue",
                       ],
@@ -3788,6 +3795,12 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                         "null",
                       ],
                     },
+                    "dueZone": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
                     "kind": {
                       "type": "string",
                     },
@@ -3809,6 +3822,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "kind",
                     "dueAt",
                     "dueAllDay",
+                    "dueZone",
                     "deadlineAt",
                     "overdue",
                   ],
@@ -5283,6 +5297,12 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                         "null",
                       ],
                     },
+                    "dueZone": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
                     "kind": {
                       "type": "string",
                     },
@@ -5304,6 +5324,7 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "kind",
                     "dueAt",
                     "dueAllDay",
+                    "dueZone",
                     "deadlineAt",
                     "overdue",
                   ],

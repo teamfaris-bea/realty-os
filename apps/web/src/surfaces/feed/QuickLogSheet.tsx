@@ -1,11 +1,14 @@
 // The sheets behind the header's "Log a call or conversation" (feed/QuickLog.tsx; R-TODAY-9): pick the person, then
 // the person page's own Log sheet.
 //
-// The picker is the app's two existing reads, nothing new on the server:
-//   - before anything is typed: the people the viewer can see, most recent activity first (GET /people, the People
-//     page's own list and order);
+// The picker:
+//   - before anything is typed: "Recent people", the viewer's OWN recent activity (M11, R-TODAY-18): the people they
+//     most recently logged for, wrote a note about or called, newest first, and only people they may log for
+//     (GET /activities/recent-people). Not the People page's list, which is ordered by the system's activity and is
+//     the whole team's for a Team Lead: a call just logged from a personal phone puts that person first here;
 //   - from two letters: the app's search (GET /search), contacts only. Someone the viewer sees only as a pond or offer
 //     card cannot be logged on, so they are not offered.
+// So the entry is 4 taps when the person is recent; otherwise 4 taps and typing their name.
 // Loading, nobody yet, nobody matching and a failed read are each said in plain words (R-TODAY-8).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
@@ -17,6 +20,8 @@ import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
 import type { SearchResponse } from './lib/types.js';
 
 const RECENT_KEY = ['quick-log', 'recent'];
+export const RECENT_WHAT = 'People you logged for, noted or called most recently.';
+export const NOBODY_RECENT = 'Nobody recent yet: people you log for, note or call show here. Type a name, phone or email to find anyone else.';
 const MIN_QUERY = 2;
 const DEBOUNCE_MS = 150;
 const SHOWN = 8;
@@ -58,9 +63,9 @@ function PersonPicker({ title, onPick, onClose }: { title: string; onPick: (w: W
     return () => clearTimeout(t);
   }, [text]);
   const searching = q.length >= MIN_QUERY;
-  const recent = useQuery<{ people: { id: string; displayName: string }[] }, ApiError>({
+  const recent = useQuery<{ people: Who[] }, ApiError>({
     queryKey: RECENT_KEY,
-    queryFn: ({ signal }) => api.get('/people?sort=last_activity_desc', { signal }),
+    queryFn: ({ signal }) => api.get('/activities/recent-people', { signal }),
     staleTime: 30_000,
   });
   const found = useQuery<SearchResponse, ApiError>({
@@ -72,7 +77,7 @@ function PersonPicker({ title, onPick, onClose }: { title: string; onPick: (w: W
   const active = searching ? found : recent;
   const people: Who[] = searching
     ? (found.data?.contacts ?? []).filter((c) => c.view === 'full').map((c) => ({ id: c.id, name: c.name }))
-    : (recent.data?.people ?? []).slice(0, SHOWN).map((p) => ({ id: p.id, name: p.displayName }));
+    : (recent.data?.people ?? []).slice(0, SHOWN).map((p) => ({ id: p.id, name: p.name }));
   return (
     <Dialog title={title} description="Something that happened outside Realty OS: a call from your own phone, a text, an email." onClose={onClose} closeButton>
       <div className="flex flex-col gap-3">
@@ -90,9 +95,13 @@ function PersonPicker({ title, onPick, onClose }: { title: string; onPick: (w: W
             className="min-h-tap w-full rounded-xl border border-line bg-surface px-3 text-[17px] text-ink placeholder:text-ink-muted"
           />
         </div>
-        <p id={`${id}-h`} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
-          {searching ? 'People found' : 'Recent people'}
-        </p>
+        <div className="flex flex-col gap-0.5">
+          <p id={`${id}-h`} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+            {searching ? 'People found' : 'Recent people'}
+          </p>
+          {/* what the list is, said where it is: the viewer's own recent activity, not the team's */}
+          {!searching && people.length > 0 ? <p className="text-[14px] text-ink-muted">{RECENT_WHAT}</p> : null}
+        </div>
         {active.isPending ? (
           <p role="status" className="text-[15px] text-ink-muted">
             Loading
@@ -102,7 +111,7 @@ function PersonPicker({ title, onPick, onClose }: { title: string; onPick: (w: W
             {messageFor(active.error, AGENT_ERROR_MESSAGES)}
           </Notice>
         ) : people.length === 0 ? (
-          <p className="text-[15px] text-ink-muted [overflow-wrap:anywhere]">{searching ? `Nobody you can see matches “${q}”.` : 'No people yet. Add a person first, then log what happened.'}</p>
+          <p className="text-[15px] text-ink-muted [overflow-wrap:anywhere]">{searching ? `Nobody you can see matches “${q}”.` : NOBODY_RECENT}</p>
         ) : (
           <ul aria-labelledby={`${id}-h`} className="flex flex-col gap-1">
             {people.map((p) => (

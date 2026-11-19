@@ -236,7 +236,7 @@ describe('R-TODAY-3: the next promise', () => {
 
   it('is the earliest open task for the person, worded as it was written', () => {
     const r = selectNextPromise([task({ taskId: 't2', title: 'Call about the inspection', dueAt: (NOW + 2 * DAY_MS) as typeof NOW }), task()], NOW, NY);
-    expect(r).toEqual({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt: NOW + 7 * HOUR_MS, dueAllDay: false, deadline: NOW + 7 * HOUR_MS, overdue: false });
+    expect(r).toEqual({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt: NOW + 7 * HOUR_MS, dueAllDay: false, dueZone: null, deadline: NOW + 7 * HOUR_MS, overdue: false });
   });
   it('null when there is none', () => {
     expect(selectNextPromise([], NOW, NY)).toBeNull();
@@ -306,5 +306,21 @@ describe('R-TODAY-12: the latest human CONTACT (the quiet clock); a manual note 
   });
   it('an automated message, imported history and a failed send are not contact either', () => {
     expect(selectLastContact([msg({ initiator: 'system' }), msg({ id: 'm2', imported: true, initiator: 'import' }), msg({ id: 'm3', status: 'failed' })], NOW).lastContactAt).toBeNull();
+  });
+});
+
+// b19 Today fix 6 (M10; R-TODAY-19): an all-day task's day belongs to a zone, and the answer says which
+describe('R-TODAY-19: the zone of an all-day task', () => {
+  const allDay = (dueTz: string | null): PromiseTask => ({ taskId: 't1', title: 'Send lender intro', kind: 'promise', dueAt: at('2026-11-19T05:00:00Z'), dueAllDay: true, dueTz: dueTz === null ? null : zone(dueTz), createdAt: ago(DAY_MS) });
+  it('is the task’s own zone when it has one, else the team’s; a timed or undated task has none', () => {
+    expect(selectNextPromise([allDay(null)], NOW, NY)).toMatchObject({ dueAllDay: true, dueZone: 'America/New_York' });
+    expect(selectNextPromise([allDay('Pacific/Auckland')], NOW, NY)).toMatchObject({ dueZone: 'Pacific/Auckland' });
+    expect(selectNextPromise([{ ...allDay(null), dueAllDay: false }], NOW, NY)).toMatchObject({ dueZone: null });
+    expect(selectNextPromise([{ ...allDay(null), dueAt: null }], NOW, NY)).toMatchObject({ dueZone: null });
+  });
+  it('is the zone `overdue` and the deadline were decided in', () => {
+    // due Thursday in Auckland: by Thursday 10:00 in New York (Friday 4:00 AM in Auckland) its day is over
+    const r = selectNextPromise([{ ...allDay('Pacific/Auckland'), dueAt: at('2026-11-18T11:00:00Z') }], NOW, NY)!;
+    expect(r).toMatchObject({ dueZone: 'Pacific/Auckland', deadline: at('2026-11-19T11:00:00Z'), overdue: true });
   });
 });

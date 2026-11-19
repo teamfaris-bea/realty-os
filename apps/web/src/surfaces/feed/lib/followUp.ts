@@ -43,6 +43,41 @@ export function whenWords(iso: string, nowMs: number, o: { time?: boolean } = {}
   return Math.abs(days) < 7 ? `${day} ${t}` : `${day}, ${t}`;
 }
 
+/** The calendar day of an instant in `zone`, as [year, month, day]; null when the device does not know the zone. */
+function dayIn(ms: number, zone: string): [number, number, number] | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(ms);
+    const n = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+    const out: [number, number, number] = [n('year'), n('month'), n('day')];
+    return out.every(Number.isFinite) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The day of an ALL-DAY task (R-TODAY-19), worded in the task's own zone (the server sends it: the task's, else the
+ * team's), never in the zone of the viewer's device: "today", "yesterday", "tomorrow", "Thu", "Nov 19", "Dec 31, 2025".
+ * The day and "today" are both read in that zone, so a task due today there is "today" for a viewer anywhere, and the
+ * words agree with the server's own overdue flag. No time is said: the task has none. An unknown zone falls back to
+ * the viewer's own day.
+ */
+export function allDayWords(iso: string, zone: string | null | undefined, nowMs: number): string {
+  const at = Date.parse(iso);
+  const due = zone && Number.isFinite(at) ? dayIn(at, zone) : null;
+  const today = zone ? dayIn(nowMs, zone) : null;
+  if (!zone || !due || !today) return whenWords(iso, nowMs).replace(/^today .*$/, 'today');
+  const utc = (d: [number, number, number]) => Date.UTC(d[0], d[1] - 1, d[2]);
+  const days = Math.round((utc(due) - utc(today)) / DAY);
+  if (days === 0) return 'today';
+  if (days === -1) return 'yesterday';
+  if (days === 1) return 'tomorrow';
+  // (the calendar day itself, formatted as a UTC date so the device's zone cannot move it)
+  const d = new Date(utc(due));
+  if (Math.abs(days) < 7) return new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' }).format(d);
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC', ...(due[0] !== today[0] ? { year: 'numeric' } : {}) }).format(d);
+}
+
 /** The outcome of a LOGGED call in words (notes.activity_outcome; core's last-touch words are the same). */
 export const LOGGED_OUTCOME_WORDS: Readonly<Record<string, string>> = { connected: 'talked', left_voicemail: 'left a voicemail', no_answer: 'no answer', wrong_number: 'wrong number' };
 
@@ -157,6 +192,7 @@ export function automaticLine(a: LastAutomaticView, nowMs: number): string {
 export function nextPromiseLine(p: NextPromiseView | null | undefined, nowMs: number): string {
   if (!p) return NO_NEXT_STEP;
   if (p.dueAt === null) return `${p.text}, no date set`;
-  const when = p.dueAllDay ? whenWords(p.dueAt, nowMs).replace(/^today .*$/, 'today') : whenWords(p.dueAt, nowMs, { time: true });
+  // R-TODAY-19: an all-day task is a day in its own zone; a timed task is an instant, said in the viewer's own time
+  const when = p.dueAllDay ? allDayWords(p.dueAt, p.dueZone, nowMs) : whenWords(p.dueAt, nowMs, { time: true });
   return `${p.text}, ${p.overdue ? `overdue since ${when}` : when}`;
 }

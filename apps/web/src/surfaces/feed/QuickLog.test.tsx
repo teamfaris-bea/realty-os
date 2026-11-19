@@ -2,7 +2,8 @@
 // page, phone and desktop: pick a person (most recent people first, or search), then the same Log sheet as on the
 // person's page and on Today, with its stage step. Every tap is counted.
 //
-//   the entry → a person → an outcome → the one button = 4 taps from any page (typing a name is not a tap)
+//   the entry → a person → an outcome → the one button = 4 taps from any page WHEN the person is one of the caller's
+//   own recent people (M11, R-TODAY-18); otherwise 4 taps and typing their name (typing is not a tap, and is said)
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
@@ -19,7 +20,9 @@ const RECENT = [person(IDS.jane, 'Dana Reyes'), person(IDS.pat, 'Pat Lindqvist',
 function open(path = '/', role: Parameters<typeof agentApp>[2] = 'agent', o: { people?: 'error' | 'empty'; hold?: Promise<void> } = {}) {
   const fake = new FakeFetch()
     .on('GET /feed', { status: 200, body: feed() })
-    .on('GET /people?sort=last_activity_desc', o.people === 'error' ? { status: 500, body: { error: { code: 'INTERNAL_ERROR', requestId: 'r' } } } : { status: 200, body: { people: o.people === 'empty' ? [] : RECENT, nextCursor: null, sort: 'last_activity_desc', list: null, scope: 'people_you_can_see', audienceProtected: false } })
+    .on('GET /activities/recent-people', o.people === 'error' ? { status: 500, body: { error: { code: 'INTERNAL_ERROR', requestId: 'r' } } } : { status: 200, body: { people: o.people === 'empty' ? [] : RECENT.map((p) => ({ id: p.id, name: p.displayName })) } })
+    // (M11: the People page's own list, ordered by the system's activity and the whole team's for a Team Lead, is NOT what the picker reads)
+    .on('GET /people?sort=last_activity_desc', { status: 200, body: { people: [person(IDS.offer, 'Somebody Else')], nextCursor: null, sort: 'last_activity_desc', list: null, scope: 'people_you_can_see', audienceProtected: false } })
     .on('GET /search?q=pat', { status: 200, body: { contacts: [{ id: IDS.pat, name: 'Pat Lindqvist', view: 'full', ownershipState: 'owned', matchedOn: 'name' }, { id: IDS.offer, name: 'Pat L.', view: 'card', ownershipState: 'in_pond', matchedOn: 'name' }], listings: [], deals: [], notes: [], messages: [], incomplete: [] } })
     .on('GET /search?q=zz', { status: 200, body: { contacts: [], listings: [], deals: [], notes: [], messages: [], incomplete: [] } });
   for (const id of [IDS.jane, IDS.pat]) {
@@ -75,7 +78,7 @@ describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
     expect(screen.queryByRole('button', { name: 'Log a call or conversation' })).toBeNull();
   });
 
-  it('the entry → a recent person → an outcome → the one button = 4 taps, on a page that is not Today; saved as a logged call with a client id; the result is said once', async () => {
+  it('4 taps when the person is recent (the entry → the person → an outcome → the one button); otherwise 4 taps and typing. On a page that is not Today; saved as a logged call with a client id; the result is said once', async () => {
     const { notes, tasks, fake, n, tap, u } = open('/search');
     await tap(await entry()); // 1
     const p = await picker();
@@ -93,7 +96,7 @@ describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
     // (b19 Today fix 1, R-TODAY-11: the task the button adds is named under it before the tap)
     expect(within(within(sheet).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Pat, tomorrow 9:00 AM\.$/);
     await waitFor(() => expect(save).toBeEnabled());
-    const readsBefore = fake.callsTo('GET /people?sort=last_activity_desc').length;
+    const readsBefore = fake.callsTo('GET /activities/recent-people').length;
     await tap(save); // 4
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(n.taps).toBe(4);
@@ -109,7 +112,7 @@ describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
     // that said the new one): the people list the picker and the People page read
     await u.click(await entry());
     await within(await picker()).findAllByRole('button', { name: /^Log for / });
-    await waitFor(() => expect(fake.callsTo('GET /people?sort=last_activity_desc').length).toBeGreaterThan(readsBefore));
+    await waitFor(() => expect(fake.callsTo('GET /activities/recent-people').length).toBeGreaterThan(readsBefore));
   });
 
   it('E855: typing a name searches (from 2 letters); a person the viewer sees only as a card is not offered', async () => {
@@ -128,7 +131,7 @@ describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
     const { u } = open('/', 'agent', { people: 'empty' });
     await u.click(await entry());
     const p = await picker();
-    expect(await within(p).findByText('No people yet. Add a person first, then log what happened.')).toBeInTheDocument();
+    expect(await within(p).findByText('Nobody recent yet: people you log for, note or call show here. Type a name, phone or email to find anyone else.')).toBeInTheDocument();
     await u.type(within(p).getByRole('searchbox', { name: 'Who was it with?' }), 'zz');
     expect(await within(p).findByText('Nobody you can see matches “zz”.')).toBeInTheDocument();
   });
@@ -194,5 +197,36 @@ describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
     } finally {
       Reflect.deleteProperty(window, 'visualViewport');
     }
+  });
+});
+
+describe('M11 (R-TODAY-18): "Recent people" is the caller’s own recent activity', () => {
+  it('the picker reads the caller’s own recent people, never the People page’s list (the system’s activity; the whole team’s for a Team Lead)', async () => {
+    const { u, fake } = open('/', 'team_lead');
+    await u.click(await entry());
+    const p = await picker();
+    const rows = await within(p).findAllByRole('button', { name: /^Log for / });
+    expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual(['Log for Dana Reyes', 'Log for Pat Lindqvist']);
+    expect(within(p).queryByText('Somebody Else')).toBeNull();
+    expect(fake.callsTo('GET /activities/recent-people').length).toBeGreaterThan(0);
+    expect(fake.callsTo('GET /people?sort=last_activity_desc')).toHaveLength(0);
+    // what the list is, said where it is
+    expect(within(p).getByText('People you logged for, noted or called most recently.')).toBeInTheDocument();
+  });
+
+  it('someone who is not recent is found by typing: the entry, typing, the person, an outcome, the one button = 4 taps and typing', async () => {
+    const { u, n, tap } = open('/', 'agent', { people: 'empty' });
+    await tap(await entry()); // 1
+    const p = await picker();
+    await within(p).findByText(/^Nobody recent yet/);
+    await u.type(within(p).getByRole('searchbox', { name: 'Who was it with?' }), 'pat');
+    await tap(await within(p).findByRole('button', { name: 'Log for Pat Lindqvist' })); // 2
+    const sheet = await screen.findByRole('dialog', { name: 'Log for Pat Lindqvist' });
+    await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 3
+    const save = await within(sheet).findByRole('button', { name: 'Save and change to Trying to reach' });
+    await waitFor(() => expect(save).toBeEnabled());
+    await tap(save); // 4
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(n.taps).toBe(4);
   });
 });

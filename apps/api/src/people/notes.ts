@@ -16,7 +16,7 @@
 // the person's first name and initial, deduped per note per user. Those who cannot see the person are named
 // back to the author as `no_access` (the UI offers Share, which is the audited collaborator add). A mention
 // never grants access. A logged activity is never a messages/calls row and never a touch (R-PAR-5, R-PAR-32).
-import { type Actor, type UserActor, instantFromDate, instantFromIso, toIso } from '@realty/core/foundation';
+import { type Actor, type UserActor, can, instantFromDate, instantFromIso, toIso } from '@realty/core/foundation';
 import { DAY_MS, plusMs } from '@realty/core/foundation';
 import { uuidV5 } from '@realty/core/parity/bulk';
 import { type ActivityDirection, type ActivityKind, type CallOutcome, addedMentions, followUpTitle, mentionTokens, mentionDedupeKey, mentionTitle, parseMentions, suggestsDoNotContact, validateLoggedActivity } from '@realty/core/parity/people';
@@ -35,6 +35,10 @@ import * as repo from './repos/people.js';
 import * as S from './schemas.js';
 import { noteView } from './views.js';
 import { activitySignal, suggestedStageInTx } from './stageSuggestion.js';
+
+/** "Recent people" (R-TODAY-18): how many the picker shows, and how many of the caller's latest people are read to find them. */
+export const RECENT_PEOPLE_SHOWN = 8;
+const RECENT_PEOPLE_READ = 16;
 
 const contactAuth = (req: FastifyRequest) => detailFacts(req);
 const writeAuth = (req: FastifyRequest) => liveDetailFacts(req);
@@ -244,6 +248,23 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
       // R-PAR-4: audited; the note text is never copied into the audit row
       await audit(tx, actor, { action: 'note.delete', entity: { type: 'note', id: n.id }, changes: redactSnapshot({ source: n.source, own: n.author_user_id === actor.userId }, { entity: 'note' }) });
       return { ok: true as const };
+    }),
+  );
+
+  // R-TODAY-18: the people the caller most recently logged for, wrote a note about or called, newest first, and only
+  // those they may log for now (the same decision POST /contacts/:id/activities makes). Reads existing rows only.
+  r.get('/activities/recent-people', { config: { auth: 'self' }, schema: { response: { 200: S.RecentPeopleResponse } } }, async (req) =>
+    peopleTx(req, async (tx, _now, actor) => {
+      const out: { id: string; name: string }[] = [];
+      for (const id of await repo.ownRecentContactIds(tx, actor.userId, RECENT_PEOPLE_READ)) {
+        if (out.length >= RECENT_PEOPLE_SHOWN) break;
+        const row = await leads.getContact(tx, id);
+        // live, the caller sees their detail, and the matrix lets this role log for them in this relation
+        if (!row || !row.detail_visible || row.merged_into_contact_id !== null) continue;
+        if (!can(actor, 'activity.log', factsOf(row)).ok) continue;
+        out.push({ id: row.id, name: row.display_name });
+      }
+      return { people: out };
     }),
   );
 

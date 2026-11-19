@@ -77,6 +77,8 @@ export interface NextPromiseView {
   kind: string;
   dueAt: string | null;
   dueAllDay: boolean;
+  /** R-TODAY-19: for an all-day task, the zone its day is in (the task's, else the team's); null or absent otherwise */
+  dueZone?: string | null;
   /** when it stops being on time (an all-day task: the end of its local day); absent on an older server's answer */
   deadlineAt?: string | null;
   overdue: boolean;

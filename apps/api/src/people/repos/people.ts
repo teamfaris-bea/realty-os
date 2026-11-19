@@ -379,6 +379,26 @@ const NOTE_SELECT = sql`
          n.activity_direction, n.activity_at, n.activity_outcome, n.created_at, n.edited_at, n.created_at::text AS at_text
     FROM notes n LEFT JOIN users u ON u.id = n.author_user_id`;
 
+/**
+ * R-TODAY-18: the people `userId` most recently logged for, wrote a note about or called, newest first (at most
+ * `limit` distinct people). The caller's OWN activity only, from rows that already exist: notes by author
+ * (notes_author_recent_idx, 0110) and calls by agent (calls_agent_idx). Each read looks at the newest 100 rows, so
+ * the cost does not grow with the account's history. Row-level security still decides which rows exist for the caller.
+ */
+export async function ownRecentContactIds(tx: Tx, userId: string, limit: number): Promise<string[]> {
+  const r = await sql<{ contact_id: string }>`
+    SELECT x.contact_id FROM (
+      (SELECT n.contact_id, n.created_at AS at FROM notes n
+        WHERE n.tenant_id = app.tenant_id() AND n.author_user_id = ${userId}::uuid AND n.contact_id IS NOT NULL
+        ORDER BY n.created_at DESC LIMIT 100)
+      UNION ALL
+      (SELECT k.contact_id, k.started_at AS at FROM calls k
+        WHERE k.tenant_id = app.tenant_id() AND k.agent_user_id = ${userId}::uuid AND k.direction = 'outbound' AND NOT k.imported
+        ORDER BY k.started_at DESC LIMIT 100)) x
+     GROUP BY x.contact_id ORDER BY max(x.at) DESC, x.contact_id LIMIT ${limit}`.execute(tx);
+  return r.rows.map((x) => x.contact_id);
+}
+
 export async function note(tx: Tx, id: string): Promise<NoteRow | null> {
   const r = await sql<NoteRow>`${NOTE_SELECT} WHERE n.tenant_id = app.tenant_id() AND n.id = ${id}::uuid AND n.contact_id IS NOT NULL`.execute(tx);
   return r.rows[0] ?? null;

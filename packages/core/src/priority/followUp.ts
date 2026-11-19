@@ -367,6 +367,12 @@ export interface NextPromise {
   dueAt: Instant | null;
   dueAllDay: boolean;
   /**
+   * R-TODAY-19: for an all-day task, the zone its DAY is in (the task's own, else the team's): the zone `overdue` was
+   * decided in, and the one a screen must word the day in, whatever zone the viewer's device is in. Null for a timed
+   * or undated task (an instant reads the same everywhere).
+   */
+  dueZone: IanaZone | null;
+  /**
    * When it stops being on time (promiseDeadline): its instant, or for an all-day task the end of its local day. The
    * replace-a-task rule (parity/people decideTaskReplacement) reads this, never the screen's own idea of "due".
    */
@@ -403,7 +409,7 @@ export function selectNextPromise(tasks: readonly PromiseTask[], now: Instant, t
   const first = [...tasks].sort(byDeadline(teamZone))[0];
   if (!first) return null;
   const deadline = promiseDeadline(first, teamZone);
-  return { taskId: first.taskId, text: first.title, kind: first.kind, dueAt: first.dueAt, dueAllDay: first.dueAllDay, deadline, overdue: deadline !== null && now >= deadline };
+  return { taskId: first.taskId, text: first.title, kind: first.kind, dueAt: first.dueAt, dueAllDay: first.dueAllDay, dueZone: first.dueAllDay && first.dueAt !== null ? (first.dueTz ?? teamZone) : null, deadline, overdue: deadline !== null && now >= deadline };
 }
 
 // ---- the daily plan: "Follow up today" (R-TODAY-6) -------------------------------------------------

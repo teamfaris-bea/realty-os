@@ -3,7 +3,8 @@
 // one-tap link to Add person. Everything behind the button (the person picker and the Log sheet) is loaded when it is
 // first opened, so the header costs every page almost nothing, and a change of navigation only moves this one button.
 //
-//   the entry → a person → an outcome → the one button = 4 taps (typing a name is not a tap)
+//   the entry → a person → an outcome → the one button = 4 taps when the person is one of the viewer's own recent
+//   people (QuickLogSheet.tsx); otherwise 4 taps and typing their name
 //
 // The sheet is the person page's own Log sheet (notes/LogSheet.tsx) with its stage step: nothing is forked. What is
 // saved is the agent's own report of something that happened outside the app, with a client id (a double tap or a

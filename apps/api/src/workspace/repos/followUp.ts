@@ -145,21 +145,26 @@ function candidateOf(r: HistoryRow): ContactCandidate | null {
   }
 }
 
+/** Rows of the person's history the two attempt reads look at: an attempt only matters when it is among the newest things. */
+const ATTEMPT_WINDOW = 50;
+
 /**
- * The follow-up lines of `contactIds` for the viewer, as of `now`. A person whose detail the viewer may not open has
- * an entry with no stage, no history and only the viewer's own tasks.
+ * The history statement: for each person the viewer may open, the stage (with the system's last-touch instant) and
+ * the newest row of each kind that could be what was last discussed. Every branch is one index read per person
+ * (R-TODAY-17; migration 0110 adds the two indexes that were missing):
+ *
+ *   message, automatic   messages_contact_idx (tenant, contact, occurred_at DESC), read in order until the first match
+ *   attempt, dial        the same indexes, over the person's newest ATTEMPT_WINDOW rows only
+ *   call                 calls_contact_idx (tenant, contact, started_at DESC)
+ *   note                 notes_contact_idx (tenant, contact, created_at DESC)
+ *   logged               notes_logged_activity_idx (tenant, contact, activity_at DESC, id DESC), partial
+ *   appointment          appointments_contact_held_idx (tenant, contact, starts_at DESC, id DESC), partial
+ *   imported             the same indexes backwards for messages and calls; notes_imported_contact_idx, partial
+ *
+ * Exported so the EXPLAIN test reads the statement the route sends, not a copy of it.
  */
-export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: readonly string[], now: Instant, known?: FollowUpSettings): Promise<FollowUpContexts> {
-  const ids = [...new Set(contactIds)];
-  const byContact = new Map<string, FollowUpContext>();
-  if (ids.length === 0) return { zone: known?.zone ?? ('UTC' as IanaZone), stageLabels: known?.stageLabels ?? {}, byContact };
-  const nowIso = new Date(now).toISOString();
-
-  // 1. the team's zone and its own stage labels (unless the caller already read them)
-  const { zone, stageLabels } = known ?? (await loadFollowUpSettings(tx));
-
-  // 2. per person: the stage, and the newest row of each kind that could be what was last discussed
-  const history = await sql<HistoryRow>`
+export function followUpHistorySql(ids: readonly string[], nowIso: string) {
+  return sql<HistoryRow>`
     WITH p AS MATERIALIZED (
       SELECT c.tenant_id, c.id, c.stage, c.last_human_touch_at FROM contacts c
        WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${ids}::uuid[]) AND c.deleted_at IS NULL
@@ -195,9 +200,9 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
         SELECT m.id, m.occurred_at AS at,
                jsonb_build_object('channel', m.channel, 'direction', m.direction, 'initiator', m.initiator, 'imported', m.imported, 'bulk', false,
                                   'autoReply', false, 'status', m.status) AS facts
-          FROM messages m
-         WHERE m.tenant_id = p.tenant_id AND m.contact_id = p.id AND m.occurred_at <= ${nowIso}::timestamptz AND NOT m.imported
-           AND m.bulk_action_id IS NULL AND m.marketing_piece_id IS NULL
+          FROM (SELECT * FROM messages w WHERE w.tenant_id = p.tenant_id AND w.contact_id = p.id AND w.occurred_at <= ${nowIso}::timestamptz
+                 ORDER BY w.occurred_at DESC LIMIT ${ATTEMPT_WINDOW}) m
+         WHERE NOT m.imported AND m.bulk_action_id IS NULL AND m.marketing_piece_id IS NULL
            AND m.direction = 'outbound' AND m.initiator = 'human' AND m.status IN ('failed','undelivered','bounced')
          ORDER BY m.occurred_at DESC, m.id DESC LIMIT 1) x
       UNION ALL
@@ -206,8 +211,9 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
         SELECT k.id, k.started_at AS at,
                jsonb_build_object('direction', k.direction, 'initiator', k.initiator, 'imported', k.imported, 'status', k.status,
                                   'answered', false, 'handledBy', k.handled_by, 'outcome', NULL, 'talkSeconds', NULL) AS facts
-          FROM calls k
-         WHERE k.tenant_id = p.tenant_id AND k.contact_id = p.id AND k.started_at <= ${nowIso}::timestamptz AND NOT k.imported
+          FROM (SELECT * FROM calls w WHERE w.tenant_id = p.tenant_id AND w.contact_id = p.id AND w.started_at <= ${nowIso}::timestamptz
+                 ORDER BY w.started_at DESC LIMIT ${ATTEMPT_WINDOW}) k
+         WHERE NOT k.imported
            AND k.direction = 'outbound' AND k.initiator = 'human' AND k.answered_at IS NULL AND k.outcome IS NULL AND k.status IN ('failed','canceled')
          ORDER BY k.started_at DESC, k.id DESC LIMIT 1) x
       UNION ALL
@@ -237,13 +243,15 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
       -- a call, text or email the agent logged from outside the app: their own report, and contact. Its own branch,
       -- so a newer manual note never hides it from the quiet clock
       SELECT p.id, 'logged', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (
-        SELECT n.id, COALESCE(n.activity_at, n.created_at) AS at, n.author_user_id AS by_user,
+        -- (a logged activity always has its activity_at: notes_logged_activity_shape. Ordered by it, so the partial
+        -- index notes_logged_activity_idx answers with one row instead of sorting every note of the person)
+        SELECT n.id, n.activity_at AS at, n.author_user_id AS by_user,
                jsonb_build_object('noteSource', n.source, 'imported', n.imported, 'activityKind', n.activity_kind, 'activityDirection', n.activity_direction,
                                   'activityOutcome', n.activity_outcome, 'body', left(n.body, ${BODY_READ})) AS facts
           FROM notes n
-         WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND NOT n.imported AND n.source = 'logged_activity' AND n.activity_kind IS NOT NULL
-           AND COALESCE(n.activity_at, n.created_at) <= ${nowIso}::timestamptz
-         ORDER BY COALESCE(n.activity_at, n.created_at) DESC, n.id DESC LIMIT 1) x
+         WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND NOT n.imported AND n.source = 'logged_activity'
+           AND n.activity_at <= ${nowIso}::timestamptz
+         ORDER BY n.activity_at DESC, n.id DESC LIMIT 1) x
       UNION ALL
       SELECT p.id, 'appointment', x.id, x.at, x.by_user, x.facts FROM p CROSS JOIN LATERAL (
         SELECT a.id, a.starts_at AS at, a.user_id AS by_user, jsonb_build_object('status', a.status, 'outcome', a.outcome) AS facts
@@ -253,11 +261,29 @@ export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: 
       UNION ALL
       -- history another system wrote: only its latest date (nobody can say who or what wrote it)
       SELECT p.id, 'imported', p.id, GREATEST(
-               (SELECT max(m.occurred_at) FROM messages m WHERE m.tenant_id = p.tenant_id AND m.contact_id = p.id AND m.imported),
-               (SELECT max(k.started_at) FROM calls k WHERE k.tenant_id = p.tenant_id AND k.contact_id = p.id AND k.imported),
-               (SELECT max(n.created_at) FROM notes n WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND n.imported)), NULL::uuid, '{}'::jsonb FROM p)
+               (SELECT m.occurred_at FROM messages m WHERE m.tenant_id = p.tenant_id AND m.contact_id = p.id AND m.imported ORDER BY m.occurred_at DESC LIMIT 1),
+               (SELECT k.started_at FROM calls k WHERE k.tenant_id = p.tenant_id AND k.contact_id = p.id AND k.imported ORDER BY k.started_at DESC LIMIT 1),
+               -- (one row of the partial index notes_imported_contact_idx, never a walk through the person's notes)
+               (SELECT n.created_at FROM notes n WHERE n.tenant_id = p.tenant_id AND n.contact_id = p.id AND n.imported ORDER BY n.created_at DESC LIMIT 1)), NULL::uuid, '{}'::jsonb FROM p)
     SELECT r.contact_id, r.source, r.id::text AS id, r.at, r.by_user::text AS by_user, u.display_name AS by_name, r.facts
-      FROM rows r LEFT JOIN users u ON u.id = r.by_user`.execute(tx);
+      FROM rows r LEFT JOIN users u ON u.id = r.by_user`;
+}
+
+/**
+ * The follow-up lines of `contactIds` for the viewer, as of `now`. A person whose detail the viewer may not open has
+ * an entry with no stage, no history and only the viewer's own tasks.
+ */
+export async function loadFollowUpContext(tx: Tx, actor: UserActor, contactIds: readonly string[], now: Instant, known?: FollowUpSettings): Promise<FollowUpContexts> {
+  const ids = [...new Set(contactIds)];
+  const byContact = new Map<string, FollowUpContext>();
+  if (ids.length === 0) return { zone: known?.zone ?? ('UTC' as IanaZone), stageLabels: known?.stageLabels ?? {}, byContact };
+  const nowIso = new Date(now).toISOString();
+
+  // 1. the team's zone and its own stage labels (unless the caller already read them)
+  const { zone, stageLabels } = known ?? (await loadFollowUpSettings(tx));
+
+  // 2. per person: the stage, and the newest row of each kind that could be what was last discussed
+  const history = await followUpHistorySql(ids, nowIso).execute(tx);
 
   // 3. the viewer's own open tasks for these people
   const tasks = await sql<{ id: string; contact_id: string; kind: PromiseTask['kind']; title: string; due_at: Date | null; due_all_day: boolean; due_tz: string | null; created_at: Date }>`

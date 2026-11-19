@@ -1,7 +1,7 @@
 // R-TODAY-1 / R-TODAY-4 (web): the words of a follow-up card's "Last" and "Next" lines, and of a logged outside
 // call wherever it is shown. Written against local dates, so they hold under any TZ the suite runs in.
 import { describe, expect, it } from 'vitest';
-import { NO_CONVERSATION_YET, automaticLine, lastLine, lastTouchLine, loggedWords, nextPromiseLine, whenWords } from './followUp.js';
+import { NO_CONVERSATION_YET, allDayWords, automaticLine, lastLine, lastTouchLine, loggedWords, nextPromiseLine, whenWords } from './followUp.js';
 import type { LastTouchView, NextPromiseView } from './types.js';
 
 // Thursday Nov 19 2026, 10:00 local
@@ -155,5 +155,49 @@ describe('R-TODAY-14: lastLine, the Last line of the truth table', () => {
     expect(lastLine({ itemType: 'task_due', lastTouch: null }, NOW)).toBe('No conversation yet.');
     expect(lastLine({ itemType: 'task_due', lastTouch: null, importedHistoryAt: local(12) }, NOW)).toBe('No conversation yet in Realty OS. Earlier history was imported (latest entry Nov 12).');
     expect(lastLine({ itemType: 'warm_follow_up', lastTouch: call }, NOW)).toBe('Call Nov 10, talked 6 min');
+  });
+});
+
+// b19 Today fix 6 (M10; R-TODAY-19): an all-day task is a DAY in its own zone (the task's, else the team's), not an
+// instant in the viewer's. The server sends the zone; the day is worded in that zone, whatever zone the viewer's
+// device is in. (These hold under any TZ the suite runs in: nothing here reads the device's zone.)
+describe('M10 (R-TODAY-19): an all-day task is said in its own zone', () => {
+  // an all-day task due Thursday Nov 19 2026 in each zone: its stored instant is the start of that local day
+  const ZONES: [string, string, number][] = [
+    ['America/Los_Angeles', '2026-11-19T08:00:00.000Z', -8],
+    ['America/New_York', '2026-11-19T05:00:00.000Z', -5],
+    ['Asia/Tokyo', '2026-11-18T15:00:00.000Z', 9],
+    ['Pacific/Auckland', '2026-11-18T11:00:00.000Z', 13],
+  ];
+  /** an instant given as a wall-clock time of November 2026 in a zone `offset` hours from UTC */
+  const wall = (offset: number, day: number, h: number, m = 0) => Date.UTC(2026, 10, day, h - offset, m);
+  const allDay = (dueAt: string, dueZone: string, overdue = false): NextPromiseView => ({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt, dueAllDay: true, dueZone, overdue });
+
+  it.each(ZONES)('%s: at noon on its day it is "today"', (zone, dueAt, off) => {
+    expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 19, 12))).toBe('Send lender intro, today');
+  });
+  it.each(ZONES)('%s: at 11:30 PM on its day it is still "today"; at 12:30 AM the next day it is "overdue since yesterday"', (zone, dueAt, off) => {
+    expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 19, 23, 30))).toBe('Send lender intro, today');
+    expect(nextPromiseLine(allDay(dueAt, zone, true), wall(off, 20, 0, 30))).toBe('Send lender intro, overdue since yesterday');
+  });
+  it.each(ZONES)('%s: at 11:30 PM the evening before it is "tomorrow"; a week before, its date', (zone, dueAt, off) => {
+    expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 18, 23, 30))).toBe('Send lender intro, tomorrow');
+    expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 17, 9))).toBe('Send lender intro, Thu');
+    expect(nextPromiseLine(allDay(dueAt, zone), wall(off, 10, 9))).toBe('Send lender intro, Nov 19');
+  });
+  it('W4 (the reviewer’s case): a New York task due today, read at noon New York time, is "today" for every viewer (it used to be "yesterday" in Los Angeles and Tokyo)', () => {
+    const [zone, dueAt] = ZONES[1]!;
+    const noonNY = Date.UTC(2026, 10, 19, 17, 0);
+    expect(nextPromiseLine(allDay(dueAt, zone), noonNY)).toBe('Send lender intro, today');
+    expect(allDayWords(dueAt, zone, noonNY)).toBe('today');
+    // Friday 9 AM New York: overdue since yesterday, for every viewer
+    expect(nextPromiseLine(allDay(dueAt, zone, true), Date.UTC(2026, 10, 20, 14, 0))).toBe('Send lender intro, overdue since yesterday');
+  });
+  it('a year boundary, and a zone the device does not know: the date keeps its year; an unknown zone falls back to the viewer’s own day', () => {
+    expect(allDayWords('2025-12-31T05:00:00.000Z', 'America/New_York', Date.UTC(2026, 10, 19, 17, 0))).toBe('Dec 31, 2025');
+    expect(allDayWords(new Date(NOW).toISOString(), 'Not/AZone', NOW)).toBe('today');
+  });
+  it('a timed task is still said in the viewer’s own time, with its time', () => {
+    expect(nextPromiseLine({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt: local(19, 17, 0), dueAllDay: false, dueZone: null, overdue: false }, NOW)).toBe('Send lender intro, today 5:00 PM');
   });
 });

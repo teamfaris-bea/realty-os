@@ -37,7 +37,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useApi } from '../../shell/index.js';
-import { whenWords as dayWords } from '../feed/lib/followUp.js';
+import { allDayWords, whenWords as dayWords } from '../feed/lib/followUp.js';
 import { type Details, type StageGuideRow, detailsKey, firstNameOf, guideOf, labelIn } from './api.js';
 import { FollowUpChips, followUpKeyForDays, followUpSavedText, morningIn, useFollowUp } from './FollowUp.js';
 import { peopleMessage, usePersonAction, useToast } from './hooks.js';
@@ -94,16 +94,18 @@ export interface CardTask {
   kind: string;
   dueAt: string | null;
   dueAllDay: boolean;
+  /** for an all-day task, the zone its day is in (R-TODAY-19) */
+  dueZone?: string | null | undefined;
   /** when it stops being on time (the server's own deadline); null or absent: undated, or an older server: never replaced */
   deadlineAt: string | null | undefined;
 }
 
 /** "today 2:10 PM", "yesterday", "Tue" for a time that has passed; "tomorrow 10:48 AM" for one ahead; a day alone for an all-day task. */
-function taskDueWords(t: Pick<CardTask, 'dueAt' | 'dueAllDay'>, now: number): string | null {
+function taskDueWords(t: Pick<CardTask, 'dueAt' | 'dueAllDay' | 'dueZone'>, now: number): string | null {
   if (t.dueAt === null) return null;
   const at = Date.parse(t.dueAt);
   if (!Number.isFinite(at)) return null;
-  if (t.dueAllDay) return dayWords(t.dueAt, now).replace(/^today .*$/, 'today');
+  if (t.dueAllDay) return allDayWords(t.dueAt, t.dueZone, now);
   return dayWords(t.dueAt, now, { time: at > now });
 }
 

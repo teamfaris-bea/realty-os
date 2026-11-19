@@ -13,7 +13,8 @@
 //   3. a person whose only message was automatic says it once ("Connected: no conversation yet", and no Last line under
 //      it) and, on its own line, "Automatic text sent …"; the automatic text's words are nowhere on the page;
 //   4. from the People page the header's "Log a call or conversation" logs a conversation for another person: the
-//      entry → the person → "Talked" → the one button = 4 taps, and a double tap on that button makes one record;
+//      entry → the person → "Talked" → the one button = 4 taps when the person is one of the agent's own recent people
+//      (otherwise 4 taps and typing), and a double tap on that button makes one record;
 //   6. (fix 1, H1 and M3; R-TODAY-11) a card about an overdue "Follow up with …" task: from Log "Talked", Log "Left
 //      voicemail", Call and Text, what the one button will add and mark done is named INSIDE the sheet's pinned footer,
 //      wholly on screen (390 × 664 on the phone project) BEFORE the tap; the old task is then done and the new one open.
@@ -78,6 +79,7 @@ const ROUTES = String.raw`
 
 const NOTE = 'Wants 3 beds near the park, pre-approval next week.';
 const PROMISE = 'Send lender intro';
+const MARISOL_NOTE = 'Met at the open house on Alder.';
 const AUTOMATIC = 'New listings near you this week, reply for details';
 const LONG_LABEL = 'Trying to reach them now'; // 24 characters
 
@@ -115,6 +117,8 @@ test.beforeAll(async () => {
   const t = await must(stack.api<{ task: { id: string } }>('a.agent0', 'POST', '/tasks', { title: PROMISE, contactId: dana.id, dueAt: new Date(Date.now() + 3_600_000).toISOString() }), 'task');
   promiseTaskId = t.task.id;
   await stack.fixture('/j11/promise', { taskId: promiseTaskId, overdueMinutes: 10 });
+  // Marisol: the agent wrote a note about her, so she is one of the agent's OWN recent people (M11, R-TODAY-18)
+  await must(stack.api('a.agent0', 'POST', `/contacts/${marisol.id}/notes`, { body: MARISOL_NOTE }), 'note');
   // Ines: "Connected", theirs for 90 days, and the only message ever is one a plan sent 2 days ago (no human contact
   // at all: the system's own clock counted none either)
   await stack.fixture('/j11/automatic-text', { as: 'a.agent0', contactId: ines.id, body: AUTOMATIC, daysAgo: 2 });
@@ -267,7 +271,7 @@ test('J11.3 a person whose only message was automatic: ONE sentence ("Connected:
   await shot(page, info, 'j11', '5-automatic-only');
 });
 
-test('J11.4 from the People page: the header’s "Log a call or conversation" → a person → "Talked" → the one button = 4 taps; a double tap makes one record', async ({ page }, info) => {
+test('J11.4 from the People page, the header’s "Log a call or conversation": 4 taps when the person is recent (the entry → the person → "Talked" → the one button); otherwise 4 taps and typing. A double tap makes one record', async ({ page }, info) => {
   await openToday(page);
   await page.goto(`${stack.webUrl}/people`);
   await expect(page.getByRole('heading', { level: 1, name: 'People' })).toBeVisible({ timeout: 20_000 });
@@ -277,6 +281,15 @@ test('J11.4 from the People page: the header’s "Log a call or conversation" �
   await tap(page, page.getByRole('button', { name: 'Log a call or conversation', exact: true }), n); // 1
   const picker = page.getByRole('dialog', { name: 'Log a call or conversation' });
   await expect(picker.getByText('Recent people')).toBeVisible({ timeout: 15_000 });
+  await expect(picker.getByRole('button', { name: `Log for ${marisol.name}` })).toBeVisible({ timeout: 15_000 });
+  // M11: "Recent people" is the agent's OWN recent activity (they wrote a note about Marisol). Ines, whose latest
+  // activity is the system's (an automatic text), is not in it: she is found by typing, which is not a tap and is said so
+  await expect(picker.getByText('People you logged for, noted or called most recently.')).toBeVisible();
+  await expect(picker.getByRole('button', { name: `Log for ${ines.name}` })).toHaveCount(0);
+  await picker.getByRole('searchbox', { name: 'Who was it with?' }).fill('Ines');
+  await expect(picker.getByText('People found')).toBeVisible({ timeout: 15_000 });
+  await expect(picker.getByRole('button', { name: `Log for ${ines.name}` })).toBeVisible({ timeout: 15_000 });
+  await picker.getByRole('searchbox', { name: 'Who was it with?' }).fill('');
   await expect(picker.getByRole('button', { name: `Log for ${marisol.name}` })).toBeVisible({ timeout: 15_000 });
   expect(await axeViolations(page), 'axe with the person picker open').toEqual([]);
   if (isPhone(page)) expect(await smallTargets(picker), 'every control of the picker is at least 44 px').toEqual([]);
@@ -301,7 +314,7 @@ test('J11.4 from the People page: the header’s "Log a call or conversation" �
   }
   n.taps += 1; // 4 (the double tap's second touch is the idempotence check, not a step)
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
-  expect(n.taps, 'the entry → a person → an outcome → the one button').toBe(4);
+  expect(n.taps, 'the entry → a recent person → an outcome → the one button').toBe(4);
   await expect(peopleToast(page)).toContainText(/Call logged \(talked\)\. Stage: Connected\..*Follow-up saved for .+ 9:00\sAM/, { timeout: 15_000 });
   // still on the People page
   await expect(page.getByRole('heading', { level: 1, name: 'People' })).toBeVisible();
@@ -310,7 +323,10 @@ test('J11.4 from the People page: the header’s "Log a call or conversation" �
   await expect(page.getByRole('main').locator('li, tr, article').filter({ hasText: marisol.name }).first()).toContainText('Connected', { timeout: 15_000 });
   await shot(page, info, 'j11', '8-after-log-from-anywhere');
   // one record of each
-  expect(await notesOf(marisol.id)).toEqual([{ source: 'logged_activity', activity_kind: 'call', activity_direction: 'outbound', activity_outcome: 'connected' }]);
+  expect(await notesOf(marisol.id)).toEqual([
+    { source: 'manual', activity_kind: null, activity_direction: null, activity_outcome: null },
+    { source: 'logged_activity', activity_kind: 'call', activity_direction: 'outbound', activity_outcome: 'connected' },
+  ]);
   expect((await tasksOf(marisol.id)).map((t) => [t.kind, t.status])).toEqual([['follow_up', 'open']]);
   expect((await stageEvents(marisol.id)).map((e) => e.to_stage)).toEqual(['connected']);
   expect(await callsOf(marisol.id)).toEqual([]);

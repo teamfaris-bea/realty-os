@@ -425,7 +425,7 @@ export function cardTaskOf(card: FeedCard): CardTask | null {
   const next = card.nextPromise;
   if (!next) return null;
   const about = card.task?.id === next.taskId || ((card as Partial<FollowUpTodayCard>).taskIds ?? []).includes(next.taskId);
-  return about ? { taskId: next.taskId, title: next.text, kind: next.kind, dueAt: next.dueAt, dueAllDay: next.dueAllDay, deadlineAt: next.deadlineAt ?? null } : null;
+  return about ? { taskId: next.taskId, title: next.text, kind: next.kind, dueAt: next.dueAt, dueAllDay: next.dueAllDay, dueZone: next.dueZone ?? null, deadlineAt: next.deadlineAt ?? null } : null;
 }
 
 /** Alternatives shown as buttons: at most 3, without "Open" when the contact's name is already a link. */
