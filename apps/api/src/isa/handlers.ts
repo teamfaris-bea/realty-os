@@ -10,7 +10,7 @@ import { DISPATCH_UNKNOWN_UNRESOLVED } from '../comms/dispatch.js';
 import { commsRuntime } from '../comms/runtime.js';
 import type { CommsDeps } from '../comms/types.js';
 import type { Providers } from '../providers/index.js';
-import { jobPayload, zId } from '../worker/payload.js';
+import { jobPayload, zId, zInstant } from '../worker/payload.js';
 import type { JobContext, JobHandler, StandaloneJobHandler, TxJobHandler } from '../worker/types.js';
 import { ISA_BOOKING_DEFAULTS, refusalClass, step, type IsaFacts } from './coreSeam.js';
 import { finalizeInTx, systemEndInTx } from './controls.js';
@@ -28,7 +28,8 @@ import { runTurn, type TurnDeps } from './turn.js';
 type DepsFor = (providers: Providers) => CommsDeps;
 const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers });
 
-const TurnPayload = jobPayload({ assignmentId: zId, trigger: z.enum(['start', 'inbound', 'timer', 'control', 'sweep']), timer: z.enum(['follow_up', 'offer_expiry', 'pause_expiry', 'inactivity_warning']).optional(), epoch: z.number().int().min(1) });
+// `at`: the instant a schedule_timer job was scheduled for (effects.ts); absent on the sweep's timers and on a job queued before it existed
+const TurnPayload = jobPayload({ assignmentId: zId, trigger: z.enum(['start', 'inbound', 'timer', 'control', 'sweep']), timer: z.enum(['follow_up', 'offer_expiry', 'pause_expiry', 'inactivity_warning']).optional(), epoch: z.number().int().min(1), at: zInstant.optional() });
 const SendResultPayload = jobPayload({ messageId: zId, status: z.string().regex(/^[a-z_]{2,20}$/) });
 const SignalPayload = jobPayload({ signalId: zId });
 const AssignmentPayload = jobPayload({ assignmentId: zId, epoch: z.number().int().min(1).optional() });
