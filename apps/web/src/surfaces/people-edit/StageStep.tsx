@@ -169,7 +169,7 @@ export function StageStep(props: StageStepProps) {
         <div className="flex flex-col gap-2">
           {/* what the tap will do to the automated plan, always in view above the button (the full preview is in the body) */}
           <p id={ids.effect} data-testid="stage-step-effect" className="text-[14px] leading-snug text-ink [overflow-wrap:anywhere]">
-            {refused ? 'Locked for now: reach them first.' : preview.data ? effectLine(preview.data) : preview.isError ? PREVIEW_FAILED : PREVIEW_LOADING}
+            {preview.data ? effectLine(preview.data) : preview.isError ? PREVIEW_FAILED : PREVIEW_LOADING}
           </p>
           <Button block className="py-2" pending={working} disabled={refused || waiting || !follow.dueOk} aria-describedby={ids.effect} onClick={() => void confirm()} data-testid="stage-step-confirm">
             {primary}

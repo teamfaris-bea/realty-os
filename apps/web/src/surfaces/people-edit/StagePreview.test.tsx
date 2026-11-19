@@ -68,6 +68,14 @@ describe('R-STG-3 words', () => {
     for (const p of [preview(), preview({ starts: { plan: 'P', firstStep: null } }), preview({ sameStage: true })]) expect(effectLine(p, now)).not.toMatch(/\bstarted\b/i);
   });
 
+  it('L7 (E781): a stage the rule refuses says it is locked, before anything about a plan: never "No plan starts on this stage."', () => {
+    const locked = preview({ allowed: false, lockedReason: 'STAGE_NEEDS_CONTACT' });
+    expect(effectLine(locked)).toBe('Locked for now: reach them first.');
+    // even when the answer also carried plan fields, the lock is what is true of the tap
+    expect(effectLine({ ...locked, wontStart: { plan: 'Buyer plan', reason: 'cannot_be_reached', sentence: STOP_SENTENCE, alreadyIn: null } })).toBe('Locked for now: reach them first.');
+    expect(effectLine(locked)).not.toMatch(/No plan starts/);
+  });
+
   it('the primary button is named for its effect', () => {
     const labelOf = (k: string) => guideFixture().find((s) => s.key === k)!.label;
     expect(effectLabel('connected', 'attempting', labelOf)).toBe('Change to Connected');
@@ -99,6 +107,13 @@ describe('R-STG-3 the preview block', () => {
   it('a stage no plan names says so', async () => {
     block(preview());
     expect(await screen.findByText('No plan starts on this stage.')).toBeInTheDocument();
+  });
+
+  it('L7 (E781): the block of a locked stage says locked, and does not say "No plan starts on this stage."', async () => {
+    wrap(new FakeFetch().on(`GET /contacts/${C}/stage/preview?to=connected`, { status: 200, body: preview({ allowed: false, lockedReason: 'STAGE_NEEDS_CONTACT' }) }), <StagePreviewBlock contactId={C} to="connected" />);
+    const block = within(await screen.findByTestId('stage-preview'));
+    expect(await block.findByText('Locked for now: reach them first.')).toBeInTheDocument();
+    expect(block.queryByText('No plan starts on this stage.')).toBeNull();
   });
 
   it('a running plan keeps running; Stop is offered only when the server says this viewer may stop it, and calls the stop route', async () => {

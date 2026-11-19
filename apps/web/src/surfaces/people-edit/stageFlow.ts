@@ -115,6 +115,8 @@ export const NEVER_STOPS = 'Changing the stage does not stop a running plan.';
 export const AI_UNCHANGED = 'AI follow-up: unchanged';
 export const TASKS_UNCHANGED = 'Your tasks: unchanged';
 export const NO_PLAN_FOR_STAGE = 'No plan starts on this stage.';
+/** Said of a stage the stage rule refuses for this viewer now (STAGE_NEEDS_CONTACT), in place of any plan words. */
+export const LOCKED_FOR_NOW = 'Locked for now: reach them first.';
 
 const CHANNEL_WORD: Record<string, string> = { sms: 'text', mms: 'text', text: 'text', email: 'email', web_chat: 'chat message', voice: 'call' };
 /** "text", "email": the plain word for a step's channel. */
@@ -148,6 +150,8 @@ export function willStartText(s: NonNullable<StagePreview['starts']>, now: numbe
 
 /** The one line a stage's row carries before it is picked: what entering it would do to the automated plan. */
 export function effectLine(p: StagePreview, now: number = Date.now()): string {
+  // L7 (E781): a change the stage rule refuses enters nothing, so nothing is said about a plan
+  if (!p.allowed) return LOCKED_FOR_NOW;
   if (p.sameStage) return 'They are in this stage now. Nothing starts.';
   if (p.starts) return willStartText(p.starts, now);
   if (p.wontStart) return p.wontStart.sentence;
