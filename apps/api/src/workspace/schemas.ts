@@ -28,7 +28,7 @@ export const LastTouchSchema = z.object({
   snippet: z.string().max(140).nullable(),
   reported: z.boolean(),
 });
-export const NextPromiseSchema = z.object({ taskId: uuid, text: z.string(), kind: z.string(), dueAt: z.string().nullable(), dueAllDay: z.boolean(), overdue: z.boolean() });
+export const NextPromiseSchema = z.object({ taskId: uuid, text: z.string(), kind: z.string(), dueAt: z.string().nullable(), dueAllDay: z.boolean(), deadlineAt: z.string().nullable(), overdue: z.boolean() });
 export const FeedCardSchema = z.object({
   id: uuid,
   itemType: z.string(),

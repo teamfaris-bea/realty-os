@@ -14,12 +14,16 @@
 //      sent …"; the automatic text's words are nowhere on the page;
 //   4. from the People page the header's "Log a call or conversation" logs a conversation for another person: the
 //      entry → the person → "Talked" → the one button = 4 taps, and a double tap on that button makes one record;
+//   6. (fix 1, H1 and M3; R-TODAY-11) a card about an overdue "Follow up with …" task: from Log "Talked", Log "Left
+//      voicemail", Call and Text, what the one button will add and mark done is named INSIDE the sheet's pinned footer,
+//      wholly on screen (390 × 664 on the phone project) BEFORE the tap; the old task is then done and the new one open.
+//      A follow-up that is not due yet is left open, and the footer says the person will have two;
 //   5. axe on Today and on the open sheet; on the phone, 44 px targets, no sideways scroll, the sheet's one button on
 //      screen above the home indicator; a 24-character stage label is whole at 320 px wide.
 // Screenshots of each step go to $JOURNEY_SHOTS_DIR (desktop at deviceScaleFactor 2; the phone as the iPhone 13
 // descriptor has it).
 import { createRequire } from 'node:module';
-import { type BrowserContext, type Locator, type Page, devices, expect, test } from 'playwright/test';
+import { type BrowserContext, type Locator, type Page, type TestInfo, devices, expect, test } from 'playwright/test';
 import { phoneProblems } from '../a11y/checks.js';
 import { isPhone, shot, signIn, tap } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
@@ -51,6 +55,11 @@ const ROUTES = String.raw`
   /** { taskId, overdueMinutes } the task becomes a promise, due earlier today */
   async '/j11/promise'(b) {
     await h.su.query("UPDATE tasks SET kind = 'promise', due_at = clock_timestamp() - ($2::int * interval '1 minute') WHERE id = $1", [b.taskId, b.overdueMinutes ?? 10]);
+    return { ok: true };
+  },
+  /** { taskId, minutes } the task's due time moves to that many minutes from now (negative: overdue); its kind is kept */
+  async '/j11/due'(b) {
+    await h.su.query("UPDATE tasks SET due_at = clock_timestamp() + ($2::int * interval '1 minute') WHERE id = $1", [b.taskId, b.minutes]);
     return { ok: true };
   },
   /** { as, contactId, body, daysAgo } a text a plan sent: one the agent really sent through the fake provider, re-attributed to the system */
@@ -197,7 +206,10 @@ test('J11.2 a call made outside the app, from the row: Log → "Left voicemail" 
   await expect(sheet.getByRole('button', { name: 'Tomorrow', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(sheet.getByTestId('follow-up-line')).toHaveText(new RegExp(`^Will add a task for you: “Follow up with ${dana.first}”, due .+ 9:00\\sAM\\.$`));
   const save = sheet.getByTestId('log-save');
-  await expect(save).toHaveText('Save and change to Trying to reach + follow-up');
+  // (fix 1, R-TODAY-11: the button stays one line; the task it adds is named under it, in the pinned footer; the promise stays open)
+  await expect(save).toHaveText('Save and change to Trying to reach');
+  await expectSeenInFooter(page, sheet, sheet.getByTestId('tap-effects'), 'what the tap will do');
+  await expect(sheet.getByTestId('tap-effects')).toHaveText(new RegExp(`^Adds: Follow up with ${dana.first}, tomorrow 9:00\\sAM\\. Stays open: ${PROMISE}\\.$`));
   await expect(save).toBeEnabled({ timeout: 15_000 });
   expect(await axeViolations(page), 'axe with the Log sheet open').toEqual([]);
   if (isPhone(page)) {
@@ -271,7 +283,9 @@ test('J11.4 from the People page: the header’s "Log a call or conversation" �
   await expect(sheet.getByRole('radio', { name: 'Connected Suggested' })).toBeChecked({ timeout: 15_000 });
   await expect(sheet.getByRole('button', { name: '1 week', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const save = sheet.getByTestId('log-save');
-  await expect(save).toHaveText('Save and change to Connected + follow-up');
+  await expect(save).toHaveText('Save and change to Connected');
+  await expectSeenInFooter(page, sheet, sheet.getByTestId('tap-effects'), 'what the tap will do');
+  await expect(sheet.getByTestId('tap-effects')).toHaveText(new RegExp(`^Adds: Follow up with ${marisol.first}, .+ 9:00\\sAM\\.$`));
   await expect(save).toBeEnabled({ timeout: 15_000 });
   await shot(page, info, 'j11', '7-log-from-anywhere');
   // a double tap: the second lands while the first is on its way (or after the sheet has gone) and adds nothing
@@ -319,4 +333,145 @@ test('J11.5 a 24-character stage label is whole on the row at 320 px wide, and n
   await row(page, dana).scrollIntoViewIfNeeded();
   await shot(page, info, 'j11', '9-long-stage-label');
   if (isPhone(page)) expect(await phoneProblems(page), 'Today at 320 px').toEqual([]);
+});
+
+// ---- fix 1 (H1, M2, M3; R-TODAY-11): nothing is closed or created unseen ---------------------------------------------
+
+/** A person of the agent's with one "Follow up with <first>" task due `minutes` from now (negative: overdue). */
+async function withFollowUp(first: string, last: string, minutes: number): Promise<Person> {
+  const p = await stack.fixture<Person>('/j11/person', { as: 'a.agent0', first, last });
+  const t = await must(stack.api<{ task: { id: string } }>('a.agent0', 'POST', '/tasks', { title: `Follow up with ${first}`, kind: 'follow_up', contactId: p.id, dueAt: new Date(Date.now() + 3_600_000).toISOString() }), 'follow-up');
+  await stack.fixture('/j11/due', { taskId: t.task.id, minutes });
+  return p;
+}
+
+/**
+ * `el` is read by the agent where it is: wholly inside the viewport, inside the sheet's pinned footer, and not under
+ * anything (the element at its left, middle and right is itself). A line scrolled behind the footer fails all three.
+ */
+async function expectSeenInFooter(page: Page, sheet: Locator, el: Locator, what: string) {
+  await expect(el, what).toBeVisible({ timeout: 15_000 });
+  const vp = page.viewportSize()!;
+  const b = (await el.boundingBox())!;
+  expect(b.y, `${what}: top on screen`).toBeGreaterThanOrEqual(0);
+  expect(b.y + b.height, `${what}: bottom on screen (viewport ${vp.width}×${vp.height})`).toBeLessThanOrEqual(vp.height + 0.5);
+  const f = await sheet.getByTestId('dialog-footer').boundingBox();
+  expect(f, `${what}: the sheet has a pinned footer`).not.toBeNull();
+  expect(b.y >= f!.y - 0.5 && b.y + b.height <= f!.y + f!.height + 0.5, `${what}: inside the pinned footer (${JSON.stringify(b)} in ${JSON.stringify(f)})`).toBe(true);
+  const uncovered = await el.evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    return [0.1, 0.5, 0.9].every((x) => {
+      const at = document.elementFromPoint(r.left + r.width * x, r.top + r.height / 2);
+      return at !== null && (at === e || e.contains(at));
+    });
+  });
+  expect(uncovered, `${what}: nothing covers it`).toBe(true);
+}
+
+/** Before the tap: the footer names the new follow-up and the task it marks done; the button is one line and on screen; the stage choice is still in view. */
+async function expectNamedBeforeTap(page: Page, sheet: Locator, button: Locator, p: Person, info: TestInfo, step: string) {
+  await expect(button).toBeEnabled({ timeout: 15_000 });
+  const said = sheet.getByText(/Marks done|marked done/);
+  await expectSeenInFooter(page, sheet, said, 'the "marks done" sentence');
+  await expect(said).toHaveText(new RegExp(`^Adds: Follow up with ${p.first}, .+ 9:00\\sAM\\. Marks done: Follow up with ${p.first} \\(was due (today \\d{1,2}:\\d{2}\\s[AP]M|yesterday)\\)\\.$`));
+  await expectSeenInFooter(page, sheet, button, 'the one button');
+  if (isPhone(page)) {
+    // L16: the button's words fit on one line at 390 px (a team's own longer stage label may still wrap, whole)
+    expect((await button.boundingBox())!.height, 'the one button is one line').toBeLessThan(60);
+    // the footer still leaves the choices in view: the suggested stage is on screen above it
+    const choice = sheet.getByRole('radio', { name: /Suggested$/ });
+    const c = (await choice.boundingBox())!;
+    const f = (await sheet.getByTestId('dialog-footer').boundingBox())!;
+    expect(c.y >= 0 && c.y + c.height <= f.y + 0.5, 'the suggested stage is on screen above the footer').toBe(true);
+    expect(await smallTargets(sheet), 'every control of the sheet is at least 44 px').toEqual([]);
+  }
+  expect(await axeViolations(page), 'axe with the sheet open').toEqual([]);
+  await shot(page, info, 'j11', step);
+}
+
+const expectReplaced = async (p: Person) => {
+  await expect.poll(async () => (await tasksOf(p.id)).map((t) => [t.kind, t.title, t.status]), { timeout: 15_000 }).toEqual([
+    ['follow_up', `Follow up with ${p.first}`, 'done'],
+    ['follow_up', `Follow up with ${p.first}`, 'open'],
+  ]);
+};
+
+test('J11.6a H1: Log → "Talked" on a card about an overdue follow-up: what the one button adds and marks done is in the pinned footer, on screen, before the tap', async ({ page }, info) => {
+  const paula = await withFollowUp('Paula', 'Ibarra', -10);
+  await openToday(page);
+  await tap(page, row(page, paula).getByRole('button', { name: `Log for ${paula.name}` }));
+  const sheet = page.getByRole('dialog', { name: `Log for ${paula.name}` });
+  await tap(page, sheet.getByRole('button', { name: 'Talked', exact: true }));
+  const save = sheet.getByTestId('log-save');
+  await expectNamedBeforeTap(page, sheet, save, paula, info, '10-talked-before-tap');
+  await expect(save).toHaveText('Save and change to Connected');
+  await tap(page, save);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  await expect(peopleToast(page)).toContainText(new RegExp(`Call logged \\(talked\\)\\. Stage: Connected\\..*Follow-up saved for .+ 9:00\\sAM\\. Marked done: “Follow up with ${paula.first}”`), { timeout: 15_000 });
+  await expectReplaced(paula);
+});
+
+test('J11.6b H1: Log → "Left voicemail" names it the same way', async ({ page }, info) => {
+  const quinn = await withFollowUp('Quinn', 'Adeyemi', -10);
+  await openToday(page);
+  await tap(page, row(page, quinn).getByRole('button', { name: `Log for ${quinn.name}` }));
+  const sheet = page.getByRole('dialog', { name: `Log for ${quinn.name}` });
+  await tap(page, sheet.getByRole('button', { name: 'Left voicemail', exact: true }));
+  const save = sheet.getByTestId('log-save');
+  await expectNamedBeforeTap(page, sheet, save, quinn, info, '11-voicemail-before-tap');
+  await tap(page, save);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  await expectReplaced(quinn);
+});
+
+test('J11.6c H1: Call → an outcome: the stage step names it in its pinned footer before the tap', async ({ page }, info) => {
+  const rosa = await withFollowUp('Rosa', 'Lindqvist', -10);
+  await openToday(page);
+  await expect(row(page, rosa).getByRole('button', { name: 'Call', exact: true })).toBeEnabled({ timeout: 15_000 });
+  await tap(page, row(page, rosa).getByRole('button', { name: 'Call', exact: true }));
+  const call = page.getByRole('dialog', { name: `Call ${rosa.name}` });
+  await tap(page, call.getByRole('button', { name: 'Left voicemail', exact: true }));
+  const step = page.getByRole('dialog', { name: `Stage for ${rosa.name}` });
+  const confirm = step.getByTestId('stage-step-confirm');
+  await expectNamedBeforeTap(page, step, confirm, rosa, info, '12-call-before-tap');
+  await tap(page, confirm);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  await expectReplaced(rosa);
+});
+
+test('J11.6d H1: Text → Send: the stage step names it in its pinned footer before the tap', async ({ page }, info) => {
+  const tess = await withFollowUp('Tess', 'Moreau', -10);
+  await openToday(page);
+  await expect(row(page, tess).getByRole('button', { name: 'Text', exact: true })).toBeEnabled({ timeout: 15_000 });
+  await tap(page, row(page, tess).getByRole('button', { name: 'Text', exact: true }));
+  const text = page.getByRole('dialog', { name: `Text ${tess.name}` });
+  await text.getByRole('textbox', { name: 'Text message' }).fill('Hi Tess, checking in about the house on Alder.');
+  await tap(page, text.getByRole('button', { name: 'Send', exact: true }));
+  const step = page.getByRole('dialog', { name: `Stage for ${tess.name}` });
+  const confirm = step.getByTestId('stage-step-confirm');
+  await expectNamedBeforeTap(page, step, confirm, tess, info, '13-text-before-tap');
+  await tap(page, confirm);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  await expectReplaced(tess);
+});
+
+test('J11.7 M3: a follow-up that is not due yet is never closed: the footer says the person will have two, and both stay open', async ({ page }, info) => {
+  const uma = await withFollowUp('Uma', 'Castellanos', 18 * 60);
+  await openToday(page);
+  // (due within a day: its card is in "Next up", a day ahead)
+  const card = page.getByRole('article', { name: uma.name });
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await tap(page, card.getByRole('button', { name: `Log for ${uma.name}` }));
+  const sheet = page.getByRole('dialog', { name: `Log for ${uma.name}` });
+  await tap(page, sheet.getByRole('button', { name: 'Left voicemail', exact: true }));
+  const save = sheet.getByTestId('log-save');
+  await expect(save).toBeEnabled({ timeout: 15_000 });
+  const said = sheet.getByTestId('tap-effects');
+  await expectSeenInFooter(page, sheet, said, 'what the tap will do');
+  await expect(said).toHaveText(new RegExp(`^Adds: Follow up with ${uma.first}, .+ 9:00\\sAM\\. ${uma.first} will have two follow-ups: “Follow up with ${uma.first}” \\(due .+\\) stays open\\.$`));
+  await expect(sheet.getByText(/Marks done|marked done/)).toHaveCount(0);
+  await shot(page, info, 'j11', '14-not-due-two-follow-ups');
+  await tap(page, save);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  await expect.poll(async () => (await tasksOf(uma.id)).map((t) => [t.kind, t.status]), { timeout: 15_000 }).toEqual([['follow_up', 'open'], ['follow_up', 'open']]);
 });

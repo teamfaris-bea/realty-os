@@ -67,6 +67,8 @@ export interface NextPromiseView {
   kind: string;
   dueAt: string | null;
   dueAllDay: boolean;
+  /** when it stops being on time (an all-day task: the end of its local day); absent on an older server's answer */
+  deadlineAt?: string | null;
   overdue: boolean;
 }
 

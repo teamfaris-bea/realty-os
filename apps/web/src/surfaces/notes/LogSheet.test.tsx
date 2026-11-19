@@ -149,7 +149,8 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     await waitFor(() => expect(primary(s)).toBeEnabled());
     await tap(primary(s));
     const alert = await within(s).findByRole('alert');
-    expect(alert).toHaveTextContent('Call logged (left voicemail). The stage did not change: Reach them first (a call, text, email or reply in their website chat), or close the lead.');
+    // (b19 Today fix 1, R-TODAY-11: one consistent sentence, what was saved and what was not, then the server's reason)
+    expect(alert).toHaveTextContent(/^Saved: call logged \(left voicemail\)\. Not saved: the stage \(still New lead\)\. Reach them first \(a call, text, email or reply in their website chat\), or close the lead\.$/);
     expect(onClose).not.toHaveBeenCalled();
     // what was logged is now a fact, in place of the fields; no toast claims anything
     expect(within(s).getByRole('status')).toHaveTextContent('Call logged (left voicemail)');
@@ -167,14 +168,14 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     expect(await within(toast()).findByText('Call logged (left voicemail). Stage: Trying to reach')).toBeInTheDocument();
   });
 
-  it('a lost answer to the stage change is not called a refusal: "We could not confirm the stage change", and the same button asks again', async () => {
+  it('a lost answer to the stage change is not called a refusal: "Not confirmed: the stage change", and the same button asks again', async () => {
     const { fake, onClose, tap } = mount({ stage: (n) => (n === 1 ? 'network-error' : null) });
     const s = await sheet();
     await tap(within(s).getByRole('button', { name: 'Left voicemail' }));
     await waitFor(() => expect(primary(s)).toBeEnabled());
     await tap(primary(s));
-    expect(await within(s).findByRole('alert')).toHaveTextContent("Call logged (left voicemail). We could not confirm the stage change: Can't reach the server. Check your connection, then try again.");
-    expect(within(s).queryByText(/The stage did not change/)).toBeNull();
+    expect(await within(s).findByRole('alert')).toHaveTextContent(/^Saved: call logged \(left voicemail\)\. Not confirmed: the stage change\. Can't reach the server\. Check your connection, then try again\.$/);
+    expect(within(s).queryByText(/The stage did not change|Not saved/)).toBeNull();
     await tap(primary(s));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(logPosts(fake)).toHaveLength(1);
@@ -223,7 +224,10 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     const s = await sheet();
     await tap(within(s).getByRole('button', { name: 'Left voicemail' }));
     await tap(await within(s).findByRole('button', { name: 'Tomorrow' }));
-    expect(primary(s)).toHaveTextContent(/^Save and change to Trying to reach \+ follow-up$/);
+    // (b19 Today fix 1: the button stays one line; the task it adds is named under it, in the pinned footer)
+    expect(primary(s)).toHaveTextContent(/^Save and change to Trying to reach$/);
+    expect(within(within(s).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with .+, tomorrow 9:00 AM\.$/);
+    expect(primary(s)).toHaveAccessibleDescription(/Adds: Follow up with .+, tomorrow 9:00 AM\./);
     await waitFor(() => expect(primary(s)).toBeEnabled());
     await tap(primary(s));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));

@@ -264,6 +264,11 @@ export interface NextPromise {
   kind: TaskFacts['kind'];
   dueAt: Instant | null;
   dueAllDay: boolean;
+  /**
+   * When it stops being on time (promiseDeadline): its instant, or for an all-day task the end of its local day. The
+   * replace-a-task rule (parity/people decideTaskReplacement) reads this, never the screen's own idea of "due".
+   */
+  deadline: Instant | null;
   overdue: boolean;
 }
 
@@ -296,7 +301,7 @@ export function selectNextPromise(tasks: readonly PromiseTask[], now: Instant, t
   const first = [...tasks].sort(byDeadline(teamZone))[0];
   if (!first) return null;
   const deadline = promiseDeadline(first, teamZone);
-  return { taskId: first.taskId, text: first.title, kind: first.kind, dueAt: first.dueAt, dueAllDay: first.dueAllDay, overdue: deadline !== null && now >= deadline };
+  return { taskId: first.taskId, text: first.title, kind: first.kind, dueAt: first.dueAt, dueAllDay: first.dueAllDay, deadline, overdue: deadline !== null && now >= deadline };
 }
 
 // ---- the daily plan: "Follow up today" (R-TODAY-6) -------------------------------------------------

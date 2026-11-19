@@ -29,6 +29,7 @@ import { useMutate, useNow } from './lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
 import type { FeedCard, FeedResponse, FollowUpTodayCard } from './lib/types.js';
 import { AiFeedItem } from '../aiCare/Feed.js'; // module 76 (flagged edit)
+import type { CardTask } from '../people-edit/StageStep.js';
 
 export const FEED_KEY = ['feed'] as const;
 
@@ -225,7 +226,7 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
   // the Next line already says the card's own task when that task is the person's next promise
   const taskSaidBelow = follow && card.task != null && card.nextPromise?.taskId === card.task.id;
   // R-TODAY-7: a follow-up card's Call, Text and Log are one pass, here (the sheets of the person's page)
-  const onePass = follow ? { replaces: replacedTask(card) } : undefined;
+  const onePass = follow ? { cardTask: cardTaskOf(card) } : undefined;
   // a card whose one tap IS its details shows them in the same panel, under its own name
   const detailsFirst = card.primaryAction.kind === 'show_details';
   const details = { open: why, controls: whyId, onOpen: () => setWhy((w) => !w) };
@@ -339,14 +340,17 @@ export function FollowUpLines({ card, now }: { card: FeedCard; now: number }) {
 }
 
 /**
- * The due task a one-pass sheet's new follow-up replaces (R-TODAY-7): only a "follow up" or "call back" task, and only
- * when the card or row is about that very task. A promise or any other task is never closed for the agent.
+ * The task a follow-up card or row is ABOUT, for its one-pass sheets (R-TODAY-7, R-TODAY-11): the person's next task
+ * when the card's own task is that very task (or, on a row of the plan, one of the row's due tasks). Whether a new
+ * follow-up then replaces it is not decided here: the sheet asks core's rule (decideTaskReplacement), which closes only
+ * a follow-up or callback whose deadline has passed, and says what it will do before the tap. Null: the card is about
+ * no task of the person's, so the sheet closes nothing.
  */
-export function replacedTask(card: FeedCard): { taskId: string; title: string } | null {
+export function cardTaskOf(card: FeedCard): CardTask | null {
   const next = card.nextPromise;
-  if (!next || (next.kind !== 'follow_up' && next.kind !== 'callback')) return null;
+  if (!next) return null;
   const about = card.task?.id === next.taskId || ((card as Partial<FollowUpTodayCard>).taskIds ?? []).includes(next.taskId);
-  return about ? { taskId: next.taskId, title: next.text } : null;
+  return about ? { taskId: next.taskId, title: next.text, kind: next.kind, dueAt: next.dueAt, dueAllDay: next.dueAllDay, deadlineAt: next.deadlineAt ?? null } : null;
 }
 
 /** Alternatives shown as buttons: at most 3, without "Open" when the contact's name is already a link. */

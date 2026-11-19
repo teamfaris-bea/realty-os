@@ -89,7 +89,9 @@ describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
     expect(within(sheet).getByRole('button', { name: 'Call', pressed: true })).toBeInTheDocument();
     expect(within(sheet).getByRole('button', { name: 'I called from my phone', pressed: true })).toBeInTheDocument();
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 3
-    const save = await within(sheet).findByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
+    const save = await within(sheet).findByRole('button', { name: 'Save and change to Trying to reach' });
+    // (b19 Today fix 1, R-TODAY-11: the task the button adds is named under it before the tap)
+    expect(within(within(sheet).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Pat, tomorrow 9:00 AM\.$/);
     await waitFor(() => expect(save).toBeEnabled());
     const readsBefore = fake.callsTo('GET /people?sort=last_activity_desc').length;
     await tap(save); // 4

@@ -38,7 +38,7 @@ export interface AgentSheets {
    * `onePass` (R-TODAY-7, a follow-up card on Today): after the outcome tap the same sheet goes on to the stage step,
    * as on the person's page, with the follow-up the outcome suggests preselected; closing it refreshes the feed.
    */
-  call(contact: { id: string; name: string }, o?: { onePass?: Pick<OnePassOptions, 'replaces'> }): void;
+  call(contact: { id: string; name: string }, o?: { onePass?: Pick<OnePassOptions, 'cardTask'> }): void;
   logAppointment(appointmentId: string, label?: string): void;
   announce(text: string): void;
 }
@@ -52,7 +52,7 @@ export function useAgentSheets(): AgentSheets {
 }
 
 type Open =
-  | { kind: 'call'; contact: { id: string; name: string }; onePass?: Pick<OnePassOptions, 'replaces'> | undefined }
+  | { kind: 'call'; contact: { id: string; name: string }; onePass?: Pick<OnePassOptions, 'cardTask'> | undefined }
   | { kind: 'appointment'; appointmentId: string; label?: string | undefined }
   | null;
 
@@ -148,7 +148,7 @@ const CALL_FAILED: Record<string, string> = {
   CONTACT_MERGED: AGENT_ERROR_MESSAGES.CONTACT_MERGED as string,
 };
 
-function CallSheet({ contact, onClose, announce, stageStep, onePass }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void; stageStep: boolean; onePass?: Pick<OnePassOptions, 'replaces'> | undefined }) {
+function CallSheet({ contact, onClose, announce, stageStep, onePass }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void; stageStep: boolean; onePass?: Pick<OnePassOptions, 'cardTask'> | undefined }) {
   const api = useApi();
   const [state, setState] = useState<CallState>({ step: 'dialing' });
   const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null; outcome: CallOutcome } | null>(null);

@@ -27,7 +27,7 @@ import { Button, Dialog, Notice } from '../../design/index.js';
 import { firstNameOf } from '../people-edit/api.js';
 import { Chip, selectClass, textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
 import { NeverNote } from '../people-edit/StagePreview.js';
-import { type OnePassOptions, Saved, StageStepBody, useStageStep } from '../people-edit/StageStep.js';
+import { type OnePassOptions, Saved, StageStepBody, TapEffects, describedBy, useStageStep } from '../people-edit/StageStep.js';
 import { type SuggestedStage, joinWords } from '../people-edit/stageFlow.js';
 
 const KINDS = [
@@ -195,19 +195,28 @@ export function LogSheet({ contactId, contactName, onClose, onePass }: { contact
   }
 
   const primary = saved !== null ? step.primary : stepOn ? `Save and ${lowerFirst(step.primary)}` : 'Save';
+  // R-TODAY-11: every task the one button makes is named under it, in the pinned footer: the stage step's follow-up
+  // (and the earlier task it marks done), or this sheet's own reminder (a task the log route makes with the note)
+  const reminderEffect = saved === null && reminding ? `Adds: a reminder task for you, due in ${remind} day${remind === 1 ? '' : 's'}.` : null;
+  const effects = { ids: step.ids, tapEffects: reminderEffect ?? (stepOn ? step.tapEffects : null) };
   return (
     <Dialog
       title={`Log for ${contactName}`}
       description={saved === null && !folded ? `Something that happened outside Realty OS. It shows as logged by you and doesn’t count as reaching ${first}.` : undefined}
-      onClose={onClose}
+      onClose={() => {
+        // left after a partial save: what was saved is said once, with the stage's Undo (StageStep.tsx leave)
+        if (saved !== null) step.leave({ lead: saved });
+        onClose();
+      }}
       closeButton
       footer={
         <div className="flex flex-col gap-2">
           {act.error ? <Notice tone="error">{act.error}</Notice> : null}
           {step.failure ? <Notice tone="error">{step.failure}</Notice> : null}
-          <Button block onClick={() => void run()} pending={working} disabled={(saved === null && future) || stepPending || (stepOn && step.blocked)} aria-describedby={stepOn ? step.ids.effect : undefined} data-testid="log-save">
+          <Button block onClick={() => void run()} pending={working} disabled={(saved === null && future) || stepPending || (stepOn && step.blocked)} aria-describedby={stepOn ? describedBy(effects) : effects.tapEffects ? step.ids.tap : undefined} data-testid="log-save">
             {primary}
           </Button>
+          <TapEffects s={effects} />
         </div>
       }
     >

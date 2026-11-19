@@ -161,7 +161,13 @@ export interface FeedCard {
 
 /** `byMe`: the viewer's own call, message, note or log (the teammate's id itself is not sent). */
 export type LastTouchView = Omit<LastTouch, 'at' | 'byUserId'> & { at: string; byMe: boolean };
-export type NextPromiseView = Omit<NextPromise, 'dueAt'> & { dueAt: string | null };
+/** `deadlineAt`: when the task stops being on time (an all-day task: the end of its local day), for the replace-a-task rule. */
+export type NextPromiseView = Omit<NextPromise, 'dueAt' | 'deadline'> & { dueAt: string | null; deadlineAt: string | null };
+
+function promiseView(p: NextPromise): NextPromiseView {
+  const { deadline, ...rest } = p;
+  return { ...rest, dueAt: p.dueAt === null ? null : iso(p.dueAt), deadlineAt: deadline === null ? null : iso(deadline) };
+}
 
 /** The follow-up lines of one card, as GET /feed sends them (instants as ISO strings). */
 export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: string): Pick<FeedCard, 'stage' | 'lastTouch' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'> {
@@ -172,7 +178,7 @@ export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: st
     lastTouch: ctx.lastTouch ? { ...(touch as Omit<LastTouch, 'byUserId'>), at: iso(ctx.lastTouch.at), byMe: byUserId !== null && byUserId === viewerUserId } : null,
     lastAutomatic: ctx.lastAutomatic ? { ...ctx.lastAutomatic, at: iso(ctx.lastAutomatic.at) } : null,
     importedHistoryAt: ctx.importedHistoryAt === null ? null : iso(ctx.importedHistoryAt),
-    nextPromise: ctx.nextPromise ? { ...ctx.nextPromise, dueAt: ctx.nextPromise.dueAt === null ? null : iso(ctx.nextPromise.dueAt) } : null,
+    nextPromise: ctx.nextPromise ? promiseView(ctx.nextPromise) : null,
   };
 }
 

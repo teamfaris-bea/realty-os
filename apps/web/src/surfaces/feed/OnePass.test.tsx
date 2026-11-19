@@ -87,7 +87,9 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
     // the next step is preselected and said before the tap: Tomorrow, and the button is named for it
     expect(within(step).getByRole('button', { name: 'Tomorrow' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(step).getByTestId('follow-up-line')).toHaveTextContent(/^Will add a task for you: “Follow up with Dana”, due .+ 9:00 AM\.$/);
-    const confirm = within(step).getByRole('button', { name: 'Change to Trying to reach + follow-up' });
+    // (b19 Today fix 1: the button stays short; the task it adds is named under it, in the pinned footer)
+    const confirm = within(step).getByRole('button', { name: 'Change to Trying to reach' });
+    expect(within(within(step).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\. Stays open: Send lender intro\.$/);
     await waitFor(() => expect(confirm).toBeEnabled());
     await tap(confirm); // 3
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -111,7 +113,8 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 2
     expect(await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
     expect(within(sheet).getByRole('button', { name: 'Tomorrow' })).toHaveAttribute('aria-pressed', 'true');
-    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
+    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach' });
+    expect(within(within(sheet).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\. Stays open: Send lender intro\.$/);
     await waitFor(() => expect(save).toBeEnabled());
     await tap(save); // 3
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -134,7 +137,8 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 2
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });
     await tap(within(sheet).getByRole('button', { name: '3 days' })); // 3
-    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
+    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach' });
+    expect(within(within(sheet).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, [A-Z][a-z]{2} 9:00 AM\. Stays open: Send lender intro\.$/);
     await waitFor(() => expect(save).toBeEnabled());
     await tap(save); // 4
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -174,15 +178,16 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
       task: { id: OLD_TASK, title: 'Follow up with Dana' },
       subjectId: OLD_TASK,
       alternatives: [{ kind: 'complete_task', label: 'Done', taskId: OLD_TASK }],
-      nextPromise: { taskId: OLD_TASK, text: 'Follow up with Dana', kind: 'follow_up', dueAt: new Date(Date.now() - 3_600_000).toISOString(), dueAllDay: false, overdue: true },
+      nextPromise: { taskId: OLD_TASK, text: 'Follow up with Dana', kind: 'follow_up', dueAt: new Date(Date.now() - 3_600_000).toISOString(), dueAllDay: false, deadlineAt: new Date(Date.now() - 3_600_000).toISOString(), overdue: true },
     });
     const { fake, tap } = open(followUpCard);
     await tap(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' }));
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });
-    expect(within(sheet).getByTestId('follow-up-replaces')).toHaveTextContent('The new follow-up replaces “Follow up with Dana”, which is marked done.');
-    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
+    // (b19 Today fix 1, H1: said in the PINNED footer under the button, where it is on screen before the tap; see ReplaceTask.test.tsx)
+    expect(within(within(sheet).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\. Marks done: Follow up with Dana \(was due (today \d{1,2}:\d{2} [AP]M|yesterday)\)\.$/);
+    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach' });
     await waitFor(() => expect(save).toBeEnabled());
     await tap(save);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -198,7 +203,8 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' }));
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });
     expect(within(sheet).queryByTestId('follow-up-replaces')).toBeNull();
-    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
+    expect(within(sheet).getByTestId('tap-effects')).not.toHaveTextContent(/Marks done|marked done/);
+    const save = within(sheet).getByRole('button', { name: 'Save and change to Trying to reach' });
     await waitFor(() => expect(save).toBeEnabled());
     await tap(save);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

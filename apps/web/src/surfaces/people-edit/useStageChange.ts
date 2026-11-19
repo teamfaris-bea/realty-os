@@ -48,6 +48,30 @@ export function useStageChange(contactId: string, labelOf: (key: string) => stri
   );
 
   /**
+   * The toast of a change the server answered (`data`): "Stage: Connected. Buyer plan started. <also>", with Undo when
+   * the server named the event. Said by `change` itself, or later by a caller that held it (`hold`) until the rest of
+   * its tap had saved, so the ONE toast says the whole result.
+   */
+  const say = useCallback(
+    (data: StageResponse, o: { /** the stage asked for */ to: string; lead?: string | undefined; also?: string | undefined; from?: string | undefined }) => {
+      // "the same stage again": the server reports the stage itself as the previous one
+      const repeated = data.previousStage === o.to;
+      const prev = repeated ? o.from : data.previousStage;
+      // E784: what the entry started, or why it did not, in the server's own sentence
+      const plan = automationWords(data);
+      const eventId = data.eventId ?? null;
+      toast({
+        text: joinWords([o.lead, `Stage: ${data.stage.label}`, plan, o.also]),
+        // without the event's id an undo could not be told from a new change (which may start a plan): not offered
+        ...(eventId && prev !== undefined && prev !== o.to ? { undo: () => void undo(prev, eventId) } : {}),
+        // M5 (E778): what the change did stays on the page's panel; one tap brings it into view (on a page that has it)
+        ...(hasNextPanel() ? { action: { label: SEE_NEXT, run: () => void showNextPanel() } } : {}),
+      });
+    },
+    [toast, undo],
+  );
+
+  /**
    * Changes the stage; on success shows the toast (with Undo when the server named the event).
    *
    * `from`: the stage the caller knew the person was in. It matters for one answer only (E780): "the same stage
@@ -55,31 +79,22 @@ export function useStageChange(contactId: string, labelOf: (key: string) => stri
    * then writes nothing and answers the stored event and its stored decision. The toast says exactly that (it used to
    * say nothing at all), and offers Undo back to `from` when the server named the event. The server alone decides
    * whether that undo is one (the caller's own change, not an undo itself, at most 15 minutes old: E779).
+   *
+   * `hold` (R-TODAY-11): no toast yet. The caller has more to save with the same tap (the earlier task it closes
+   * LAST) and calls `say` with this answer when it knows the whole result.
    */
   const change = useCallback(
     async (
       to: string,
-      o: { /** words before "Stage: …" (what the same tap saved first) */ lead?: string; /** words after it (the follow-up the server stored) */ also?: string; /** the stage the person was in when the caller asked */ from?: string } = {},
+      o: { /** words before "Stage: …" (what the same tap saved first) */ lead?: string; /** words after it (the follow-up the server stored) */ also?: string; /** the stage the person was in when the caller asked */ from?: string; hold?: boolean } = {},
     ): Promise<ActionResult<StageResponse>> => {
       const r = await act.run('POST', `/contacts/${contactId}/stage`, { stage: to });
       if (!r.ok) return r;
-      // "the same stage again": the server reports the stage itself as the previous one
-      const repeated = r.data.previousStage === to;
-      const prev = repeated ? o.from : r.data.previousStage;
-      // E784: what the entry started, or why it did not, in the server's own sentence
-      const plan = automationWords(r.data);
-      const eventId = r.data.eventId ?? null;
-      toast({
-        text: joinWords([o.lead, `Stage: ${r.data.stage.label}`, plan, o.also]),
-        // without the event's id an undo could not be told from a new change (which may start a plan): not offered
-        ...(eventId && prev !== undefined && prev !== to ? { undo: () => void undo(prev, eventId) } : {}),
-        // M5 (E778): what the change did stays on the page's panel; one tap brings it into view (on a page that has it)
-        ...(hasNextPanel() ? { action: { label: SEE_NEXT, run: () => void showNextPanel() } } : {}),
-      });
+      if (!o.hold) say(r.data, { to, lead: o.lead, also: o.also, from: o.from });
       return r;
     },
-    [act, contactId, toast, undo],
+    [act, contactId, say],
   );
 
-  return { change, pending: act.pending, error: act.error, clearError: act.clearError };
+  return { change, say, pending: act.pending, error: act.error, clearError: act.clearError };
 }

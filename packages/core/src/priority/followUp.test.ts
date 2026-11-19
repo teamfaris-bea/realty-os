@@ -236,7 +236,7 @@ describe('R-TODAY-3: the next promise', () => {
 
   it('is the earliest open task for the person, worded as it was written', () => {
     const r = selectNextPromise([task({ taskId: 't2', title: 'Call about the inspection', dueAt: (NOW + 2 * DAY_MS) as typeof NOW }), task()], NOW, NY);
-    expect(r).toEqual({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt: NOW + 7 * HOUR_MS, dueAllDay: false, overdue: false });
+    expect(r).toEqual({ taskId: 't1', text: 'Send lender intro', kind: 'promise', dueAt: NOW + 7 * HOUR_MS, dueAllDay: false, deadline: NOW + 7 * HOUR_MS, overdue: false });
   });
   it('null when there is none', () => {
     expect(selectNextPromise([], NOW, NY)).toBeNull();

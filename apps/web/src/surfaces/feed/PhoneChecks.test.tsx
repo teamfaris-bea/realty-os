@@ -66,7 +66,9 @@ describe('R-TODAY-10: the new controls on a phone', () => {
     const keep = await within(sheet).findByRole('radio', { name: `Keep ${LONG}` });
     const label = within(keep.closest('label') ?? sheet).getByText(`Keep ${LONG}`);
     expect(label.className).not.toMatch(NO_CUT);
-    expect(within(sheet).getByTestId('log-save')).toHaveTextContent(`Save and keep ${LONG} + follow-up`);
+    // (b19 Today fix 1: the follow-up the button adds is named under it, in the pinned footer, not in the button)
+    expect(within(sheet).getByTestId('log-save')).toHaveTextContent(`Save and keep ${LONG}`);
+    expect(within(within(sheet).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\.$/);
   });
 
   it('the Log sheet’s quick times and its one button are 44 px targets, and the button is in the sheet’s pinned footer (above the keyboard and the safe area)', async () => {

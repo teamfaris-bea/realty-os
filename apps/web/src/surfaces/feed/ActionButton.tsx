@@ -73,7 +73,7 @@ export interface ActionButtonProps {
    * R-TODAY-7: the action is on a follow-up card of Today. Call goes on to the stage step in its own sheet, and Text
    * opens the text sheet on the page (feed/OnePass.tsx) instead of the conversation page. Absent: as it always was.
    */
-  onePass?: Pick<OnePassOptions, 'replaces'> | undefined;
+  onePass?: Pick<OnePassOptions, 'cardTask'> | undefined;
 }
 
 const FEED_KEYS = [['feed'], ['inbox']];
@@ -308,7 +308,7 @@ export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): s
  * R-TODAY-7: "Log" on a follow-up card. A call, text or email that happened outside the app (the agent's own phone),
  * logged without leaving Today: the person page's Log sheet, with its stage step.
  */
-export function LogButton({ contact, onePass }: { contact: { id: string; name: string }; onePass?: Pick<OnePassOptions, 'replaces'> | undefined }) {
+export function LogButton({ contact, onePass }: { contact: { id: string; name: string }; onePass?: Pick<OnePassOptions, 'cardTask'> | undefined }) {
   const sheets = useOnePass();
   if (!sheets) return null;
   return (

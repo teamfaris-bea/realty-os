@@ -426,7 +426,9 @@ test('J10.7: a double tap on the one button that saves the log, the follow-up an
   await expect(s.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked({ timeout: 15_000 });
   await tap(page, s.getByRole('group', { name: 'Follow-up' }).getByRole('button', { name: 'Tomorrow' }));
   await expect(s.getByTestId('follow-up-line')).toHaveText(new RegExp(`^Will add a task for you: “Follow up with ${ivy.first}”, due .+9:00 AM\\.$`));
-  const confirm = s.getByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
+  // (b19 Today fix 1, R-TODAY-11: the button stays one line; the task it adds is named under it, in the pinned footer)
+  const confirm = s.getByRole('button', { name: 'Save and change to Trying to reach', exact: true });
+  await expect(s.getByTestId('dialog-footer').getByTestId('tap-effects')).toHaveText(new RegExp(`^Adds: Follow up with ${ivy.first}, tomorrow 9:00\\sAM\\.$`));
   await expect(confirm).toBeEnabled({ timeout: 15_000 });
   // two taps inside one frame: neither can wait for the other's answer
   const twice = (l: Locator) => l.evaluate((el) => { (el as HTMLElement).click(); (el as HTMLElement).click(); });
@@ -599,7 +601,8 @@ test('J10.10 (M6, E775): the stage change fails after the log saved: the sheet s
   await expect(one).toBeEnabled({ timeout: 15_000 });
   await tap(page, one);
   // exactly what was saved and what was not; nothing is claimed in a toast
-  await expect(s.getByRole('alert')).toHaveText("Call logged (left voicemail). We could not confirm the stage change: Can't reach the server. Check your connection, then try again.", { timeout: 15_000 });
+  // (b19 Today fix 1, R-TODAY-11: one consistent sentence: what was saved, what could not be confirmed, the reason)
+  await expect(s.getByRole('alert')).toHaveText("Saved: call logged (left voicemail). Not confirmed: the stage change. Can't reach the server. Check your connection, then try again.", { timeout: 15_000 });
   await expect(s.getByRole('status')).toHaveText('Call logged (left voicemail)');
   await expect(peopleToast(page)).toBeEmpty();
   expect(dropped).toBe(1);
