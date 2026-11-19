@@ -34,6 +34,13 @@ const TITLES: Record<string, string> = {
   REINQUIRY: 'A lead you own inquired again',
   REINQUIRY_CLOSED: 'A closed contact inquired again',
   MERGED: 'Two contacts were merged',
+  // b19 R-TEAMQ-12: a pond arrival, by why it arrived (kind pond_new, to the team leads)
+  POND_NEW_RULE_POND: 'New lead in the pond: a routing rule sends leads like this there',
+  POND_NEW_NO_RULE_MATCH: 'New lead in the pond: no routing rule matched',
+  POND_NEW_MAX_OFFERS_REACHED: 'A lead went to the pond: nobody accepted the offer',
+  POND_NEW_NO_ELIGIBLE_AGENT: 'A lead went to the pond: nobody was available',
+  POND_NEW_RELEASED: 'A lead was released to the pond',
+  POND_NEW_AUTO_RELEASED: 'A lead went back to the pond (no first touch)',
 };
 
 export const FOLLOWUP_JOB_KIND = 'ownership.followup';

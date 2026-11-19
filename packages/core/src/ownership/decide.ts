@@ -340,9 +340,51 @@ function finalize(b: Builder, auditAction: AuditAction | null, auditAlways = fal
   return [...pre, ...b.effects, ...out];
 }
 
+// ---- pond arrival (R-TEAMQ-12) -----------------------------------------------------------------------
+
+/** The ledger events that are a lead ARRIVING in a pond for a person to pick up. */
+const POND_ARRIVAL_TYPES: ReadonlySet<OwnershipEventType> = new Set<OwnershipEventType>(['sent_to_pond', 'released', 'auto_released']);
+
+/**
+ * R-TEAMQ-12 (b19, owner decision 4 of 2026-11-19): a pond arrival alerts the team leads. When this decision leaves
+ * the lead in a pond it was not in before, through routing (the rule sends it there, no rule matched, every offer
+ * expired, nobody was available), a release by its owner or the first-touch auto-release, every active Team Lead of
+ * the tenant gets one `pond_new` notification at high priority (ponds belong to no team, and a Team Lead sees every
+ * pond); a tenant with no Team Lead alerts its Owners and Admins instead. Decided here, with the move, so the alert
+ * commits in the same transaction as the ledger event, and keyed on that event (`pond_new:{contact}:{seq}`), so a
+ * replay or a retry alerts nobody twice and a later arrival is its own alert.
+ *
+ * Fewest alerts: the person who made the move is not told about their own move, and a person this decision already
+ * alerts (the critical "nobody was available" notice, the auto-release notice to the owner's Team Lead) gets no
+ * second notification for the same arrival. Not an arrival, so no alert: an import (never notifies, R-OWN-13), a
+ * merge, a re-inquiry that stays in the pond, the inactivity release of an old lead, and a member's deactivation
+ * (an Owner's or Admin's own bulk move of that member's leads). Notifications go to members only: nothing here is,
+ * or causes, a message to the client.
+ */
+function pondArrival(b: Builder): void {
+  const ctx = b.ctx;
+  const final = b.state;
+  if (final.state !== 'in_pond' || isSystem(ctx.actor, 'import') || ctx.deactivation !== undefined) return;
+  if (b.initial?.state === 'in_pond' && b.initial.pondId === final.pondId && !b.events.some((e) => e.toState !== 'in_pond')) return; // it never left
+  const arrival = [...b.events].reverse().find((e) => e.toState === 'in_pond' && e.fromState !== 'in_pond');
+  if (!arrival || !POND_ARRIVAL_TYPES.has(arrival.type)) return;
+  const people = ctx.people;
+  const leads = people?.teamLeads ?? Object.values(people?.teamLeadsOf ?? {}).flat();
+  const recipients = leads.length > 0 ? leads : (people?.admins ?? []);
+  const actorId = ctx.actor.kind === 'user' ? ctx.actor.userId : null;
+  const alreadyTold = new Set(b.effects.filter((e): e is Extract<Effect, { kind: 'notify' }> => e.kind === 'notify').map((e) => e.userId));
+  const key = `pond_new:${b.contactId}:${arrival.seq}`;
+  const reason = `POND_NEW_${arrival.type === 'sent_to_pond' ? arrival.reasonCode : arrival.type === 'released' ? 'RELEASED' : 'AUTO_RELEASED'}`;
+  for (const u of [...new Set(recipients)].sort()) {
+    if (u === actorId || alreadyTold.has(u)) continue;
+    b.notify(u, 'pond_new', 'high', key, reason);
+  }
+}
+
 // ---- results ---------------------------------------------------------------------------------------
 
 function accepted(b: Builder, auditAction: AuditAction | null, auditAlways = false): Decision {
+  pondArrival(b);
   const effects = finalize(b, auditAction, auditAlways);
   return { ok: true, events: b.events, next: b.state, effects };
 }

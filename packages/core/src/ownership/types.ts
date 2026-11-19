@@ -358,6 +358,11 @@ export interface PeopleFacts {
   admins: readonly UserId[];
   /** user id -> the team leads of that user's teams. */
   teamLeadsOf: Readonly<Record<string, readonly UserId[]>>;
+  /**
+   * Every active Team Lead of the tenant (b19, R-TEAMQ-12: who a pond arrival alerts; a Team Lead sees every pond).
+   * When not given, the leaders named in `teamLeadsOf` stand in.
+   */
+  teamLeads?: readonly UserId[];
 }
 
 export interface DeactivationFacts {

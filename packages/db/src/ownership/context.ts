@@ -105,13 +105,16 @@ const PEOPLE_COLUMNS = sql`
                       FROM team_members tm
                       JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
                       JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
-                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads`;
-type PeopleRow = { admins: string[] | null; leads: { member: string; lead: string }[] | null };
+                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads,
+           -- b19 R-TEAMQ-12: who a pond arrival alerts: every active Team Lead of the tenant (a Team Lead sees every pond)
+           (SELECT array_agg(user_id ORDER BY user_id) FROM memberships
+             WHERE tenant_id = app.tenant_id() AND role = 'team_lead' AND status = 'active') AS team_leads`;
+type PeopleRow = { admins: string[] | null; leads: { member: string; lead: string }[] | null; team_leads: string[] | null };
 
 function peopleOf(row: PeopleRow | undefined): PeopleFacts {
   const teamLeadsOf: Record<string, UserId[]> = {};
   for (const x of row?.leads ?? []) (teamLeadsOf[x.member] ??= []).push(x.lead as UserId);
-  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf };
+  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf, teamLeads: (row?.team_leads ?? []).map((a) => a as UserId) };
 }
 
 const DEAL_OPEN = (contactId: ContactId) => sql`
