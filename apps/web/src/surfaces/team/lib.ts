@@ -1,6 +1,6 @@
 // Pure helpers of the Team surface (exception queue, scoreboard, momentum). Unit-tested.
 import type { EvidenceRefView, EvidenceSourceType } from '../../design/index.js';
-import { formatDays, formatDuration, formatStamp, plural } from '../admin/lib/format.js';
+import { formatAge, formatDays, formatDuration, formatStamp, plural } from '../admin/lib/format.js';
 import type { ExceptionEvidence, ExceptionItem, ExceptionType, MomentumNorm, Scoreboard } from '../admin/lib/types.js';
 
 export const TYPE_LABEL: Record<ExceptionType, string> = {
@@ -139,4 +139,76 @@ export function scoreboardLines(s: Scoreboard): MetricLine[] {
 export function normLine(norm: MomentumNorm | null, minSample: number): string {
   if (!norm || !norm.enough) return `Not enough team history to compare yet (${norm?.sample ?? 0} of ${minSample} deals needed)`;
   return `Team median ${formatDays(norm.medianDays)} (of ${plural(norm.sample, 'deal')})`;
+}
+
+// ---- the team work queue (b19 team-queue lane; GET /team/queue, read-only) ----------------------------------
+
+export type TeamQueueGroupKey = 'new_lead' | 'unanswered_reply' | 'due_promise' | 'overdue_follow_up' | 'appointment_outcome';
+
+export interface TeamQueueRow {
+  key: string;
+  contact: { id: string; name: string };
+  source: string | null;
+  /** `owner`: the lead's owner, or the member a task or appointment is on; anything else is "no owner yet" */
+  owner: { kind: 'owner' | 'on_offer' | 'pond' | 'unassigned'; userId: string | null; name: string | null; pondId: string | null; label: string };
+  /** the server's sentence: why this row is here */
+  why: string;
+  since: string;
+  waitingSeconds: number;
+  /** new leads only: the same wait inside staffed hours */
+  staffedSeconds: number | null;
+  offHours: boolean;
+}
+
+export interface TeamQueueGroup {
+  key: TeamQueueGroupKey;
+  label: string;
+  empty: string;
+  rows: TeamQueueRow[];
+  total: number;
+  more: number;
+  /** the server's read reached its cap: total and more are lower bounds */
+  atLeast: boolean;
+}
+
+export interface TeamQueueResponse {
+  groups: TeamQueueGroup[];
+  staffedHours: { open: string; close: string; zone: string };
+  windows: { newLeadDays: number; replyDays: number; taskDays: number; appointmentDays: number };
+  generatedAt: string;
+}
+
+/** "32", or "at least 500" when the server's read was capped. */
+export function queueCount(g: Pick<TeamQueueGroup, 'total' | 'atLeast'>): string {
+  return g.atLeast ? `at least ${g.total}` : String(g.total);
+}
+
+/** How long a row has waited, in the words of its group; a new lead's staffed time is said apart when it differs. */
+export function queueWait(key: TeamQueueGroupKey, r: Pick<TeamQueueRow, 'waitingSeconds' | 'staffedSeconds'>): string {
+  const wait = formatAge(r.waitingSeconds);
+  if (key === 'due_promise' || key === 'overdue_follow_up') return `Past due ${wait}`;
+  if (key === 'appointment_outcome') return `Ended ${wait} ago`;
+  const staffed = r.staffedSeconds !== null && r.waitingSeconds - r.staffedSeconds >= 60 ? ` · ${formatAge(r.staffedSeconds)} in staffed hours` : '';
+  return `Waiting ${wait}${staffed}`;
+}
+
+/** "Showing the 25 waiting longest. 7 more are not shown." (null when everything is shown) */
+export function queueMoreLine(g: Pick<TeamQueueGroup, 'rows' | 'more' | 'atLeast'>): string | null {
+  if (g.more <= 0) return null;
+  return `Showing the ${g.rows.length} waiting longest. ${g.atLeast ? `At least ${g.more}` : g.more} more ${g.more === 1 && !g.atLeast ? 'is' : 'are'} not shown.`;
+}
+
+/** "08:00" → "8:00 AM", "21:00" → "9:00 PM" (a wall-clock time of the team's zone: no Date, no viewer zone). */
+export function clock12(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm);
+  if (!m) return hhmm;
+  const h = Number(m[1]);
+  return `${h % 12 === 0 ? 12 : h % 12}:${m[2]} ${h < 12 || h === 24 ? 'AM' : 'PM'}`;
+}
+
+/** The footer line: when it was checked, the staffed hours and how far back each group looks. */
+export function queueFootnote(q: Pick<TeamQueueResponse, 'generatedAt' | 'staffedHours' | 'windows'>): string {
+  const w = q.windows;
+  const replies = w.replyDays === w.newLeadDays ? `${plural(w.newLeadDays, 'day')} for new leads and replies` : `${plural(w.newLeadDays, 'day')} for new leads, ${plural(w.replyDays, 'day')} for replies`;
+  return `Checked ${formatStamp(q.generatedAt)}. Staffed hours are ${clock12(q.staffedHours.open)} to ${clock12(q.staffedHours.close)} (${q.staffedHours.zone}). Looks back ${replies}, ${plural(w.taskDays, 'day')} for promises and follow-ups, ${plural(w.appointmentDays, 'day')} for appointments.`;
 }
