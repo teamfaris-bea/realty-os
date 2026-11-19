@@ -450,7 +450,8 @@ const ALERT_HOLDS_PER_RUN = 10_000;
  * Their matches therefore stay pending, so the source check must not be asked for them on every run (E756; review round
  * 5): the due query holds NO definer. The due searches are read once, a page of them at a time is asked the source
  * check in one statement (once per person, no lock on anyone), and every active search of a refused person is put on
- * hold for an hour (`alerts_held_until`), which the due query skips on a plain column. A held search costs later runs
+ * hold for an hour (`alerts_held_until`), which the due query skips on a plain column. Every page is asked before any
+ * person is locked, so no alerted person's lock is held while others are asked. A held search costs later runs
  * nothing; the Owner's mapping or setting change clears the holds of the people it may have released
  * (leads/sourceStop.ts releaseAlertHolds), and a hold that runs out is asked again once. Refused people never count
  * against `limit`, so they neither fill the batch nor starve it. A hold only ever withholds: the source check is asked
@@ -478,31 +479,35 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
                                                 AND a.contact_id = ANY (app.contact_person_ids(s.tenant_id, s.contact_id))))
      ORDER BY s.contact_id, s.id LIMIT ${limit + ALERT_HOLDS_PER_RUN}`.execute(tx);
   let sent = 0;
-  let considered = 0;
   let holds = 0;
-  /** the people of the pages read so far, with what the source check said of each */
+  /** the people asked so far, with what the source check said of each */
   const refused = new Map<string, boolean>();
-  for (let i = 0; i < due.rows.length && considered < limit; i++) {
-    if (i % ALERT_SOURCE_PAGE === 0) {
-      if (holds >= ALERT_HOLDS_PER_RUN) break;
-      // R-LSRC-10 M7 (R-LSRC-8, R-LSRC-9): this page's people, asked once each in one statement (the same definer every
-      // automated path asks), and the refused ones' searches held. No contact lock is taken for a person who is refused.
-      const page = [...new Set(due.rows.slice(i, i + ALERT_SOURCE_PAGE).map((x) => x.contact_id))].filter((id) => !refused.has(id));
-      if (page.length > 0) {
-        const asked = await sql<{ id: string; why: string | null }>`
-          SELECT p.id, app.person_source_refusal(app.tenant_id(), p.id) AS why FROM unnest(${page}::uuid[]) AS p(id)`.execute(tx);
-        for (const x of asked.rows) refused.set(x.id, x.why !== null);
-        const hold = asked.rows.filter((x) => x.why !== null).map((x) => x.id);
-        if (hold.length > 0) {
-          const u = await sql`UPDATE saved_searches SET alerts_held_until = ${new Date(now + ALERT_HOLD_MS).toISOString()}::timestamptz
-             WHERE tenant_id = app.tenant_id() AND status = 'active' AND contact_id = ANY (${hold}::uuid[])`.execute(tx);
-          holds += Number(u.numAffectedRows ?? 0n);
-        }
+  // R-LSRC-10 M7 (R-LSRC-8, R-LSRC-9), first: the people of the due searches are asked the source check, a page at a
+  // time, once each in one statement (the same definer every automated path asks), and the refused ones' searches are
+  // held. All of it happens BEFORE any person is locked below: the question costs about 1.5 ms a person, seconds when
+  // thousands are newly covered or their holds run out together, and those must not be seconds during which an alerted
+  // person's lock is held (their inbound STOP, their pause and the agent's own text take it). No contact lock is ever
+  // taken for a refused person.
+  const open: (typeof due.rows)[number][] = [];
+  for (let i = 0; i < due.rows.length && open.length < limit && holds < ALERT_HOLDS_PER_RUN; i += ALERT_SOURCE_PAGE) {
+    const rows = due.rows.slice(i, i + ALERT_SOURCE_PAGE);
+    const page = [...new Set(rows.map((x) => x.contact_id))].filter((id) => !refused.has(id));
+    if (page.length > 0) {
+      const asked = await sql<{ id: string; why: string | null }>`
+        SELECT p.id, app.person_source_refusal(app.tenant_id(), p.id) AS why FROM unnest(${page}::uuid[]) AS p(id)`.execute(tx);
+      for (const x of asked.rows) refused.set(x.id, x.why !== null);
+      const hold = asked.rows.filter((x) => x.why !== null).map((x) => x.id);
+      if (hold.length > 0) {
+        const u = await sql`UPDATE saved_searches SET alerts_held_until = ${new Date(now + ALERT_HOLD_MS).toISOString()}::timestamptz
+           WHERE tenant_id = app.tenant_id() AND status = 'active' AND contact_id = ANY (${hold}::uuid[])`.execute(tx);
+        holds += Number(u.numAffectedRows ?? 0n);
       }
     }
-    const d = due.rows[i]!;
-    if (refused.get(d.contact_id) === true) continue; // held: it does not count against the batch
-    considered += 1;
+    for (const d of rows) if (refused.get(d.contact_id) !== true) open.push(d); // a held search does not count against the batch
+  }
+  // then the searches of the people who may be alerted, each under its person's lock
+  for (const d of open.slice(0, limit)) {
+    if (refused.get(d.contact_id) === true) continue; // refused under the lock below, for an earlier search of theirs
     const s0 = { id: d.id, contactId: d.contact_id, alertFrequency: d.alert_frequency, lastAlertedAt: d.last_alerted_at ? (d.last_alerted_at.getTime() as Instant) : null };
     if (s0.lastAlertedAt !== null && now - s0.lastAlertedAt < PERIOD_MS[s0.alertFrequency]) continue;
     await lockContact(tx, s0.contactId as ContactId);

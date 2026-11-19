@@ -12,12 +12,17 @@
 // Now the first run asks once per person, in pages, with no lock on them, holds their searches for an hour
 // (saved_searches.alerts_held_until) and still sends the reviewed person's alert; every later run skips the held
 // searches on a plain column and asks nothing. The Owner's mapping clears the holds of that label's people, and a hold
-// that ran out is asked again once. Two proofs: the stated times (first run under 20 s, later runs under 1 s; about
-// 3 s and 30 ms on an idle machine) and the database's own counters (each definer call probes lead_inquiries once: the
-// two later runs make fewer than 50 index scans of it, where the old sender made more than 10,000).
+// that ran out is asked again once. Two proofs: the stated times (first run under 20 s, later runs under 1 s; measured
+// here: about 8 s, which is the one question per covered person at about 1.5 ms each, and under 50 ms) and the
+// database's own counters (each definer call probes lead_inquiries once: the two later runs make fewer than 50 index
+// scans of it, where the old sender made more than 10,000 and took the 8 s on every run).
+//
+// The asking is done BEFORE any person is locked: the seconds a first run spends on the source check must not be
+// seconds during which an alerted person's lock is held (their inbound STOP, their pause and the agent's own text
+// take that lock). The last case reads the order of the sender's own statements.
 // Made-up labels and sources; fakes only.
 import { randomUUID } from 'node:crypto';
-import { withTenantTx } from '@realty/db';
+import { type Database, withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { freshReauth } from '../comms/testing.js';
@@ -181,5 +186,48 @@ describe('R-LSRC-10 M7: the alert sender at volume (5,003 covered pending search
     expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label: BIG, leadSourceId: plain })).status).toBe(200);
     expect(Date.now() - t1).toBeLessThan(5000);
     expect((await held()).n).toBe(0);
+  }, 300_000);
+
+  it('E756: every page of people is asked the source check before any person is locked, so an alerted person\'s lock is never held while thousands of others are asked', async () => {
+    // the big label goes back in review: 5,000 covered pending searches again, none held
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PUT', '/lead-sources/import-labels', { label: BIG, leadSourceId: null })).status).toBe(200);
+    expect((await held()).n).toBe(0);
+    // a reviewed person whose id sorts BEFORE all of them, with an active search and a home not yet alerted (a copy of
+    // the reviewed person and their search, written as the migration owner: fixtures only)
+    const early = { contactId: '00000000-0000-4000-7000-000000000001', searchId: '00000000-0000-4000-7000-000000000002' };
+    const cols = async (table: string) =>
+      (await h.su.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND is_generated = 'NEVER' ORDER BY ordinal_position", [table])).rows.map((r) => `"${r.column_name}"`);
+    const contactCols = await cols('contacts');
+    const searchCols = await cols('saved_searches');
+    await suFixture(h, [
+      { text: `INSERT INTO contacts (${contactCols.join(', ')}) SELECT ${contactCols.map((c) => (c === '"id"' ? '$2::uuid' : `x.${c}`)).join(', ')} FROM contacts x WHERE x.id = $1`, values: [reviewed.contactId, early.contactId] },
+      {
+        text: `INSERT INTO saved_searches (${searchCols.join(', ')}) SELECT ${searchCols.map((c) => (c === '"id"' ? '$2::uuid' : c === '"contact_id"' ? '$3::uuid' : `x.${c}`)).join(', ')} FROM saved_searches x WHERE x.id = $1`,
+        values: [reviewed.searchId, early.searchId, early.contactId],
+      },
+      { text: 'INSERT INTO saved_search_matches (tenant_id, search_id, listing_id, matched_at) VALUES ($1,$2,$3, now())', values: [w.tenantId, early.searchId, listingId] },
+    ]);
+
+    // the sender's own statements, in order: a page of people asked the source check, and a person's lock taken
+    const order: ('ask' | 'lock')[] = [];
+    const watched: Database = {
+      ...h.database,
+      kysely: h.database.kysely.withPlugin({
+        transformQuery: ({ node }) => {
+          const text = node.kind === 'RawNode' ? (node as unknown as { sqlFragments: readonly string[] }).sqlFragments.join(' ') : '';
+          if (text.includes('app.person_source_refusal') && text.includes('unnest(')) order.push('ask');
+          else if (text.includes('app.lock_contact')) order.push('lock');
+          return node;
+        },
+        transformResult: async ({ result }) => result,
+      }),
+    };
+    await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => sendDueAlertsInTx(tx, depsOf(h), w.tenantId, now, {}), { db: watched });
+
+    expect(order.filter((x) => x === 'ask').length).toBeGreaterThanOrEqual(26); // 5,001 due searches, 200 a page
+    expect(order.filter((x) => x === 'lock').length).toBeGreaterThanOrEqual(1); // the early person's
+    expect(order.lastIndexOf('ask'), 'the last page is asked before the first lock is taken').toBeLessThan(order.indexOf('lock'));
+    expect((await held()).n).toBe(COVERED);
   }, 300_000);
 });
