@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiClient } from '../../shell/index.js';
 import { ShellProvider } from '../../shell/context.js';
 import { FakeFetch, err, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
+import { aiFollowUpLine } from '../aiCare/Person.js';
 import { panel } from '../aiCare/testing.js';
 import { IDS, fullContact, iso, reachability, stopReason } from '../feed/lib/testing.js';
 import type { TaskView } from '../feed/lib/types.js';
@@ -250,6 +251,23 @@ describe('R-STG-4 the "What happens next" panel', () => {
     const r = row('AI follow-up');
     expect(await within(r).findByText('On: the AI assistant is handling this conversation.')).toBeInTheDocument();
     expect(within(r).getByRole('link', { name: 'Open AI care' })).toHaveAttribute('href', '/#ai-care');
+  });
+
+  it('L13 (E791): AI follow-up says the TRUE reason it is not on: off for the whole team (as the AI care card says), not "Not on for this person"', async () => {
+    mount({ ai: panel({ state: 'none', canStart: false, startRefusal: { code: 'AI_ISA_OFF', sentence: 'The AI assistant is off for your team.' } }) });
+    const r = row('AI follow-up');
+    expect(await within(r).findByText('Not on: the AI assistant is off for your team.')).toBeInTheDocument();
+    expect(within(r).queryByText('Not on for this person.')).toBeNull();
+    // the same data, every state, one line each
+    const off = (code: string) => aiFollowUpLine(panel({ state: 'none', canStart: false, startRefusal: { code, sentence: 'x' } }), { visible: true, pending: false });
+    expect(off('AI_ISA_OFF')).toBe('Not on: the AI assistant is off for your team.');
+    expect(off('AI_ISA_POLICY_NOT_APPROVED')).toBe('Not on: your team has no approved AI assistant policy.');
+    expect(off('AI_ISA_NOT_CLEARED')).toMatch(/^Not on: waiting on counsel review/);
+    // a reason about this person or this viewer is not a team-wide one: the line stays about the person
+    expect(off('AI_ISA_NO_OPTIN')).toBe('Not on for this person.');
+    expect(aiFollowUpLine(panel({ state: 'none', canStart: true, startRefusal: null }), { visible: true, pending: false })).toBe('Not on for this person.');
+    expect(aiFollowUpLine(panel({ state: 'live' }), { visible: true, pending: false })).toBe('On: the AI assistant is handling this conversation.');
+    expect(aiFollowUpLine(panel({ state: 'paused' }), { visible: true, pending: false })).toMatch(/^Paused: nobody is following up automatically\./);
   });
 
   it('AI follow-up paused says nobody is following up automatically', async () => {

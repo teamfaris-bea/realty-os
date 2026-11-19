@@ -282,8 +282,8 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   await expect(s.getByRole('radio', { name: 'Keep Trying to reach' })).toBeVisible();
   // only the agent who was on the call knows whether they are months away: offered beside it, never chosen for them
   await expect(s.getByRole('radio', { name: 'Long-term follow-up' })).toBeVisible();
-  await expect(preview.getByText(new RegExp(`^Will start: ${PLAN}, first step text `))).toBeVisible({ timeout: 15_000 });
-  await expect(s.getByTestId('stage-step-effect')).toHaveText(new RegExp(`^Will start: ${PLAN}, first step text `));
+  await expect(preview.getByText(new RegExp(`^Will start: ${PLAN}, first step: a text`))).toBeVisible({ timeout: 15_000 });
+  await expect(s.getByTestId('stage-step-effect')).toHaveText(new RegExp(`^Will start: ${PLAN}, first step: a text`));
   await expect(s.getByText(/Will start/)).toHaveCount(1);
   await expect(s.getByTestId('stage-step-effect')).toBeInViewport({ ratio: 1 });
   // at open with three choices and a plan that will start: still nothing that matters under the fold

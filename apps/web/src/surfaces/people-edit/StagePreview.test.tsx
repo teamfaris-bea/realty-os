@@ -59,8 +59,15 @@ describe('R-STG-3 words', () => {
 
   it('"Will start" names the plan and its first step; a plan with no step due says so; the row line never says started', () => {
     const now = at(0, 8).getTime();
-    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(1, 9).toISOString() } }, now)).toBe('Will start: Buyer plan, first step text tomorrow 9:00 AM');
-    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'email', dueAt: at(0, 7).toISOString() } }, now)).toBe('Will start: Buyer plan, first step email now');
+    // L13 (E791): the first step reads as a sentence ("first step text now" did not): what it is, then when
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(1, 9).toISOString() } }, now)).toBe('Will start: Buyer plan, first step: a text tomorrow at 9:00 AM');
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'email', dueAt: at(0, 7).toISOString() } }, now)).toBe('Will start: Buyer plan, first step: an email, now');
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(0, 9).toISOString() } }, now)).toBe('Will start: Buyer plan, first step: a text today at 9:00 AM');
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(3, 9).toISOString() } }, now)).toBe(`Will start: Buyer plan, first step: a text on ${new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(at(3, 9))} at 9:00 AM`);
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(10, 9).toISOString() } }, now)).toMatch(/^Will start: Buyer plan, first step: a text on [A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2} at 9:00 AM$/);
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'voice', dueAt: at(0, 7).toISOString() } }, now)).toBe('Will start: Buyer plan, first step: a call, now');
+    expect(willStartText({ plan: 'Buyer plan', firstStep: { channel: 'fax', dueAt: at(0, 7).toISOString() } }, now)).toBe('Will start: Buyer plan, first step: a message, now');
+    for (const ch of ['sms', 'email', 'voice', 'web_chat']) expect(willStartText({ plan: 'P', firstStep: { channel: ch, dueAt: at(1, 9).toISOString() } }, now)).not.toMatch(/first step (text|email|call|chat)/);
     expect(willStartText({ plan: 'Buyer plan', firstStep: null }, now)).toBe('Will start: Buyer plan. No message is due from it yet.');
     expect(effectLine(preview({ wontStart: { plan: 'Buyer plan', reason: 'cannot_be_reached', sentence: STOP_SENTENCE, alreadyIn: null } }), now)).toBe(STOP_SENTENCE);
     expect(effectLine(preview(), now)).toBe('No plan starts on this stage.');
@@ -100,8 +107,8 @@ describe('R-STG-3 the preview block', () => {
       </>,
     );
     // M4: the effect is ONE line (the sheet's button is described by it); what no stage change does is the footnote
-    expect(await screen.findByText('Will start: Buyer plan, first step text tomorrow 9:00 AM')).toBeInTheDocument();
-    expect(screen.getByTestId('stage-step-effect')).toHaveTextContent(/^Will start: Buyer plan, first step text tomorrow 9:00 AM$/);
+    expect(await screen.findByText('Will start: Buyer plan, first step: a text tomorrow at 9:00 AM')).toBeInTheDocument();
+    expect(screen.getByTestId('stage-step-effect')).toHaveTextContent(/^Will start: Buyer plan, first step: a text tomorrow at 9:00 AM$/);
     expect(screen.getAllByText(/Will start/)).toHaveLength(1);
     const note = within(screen.getByTestId('stage-never-note'));
     expect(note.getByText('AI follow-up: unchanged')).toBeInTheDocument();
@@ -197,7 +204,7 @@ describe('R-STG-3 the stage pill: every stage says what it will do BEFORE the ta
     await u.click(screen.getByRole('button', { name: 'Stage: Trying to reach. Change stage' }));
     const sheet = screen.getByRole('dialog');
     const active = await within(sheet).findByRole('button', { name: 'Active client' });
-    await waitFor(() => expect(active).toHaveAccessibleDescription(/Will start: Buyer plan, first step text tomorrow 9:00 AM/));
+    await waitFor(() => expect(active).toHaveAccessibleDescription(/Will start: Buyer plan, first step: a text tomorrow at 9:00 AM/));
     expect(within(sheet).getByRole('button', { name: 'Long-term follow-up' })).toHaveAccessibleDescription(/Keep in touch will not start: it has no approved version yet/);
     expect(within(sheet).getByRole('button', { name: 'Connected' })).toHaveAccessibleDescription(/No plan starts on this stage\./);
     // the person's own stage is not asked about: picking it changes nothing

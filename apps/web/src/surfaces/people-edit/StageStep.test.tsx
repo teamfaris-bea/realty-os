@@ -145,8 +145,8 @@ describe('the stage step after an outcome', () => {
     expect(within(group).getByRole('radio', { name: 'Keep Trying to reach' })).not.toBeChecked();
     const longTerm = within(group).getByRole('radio', { name: 'Long-term follow-up' });
     expect(longTerm).toHaveAccessibleDescription(/We have talked and they are months away, so we keep in touch\./);
-    expect(await previewBlock().findByText('Will start: Stay in touch, first step text tomorrow 9:00 AM')).toBeInTheDocument();
-    expect(effect()).toHaveTextContent('Will start: Stay in touch, first step text tomorrow 9:00 AM');
+    expect(await previewBlock().findByText('Will start: Stay in touch, first step: a text tomorrow at 9:00 AM')).toBeInTheDocument();
+    expect(effect()).toHaveTextContent('Will start: Stay in touch, first step: a text tomorrow at 9:00 AM');
     await u.click(longTerm);
     expect(await within(await sheet()).findByRole('button', { name: 'Change to Long-term follow-up' })).toBeInTheDocument();
     await waitFor(() => expect(previewBlock().getByText('No plan starts on this stage.')).toBeInTheDocument());

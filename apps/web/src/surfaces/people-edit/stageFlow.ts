@@ -145,9 +145,28 @@ export function whenWords(iso: string, now: number = Date.now()): string {
   return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(d);
 }
 
-/** "Will start: Buyer plan, first step text tomorrow 9:00 AM". Said only of a preview whose `starts` is set. */
+const CHANNEL_THING: Record<string, string> = { sms: 'a text', mms: 'a text', text: 'a text', email: 'an email', web_chat: 'a chat message', voice: 'a call' };
+
+/**
+ * A step as a phrase (E791): what it is, then when, in the viewer's zone. "a text, now", "a text today at 9:00 AM",
+ * "a text tomorrow at 9:00 AM", "a text on Thu at 9:00 AM" within a week, otherwise "a text on Thu, Nov 26 at
+ * 9:00 AM". A time already past reads "now": the runner takes it on its next pass.
+ */
+export function stepWords(channel: string, iso: string, now: number = Date.now()): string {
+  const what = CHANNEL_THING[channel] ?? 'a message';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()) || d.getTime() <= now + 60_000) return `${what}, now`;
+  const days = Math.round((dayStart(d) - dayStart(new Date(now))) / 86_400_000);
+  const time = formatTime(iso);
+  if (days === 0) return `${what} today at ${time}`;
+  if (days === 1) return `${what} tomorrow at ${time}`;
+  if (days < 7) return `${what} on ${new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(d)} at ${time}`;
+  return `${what} on ${new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(d)} at ${time}`;
+}
+
+/** "Will start: Buyer plan, first step: a text tomorrow at 9:00 AM". Said only of a preview whose `starts` is set. */
 export function willStartText(s: NonNullable<StagePreview['starts']>, now: number = Date.now()): string {
-  return s.firstStep ? `Will start: ${s.plan}, first step ${channelWord(s.firstStep.channel)} ${whenWords(s.firstStep.dueAt, now)}` : `Will start: ${s.plan}. No message is due from it yet.`;
+  return s.firstStep ? `Will start: ${s.plan}, first step: ${stepWords(s.firstStep.channel, s.firstStep.dueAt, now)}` : `Will start: ${s.plan}. No message is due from it yet.`;
 }
 
 /** The one line a stage's row carries before it is picked: what entering it would do to the automated plan. */

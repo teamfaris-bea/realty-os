@@ -144,7 +144,12 @@ export function aiFollowUpLine(p: PanelResponse | null, o: { visible: boolean; p
   if (!o.visible) return 'Not shown for your role.';
   if (o.pending) return 'Loading';
   const state = p ? stateOfPanel(p) : null;
-  if (!p || !state || !p.assignment) return 'Not on for this person.';
+  if (!p || !state || !p.assignment) {
+    // E791: the true reason it is not on. A team-wide condition (the assistant is off for the team, its policy is not
+    // approved, counsel has not cleared it) is said as that, in the AI care card's own words, never as "this person"
+    const team = p?.startRefusal && TEAM_REFUSALS.has(p.startRefusal.code) ? isaMessage(p.startRefusal.code) : null;
+    return team ? `Not on: ${team.charAt(0).toLowerCase()}${team.slice(1)}` : 'Not on for this person.';
+  }
   if (state === 'live') return 'On: the AI assistant is handling this conversation.';
   if (state === 'paused') return `Paused: nobody is following up automatically. ${pauseWords(p.assignment.pauseReason)}`;
   return `Ended: ${endWords(p.assignment.endReason)}`;
