@@ -5,6 +5,7 @@
 //   - a person changed the stage (an import, migration, merge copy or the system never auto-enrolls);
 //   - not as a bulk action whose audience is built from a protected tag (R-PAR-8: a protected tag never defines the
 //     audience of a bulk enrollment, and a bulk stage change into a plan's stage would be one; batch 5 review F1);
+//   - the change is not the undo of the person's last stage change (R-STG-5: an undo never starts a plan);
 //   - the person still exists, is not merged, and is still in that stage (an Undo or a later change wins);
 //   - the person who changed the stage still sees the person's detail by their own RLS;
 //   - the chosen playbook has an APPROVED version (a draft, superseded or revoked version never runs);
@@ -34,6 +35,7 @@ export const SKIP_REASONS = [
   'ai_isa_active', // R-ISA-2 (D12 proposed; b12 review B12X-4): the person is under live AI care, so no plan starts
   'source_no_automated_contact', // b18 review B18S-5: a lead source marked "No automated contact for leads from this source" sent them
   'source_unclassified', // R-LSRC-9 (0101): an import brought them in and the Owner has not reviewed that source yet
+  'undo', // R-STG-5 (0105): the change is the undo of the person's last stage change, and an undo never starts a plan
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 
@@ -67,6 +69,12 @@ export interface StageEntryFacts {
   /** R-ISA-2: the person (any record of them) has a live AI ISA assignment */
   aiIsaActive?: boolean;
   /**
+   * R-STG-5: the stage event is marked as the undo of the person's most recent stage change
+   * (contact_stage_events.undo_of_event_id, written only by the history definer for a true reversal). An undo puts
+   * the stage back; it never starts the plan of the stage it goes back to.
+   */
+  undo?: boolean;
+  /**
    * b18 review B18S-5 and R-LSRC-9 (A8): why nothing automatic goes to the person, or null when automated contact is
    * allowed (leads/automatedContact.ts noAutomatedContact). REQUIRED: a stage entry starts a plan, which is automated
    * contact, so no caller can decide one without stating it; anything but an explicit null skips the plan.
@@ -91,6 +99,8 @@ export function decideStageEntry(f: StageEntryFacts): StageDecision {
   if (playbook === null) return { kind: 'none' };
   const skip = (reason: SkipReason): StageDecision => ({ kind: 'skip', reason, playbook });
   if (f.actorKind !== 'user') return skip('not_a_person_change');
+  // R-STG-5: before every other condition, so no later rule can turn an undo into a start
+  if (f.undo === true) return skip('undo');
   if (f.protectedAudience) return skip('protected_audience');
   if (!f.contact.exists || f.contact.deleted || f.contact.merged) return skip('person_removed');
   if (f.contact.stage !== f.toStage) return skip('stage_changed_again');

@@ -240,9 +240,9 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
       const view = force?.view ?? (who ? await changerView({ db: h.database }, w.tenantId, who) : { sees: false, protectedAudience: false });
       return withTenantTx(sys, async (tx, now) => {
         await sql`SET LOCAL transaction_read_only = on`.execute(tx);
-        const e = (await sql<{ contact_id: string; to_stage: string; actor_kind: 'user' | 'system' | 'support' | 'none'; bulk: boolean }>`
-          SELECT contact_id, to_stage, actor_kind, bulk_action_id IS NOT NULL AS bulk FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND id = ${eventId}`.execute(tx)).rows[0]!;
-        return decideEntry(tx, { contactId: e.contact_id, toStage: e.to_stage, actorKind: e.actor_kind, bulk: force?.bulk ?? e.bulk, playbooksOf: { eventId }, assumeEntered: false }, view, now);
+        const e = (await sql<{ contact_id: string; to_stage: string; actor_kind: 'user' | 'system' | 'support' | 'none'; bulk: boolean; undo: boolean }>`
+          SELECT contact_id, to_stage, actor_kind, bulk_action_id IS NOT NULL AS bulk, undo_of_event_id IS NOT NULL AS undo FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND id = ${eventId}`.execute(tx)).rows[0]!;
+        return decideEntry(tx, { contactId: e.contact_id, toStage: e.to_stage, actorKind: e.actor_kind, bulk: force?.bulk ?? e.bulk, undo: e.undo, playbooksOf: { eventId }, assumeEntered: false }, view, now);
       }, { db: h.database });
     };
     const got: Record<string, [string | null, string | null]> = {};
@@ -281,6 +281,27 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
     expect((await command(w.owner, survivor, 'merge', { loserId: loser, ownerChoice: agent.userId })).status).toBe(200);
     await check('person_removed', loser, lev);
 
+    // the change is the undo of the person's last stage change (R-STG-5; the mark is on the event, migration 0105)
+    const undone = await newContact(agent);
+    const away = await rawStageChange(h, agent, undone, 'connected');
+    const uev = await withTenantTx(agent.actor(), async (tx) => {
+      await sql`SELECT set_config('app.stage_undo_of', ${away}, true)`.execute(tx);
+      await sql`UPDATE contacts SET stage = 'new' WHERE tenant_id = app.tenant_id() AND id = ${undone}`.execute(tx);
+      await sql`SELECT set_config('app.stage_undo_of', '', true)`.execute(tx);
+      return (await sql<{ id: string }>`SELECT id FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND contact_id = ${undone} AND undo_of_event_id = ${away}`.execute(tx)).rows[0]!.id;
+    }, { db: h.database });
+    // "new" has no plan in this world, so give the undo a stage that has one: undo a move away from Active
+    const undone2 = await newContact(agent);
+    await rawStageChange(h, agent, undone2, 'active');
+    const away2 = await rawStageChange(h, agent, undone2, 'connected');
+    const uev2 = await withTenantTx(agent.actor(), async (tx) => {
+      await sql`SELECT set_config('app.stage_undo_of', ${away2}, true)`.execute(tx);
+      await sql`UPDATE contacts SET stage = 'active' WHERE tenant_id = app.tenant_id() AND id = ${undone2}`.execute(tx);
+      return (await sql<{ id: string }>`SELECT id FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND contact_id = ${undone2} AND undo_of_event_id = ${away2}`.execute(tx)).rows[0]!.id;
+    }, { db: h.database });
+    expect((await decideEvent(uev)).kind).toBe('none');
+    await check('undo', undone2, uev2);
+
     // a bulk action whose audience is built from a protected tag made the change (the fact the bulk runner's view
     // carries; bulk/secreview.stageplan.test.ts covers the real bulk path through this same function)
     const bulk = await newContact(agent);
@@ -295,11 +316,12 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
       not_visible: ['not_visible', 'not_visible'],
       person_removed: ['person_removed', 'person_removed'],
       protected_audience: ['protected_audience', 'protected_audience'],
+      undo: ['undo', 'undo'],
     });
   });
 
   it('R-STG-3 every skip reason the decision has is named by one of the tests above (a new reason needs its own preview test)', () => {
-    const covered = ['cannot_be_reached', 'source_no_automated_contact', 'source_unclassified', 'plan_not_approved', 'already_in_a_plan', 'ai_isa_active', 'not_a_person_change', 'stage_changed_again', 'not_visible', 'person_removed', 'protected_audience'];
+    const covered = ['cannot_be_reached', 'source_no_automated_contact', 'source_unclassified', 'plan_not_approved', 'already_in_a_plan', 'ai_isa_active', 'not_a_person_change', 'stage_changed_again', 'not_visible', 'person_removed', 'protected_audience', 'undo'];
     expect([...SKIP_REASONS].filter((r) => !covered.includes(r))).toEqual([]);
   });
 });

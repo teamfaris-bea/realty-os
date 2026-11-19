@@ -35,7 +35,8 @@ export const AddressBody = z.strictObject({
 
 export const CollaboratorBody = z.strictObject({ userId: Id, role: z.enum(['isa', 'tc', 'co_agent']).optional() });
 
-export const StageBody = z.strictObject({ stage: z.enum(STAGES), rowVersion: z.number().int().min(1).optional() });
+/** `undoOf` (R-STG-5): the stage event this change undoes; it must be the person's most recent one, and `stage` the stage it came from. */
+export const StageBody = z.strictObject({ stage: z.enum(STAGES), rowVersion: z.number().int().min(1).optional(), undoOf: Id.optional() });
 export const StageLabelsBody = z.strictObject({ labels: z.record(z.string(), z.string()) });
 
 export const RelationshipBody = z
@@ -116,7 +117,16 @@ export const CollaboratorsResponse = z.object({ collaborators: z.array(Collabora
 export const StageGuideRow = z.object({ key: z.string(), label: z.string(), definition: z.string(), notThis: z.string() });
 export const StageInfo = z.object({ stage: z.string(), label: z.string(), definition: z.string(), notThis: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
 // parity module 67 (flagged edit): what the stage entry started, or why not (null: no plan for this stage)
-export const StageResponse = z.object({ stage: StageInfo, previousStage: z.string(), rowVersion: z.number().int(), automation: AutomationOutcomeSchema });
+export const StageResponse = z.object({
+  stage: StageInfo,
+  previousStage: z.string(),
+  rowVersion: z.number().int(),
+  /** R-STG-5: the stage event this change wrote; for the same stage again, the event that put the person there (null: none) */
+  eventId: Id.nullable(),
+  automation: AutomationOutcomeSchema,
+  /** R-STG-5: for an undo, the plan the person is still in (an undo never stops it); null otherwise or when none */
+  stillRunning: z.object({ enrollmentId: Id, plan: z.string(), canStop: z.boolean() }).nullable(),
+});
 /** R-STG-3: GET /contacts/:id/stage/preview?to=<stage> */
 export const StagePreviewQuery = z.strictObject({ to: z.enum(STAGES) });
 export const StagePreviewResponse = z.object({

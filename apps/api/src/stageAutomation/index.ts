@@ -1,10 +1,11 @@
 // Public interface of api/stage-automation (parity module 67) for the stage-change path of api/people.
-import type { UserActor } from '@realty/core/foundation';
+import { type UserActor, plusMs } from '@realty/core/foundation';
 import { type Database, withTenantTx } from '@realty/db';
 import { z } from 'zod';
 import { systemActor } from '../worker/systemActor.js';
-import { decisionOf } from './repos.js';
-import { type AutomationOutcome, SKIP_REASONS } from './decide.js';
+import { SCAN_WINDOW_MS } from './contract.js';
+import { decisionOf, pendingStageEvents } from './repos.js';
+import { type AutomationOutcome, SKIP_REASONS, outcomeOf } from './decide.js';
 import { HIDDEN_PLAN, visiblePlaybookIds } from './planNames.js';
 import { reconcileStageEvent } from './reconcile.js';
 
@@ -25,6 +26,31 @@ export async function stageChangeAutomation(db: Database, tenantId: string, stag
     return out === null || viewer === undefined ? out : await asSeenBy(db, viewer, stageEventId, out);
   } catch (e) {
     log?.warn({ code: (e as { code?: string }).code ?? 'error' }, 'stage automation deferred to the scan');
+    return null;
+  }
+}
+
+/**
+ * The same stage posted again (R-STG-5): what is STORED for the event that put the person in that stage, as the
+ * viewer may see it. Nothing is decided here that the worker would not decide anyway: when no decision is stored, the
+ * event is decided now only if the backup scan's own query still lists it (the other of two taps at the same moment,
+ * whose decision is being written); an older undecided event stays undecided and the answer is null.
+ */
+export async function stageRepeatAutomation(db: Database, tenantId: string, stageEventId: string, log?: { warn(o: object, m: string): void }, viewer?: UserActor): Promise<AutomationOutcome> {
+  try {
+    const stored = await withTenantTx(
+      systemActor(tenantId, 'assistant'),
+      async (tx, now) => {
+        const d = await decisionOf(tx, stageEventId);
+        return { d, pending: d === null && (await pendingStageEvents(tx, plusMs(now, -SCAN_WINDOW_MS), 1, { eventId: stageEventId })).length > 0 };
+      },
+      { db },
+    );
+    if (stored.pending) return await stageChangeAutomation(db, tenantId, stageEventId, log, viewer);
+    const out = outcomeOf(stored.d);
+    return out === null || viewer === undefined ? out : await asSeenBy(db, viewer, stageEventId, out);
+  } catch (e) {
+    log?.warn({ code: (e as { code?: string }).code ?? 'error' }, 'stage automation: the stored decision could not be read');
     return null;
   }
 }

@@ -19,6 +19,7 @@ const WHY: Record<Exclude<SkipReason, 'source_no_automated_contact' | 'source_un
   already_in_a_plan: 'they are already in a plan, and a person is in one plan at a time.',
   cannot_be_reached: 'they opted out, are marked do not contact, or have no phone or email this plan could use.',
   ai_isa_active: 'AI follow-up is working with this person now, and a plan does not run beside it.',
+  undo: 'this change was an undo, and an undo never starts a plan.',
 };
 
 export function skipSentence(reason: SkipReason, plan: string, tense: Tense): string {

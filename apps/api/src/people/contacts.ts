@@ -3,7 +3,8 @@
 //   GET   /contacts/:id/details          stage (+ locked stages), labels, addresses, collaborators,
 //                                        relationships, removed points, row version     contact.view_detail
 //   PATCH /contacts/:id                  names, type, intent, timezone, stage, pond summary (row_version)  contact.edit
-//   POST  /contacts/:id/stage            one stage change (the Undo toast posts the previous stage)  contact.edit
+//   POST  /contacts/:id/stage            one stage change; `undoOf` marks the undo of the last one, which never
+//                                        starts a plan; the same stage again answers what is stored (R-STG-5)  contact.edit
 //   GET   /contacts/:id/stage/preview    what that change would start, not start or leave running (R-STG-3)  contact.edit
 //   GET   /stage-labels                  the eight stages with the tenant's labels and what each means (R-STG-1)  session (members)
 //   PUT   /stage-labels                  Owner/Admin                                      settings.stage_labels
@@ -20,6 +21,7 @@ import { STAGE_GUIDE, type Stage, type StageFacts, isStage, lockedStages, stageC
 import { instantFromDate } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { sql } from 'kysely';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
@@ -30,9 +32,9 @@ import { actorOf, detailFacts, liveDetailFacts, idOf, peopleTx, platformOf } fro
 import * as repo from './repos/people.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
-import { stageChangeAutomation } from '../stageAutomation/index.js';
-import { ownLatestStageEvent } from '../stageAutomation/repos.js';
-import { previewStageEntry } from '../stageAutomation/preview.js';
+import { stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
+import { latestStageEvent, ownLatestStageEvent } from '../stageAutomation/repos.js';
+import { previewStageEntry, runningPlan } from '../stageAutomation/preview.js';
 import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 
 export function stageFactsOf(r: repo.EditRow): StageFacts {
@@ -168,28 +170,55 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
     '/contacts/:id/stage',
     { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, body: S.StageBody, response: { 200: S.StageResponse } } },
     async (req) => {
+      const { stage, undoOf } = req.body;
       const out = await peopleTx(req, async (tx, _now, actor) => {
         const id = req.params.id;
         const before = await repo.editRow(tx, id);
         if (!before) throw new AppError('NOT_FOUND');
+        const latest = await latestStageEvent(tx, id);
+        const labels = await repo.stageLabels(tx);
+        // R-STG-5: the same stage again (a double tap, a refresh, a retry of this very request). Nothing is written:
+        // the answer names the event that put the person in this stage, and the decision stored for it.
+        const repeat = (row: repo.EditRow, ev: typeof latest) => {
+          // a repeated undo must be the undo it says it is; any other undoOf with the stage unchanged is refused
+          if (undoOf !== undefined && ev?.undoOfEventId !== undoOf) throw new AppError('STAGE_UNDO_INVALID');
+          return { stage: stageInfo(row, actor, labels), previousStage: row.stage, rowVersion: row.row_version, eventId: ev !== null && ev.toStage === row.stage ? ev.id : null, changed: false };
+        };
+        if (stage === before.stage) return repeat(before, latest);
+        // R-STG-5: an undo names this person's MOST RECENT stage change and goes back to the stage that change came
+        // from. Anything else (another person's or team's event, an older one, an unknown one, another stage) is
+        // refused before anything is written. The history definer checks the same again (migration 0105).
+        if (undoOf !== undefined && !(latest !== null && latest.id === undoOf && latest.toStage === before.stage && latest.fromStage === stage)) throw new AppError('STAGE_UNDO_INVALID');
         const rv = req.body.rowVersion ?? before.row_version;
         if (rv !== before.row_version) throw new AppError('STALE_CONTACT', { rowVersion: before.row_version });
-        changeStageCheck(before, actor, req.body.stage);
-        const labels = await repo.stageLabels(tx);
-        let eventId: string | null = null;
-        if (req.body.stage !== before.stage) {
-          const next = await repo.updateContact(tx, id, rv, { stage: req.body.stage });
-          if (next === null) return staleOrMissing(tx, id);
-          await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id }, changes: redactDiff({ stage: before.stage }, { stage: req.body.stage }, { entity: 'contacts' }) });
-          eventId = await ownLatestStageEvent(tx, id, before.stage, req.body.stage); // parity 67
+        changeStageCheck(before, actor, stage);
+        // the mark travels to the definer trigger in this transaction only, and is cleared right after the update
+        if (undoOf !== undefined) await sql`SELECT set_config('app.stage_undo_of', ${undoOf}, true)`.execute(tx);
+        const next = await repo.updateContact(tx, id, rv, { stage });
+        if (undoOf !== undefined) await sql`SELECT set_config('app.stage_undo_of', '', true)`.execute(tx);
+        if (next === null) {
+          // someone changed the person while this request waited. If they are now in the requested stage (the other
+          // of two identical taps), this request is a repeat of that change, not a stale edit.
+          const now = await repo.editRow(tx, id);
+          if (!now) throw new AppError('NOT_FOUND');
+          if (now.stage !== stage) throw new AppError('STALE_CONTACT', { rowVersion: now.row_version });
+          return repeat(now, await latestStageEvent(tx, id));
         }
+        await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id }, changes: redactDiff({ stage: before.stage }, { stage }, { entity: 'contacts' }), ...(undoOf !== undefined ? { reason: 'STAGE_UNDO' } : {}) });
+        const eventId = await ownLatestStageEvent(tx, id, before.stage, stage); // parity 67
         const after = (await repo.editRow(tx, id))!;
-        return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version, eventId };
+        return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version, eventId, changed: true };
       });
-      // parity module 67 (flagged edit): the stage entry's plan, decided after the change committed
-      const { eventId, ...res } = out;
-      const automation = eventId ? await stageChangeAutomation(platformOf(req).db, actorOf(req).tenantId, eventId, req.log, actorOf(req)) : null;
-      return { ...res, automation };
+      // parity module 67 (flagged edit): the stage entry's plan, decided after the change committed. A repeat only
+      // reads what is stored (or decides an event the worker's scan is about to decide anyway): R-STG-5.
+      const { changed, ...res } = out;
+      const db = platformOf(req).db;
+      const viewer = actorOf(req);
+      const automation = res.eventId === null ? null : changed ? await stageChangeAutomation(db, viewer.tenantId, res.eventId, req.log, viewer) : await stageRepeatAutomation(db, viewer.tenantId, res.eventId, req.log, viewer);
+      // R-STG-5: an undo never stops a plan either. The plan still running is named, with whether this caller may stop
+      // it themselves (the stop route's own answer), so the screen can say so and offer Stop.
+      const stillRunning = undoOf === undefined ? null : await runningPlan(db, viewer, req.params.id);
+      return { ...res, automation, stillRunning };
     },
   );
 

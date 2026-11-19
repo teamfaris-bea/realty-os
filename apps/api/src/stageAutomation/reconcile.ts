@@ -75,6 +75,8 @@ export interface EntrySubject {
   actorKind: R.StageEventRow['actorKind'];
   /** the change was made by a bulk action (judged on that action's audience, R-PAR-8); never true of a preview */
   bulk: boolean;
+  /** the stage event is marked as an undo (R-STG-5; repos.ts StageEventRow.undoOfEventId); never true of a preview */
+  undo: boolean;
   /**
    * Which playbooks could cover the entry: for an event, the active ones naming its stage as they were configured
    * when the stage was entered; for a preview, the active ones naming the stage now (the entry would happen now).
@@ -108,9 +110,10 @@ export async function readEntryFacts(tx: Tx, s: EntrySubject, view: ChangerView,
   // R-PAR-8 (batch 5 review F1): a change a bulk action made is judged on that action's audience as it is now
   const protectedAudience = s.bulk && view.protectedAudience;
   // reachability is read for the playbook decide would choose (the same choice, computed first)
-  const pre = decideStageEntry({ actorKind: s.actorKind, protectedAudience, toStage: s.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true, aiIsaActive, sourceRefusal });
+  const undo = s.undo;
+  const pre = decideStageEntry({ actorKind: s.actorKind, undo, protectedAudience, toStage: s.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true, aiIsaActive, sourceRefusal });
   const reachable = pre.kind === 'start' ? await reachableForVersion(tx, s.contactId, pre.versionId, now) : true;
-  return { actorKind: s.actorKind, protectedAudience, toStage: s.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable, aiIsaActive, sourceRefusal };
+  return { actorKind: s.actorKind, undo, protectedAudience, toStage: s.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable, aiIsaActive, sourceRefusal };
 }
 
 /**
@@ -122,7 +125,7 @@ export async function readEntryFacts(tx: Tx, s: EntrySubject, view: ChangerView,
 export async function decideEntry(tx: Tx, s: EntrySubject, view: ChangerView, now: Instant): Promise<StageDecision> {
   const f = await readEntryFacts(tx, s, view, now);
   if (f === null) return { kind: 'none' };
-  return decideStageEntry({ actorKind: f.actorKind, protectedAudience: f.protectedAudience, toStage: f.toStage, contact: f.contact, changerSeesDetail: f.changerSeesDetail, candidates: f.candidates, liveEnrollment: f.liveEnrollment, reachable: f.reachable, aiIsaActive: f.aiIsaActive, sourceRefusal: f.sourceRefusal });
+  return decideStageEntry({ actorKind: f.actorKind, undo: f.undo === true, protectedAudience: f.protectedAudience, toStage: f.toStage, contact: f.contact, changerSeesDetail: f.changerSeesDetail, candidates: f.candidates, liveEnrollment: f.liveEnrollment, reachable: f.reachable, aiIsaActive: f.aiIsaActive, sourceRefusal: f.sourceRefusal });
 }
 
 export interface ReconcileResult {
@@ -147,7 +150,7 @@ export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventI
 
   // decided by the one function the preview decides with (decideEntry: readEntryFacts, then the pure
   // decideStageEntry), so a preview cannot disagree with what the change then does (R-STG-3)
-  const d = await decideEntry(tx, { contactId: e.contactId, toStage: e.toStage, actorKind: e.actorKind, bulk: e.bulkActionId !== null, playbooksOf: { eventId: e.id }, assumeEntered: false }, view, now);
+  const d = await decideEntry(tx, { contactId: e.contactId, toStage: e.toStage, actorKind: e.actorKind, bulk: e.bulkActionId !== null, undo: e.undoOfEventId !== null, playbooksOf: { eventId: e.id }, assumeEntered: false }, view, now);
 
   if (d.kind === 'none') return { automation: null, decided: false, enrollmentId: null };
   if (d.kind === 'skip') {

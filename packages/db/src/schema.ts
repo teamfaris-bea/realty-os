@@ -831,6 +831,7 @@ export interface ContactStageEventsTable {
   actor_user_id: string | null;
   occurred_at: Generated<Timestamp>;
   bulk_action_id: string | null;
+  undo_of_event_id: string | null;
 }
 
 /** public.contact_tags (table) */

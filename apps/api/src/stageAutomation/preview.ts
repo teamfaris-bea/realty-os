@@ -46,7 +46,7 @@ export async function previewStageEntry(db: Database, viewer: UserActor, contact
     async (tx, now) => {
       await sql`SET LOCAL transaction_read_only = on`.execute(tx);
       const d: StageDecision =
-        to === null || view === null ? { kind: 'none' } : await decideEntry(tx, { contactId, toStage: to, actorKind: 'user', bulk: false, playbooksOf: { stage: to }, assumeEntered: true }, view, now);
+        to === null || view === null ? { kind: 'none' } : await decideEntry(tx, { contactId, toStage: to, actorKind: 'user', bulk: false, undo: false, playbooksOf: { stage: to }, assumeEntered: true }, view, now);
       const firstStep = d.kind === 'start' ? await firstStepOfVersion(tx, contactId, d.versionId, now) : null;
       const live = await P.liveEnrollmentOf(tx, contactId);
       const livePlan = live ? await P.playbookById(tx, live.playbookId) : null;
@@ -70,4 +70,13 @@ export async function previewStageEntry(db: Database, viewer: UserActor, contact
     wontStart: d.kind === 'skip' ? { plan: nameOf(d.playbook), reason: d.reason, sentence: skipSentence(d.reason, nameOf(d.playbook), 'will') } : null,
     keepsRunning: live && (live.state === 'active' || live.state === 'paused') ? { enrollmentId: live.id, plan: nameOf(livePlan), state: live.state, canStop: mine.canStop } : null,
   };
+}
+
+/**
+ * The plan the person is in now, for this viewer (R-STG-5: what an undo leaves running): its enrollment, its name as
+ * the viewer may see it, and whether the stop route would let them stop it. Null: no live plan. Read-only.
+ */
+export async function runningPlan(db: Database, viewer: UserActor, contactId: string): Promise<{ enrollmentId: string; plan: string; canStop: boolean } | null> {
+  const k = (await previewStageEntry(db, viewer, contactId, null)).keepsRunning;
+  return k ? { enrollmentId: k.enrollmentId, plan: k.plan, canStop: k.canStop } : null;
 }
