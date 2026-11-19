@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { approvedPlaybook, assistantWorld, grantConsent, runJobs } from '../assistant/testing.js';
 import { teamScoreboard } from '../accountability/scoreboard.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { type CommsWorld, randomEmail, sendText } from '../comms/testing.js';
+import { type CommsWorld, ownedContact, randomEmail, sendText } from '../comms/testing.js';
 import { marketingReady } from '../bulk/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { BACKUP_ALERT_JOB, decideBackupAlert } from './backupAlert.js';
@@ -643,6 +643,78 @@ describe('R-TEAMQ-16 the backup\'s access', () => {
     await run();
     expect((await alertRows(lead.inquiryId))[0]).toMatchObject({ outcome: 'alerted', alerted_user_id: backup.userId, grant_expires_at: null });
     expect(await grantOf(lead.contactId, backup.userId)).toMatchObject({ role: 'co_agent', expires_at: null, live: true });
+  });
+});
+
+describe('R-TEAMQ-26 a merge carries the waiting inquiry and the backup\'s grant to the surviving record (review fix L5)', () => {
+  it('R-TEAMQ-26 E891: the alerted lead is merged INTO another record of the same person: the waiting inquiry is the survivor\'s (it stays in the queue, with its alert line, and in the report), the backup can open the survivor until the same expiry and no longer holds a live grant on the merged-away record; the merge moved no owner beyond its own rule and sent the client nothing', async () => {
+    const src = await source('Merged away (alert test)');
+    const lead = await arrive(src);
+    const owner = await accept(lead);
+    await minutesPass(lead);
+    await run();
+    const alert = (await alertRows(lead.inquiryId))[0]!;
+    expect(alert).toMatchObject({ outcome: 'alerted', alerted_user_id: backup.userId, recipient: 'backup' });
+    const granted = (await grantOf(lead.contactId, backup.userId))!;
+    expect(granted.live).toBe(true);
+    // the same person, typed in by the same agent as a second record: the survivor of the merge
+    const survivor = (await ownedContact(owner, { consent: false, firstName: 'Dana', confirmDistinct: true })).id;
+    expect((await call(backup, 'GET', `/contacts/${survivor}`)).status).toBe(404);
+    const merged = await command(w.owner, survivor, 'merge', { loserId: lead.contactId, ownerChoice: owner.userId });
+    expect(merged.status).toBe(200);
+    await run(); // a Team Lead's merge moves in the follow-up job; the Owner's moved inline: either way it is done now
+    expect((await h.su.query('SELECT merged_into_contact_id AS m FROM contacts WHERE id = $1', [lead.contactId])).rows[0]!.m).toBe(survivor);
+
+    // the inquiry is the survivor's now, with its alert row (which follows its inquiry)
+    expect((await h.su.query('SELECT contact_id FROM lead_inquiries WHERE id = $1', [lead.inquiryId])).rows).toEqual([{ contact_id: survivor }]);
+    const q = await call<{ groups: { key: string; rows: { contact: { id: string }; why: string; backupAlert: { alerted: boolean; line: string } | null }[] }[] }>(w.owner, 'GET', '/team/queue');
+    const rows = q.body.groups.find((g) => g.key === 'new_lead')!.rows;
+    expect(rows.find((r) => r.contact.id === lead.contactId)).toBeUndefined();
+    const row = rows.find((r) => r.contact.id === survivor)!;
+    expect(row).toBeDefined();
+    expect(row.why).toMatch(/Nobody has called, texted or emailed yet\./);
+    expect(row.backupAlert).toMatchObject({ alerted: true, line: expect.stringMatching(/^Backup alerted at /) });
+    expect((await reported(w.owner, lead.inquiryId))!.attempt).toBeNull();
+
+    // the backup's grant: live on the survivor until the SAME expiry; not live on the merged-away record
+    const carried = (await grantOf(survivor, backup.userId))!;
+    expect(carried).toMatchObject({ role: 'backup', removed_at: null, live: true });
+    expect(carried.expires_at!.getTime()).toBe(granted.expires_at!.getTime());
+    expect((await grantOf(lead.contactId, backup.userId))!.live).toBe(false);
+    expect((await call(backup, 'GET', `/contacts/${survivor}`)).status).toBe(200);
+    expect((await call(bystander, 'GET', `/contacts/${survivor}`)).status).toBe(404);
+    // the backup's call from the survivor is the attempt on the carried inquiry, credited to the backup
+    const dial = await call<{ result: string }>(backup, 'POST', `/contacts/${survivor}/calls`, {});
+    expect([dial.status, dial.body.result]).toEqual([200, 'dialing']);
+    expect((await reported(w.owner, lead.inquiryId))!.attempt).toMatchObject({ kind: 'call', by: { userId: backup.userId }, role: 'backup' });
+    expect((await holding(survivor)).owner).toBe(owner.userId);
+    expect(await toClient(survivor)).toEqual([{ kind: 'call', initiator: 'human' }]);
+  });
+
+  it('R-TEAMQ-26 E891: an EXPIRED grant, or a member\'s other access on the survivor, is not touched by the merge: nothing is revived and nothing is replaced', async () => {
+    const src = await source('Merged, expired (alert test)');
+    const lead = await arrive(src);
+    const owner = await accept(lead);
+    await minutesPass(lead);
+    await run();
+    await h.su.query(`UPDATE contact_collaborators SET expires_at = now() - interval '1 second' WHERE contact_id = $1 AND user_id = $2`, [lead.contactId, backup.userId]);
+    const survivor = (await ownedContact(owner, { consent: false, firstName: 'Dana', confirmDistinct: true })).id;
+    expect((await command(w.owner, survivor, 'merge', { loserId: lead.contactId, ownerChoice: owner.userId })).status).toBe(200);
+    await run();
+    expect(await grantOf(survivor, backup.userId)).toBeUndefined();
+    expect((await call(backup, 'GET', `/contacts/${survivor}`)).status).toBe(404);
+
+    // a co-agent of the survivor who is also the loser's alerted backup keeps exactly their co-agent access
+    const lead2 = await arrive(src);
+    const owner2 = await accept(lead2);
+    await minutesPass(lead2);
+    await run();
+    expect((await grantOf(lead2.contactId, backup.userId))!.live).toBe(true);
+    const survivor2 = (await ownedContact(owner2, { consent: false, firstName: 'Dana', confirmDistinct: true })).id;
+    expect((await call(owner2, 'POST', `/contacts/${survivor2}/collaborators`, { userId: backup.userId, role: 'co_agent' })).status).toBe(200);
+    expect((await command(w.owner, survivor2, 'merge', { loserId: lead2.contactId, ownerChoice: owner2.userId })).status).toBe(200);
+    await run();
+    expect(await grantOf(survivor2, backup.userId)).toMatchObject({ role: 'co_agent', expires_at: null, live: true });
   });
 });
 
