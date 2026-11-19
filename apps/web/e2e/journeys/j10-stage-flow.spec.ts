@@ -15,10 +15,17 @@
 //   7. a double tap on Save and on the confirm button, then a page refresh: one note, one task, one stage event and
 //      at most one enrolment (read back through the API and the database);
 //   8. with a 24-character team label at 320 px wide nothing truncates or overflows.
+// b19 fix pass:
+//   9. Log → outcome → ONE button ("Save and change to …") = 3 taps from the bar to a saved log and a confirmed stage,
+//      every tap counted (M6); the stage step is in the Log sheet itself;
+//  10. a stage change that fails after the log saved: the sheet says what was saved and what was not, and the retry
+//      makes no second note (the first stage request is aborted in the browser; the API is real);
+//  at 390 × 664 (the phone project's viewport) the suggested choice, the one effect line and the follow-up chips are
+//  inside the sheet's visible body when the step opens, with the primary button on screen (M4).
 // The existing checks stay on: axe on the page and on the sheet, 44 px targets and no sideways scroll on the phone.
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { type Locator, type Page, type TestInfo, expect, test } from 'playwright/test';
+import { type BrowserContext, type Locator, type Page, type TestInfo, expect, test } from 'playwright/test';
 import { phoneProblems } from '../a11y/checks.js';
 import { isPhone, shot, signIn, tap } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
@@ -68,6 +75,22 @@ async function assignedLead(first: string, last: string, world: 'a' | 'b' = 'a',
   return { id, name, first, phone };
 }
 
+/**
+ * The agent signs in through the login page once per run and the later tests reuse that session's cookies: the login
+ * endpoint is rate limited, and this journey opens the agent's session in seven tests within a minute.
+ */
+let agentSession: Awaited<ReturnType<BrowserContext['storageState']>> | null = null;
+async function signInAgent(page: Page) {
+  if (agentSession) {
+    await page.context().addCookies(agentSession.cookies);
+    await page.goto(`${stack.webUrl}/`);
+    await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible({ timeout: 20_000 });
+    return;
+  }
+  await signIn(page, stack, agent);
+  agentSession = await page.context().storageState();
+}
+
 const suffix = (info: TestInfo) => (info.project.name === 'phone' ? 'Phone' : 'Desk');
 
 async function openPerson(page: Page, p: Person) {
@@ -91,9 +114,48 @@ async function callAndLog(page: Page, p: Person, outcome: string, counter?: { ta
   const sheet = page.getByRole('dialog', { name: `Call ${p.name}` });
   await expect(sheet.getByText(`Your phone will ring first. Answer it and you're connected to ${p.first}.`)).toBeVisible({ timeout: 20_000 });
   await tap(page, sheet.getByRole('button', { name: outcome, exact: true }), counter);
-  await expect(page.getByTestId('toast').getByText('Call outcome saved.')).toBeVisible({ timeout: 15_000 });
   await expect(step(page, p).getByRole('radiogroup', { name: 'Stage' })).toBeVisible({ timeout: 15_000 });
+  // M4: the step's first line says what was saved; no toast says it a second time over that line
+  await expect(page.getByTestId('toast')).toBeEmpty();
 }
+
+/** The phone project's viewport: the design budget is checked at exactly this size. */
+const PHONE_VIEWPORT = { width: 390, height: 664 };
+
+/**
+ * M4: when the step opens, each of `what` is wholly inside the sheet's visible body (the scrolling part between the
+ * title and the pinned button), nothing has been scrolled, and the primary button is wholly on screen.
+ */
+async function expectAtOpen(page: Page, sheet: Locator, primary: Locator, what: Record<string, Locator>) {
+  const body = sheet.getByTestId('dialog-body');
+  expect(await body.evaluate((el) => el.scrollTop), 'the sheet has not been scrolled').toBe(0);
+  const frame = (await body.boundingBox())!;
+  const view = page.viewportSize()!;
+  for (const [name, l] of Object.entries(what)) {
+    await expect(l, name).toBeVisible();
+    const r = (await l.boundingBox())!;
+    expect(r.y, `${name}: top inside the sheet's visible body`).toBeGreaterThanOrEqual(frame.y - 0.5);
+    expect(r.y + r.height, `${name}: bottom inside the sheet's visible body (${Math.round(r.y + r.height)} of ${Math.round(frame.y + frame.height)})`).toBeLessThanOrEqual(frame.y + frame.height + 0.5);
+  }
+  const b = (await primary.boundingBox())!;
+  expect(b.y + b.height, 'the primary button is on screen').toBeLessThanOrEqual(view.height + 0.5);
+  expect(b.y, 'the primary button is under the body, not over it').toBeGreaterThanOrEqual(frame.y + frame.height - 0.5);
+}
+/**
+ * M4, the longer case (a refusal sentence of several lines): `l` is not on screen when the step opens, but it is
+ * reached by scrolling the sheet's body alone, with the primary button still wholly on screen.
+ */
+async function expectReachable(page: Page, sheet: Locator, primary: Locator, name: string, l: Locator) {
+  const body = sheet.getByTestId('dialog-body');
+  await l.evaluate((el) => el.scrollIntoView({ block: 'end' }));
+  const frame = (await body.boundingBox())!;
+  const r = (await l.boundingBox())!;
+  expect(r.y, `${name}: top inside the sheet's visible body after scrolling it`).toBeGreaterThanOrEqual(frame.y - 0.5);
+  expect(r.y + r.height, `${name}: bottom inside the sheet's visible body after scrolling it`).toBeLessThanOrEqual(frame.y + frame.height + 0.5);
+  await expect(primary).toBeInViewport({ ratio: 1 });
+  await body.evaluate((el) => el.scrollTo(0, 0));
+}
+const stepParts = (s: Locator, suggested: string) => ({ 'what was logged': s.getByTestId('stage-step-saved'), 'the suggested choice': s.getByRole('radio', { name: `${suggested} Suggested` }), 'the effect line': s.getByTestId('stage-step-effect'), 'the follow-up chips': s.getByRole('group', { name: 'Follow-up' }) });
 
 async function axeViolations(page: Page): Promise<string[]> {
   await page.addScriptTag({ path: AXE_PATH });
@@ -154,7 +216,7 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   test.setTimeout(240_000);
   expect(playbookId, 'J10.1 made the plan').not.toBe('');
   const dana = await assignedLead('Dana', suffix(info));
-  await signIn(page, stack, agent);
+  await signInAgent(page);
   await openPerson(page, dana);
   await expect(page.getByRole('button', { name: 'Stage: New lead. Change stage' })).toBeVisible();
   // before anything: three rows, and the truth that nothing is running
@@ -178,14 +240,21 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   await expect(s.getByRole('radio', { name: 'Keep New lead' })).toBeVisible();
   const preview = s.getByTestId('stage-preview');
   await expect(preview.getByText('No plan starts on this stage.')).toBeVisible();
-  await expect(preview.getByText('AI follow-up: unchanged')).toBeVisible();
-  await expect(preview.getByText('Your tasks: unchanged')).toBeVisible();
-  await expect(preview.getByText('Changing the stage does not stop a running plan.')).toBeVisible();
-  await expect(preview.getByText(/Will start/)).toHaveCount(0);
-  // what the tap will do is also directly above the button, on screen without scrolling the sheet
+  // what no stage change ever does is the footnote under the step (M4: it is not what must be read before the tap)
+  const note = s.getByTestId('stage-never-note');
+  await expect(note.getByText('AI follow-up: unchanged')).toBeAttached();
+  await expect(note.getByText('Your tasks: unchanged')).toBeAttached();
+  await expect(note.getByText('Changing the stage does not stop a running plan.')).toBeAttached();
+  await expect(s.getByText(/Will start/)).toHaveCount(0);
+  // M4: what the tap will do is said ONCE, on screen without scrolling the sheet, and the button is described by it
   await expect(s.getByTestId('stage-step-effect')).toHaveText('No plan starts on this stage.');
+  await expect(s.getByText('No plan starts on this stage.')).toHaveCount(1);
   await expect(s.getByTestId('stage-step-effect')).toBeInViewport({ ratio: 1 });
   await expect(s.getByRole('button', { name: 'Change to Trying to reach' })).toBeInViewport({ ratio: 1 });
+  await expect(s.getByRole('button', { name: 'Change to Trying to reach' })).toHaveAccessibleDescription('No plan starts on this stage.');
+  if (isPhone(page)) expect(page.viewportSize(), 'the phone project is 390 × 664').toEqual(PHONE_VIEWPORT);
+  // at open, without scrolling: what was logged, the suggested choice, "Keep", "Another stage…", the effect, the follow-up
+  await expectAtOpen(page, s, s.getByTestId('stage-step-confirm'), { ...stepParts(s, 'Trying to reach'), 'Keep': s.getByRole('radio', { name: 'Keep New lead' }), 'Another stage…': s.getByRole('button', { name: 'Another stage…' }) });
   // the outcome is saved, and the suggestion has changed nothing
   expect(await stageOf(dana.id)).toBe('new');
   if (isPhone(page)) expect(await smallTargets(s), 'stage step targets').toEqual([]);
@@ -210,7 +279,10 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   await expect(s.getByRole('radio', { name: 'Long-term follow-up' })).toBeVisible();
   await expect(preview.getByText(new RegExp(`^Will start: ${PLAN}, first step text `))).toBeVisible({ timeout: 15_000 });
   await expect(s.getByTestId('stage-step-effect')).toHaveText(new RegExp(`^Will start: ${PLAN}, first step text `));
+  await expect(s.getByText(/Will start/)).toHaveCount(1);
   await expect(s.getByTestId('stage-step-effect')).toBeInViewport({ ratio: 1 });
+  // at open with three choices and a plan that will start: still nothing that matters under the fold
+  await expectAtOpen(page, s, s.getByTestId('stage-step-confirm'), { ...stepParts(s, 'Connected'), 'Keep': s.getByRole('radio', { name: 'Keep Trying to reach' }), 'Long-term follow-up': s.getByRole('radio', { name: 'Long-term follow-up' }) });
   expect(await enrollments(dana.id), 'a preview starts nothing').toHaveLength(0);
   await shot(page, info, 'j10', '3-stage-step-will-start');
   await tap(page, s.getByRole('button', { name: 'Change to Connected' }));
@@ -254,7 +326,7 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   test.setTimeout(180_000);
   const omar = await assignedLead('Omar', suffix(info));
   expect((await stack.fixture<{ status: number }>('/sms-in', { world: 'a', from: omar.phone, body: 'STOP' })).status).toBeLessThan(300);
-  await signIn(page, stack, agent);
+  await signInAgent(page);
   await openPerson(page, omar);
   await expect(page.getByRole('list', { name: `About ${omar.name}` }).getByText(/^No texting: Texted STOP on /)).toBeVisible({ timeout: 15_000 });
   if (isPhone(page)) {
@@ -269,9 +341,15 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   const preview = s.getByTestId('stage-preview');
   const why = `${PLAN} will not start: they opted out, are marked do not contact, or have no phone or email this plan could use.`;
   await expect(preview.getByText(why)).toBeVisible({ timeout: 15_000 });
-  await expect(preview.getByText(/Will start/)).toHaveCount(0);
+  await expect(s.getByText(/Will start/)).toHaveCount(0);
   await expect(s.getByTestId('stage-step-effect')).toHaveText(why);
+  await expect(s.getByText(why)).toHaveCount(1);
   await expect(s.getByTestId('stage-step-effect')).toBeInViewport({ ratio: 1 });
+  // the refusal is a longer sentence: what was logged, the suggested choice and the reason are on screen at open; the
+  // follow-up is one scroll of the sheet's body away, with the button still on screen
+  const { 'the follow-up chips': followUp, ...above } = stepParts(s, 'Connected');
+  await expectAtOpen(page, s, s.getByTestId('stage-step-confirm'), above);
+  await expectReachable(page, s, s.getByTestId('stage-step-confirm'), 'the follow-up chips', followUp!);
   await shot(page, info, 'j10', '5a-stage-step-blocked');
   await tap(page, s.getByRole('button', { name: 'Change to Connected' }));
   await expect(peopleToast(page).getByText(`Stage: Connected. ${PLAN} didn't start: they can't be messaged`)).toBeVisible({ timeout: 15_000 });
@@ -292,7 +370,7 @@ test('J10.6: Undo moves the stage back, says the plan is still running and that 
   test.setTimeout(180_000);
   const uma = await assignedLead('Uma', suffix(info));
   const before = (await stageEvents(uma.id)).length;
-  await signIn(page, stack, agent);
+  await signInAgent(page);
   await openPerson(page, uma);
   await callAndLog(page, uma, 'Talked');
   await tap(page, step(page, uma).getByRole('button', { name: 'Change to Connected' }));
@@ -319,28 +397,26 @@ test('J10.6: Undo moves the stage back, says the plan is still running and that 
   expect((await stageEvents(uma.id)).slice(before).map((e) => e.to_stage)).toEqual(['connected', 'new']);
 });
 
-test('J10.7: a double tap on Save and on the confirm button, then a refresh: one note, one task, one stage event, no enrolment', async ({ page }, info) => {
+test('J10.7: a double tap on the one button that saves the log, the follow-up and the stage, then a refresh: one note, one task, one stage event, no enrolment', async ({ page }, info) => {
   test.setTimeout(180_000);
   const ivy = await assignedLead('Ivy', suffix(info));
   const before = (await stageEvents(ivy.id)).length;
-  await signIn(page, stack, agent);
+  await signInAgent(page);
   await openPerson(page, ivy);
   const log = isPhone(page) ? page.getByTestId('person-phone-bar').getByRole('button', { name: 'Log', exact: true }) : page.getByRole('button', { name: 'Log', exact: true });
   await tap(page, log);
-  const sheet = page.getByRole('dialog', { name: `Log for ${ivy.name}` });
-  await tap(page, sheet.getByRole('button', { name: 'Left voicemail' }));
-  // two taps inside one frame: neither can wait for the other's answer
-  const twice = (l: Locator) => l.evaluate((el) => { (el as HTMLElement).click(); (el as HTMLElement).click(); });
-  await twice(sheet.getByRole('button', { name: 'Save', exact: true }));
-  const s = step(page, ivy);
-  await expect(s.getByRole('status')).toHaveText('Call logged (left voicemail)', { timeout: 15_000 });
-  await expect(s.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
+  // M6: the stage step is in the Log sheet itself; ONE button saves the log, the follow-up and the stage
+  const s = page.getByRole('dialog', { name: `Log for ${ivy.name}` });
+  await tap(page, s.getByRole('button', { name: 'Left voicemail' }));
+  await expect(s.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked({ timeout: 15_000 });
   await tap(page, s.getByRole('group', { name: 'Follow-up' }).getByRole('button', { name: 'Tomorrow' }));
   await expect(s.getByTestId('follow-up-line')).toHaveText(new RegExp(`^Will add a task for you: “Follow up with ${ivy.first}”, due .+9:00 AM\\.$`));
-  const confirm = s.getByRole('button', { name: 'Change to Trying to reach + follow-up' });
+  const confirm = s.getByRole('button', { name: 'Save and change to Trying to reach + follow-up' });
   await expect(confirm).toBeEnabled({ timeout: 15_000 });
+  // two taps inside one frame: neither can wait for the other's answer
+  const twice = (l: Locator) => l.evaluate((el) => { (el as HTMLElement).click(); (el as HTMLElement).click(); });
   await twice(confirm);
-  await expect(peopleToast(page).getByText(/^Stage: Trying to reach\. Follow-up saved for /)).toBeVisible({ timeout: 15_000 });
+  await expect(peopleToast(page).getByText(/^Call logged \(left voicemail\)\. Stage: Trying to reach\. Follow-up saved for /)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // a refresh shows what the server stored
@@ -417,15 +493,13 @@ test('J10.8: a 24-character team label at 320 px wide: the pill, the picker, the
 
   // the stage step: "Keep <label>" and the button named for its effect
   await press(page.getByTestId('person-phone-bar').getByRole('button', { name: 'Log', exact: true }));
-  const sheet = page.getByRole('dialog', { name: `Log for ${lia.name}` });
-  await press(sheet.getByRole('button', { name: 'No answer' }));
-  await press(sheet.getByRole('button', { name: 'Save', exact: true }));
-  const s = step(page, lia);
-  // already "trying to reach": another try suggests nothing, and the step keeps the stage
+  const s = page.getByRole('dialog', { name: `Log for ${lia.name}` });
+  await press(s.getByRole('button', { name: 'No answer' }));
+  // already "trying to reach": another try suggests nothing, and the step (in the Log sheet) keeps the stage
   const keep = s.getByRole('radio', { name: `Keep ${LONG_LABEL}` });
   await expect(keep).toBeChecked({ timeout: 15_000 });
   await whole(keep, 'the "Keep" row');
-  const button = s.getByRole('button', { name: `Keep ${LONG_LABEL}` });
+  const button = s.getByRole('button', { name: `Save and keep ${LONG_LABEL}` });
   await whole(button, 'the primary button');
   expect(await s.evaluate((el) => el.scrollWidth - el.clientWidth), 'the stage step').toBeLessThanOrEqual(1);
   expect(await sideways()).toBeLessThanOrEqual(0);
@@ -434,6 +508,8 @@ test('J10.8: a 24-character team label at 320 px wide: the pill, the picker, the
   await shot(page, info, 'j10', '8b-320-stage-step-long-label');
   await press(button);
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(peopleToast(page).getByText('Call logged (no answer)')).toBeVisible({ timeout: 15_000 });
+  expect(await stack.sql("SELECT 1 FROM notes WHERE contact_id = $1 AND source = 'logged_activity'", [lia.id])).toHaveLength(1);
   const bar = page.getByTestId('person-phone-bar');
   expect(await bar.getByRole('button').count()).toBe(5);
   expect(await smallTargets(bar), 'the working bar at 320 px').toEqual([]);
@@ -442,4 +518,84 @@ test('J10.8: a 24-character team label at 320 px wide: the pill, the picker, the
     expect(r.x).toBeGreaterThanOrEqual(0);
     expect(r.x + r.width).toBeLessThanOrEqual(320);
   }
+});
+
+const logButton = (page: Page) => (isPhone(page) ? page.getByTestId('person-phone-bar').getByRole('button', { name: 'Log', exact: true }) : page.getByRole('button', { name: 'Log', exact: true }));
+const loggedNotes = (contactId: string) => stack.sql("SELECT 1 FROM notes WHERE contact_id = $1 AND source = 'logged_activity'", [contactId]);
+
+test('J10.9 (M6): Log → outcome → "Save and change to Trying to reach" = 3 taps from the bar to a saved log and a confirmed stage, every tap counted; the step is in the Log sheet and nothing that matters is under the fold', async ({ page }, info) => {
+  test.setTimeout(180_000);
+  const noor = await assignedLead('Noor', suffix(info));
+  const before = (await stageEvents(noor.id)).length;
+  await signInAgent(page);
+  await openPerson(page, noor);
+  const n = { taps: 0 };
+  await tap(page, logButton(page), n);
+  const s = page.getByRole('dialog', { name: `Log for ${noor.name}` });
+  await expect(s.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+  await tap(page, s.getByRole('group', { name: 'Outcome' }).getByRole('button', { name: 'Left voicemail' }), n);
+  // the same sheet: what is about to be logged, the suggestion, what it will do, the follow-up, ONE button
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  await expect(s.getByTestId('log-summary')).toHaveText('To log: Call · I called · Left voicemail');
+  const suggested = s.getByRole('radio', { name: 'Trying to reach Suggested' });
+  await expect(suggested).toBeChecked({ timeout: 15_000 });
+  await expect(suggested).toContainText('You left a voicemail. That is a try, not a conversation yet.');
+  await expect(s.getByTestId('stage-step-effect')).toHaveText('No plan starts on this stage.', { timeout: 15_000 });
+  const one = s.getByRole('button', { name: 'Save and change to Trying to reach' });
+  await expect(one).toBeEnabled({ timeout: 15_000 });
+  await expect(s.getByRole('button', { name: /^(Save|Change to|Keep)/ })).toHaveCount(1);
+  // nothing is saved by choosing
+  expect(await loggedNotes(noor.id)).toHaveLength(0);
+  expect(await stageOf(noor.id)).toBe('new');
+  await expectAtOpen(page, s, one, { 'what is being logged': s.getByTestId('log-summary'), 'the suggested choice': suggested, 'Keep': s.getByRole('radio', { name: 'Keep New lead' }), 'the effect line': s.getByTestId('stage-step-effect'), 'the follow-up chips': s.getByRole('group', { name: 'Follow-up' }) });
+  if (isPhone(page)) expect(await smallTargets(s), 'log sheet targets').toEqual([]);
+  expect(await axeViolations(page), 'log sheet with the stage step').toEqual([]);
+  await shot(page, info, 'j10', '9-log-sheet-stage-step-in-place');
+  await tap(page, one, n);
+  await expect(peopleToast(page).getByText('Call logged (left voicemail). Stage: Trying to reach')).toBeVisible({ timeout: 15_000 });
+  expect(n.taps, 'Log → outcome → the one button, every tap counted (no Close)').toBe(3);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // M4: the banner's words are not repeated in a second toast
+  await expect(page.getByTestId('toast')).toBeEmpty();
+  await expect(page.getByRole('button', { name: 'Stage: Trying to reach. Change stage' })).toBeVisible({ timeout: 15_000 });
+  expect(await loggedNotes(noor.id)).toHaveLength(1);
+  expect((await stageEvents(noor.id)).slice(before).map((e) => e.to_stage)).toEqual(['attempting']);
+});
+
+test('J10.10 (M6): the stage change fails after the log saved: the sheet says what was saved and what was not, the button stays enabled, and the retry makes no second note', async ({ page }, info) => {
+  test.setTimeout(180_000);
+  const remy = await assignedLead('Remy', suffix(info));
+  const before = (await stageEvents(remy.id)).length;
+  await signInAgent(page);
+  await openPerson(page, remy);
+  // the first stage request never reaches the API (the connection drops in the browser); everything else is real
+  let dropped = 0;
+  await page.route(`**/contacts/${remy.id}/stage`, async (route) => {
+    if (route.request().method() === 'POST' && dropped === 0) {
+      dropped += 1;
+      await route.abort('connectionfailed');
+    } else await route.continue();
+  });
+  await tap(page, logButton(page));
+  const s = page.getByRole('dialog', { name: `Log for ${remy.name}` });
+  await tap(page, s.getByRole('group', { name: 'Outcome' }).getByRole('button', { name: 'Left voicemail' }));
+  const one = s.getByTestId('log-save');
+  await expect(one).toHaveText('Save and change to Trying to reach', { timeout: 15_000 });
+  await expect(one).toBeEnabled({ timeout: 15_000 });
+  await tap(page, one);
+  // exactly what was saved and what was not; nothing is claimed in a toast
+  await expect(s.getByRole('alert')).toHaveText("Call logged (left voicemail). We could not confirm the stage change: Can't reach the server. Check your connection, then try again.", { timeout: 15_000 });
+  await expect(s.getByRole('status')).toHaveText('Call logged (left voicemail)');
+  await expect(peopleToast(page)).toBeEmpty();
+  expect(dropped).toBe(1);
+  expect(await loggedNotes(remy.id), 'the log is saved').toHaveLength(1);
+  expect(await stageOf(remy.id), 'the stage is not').toBe('new');
+  await expect(one).toHaveText('Change to Trying to reach');
+  await expect(one).toBeEnabled();
+  await shot(page, info, 'j10', '10-log-saved-stage-not');
+  await tap(page, one);
+  await expect(peopleToast(page).getByText('Call logged (left voicemail). Stage: Trying to reach')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await loggedNotes(remy.id), 'the retry made no second note').toHaveLength(1);
+  expect((await stageEvents(remy.id)).slice(before).map((e) => e.to_stage)).toEqual(['attempting']);
 });

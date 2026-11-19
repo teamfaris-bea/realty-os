@@ -39,6 +39,7 @@ export function TextSheet({ contact, onClose }: { contact: ContactFullView; onCl
         contact={{ id: contact.id, name: contact.displayName, canText: contact.phones.length > 0, canEmail: contact.emails.length > 0, typedInChat: contact.typedInChat ?? [], ownedByMe: contact.ownership.ownedByMe }}
         initialChannel="sms"
         autoFocus
+        sentShownByCaller
         onSent={(r, channel) => setSent({ saved: sendOutcomeText(r, contact.displayName).title, signal: signalOfSend(sentResult(r), channel) })}
         templatePicker={({ channel, insert }) => <TemplatePicker contactId={contact.id} channel={channel} onInsert={insert} />}
       />

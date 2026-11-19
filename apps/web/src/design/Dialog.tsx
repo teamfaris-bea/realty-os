@@ -29,6 +29,13 @@ export interface DialogProps {
   dismissible?: boolean;
   /** what gets focus on open (default: the first control) */
   initialFocus?: RefObject<HTMLElement | null>;
+  /**
+   * A visible "Close" in the header's corner (b19 fix pass M4), for a sheet whose footer holds only its primary
+   * button: the way out stays on screen (a phone has no Escape key) without a second row under the primary button.
+   * Focus then opens on the dialog itself (its title is read), not on Close. Such a sheet may be a little taller on a
+   * phone (94% of the visible viewport, not 90%) and its header is tighter, so its body shows more at open.
+   */
+  closeButton?: boolean;
   /** desktop only: 'side' is a full-height panel on the right (a filter builder beside the results); a phone always gets the bottom sheet */
   placement?: 'center' | 'side';
 }
@@ -61,7 +68,7 @@ function useVisibleViewport(): { top: number; height: number } | null {
   return box;
 }
 
-export function Dialog({ title, description, onClose, children, footer, dismissible = true, initialFocus, placement = 'center' }: DialogProps) {
+export function Dialog({ title, description, onClose, children, footer, dismissible = true, initialFocus, placement = 'center', closeButton = false }: DialogProps) {
   const id = useId();
   const panel = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement | null>(null);
@@ -78,7 +85,7 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
     const madeInert = [...document.body.children].filter((c): c is HTMLElement => c !== el && c instanceof HTMLElement && !c.hasAttribute('inert'));
     for (const c of madeInert) c.setAttribute('inert', '');
     const items = () => (panel.current ? [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)] : []);
-    (initialFocus?.current ?? items()[0] ?? panel.current)?.focus();
+    (initialFocus?.current ?? (closeButton ? panel.current : items()[0]) ?? panel.current)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -138,19 +145,32 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
         aria-labelledby={`${id}-t`}
         aria-describedby={description ? `${id}-d` : undefined}
         tabIndex={-1}
-        className={`pb-safe pointer-events-auto relative flex max-h-[90%] w-full flex-col rounded-t-2xl bg-surface shadow-xl outline-none ${placement === 'side' ? 'md:h-full md:max-h-none md:max-w-md md:rounded-none md:border-l md:border-line' : 'md:max-w-lg md:rounded-2xl'}`}
+        className={`pb-safe pointer-events-auto relative flex ${closeButton ? 'max-h-[94%]' : 'max-h-[90%]'} w-full flex-col rounded-t-2xl bg-surface shadow-xl outline-none ${placement === 'side' ? 'md:h-full md:max-h-none md:max-w-md md:rounded-none md:border-l md:border-line' : 'md:max-w-lg md:rounded-2xl'}`}
       >
-        <div className="px-5 pt-5">
-          <h2 id={`${id}-t`} className="text-[20px] font-semibold text-ink">
-            {title}
-          </h2>
+        <div className={`px-5 ${closeButton ? 'pt-3' : 'pt-5'}`}>
+          {closeButton ? (
+            <div className="flex items-start justify-between gap-3">
+              <h2 id={`${id}-t`} className="min-w-0 pt-2 text-[20px] font-semibold text-ink [overflow-wrap:anywhere]">
+                {title}
+              </h2>
+              <button type="button" onClick={() => close.current()} className="-mr-2 -mt-1 inline-flex min-h-tap min-w-tap shrink-0 items-center justify-center rounded-xl px-2 text-[16px] font-semibold text-accent active:bg-accent-soft">
+                Close
+              </button>
+            </div>
+          ) : (
+            <h2 id={`${id}-t`} className="text-[20px] font-semibold text-ink">
+              {title}
+            </h2>
+          )}
           {description ? (
             <p id={`${id}-d`} className="mt-1 text-[15px] text-ink-muted">
               {description}
             </p>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">{children}</div>
+        <div data-testid="dialog-body" className={`min-h-0 flex-1 overflow-y-auto px-5 ${closeButton ? 'pb-4 pt-2' : 'pb-5 pt-4'}`}>
+          {children}
+        </div>
         {footer ? <div className="border-t border-line px-5 py-3">{footer}</div> : null}
       </div>
       </div>

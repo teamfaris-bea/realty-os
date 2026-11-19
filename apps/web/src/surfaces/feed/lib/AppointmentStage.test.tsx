@@ -55,9 +55,10 @@ describe('the appointment outcome sheet and the stage step (R-STG-2)', () => {
     const { fake, u } = mount({ appointment, suggestedStage: SIGNED });
     await u.click(screen.getByRole('button', { name: 'Log outcome' }));
     await u.click(within(await screen.findByRole('dialog', { name: 'Buyer consult with Jane Doe' })).getByRole('button', { name: 'Signed' }));
-    await waitFor(() => expect(screen.getByTestId('toast')).toHaveTextContent('Outcome saved.'));
+    // M4: the step's first line says it; no toast says it a second time over that line
     const step = await screen.findByRole('dialog', { name: 'Stage for Jane Doe' });
     expect(within(step).getByRole('status')).toHaveTextContent('Outcome saved: Signed');
+    expect(screen.getByTestId('toast').textContent).toBe('');
     const active = await within(step).findByRole('radio', { name: 'Active client Suggested' });
     expect(active).toBeChecked();
     expect(active).toHaveAccessibleDescription(/We are working together now\..*They signed an agreement, so you are working together now\./);

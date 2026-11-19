@@ -1,16 +1,31 @@
-// Log an outside call, text or email (PARITY_PLAN §5: Log (Call preselected) → outcome → Save = 3 taps).
+// Log an outside call, text or email (PARITY_PLAN §5: Log (Call preselected) → outcome → one button = 3 taps).
 // It is a note, never a call or message record and never a touch (R-PAR-30, R-PAR-32): the sheet says so.
 // "Remind me in N days" makes an ordinary task. If the note reads like "they asked not to be contacted",
 // the sheet asks, and offers the real person-level do-not-contact: a note alone never blocks anything (E193).
-// After a save the same sheet shows the stage step (R-STG-2; people-edit/StageStep.tsx): what was logged, the stage
-// the server suggests for it (to confirm, never applied by itself), and what the choice will do. The log's id is
-// made once per sheet, so a second tap or a retry of Save answers the same note (R-STG-6).
-import { ACTIVITY_MAX_AHEAD_MS, CALL_OUTCOMES, suggestsDoNotContact } from '@realty/core/parity/people';
+//
+// The stage step, in place (R-STG-2; b19 fix pass M6, E775). Choosing an outcome reveals the stage step in THIS sheet
+// (people-edit/StageStep.tsx): the stage the outcome suggests, to confirm, what the choice will do, and a follow-up.
+// The suggestion shown before the save is core's own (activitySignal + suggestStageFromOutcome, the functions the log
+// route answers its suggestion with) against the person's details read when the sheet opened. ONE primary button
+// then does both, in order: it saves the log ("Save and change to Trying to reach", "Save and keep New lead"), then
+// the follow-up and the stage. So Log → outcome → that button is 3 taps to a confirmed stage.
+//
+//   - The log's id is made once per sheet: a second tap or a retry of the button answers the same note (R-STG-6).
+//   - Once the log is saved the sheet says so ("Call logged (left voicemail)") in place of the fields, and the button
+//     is named for what is left ("Change to Trying to reach"). When the stage change (or the follow-up) fails after
+//     the log saved, the sheet stays open and says exactly what was saved and what was not, with the server's reason;
+//     the button stays enabled and a retry never makes a second note.
+//   - A call logged with no outcome suggests nothing: no stage step, the button is "Save", and the sheet closes.
+//   - Nothing is said twice: the toast after the sheet closes is the only place the save is confirmed.
+//   - When the server says the note reads like a do-not-contact request, the stage is NOT changed by that tap: the
+//     sheet asks first. "No" comes back to the saved log with the stage step still to confirm.
+import { ACTIVITY_MAX_AHEAD_MS, CALL_OUTCOMES, activitySignal, suggestsDoNotContact } from '@realty/core/parity/people';
 import { useId, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { firstNameOf } from '../people-edit/api.js';
 import { Chip, selectClass, textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
-import { StageStep } from '../people-edit/StageStep.js';
+import { NeverNote } from '../people-edit/StagePreview.js';
+import { Saved, StageStepBody, useStageStep } from '../people-edit/StageStep.js';
 import type { SuggestedStage } from '../people-edit/stageFlow.js';
 
 const KINDS = [
@@ -26,6 +41,8 @@ function localInputValue(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
 export function LogSheet({ contactId, contactName, onClose }: { contactId: string; contactName: string; onClose: () => void }) {
   const [kind, setKind] = useState<'call' | 'text' | 'email'>('call');
   const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
@@ -33,38 +50,78 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
   const [when, setWhen] = useState(() => localInputValue(new Date()));
   const [body, setBody] = useState('');
   const [remind, setRemind] = useState(0);
-  const [askDnc, setAskDnc] = useState(false);
+  // the chips shown again after an outcome folded them into one line
+  const [editing, setEditing] = useState(false);
+  // 'asked': the agent opened the question themselves, nothing is saved yet; 'suggested': the server asked after the save
+  const [askDnc, setAskDnc] = useState<'asked' | 'suggested' | null>(null);
   const act = usePersonAction<{ suggestDoNotContact: boolean; taskId: string | null; suggestedStage?: SuggestedStage | null; replayed?: boolean }>(contactId);
   // R-STG-6: one id for whatever this sheet logs; the server answers the same note for it again
   const noteId = useRef<string>(globalThis.crypto.randomUUID());
-  const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null } | null>(null);
+  // the log as the server stored it, in words (null: not saved yet)
+  const [saved, setSaved] = useState<string | null>(null);
+  const busy = useRef(false);
+  const done = useRef(false);
+  const [working, setWorking] = useState(false);
   const dnc = usePersonAction<{ alreadySet: boolean }>(contactId);
   const toast = useToast();
   const first = firstNameOf(contactName);
-  const ids = { when: useId(), body: useId(), remind: useId(), note: useId() };
+  const ids = { when: useId(), body: useId(), remind: useId() };
   const at = new Date(when);
   const future = Number.isFinite(at.getTime()) && at.getTime() > Date.now() + ACTIVITY_MAX_AHEAD_MS;
 
-  const save = async () => {
-    const r = await act.run('POST', `/contacts/${contactId}/activities`, {
-      kind,
-      direction,
-      at: at.toISOString(),
-      ...(kind === 'call' && outcome ? { outcome } : {}),
-      ...(body.trim() ? { body: body.trim() } : {}),
-      ...(remind > 0 ? { remindInDays: remind } : {}),
-      noteId: noteId.current,
-    });
-    if (!r.ok) return;
-    if (r.data.suggestDoNotContact) {
-      setAskDnc(true);
-      return;
+  // The stage step. An outcome is what reveals it: a call's outcome chip, or a text or email (its own outcome).
+  const hasOutcome = kind !== 'call' || outcome !== null;
+  const step = useStageStep(contactId, contactName, { signal: activitySignal({ kind, direction, outcome }), active: hasOutcome });
+  const stepOn = hasOutcome && step.canEdit;
+  // the outcome is chosen and the person is still being read: the button waits, so the step is never skipped by a fast tap
+  const stepPending = hasOutcome && step.details === null && step.failed === null;
+  const folded = saved === null && kind === 'call' && outcome !== null && !editing;
+
+  const kindLabel = KINDS.find((k) => k.key === kind)!.label;
+  const directionLabel = (d: 'outbound' | 'inbound') => (d === 'outbound' ? (kind === 'call' ? 'I called' : 'I sent') : kind === 'call' ? `${first} called` : `${first} sent`);
+
+  const run = async () => {
+    if (busy.current || done.current) return;
+    busy.current = true;
+    setWorking(true);
+    try {
+      let words = saved;
+      if (words === null) {
+        const r = await act.run('POST', `/contacts/${contactId}/activities`, {
+          kind,
+          direction,
+          at: at.toISOString(),
+          ...(kind === 'call' && outcome ? { outcome } : {}),
+          ...(body.trim() ? { body: body.trim() } : {}),
+          ...(remind > 0 ? { remindInDays: remind } : {}),
+          noteId: noteId.current,
+        });
+        // nothing was saved (or nobody can say): nothing is claimed, and the same tap again is the same note
+        if (!r.ok) return;
+        const logged = `${kindLabel} logged${r.data.taskId ? `, reminder in ${remind} day${remind === 1 ? '' : 's'}` : ''}`;
+        const what = kind === 'call' && outcome ? `${logged} (${OUTCOME_LABEL[outcome].toLowerCase()})` : logged;
+        // a repeat of this sheet's save (a retry after a lost answer) is the note the first one stored
+        words = r.data.replayed ? `${what}. Your first tap had already saved it, as first written.` : what;
+        setSaved(words);
+        if (r.data.suggestDoNotContact) {
+          setAskDnc('suggested');
+          return;
+        }
+      }
+      if (!stepOn) {
+        done.current = true;
+        toast({ text: words });
+        onClose();
+        return;
+      }
+      if (await step.finish({ saved: words, lead: words })) {
+        done.current = true;
+        onClose();
+      }
+    } finally {
+      busy.current = false;
+      setWorking(false);
     }
-    const saved = `${KINDS.find((k) => k.key === kind)!.label} logged${r.data.taskId ? `, reminder in ${remind} day${remind === 1 ? '' : 's'}` : ''}`;
-    toast({ text: saved });
-    // a repeat of this sheet's save (a second tap, a retry after a lost answer) is the note the first one stored
-    const what = kind === 'call' && outcome ? `${saved} (${OUTCOME_LABEL[outcome].toLowerCase()})` : saved;
-    setLogged({ saved: r.data.replayed ? `${what}. Your first tap had already saved it, as first written.` : what, suggested: r.data.suggestedStage ?? null });
   };
 
   const recordDnc = async () => {
@@ -74,20 +131,28 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
     onClose();
   };
 
-  if (logged) return <StageStep contactId={contactId} contactName={contactName} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
-
   if (askDnc) {
+    // "No": back to the sheet when something is left to do there (the unsaved log, or the stage still to confirm)
+    const back = askDnc === 'asked' || stepOn;
+    const no = () => {
+      if (back) {
+        setAskDnc(null);
+        return;
+      }
+      if (saved) toast({ text: saved });
+      onClose();
+    };
     return (
       <Dialog
         title={`Did ${first} ask not to be contacted?`}
-        description="Your note was saved. A note alone doesn’t stop anything from being sent."
-        onClose={onClose}
+        description={`${saved !== null ? `Your note was saved${stepOn ? ', and the stage was not changed' : ''}. ` : ''}A note alone doesn’t stop anything from being sent.`}
+        onClose={no}
         footer={
           <div className="flex flex-col gap-2">
             <Button block onClick={() => void recordDnc()} pending={dnc.pending}>
               Yes, record do not contact
             </Button>
-            <Button block variant="secondary" onClick={onClose}>
+            <Button block variant="secondary" onClick={no}>
               No
             </Button>
           </div>
@@ -99,74 +164,114 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
     );
   }
 
+  const primary = saved !== null ? step.primary : stepOn ? `Save and ${lowerFirst(step.primary)}` : 'Save';
   return (
     <Dialog
       title={`Log for ${contactName}`}
-      description={`Something that happened outside Realty OS. It shows as logged by you and doesn’t count as reaching ${first}.`}
+      description={saved === null && !folded ? `Something that happened outside Realty OS. It shows as logged by you and doesn’t count as reaching ${first}.` : undefined}
       onClose={onClose}
+      closeButton
       footer={
         <div className="flex flex-col gap-2">
-          <Button block onClick={() => void save()} pending={act.pending} disabled={future}>
-            Save
-          </Button>
-          <Button block variant="quiet" onClick={() => setAskDnc(true)}>
-            They asked not to be contacted…
+          {act.error ? <Notice tone="error">{act.error}</Notice> : null}
+          {step.failure ? <Notice tone="error">{step.failure}</Notice> : null}
+          <Button block onClick={() => void run()} pending={working} disabled={(saved === null && future) || stepPending || (stepOn && step.blocked)} aria-describedby={stepOn ? step.ids.effect : undefined} data-testid="log-save">
+            {primary}
           </Button>
         </div>
       }
     >
-      <div className="flex flex-col gap-4">
-        <div role="group" aria-label="What happened" className="flex flex-wrap gap-2">
-          {KINDS.map((k) => (
-            <Chip key={k.key} selected={kind === k.key} onClick={() => setKind(k.key)}>
-              {k.label}
-            </Chip>
-          ))}
-        </div>
-        <div role="group" aria-label="Direction" className="flex flex-wrap gap-2">
-          <Chip selected={direction === 'outbound'} onClick={() => setDirection('outbound')}>
-            {kind === 'call' ? 'I called' : 'I sent'}
-          </Chip>
-          <Chip selected={direction === 'inbound'} onClick={() => setDirection('inbound')}>
-            {kind === 'call' ? `${first} called` : `${first} sent`}
-          </Chip>
-        </div>
-        {kind === 'call' ? (
-          <div role="group" aria-label="Outcome" className="flex flex-wrap gap-2">
-            {CALL_OUTCOMES.map((o) => (
-              <Chip key={o} selected={outcome === o} onClick={() => setOutcome(outcome === o ? null : o)}>
-                {OUTCOME_LABEL[o]}
-              </Chip>
-            ))}
+      <div className={`flex flex-col ${folded || saved !== null ? 'gap-2' : 'gap-3'}`}>
+        {saved !== null ? (
+          <Saved text={saved} />
+        ) : folded ? (
+          // what is about to be logged, in one line; "Edit" brings the choices back
+          <div className="flex items-center gap-2 rounded-xl bg-surface-2 py-0.5 pl-3 pr-1 text-[15px] text-ink">
+            <p className="min-w-0 flex-1 [overflow-wrap:anywhere]" data-testid="log-summary">
+              <span className="font-medium">To log:</span> {kindLabel} · {directionLabel(direction)} · {OUTCOME_LABEL[outcome!]}
+            </p>
+            <Button variant="quiet" className="shrink-0 px-2" aria-label="Edit what happened" disabled={working} onClick={() => setEditing(true)}>
+              Edit
+            </Button>
           </div>
+        ) : (
+          <>
+            <div role="group" aria-label="What happened" className="flex flex-wrap gap-2">
+              {KINDS.map((k) => (
+                <Chip key={k.key} selected={kind === k.key} disabled={working} onClick={() => setKind(k.key)}>
+                  {k.label}
+                </Chip>
+              ))}
+            </div>
+            <div role="group" aria-label="Direction" className="flex flex-wrap gap-2">
+              {(['outbound', 'inbound'] as const).map((d) => (
+                <Chip key={d} selected={direction === d} disabled={working} onClick={() => setDirection(d)}>
+                  {directionLabel(d)}
+                </Chip>
+              ))}
+            </div>
+            {kind === 'call' ? (
+              <div role="group" aria-label="Outcome" className="flex flex-wrap gap-2">
+                {CALL_OUTCOMES.map((o) => (
+                  <Chip
+                    key={o}
+                    selected={outcome === o}
+                    disabled={working}
+                    onClick={() => {
+                      setOutcome(outcome === o ? null : o);
+                      setEditing(false);
+                    }}
+                  >
+                    {OUTCOME_LABEL[o]}
+                  </Chip>
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+        {stepOn ? (
+          <StageStepBody s={step} disabled={working} />
+        ) : stepPending ? (
+          <p className="text-[15px] text-ink-muted">Loading</p>
+        ) : hasOutcome && step.details && !step.canEdit ? (
+          <p className="text-[15px] text-ink">The stage stays {step.details.stage.label}. Only someone who can edit this person changes it.</p>
+        ) : hasOutcome && step.failed ? (
+          <p className="text-[15px] text-ink">We couldn’t read this person’s stage, so this sheet only saves the log. {step.failed}</p>
         ) : null}
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={ids.when} className="text-[15px] font-medium text-ink">
-            When
-          </label>
-          <input id={ids.when} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={selectClass} aria-invalid={future || undefined} />
-          {future ? <p className="text-[14px] font-medium text-danger">That time is in the future.</p> : null}
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={ids.body} className="text-[15px] font-medium text-ink">
-            Note (optional)
-          </label>
-          <textarea id={ids.body} value={body} onChange={(e) => setBody(e.target.value)} className={textareaClass} maxLength={20000} />
-          {suggestsDoNotContact(body) ? <p className="text-[14px] text-ink-muted">If {first} asked not to be contacted, use “They asked not to be contacted…” below: a note alone doesn’t stop anything.</p> : null}
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={ids.remind} className="text-[15px] font-medium text-ink">
-            Remind me
-          </label>
-          <select id={ids.remind} value={remind} onChange={(e) => setRemind(Number(e.target.value))} className={selectClass}>
-            {REMIND.map((d) => (
-              <option key={d} value={d}>
-                {d === 0 ? 'No reminder' : `In ${d} day${d === 1 ? '' : 's'}`}
-              </option>
-            ))}
-          </select>
-        </div>
-        {act.error ? <Notice tone="error">{act.error}</Notice> : null}
+        {saved === null ? (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor={ids.when} className="text-[15px] font-medium text-ink">
+                When
+              </label>
+              <input id={ids.when} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={selectClass} aria-invalid={future || undefined} />
+              {future ? <p className="text-[14px] font-medium text-danger">That time is in the future.</p> : null}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor={ids.body} className="text-[15px] font-medium text-ink">
+                Note (optional)
+              </label>
+              <textarea id={ids.body} value={body} onChange={(e) => setBody(e.target.value)} className={textareaClass} maxLength={20000} />
+              {suggestsDoNotContact(body) ? <p className="text-[14px] text-ink-muted">If {first} asked not to be contacted, use “They asked not to be contacted…” below: a note alone doesn’t stop anything.</p> : null}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor={ids.remind} className="text-[15px] font-medium text-ink">
+                Remind me
+              </label>
+              <select id={ids.remind} value={remind} onChange={(e) => setRemind(Number(e.target.value))} className={selectClass}>
+                {REMIND.map((d) => (
+                  <option key={d} value={d}>
+                    {d === 0 ? 'No reminder' : `In ${d} day${d === 1 ? '' : 's'}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button variant="quiet" className="self-start px-3" disabled={working} onClick={() => setAskDnc('asked')}>
+              They asked not to be contacted…
+            </Button>
+          </>
+        ) : null}
+        {stepOn ? <NeverNote /> : null}
       </div>
     </Dialog>
   );

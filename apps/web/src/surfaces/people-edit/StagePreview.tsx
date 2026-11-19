@@ -5,9 +5,13 @@
 //   Will start: <plan>, first step <channel> <when>     only when the preview's `starts` is set
 //   <Plan> will not start: <why>                         the server's own sentence (an opt-out, no approved version, …)
 //   No plan starts on this stage.                        nothing names the stage
-//   Keeps running: <plan>   [Stop]                       a stage change never stops a plan; Stop only when the server
-//                                                        says this viewer's stop request would act (canStop)
-//   AI follow-up: unchanged · Your tasks: unchanged
+//   Locked for now: reach them first.                    the stage rule refuses the change (said before any plan words)
+//   Keeps running: <plan>   [Stop]                       directly under it: a stage change never stops a plan; Stop only
+//                                                        when the server says this viewer's stop request would act
+//
+// StagePreviewBlock is that ONE line and the running plan (b19 fix pass M4: the sentence is on the screen once, in the
+// sheet's body above the follow-up; the sheet's primary button is described by it). NeverNote is the footnote under
+// the sheet and the picker: what no stage change ever does (it stops no plan; AI follow-up and tasks are unchanged).
 //
 // Nothing here is said in the past tense: what actually happened is read after the save (the toast, and the "What
 // happens next" panel). While the answer is not in, and when it fails, the block says so and claims nothing.
@@ -49,32 +53,30 @@ export function KeepsRunning({ contactId, k, onStopped }: { contactId: string; k
   );
 }
 
-export function StagePreviewBlock({ contactId, to }: { contactId: string; to: string }) {
+export function StagePreviewBlock({ contactId, to, effectId }: { contactId: string; to: string; /** the id of the effect line (the primary button is described by it) */ effectId?: string }) {
   const q = useStagePreview(contactId, to);
   const [stopped, setStopped] = useState<string | null>(null);
   const p = q.data;
   return (
-    <div className="flex flex-col gap-1.5 rounded-xl bg-surface-2 px-3 py-2.5 text-[15px] text-ink" data-testid="stage-preview">
-      {!p && q.isPending ? <p className="text-ink-muted">{PREVIEW_LOADING}</p> : null}
-      {!p && q.isError ? <p>{PREVIEW_FAILED}</p> : null}
-      {p ? (
-        <ul aria-label="What this change will do" className="flex flex-col gap-1.5">
-          <li className={`[overflow-wrap:anywhere] ${p.starts ? 'font-semibold' : ''}`}>{effectLine(p)}</li>
-          {p.keepsRunning ? (
-            <li>
-              <KeepsRunning contactId={contactId} k={p.keepsRunning} onStopped={setStopped} />
-            </li>
-          ) : null}
-          <li>{AI_UNCHANGED}</li>
-          <li>{TASKS_UNCHANGED}</li>
-        </ul>
-      ) : null}
+    <div className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[15px] text-ink" data-testid="stage-preview">
+      <p id={effectId} data-testid="stage-step-effect" className={`leading-snug [overflow-wrap:anywhere] ${p?.allowed && p.starts ? 'font-semibold' : ''} ${!p && q.isPending ? 'text-ink-muted' : ''}`}>
+        {p ? effectLine(p) : q.isError ? PREVIEW_FAILED : PREVIEW_LOADING}
+      </p>
+      {p?.keepsRunning ? <KeepsRunning contactId={contactId} k={p.keepsRunning} onStopped={setStopped} /> : null}
       {stopped ? (
         <p role="status" className="font-medium">
           Stopped {stopped}.
         </p>
       ) : null}
-      <p className="text-[13px] text-ink-muted">{NEVER_STOPS}</p>
     </div>
+  );
+}
+
+/** Under the stages, in smaller type: what no stage change ever does. */
+export function NeverNote({ className = '' }: { className?: string }) {
+  return (
+    <p className={`text-[13px] leading-snug text-ink-muted ${className}`} data-testid="stage-never-note">
+      <span>{NEVER_STOPS}</span> <span>{AI_UNCHANGED}</span> · <span>{TASKS_UNCHANGED}</span>
+    </p>
   );
 }

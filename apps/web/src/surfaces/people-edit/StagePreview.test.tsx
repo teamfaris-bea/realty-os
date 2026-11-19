@@ -12,7 +12,7 @@ import { ShellProvider } from '../../shell/context.js';
 import { FakeFetch, err, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
 import { reachability } from '../feed/lib/testing.js';
 import { StagePill } from './StagePill.js';
-import { StagePreviewBlock } from './StagePreview.js';
+import { NeverNote, StagePreviewBlock } from './StagePreview.js';
 import { ToastProvider } from './hooks.js';
 import { type StagePreview, effectLabel, effectLine, whenWords, willStartText } from './stageFlow.js';
 import { detailsFixture, guideFixture, stageFixture } from './testing.js';
@@ -91,10 +91,22 @@ describe('R-STG-3 the preview block', () => {
   };
 
   it('a plan that will start: its name and first step, AI follow-up and tasks unchanged, and that a stage change stops nothing', async () => {
-    block(preview({ starts: { plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(1, 9).toISOString() } } }));
-    const list = await screen.findByRole('list', { name: 'What this change will do' });
-    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Will start: Buyer plan, first step text tomorrow 9:00 AM', 'AI follow-up: unchanged', 'Your tasks: unchanged']);
-    expect(screen.getByText('Changing the stage does not stop a running plan.')).toBeInTheDocument();
+    const fake = new FakeFetch().on(`GET /contacts/${C}/stage/preview?to=active`, { status: 200, body: preview({ starts: { plan: 'Buyer plan', firstStep: { channel: 'sms', dueAt: at(1, 9).toISOString() } } }) });
+    wrap(
+      fake,
+      <>
+        <StagePreviewBlock contactId={C} to="active" />
+        <NeverNote />
+      </>,
+    );
+    // M4: the effect is ONE line (the sheet's button is described by it); what no stage change does is the footnote
+    expect(await screen.findByText('Will start: Buyer plan, first step text tomorrow 9:00 AM')).toBeInTheDocument();
+    expect(screen.getByTestId('stage-step-effect')).toHaveTextContent(/^Will start: Buyer plan, first step text tomorrow 9:00 AM$/);
+    expect(screen.getAllByText(/Will start/)).toHaveLength(1);
+    const note = within(screen.getByTestId('stage-never-note'));
+    expect(note.getByText('AI follow-up: unchanged')).toBeInTheDocument();
+    expect(note.getByText('Your tasks: unchanged')).toBeInTheDocument();
+    expect(note.getByText('Changing the stage does not stop a running plan.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Stop/ })).toBeNull();
   });
 

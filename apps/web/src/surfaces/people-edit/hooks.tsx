@@ -10,7 +10,20 @@ import { PEOPLE_ERROR_MESSAGES, personKeys } from './api.js';
 
 const MESSAGES = { ...AGENT_ERROR_MESSAGES, ...PEOPLE_ERROR_MESSAGES };
 
-export type ActionResult<R> = { ok: true; data: R } | { ok: false; code: string; message: string; details: Record<string, unknown> | null };
+export type ActionResult<R> =
+  | { ok: true; data: R }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      details: Record<string, unknown> | null;
+      /**
+       * Nobody can say whether the server did it: the answer never arrived, or the server failed after it may have
+       * committed (a network error, a 5xx). The screen then says "could not confirm", never "was not saved". False:
+       * the server refused, and nothing was done.
+       */
+      uncertain: boolean;
+    };
 
 /**
  * One request per tap: a call for the same request (method, path and body) while that one is in flight reuses it, so
@@ -44,7 +57,7 @@ export function usePersonAction<R = unknown>(contactId: string) {
           const err = e instanceof ApiError ? e : new ApiError('INTERNAL_ERROR', 0);
           const message = messageFor(err, MESSAGES);
           setError(message);
-          return { ok: false, code: err.code, message, details: err.details };
+          return { ok: false, code: err.code, message, details: err.details, uncertain: err.code === 'NETWORK_ERROR' || err.status === 0 || err.status >= 500 };
         } finally {
           if (inFlight.current.get(key) === p) inFlight.current.delete(key);
           open.current -= 1;
@@ -106,8 +119,8 @@ function OwnToast({ children }: { children: ReactNode }) {
       <InToastCtx.Provider value={true}>{children}</InToastCtx.Provider>
       <div data-testid="people-toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+76px)] z-50 flex justify-center px-4 md:bottom-6">
         {toast ? (
-          <div className="pointer-events-auto flex max-w-md items-center gap-3 rounded-xl bg-ink px-4 py-2 text-[15px] font-medium text-surface shadow-lg">
-            <span>{toast.text}</span>
+          <div className="pointer-events-auto flex max-w-md flex-wrap items-center justify-end gap-x-3 rounded-xl bg-ink px-4 py-2 text-[15px] font-medium text-surface shadow-lg">
+            <span className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere]">{toast.text}</span>
             {toast.undo ? (
               <button
                 type="button"
@@ -144,7 +157,7 @@ function OwnToast({ children }: { children: ReactNode }) {
 
 // ---- small controls ----------------------------------------------------------------------------------
 
-export function Chip({ selected, onClick, children, disabled, describedBy, compact = false }: { selected: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; describedBy?: string; /** a row of five on a phone: narrower sides, the same 44 px height */ compact?: boolean }) {
+export function Chip({ selected, onClick, children, disabled, describedBy }: { selected: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; describedBy?: string }) {
   return (
     <button
       type="button"
@@ -152,7 +165,7 @@ export function Chip({ selected, onClick, children, disabled, describedBy, compa
       disabled={disabled}
       aria-describedby={describedBy}
       onClick={onClick}
-      className={`min-h-tap rounded-full border ${compact ? 'px-3' : 'px-4'} text-[15px] font-medium ${selected ? 'border-accent bg-accent text-accent-ink' : 'border-line bg-surface text-ink'} disabled:opacity-50`}
+      className={`min-h-tap rounded-full border px-4 text-[15px] font-medium ${selected ? 'border-accent bg-accent text-accent-ink' : 'border-line bg-surface text-ink'} disabled:opacity-50`}
     >
       {children}
     </button>

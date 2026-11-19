@@ -9,6 +9,9 @@
 // - `effect`: what choosing it would do to the person's automated plan (StagePreview.tsx), when the caller knows.
 // - `compact` (a set of choices in a sheet on a phone): the "does not mean" line shows on demand, for the selected
 //   choice, so the choices and what the selected one will do fit one screen. The definition always shows.
+// - `brief` ("Keep <current>" in that sheet): the person is in this stage now, so only its label shows.
+// - `plain` (the few choices a sheet opens with): the "does not mean" line is left to "Another stage…", where every
+//   stage shows it on demand, so what the suggested choice will do and the follow-up stay above the fold on a phone.
 import { type ReactNode, useId } from 'react';
 import type { StageGuideRow } from './api.js';
 
@@ -34,14 +37,19 @@ export interface StageRowProps {
   label?: string | undefined;
   /** show the "does not mean" line only while this choice is selected */
   compact?: boolean;
+  /** the label alone: no definition and no "does not mean" line */
+  brief?: boolean;
+  /** never the "does not mean" line (it shows in the full list) */
+  plain?: boolean;
   onPick(): void;
 }
 
-export function StageRow({ stage, current = false, locked = false, lockedBy, badge, why, effect, disabled = false, mode, selected = false, label, compact = false, onPick }: StageRowProps) {
+export function StageRow({ stage, current = false, locked = false, lockedBy, badge, why, effect, disabled = false, mode, selected = false, label, compact = false, brief = false, plain = false, onPick }: StageRowProps) {
   const id = useId();
-  const showNot = !compact || selected;
+  const showDef = !brief;
+  const showNot = showDef && !plain && (!compact || selected);
   const state = locked ? 'Locked' : current && mode === 'pick' ? 'Current' : (badge ?? '');
-  const describedBy = [`${id}-d`, showNot ? `${id}-n` : null, why ? `${id}-w` : null, effect ? `${id}-e` : null, locked ? lockedBy : null].filter(Boolean).join(' ');
+  const describedBy = [showDef ? `${id}-d` : null, showNot ? `${id}-n` : null, why ? `${id}-w` : null, effect ? `${id}-e` : null, locked ? lockedBy : null].filter(Boolean).join(' ');
   const on = mode === 'select' ? selected : current;
   return (
     <button
@@ -53,7 +61,7 @@ export function StageRow({ stage, current = false, locked = false, lockedBy, bad
       aria-describedby={describedBy}
       disabled={locked || disabled}
       onClick={onPick}
-      className={`flex min-h-tap w-full flex-col gap-0.5 rounded-xl border px-3 py-2 text-left ${on ? 'border-accent bg-accent-soft' : 'border-transparent'} ${mode === 'select' && !on ? 'border-line' : ''} disabled:opacity-70`}
+      className={`flex min-h-tap w-full flex-col justify-center gap-0.5 rounded-xl border px-3 py-2 text-left ${on ? 'border-accent bg-accent-soft' : 'border-transparent'} ${mode === 'select' && !on ? 'border-line' : ''} disabled:opacity-70`}
     >
       <span className="flex w-full items-start justify-between gap-3">
         <span id={`${id}-l`} className={`min-w-0 text-[17px] text-ink [overflow-wrap:anywhere] ${on ? 'font-semibold' : 'font-medium'}`}>
@@ -65,9 +73,11 @@ export function StageRow({ stage, current = false, locked = false, lockedBy, bad
           </span>
         ) : null}
       </span>
-      <span id={`${id}-d`} className="text-[15px] leading-snug text-ink [overflow-wrap:anywhere]">
-        {stage.definition}
-      </span>
+      {showDef ? (
+        <span id={`${id}-d`} className="text-[15px] leading-snug text-ink [overflow-wrap:anywhere]">
+          {stage.definition}
+        </span>
+      ) : null}
       {showNot ? (
         <span id={`${id}-n`} className="text-[13px] leading-snug text-ink-muted [overflow-wrap:anywhere]">
           {stage.notThis}

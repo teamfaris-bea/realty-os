@@ -7,7 +7,7 @@
 // A refusal says nothing was undone, or that the plan was not stopped, with the server's reason.
 import { useCallback } from 'react';
 import { type ActionResult, usePersonAction, useToast } from './hooks.js';
-import { type StageResponse, UNDO_REFUSED, automationText, undoneText } from './stageFlow.js';
+import { type StageResponse, UNDO_REFUSED, automationText, joinWords, undoneText } from './stageFlow.js';
 
 export function useStageChange(contactId: string, labelOf: (key: string) => string) {
   const act = usePersonAction<StageResponse>(contactId);
@@ -41,14 +41,14 @@ export function useStageChange(contactId: string, labelOf: (key: string) => stri
 
   /** Changes the stage; on success shows the toast (with Undo when the server named the event). */
   const change = useCallback(
-    async (to: string, o: { also?: string } = {}): Promise<ActionResult<StageResponse>> => {
+    async (to: string, o: { /** words before "Stage: …" (what the same tap saved first) */ lead?: string; /** words after it (the follow-up the server stored) */ also?: string } = {}): Promise<ActionResult<StageResponse>> => {
       const r = await act.run('POST', `/contacts/${contactId}/stage`, { stage: to });
       if (!r.ok || r.data.previousStage === to) return r;
       const prev = r.data.previousStage;
       const plan = automationText(r.data.automation);
       const eventId = r.data.eventId ?? null;
       toast({
-        text: [`Stage: ${r.data.stage.label}${plan ? `. ${plan}` : ''}`, o.also].filter(Boolean).join('. '),
+        text: joinWords([o.lead, `Stage: ${r.data.stage.label}`, plan, o.also]),
         // without the event's id an undo could not be told from a new change (which may start a plan): not offered
         ...(eventId ? { undo: () => void undo(prev, eventId) } : {}),
       });

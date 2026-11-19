@@ -4,7 +4,7 @@
 // not counted; picking a mention adds +0 by the plan's count):
 //   add a person: phone + → Save = 2 (+1 on a duplicate warning) · desktop + → ↵ = 1
 //   add a note:   phone Note → Save = 2 · desktop click the box → ⌘↵ = 1
-//   log a call:   Log (Call preselected) → outcome → Save = 3 (+ the follow-up task)
+//   log a call:   Log (Call preselected) → outcome → one button = 3, to a saved log and a confirmed stage (+ the follow-up task)
 //   change stage: pill → stage = 2, toast with Undo
 //   replace a phone: phone Details ✎ → field → Save = 3 · desktop inline field → ↵ = 1
 //   add a relationship; locked stages say why before the tap; logged items say "Logged by".
@@ -148,7 +148,7 @@ test('a note with an @mention: phone Note → Save = 2, desktop box → ⌘↵ =
   await expect(page.getByText(/^Everyone who can see Jane can read (this note|these notes)\.$/).first()).toBeVisible();
 });
 
-test('log an outside call: Log → outcome → Save = 3; "Logged by" and not verified; the follow-up task; "they said stop" asks', async ({ page }) => {
+test('log an outside call: Log → outcome → ONE button = 3 to a saved log AND a confirmed stage, every tap counted (no Close; b19 fix pass M6); "Logged by" and not verified; the follow-up task; "they said stop" asks', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page);
   await openContact(page, jane.id, 'Jane Doe');
@@ -157,17 +157,17 @@ test('log an outside call: Log → outcome → Save = 3; "Logged by" and not ver
   const sheet = page.getByRole('dialog', { name: 'Log for Jane Doe' });
   await expect(sheet.getByRole('button', { name: 'Call', exact: true, pressed: true })).toBeVisible();
   await tap(page, sheet.getByRole('button', { name: 'No answer' }), log);
+  // b19 (R-STG-2, M6): choosing the outcome shows the stage step in the SAME sheet: the stage it suggests, to confirm
+  await expect(sheet.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked({ timeout: 15_000 });
+  await expect(page.getByRole('dialog')).toHaveCount(1);
   await shot(page, 'log-sheet');
-  await tap(page, sheet.getByRole('button', { name: 'Save' }), log);
+  // the one button saves the log and the stage: the third and last tap
+  await tap(page, sheet.getByRole('button', { name: 'Save and change to Trying to reach' }), log);
   await expect(peopleToast(page).getByText('Call logged')).toBeVisible();
+  await expect(peopleToast(page).getByText('Call logged (no answer). Stage: Trying to reach')).toBeVisible();
   expect(log.taps).toBe(3);
-  // b19 (R-STG-2): after the save the same sheet shows the stage step: what was logged and the stage it suggests,
-  // to confirm. The suggestion changes nothing by itself; Close leaves Jane's stage as it was.
-  const step = page.getByRole('dialog', { name: 'Stage for Jane Doe' });
-  await expect(step.getByRole('status')).toHaveText('Call logged (no answer)');
-  await expect(step.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
-  await step.getByRole('button', { name: 'Close' }).click();
-  await expect(page.getByRole('button', { name: 'Stage: New lead. Change stage' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stage: Trying to reach. Change stage' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('list', { name: 'Notes' }).getByText(/Outbound call · No answer · Logged by .+ · not verified/).first()).toBeVisible();
 
   // with a "remind me": an ordinary task appears in the person's tasks
@@ -175,9 +175,9 @@ test('log an outside call: Log → outcome → Save = 3; "Logged by" and not ver
   const again = page.getByRole('dialog', { name: 'Log for Jane Doe' });
   await again.getByRole('button', { name: 'Talked' }).click();
   await again.getByLabel('Remind me').selectOption('2');
-  await again.getByRole('button', { name: 'Save' }).click();
+  await again.getByRole('button', { name: /^Save and / }).click();
   await expect(peopleToast(page).getByText('Call logged, reminder in 2 days')).toBeVisible();
-  await page.getByRole('dialog', { name: 'Stage for Jane Doe' }).getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Follow up after the call' }).first()).toBeVisible({ timeout: 15_000 });
 
   // E193: "she said stop" only asks; nothing is blocked until the agent records it

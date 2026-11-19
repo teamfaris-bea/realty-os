@@ -48,14 +48,17 @@ describe('one sheet, no navigation: call → outcome → confirm the stage', () 
     taps += 1;
     await u.click(await within(await screen.findByRole('dialog', { name: 'Call Jane Doe' })).findByRole('button', { name: 'Left voicemail' }));
     taps += 1;
-    // saved as today (the toast says so), and nothing about the stage has been sent
-    await waitFor(() => expect(screen.getByTestId('toast')).toHaveTextContent('Call outcome saved.'));
+    // saved as today, and nothing about the stage has been sent. The step's first line says what was saved; no toast
+    // says it a second time over that line (M4)
     const s = await step();
     expect(within(s).getByRole('status')).toHaveTextContent('Voicemail logged');
+    expect(screen.getByTestId('toast').textContent).toBe('');
     expect(await within(s).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
     expect(within(s).getByRole('radio', { name: 'Keep New lead' })).toBeInTheDocument();
     expect(await within(within(s).getByTestId('stage-preview')).findByText('No plan starts on this stage.')).toBeInTheDocument();
     expect(within(s).getByTestId('stage-step-effect')).toHaveTextContent('No plan starts on this stage.');
+    // M4: that sentence is on the sheet once
+    expect(within(s).getAllByText('No plan starts on this stage.')).toHaveLength(1);
     expect(fake.callsTo(`POST /contacts/${C}/stage`)).toHaveLength(0);
     const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach' });
     await waitFor(() => expect(confirm).toBeEnabled());
@@ -140,25 +143,38 @@ describe('after the confirm the page shows the truth from the server, not what t
   });
 });
 
-describe('one sheet, no navigation: log → stage step', () => {
+describe('one sheet, no navigation: log → outcome → one button (M6)', () => {
   const activity = (over: Record<string, unknown> = {}) => ({ status: 201, body: { note: { id: 'n1' }, taskId: null, suggestDoNotContact: false, suggestedStage: VOICEMAIL, replayed: false, ...over } });
 
-  it('Log → Left voicemail → Save stays 3 taps to a saved note; the same sheet then shows the stage step with the server\'s suggestion', async () => {
+  it('Log → Left voicemail → "Save and change to Trying to reach" is 3 taps from the bar to a saved note AND a confirmed stage, every tap counted, in one sheet', async () => {
     const fake = page().on(`POST /contacts/${C}/activities`, activity());
-    agentApp(fake, `/contacts/${C}`);
+    const { router } = agentApp(fake, `/contacts/${C}`);
     const u = userEvent.setup();
-    await u.click(await within(await bar()).findByRole('button', { name: 'Log' }));
+    const n = { taps: 0 };
+    const tap = async (el: HTMLElement) => {
+      await u.click(el);
+      n.taps += 1;
+    };
+    await tap(await within(await bar()).findByRole('button', { name: 'Log' }));
     const log = await screen.findByRole('dialog', { name: 'Log for Jane Doe' });
-    await u.click(within(log).getByRole('button', { name: 'Left voicemail' }));
-    await u.click(within(log).getByRole('button', { name: 'Save' }));
-    expect(await within(screen.getByTestId('people-toast')).findByText('Call logged')).toBeInTheDocument();
-    const s = await step();
-    expect(within(s).getByRole('status')).toHaveTextContent('Call logged (left voicemail)');
-    expect(await within(s).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
+    await tap(within(log).getByRole('button', { name: 'Left voicemail' }));
+    // the stage step is in the same sheet: the suggestion is core's own, before anything is saved
+    expect(await within(log).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(fake.callsTo(`POST /contacts/${C}/activities`)).toHaveLength(0);
+    const save = within(log).getByRole('button', { name: 'Save and change to Trying to reach' });
+    await waitFor(() => expect(save).toBeEnabled());
+    await tap(save);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(n.taps, 'Log → outcome → the one button').toBe(3);
     const posts = fake.callsTo(`POST /contacts/${C}/activities`);
     expect(posts).toHaveLength(1);
     expect(posts[0]!.body).toMatchObject({ kind: 'call', direction: 'outbound', outcome: 'left_voicemail', noteId: expect.stringMatching(UUID) });
-    expect(fake.callsTo(`POST /contacts/${C}/stage`)).toHaveLength(0);
+    expect(fake.callsTo(`POST /contacts/${C}/stage`).map((c) => c.body)).toEqual([{ stage: 'attempting' }]);
+    // said once: the one toast after the sheet closed
+    expect(await within(screen.getByTestId('people-toast')).findByText('Call logged (left voicemail). Stage: Trying to reach')).toBeInTheDocument();
+    expect(screen.getByTestId('toast').textContent).toBe('');
+    expect(router.state.location.pathname).toBe(`/contacts/${C}`);
   });
 
   it('the log\'s id is made once per sheet: a retry after a lost answer sends the same noteId, and a replay is said as already saved (R-STG-6)', async () => {
@@ -168,11 +184,13 @@ describe('one sheet, no navigation: log → stage step', () => {
     await u.click(await within(await bar()).findByRole('button', { name: 'Log' }));
     const log = await screen.findByRole('dialog', { name: 'Log for Jane Doe' });
     await u.click(within(log).getByRole('button', { name: 'No answer' }));
-    await u.click(within(log).getByRole('button', { name: 'Save' }));
+    const save = await within(log).findByRole('button', { name: 'Save and change to Trying to reach' });
+    await waitFor(() => expect(save).toBeEnabled());
+    await u.click(save);
     expect(await within(log).findByRole('alert')).toHaveTextContent("Can't reach the server. Check your connection, then try again.");
-    await u.click(within(log).getByRole('button', { name: 'Save' }));
-    const s = await step();
-    expect(within(s).getByRole('status')).toHaveTextContent('Call logged (no answer). Your first tap had already saved it, as first written.');
+    await u.click(save);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await within(screen.getByTestId('people-toast')).findByText('Call logged (no answer). Your first tap had already saved it, as first written. Stage: Trying to reach')).toBeInTheDocument();
     const ids = fake.callsTo(`POST /contacts/${C}/activities`).map((c) => (c.body as { noteId: string }).noteId);
     expect(ids).toHaveLength(2);
     expect(ids[0]).toBe(ids[1]);
@@ -195,6 +213,8 @@ describe('one sheet, no navigation: text → stage step', () => {
     await u.click(send);
     const s = await step();
     expect(within(s).getByRole('status')).toHaveTextContent('Sent to Jane.');
+    // M4: no toast says "Sent to Jane." a second time over that line
+    expect(screen.getByTestId('toast').textContent).toBe('');
     const suggested = await within(s).findByRole('radio', { name: 'Trying to reach Suggested' });
     expect(suggested).toBeChecked();
     expect(suggested).toHaveAccessibleDescription(/You sent a text and they have not replied yet\./);

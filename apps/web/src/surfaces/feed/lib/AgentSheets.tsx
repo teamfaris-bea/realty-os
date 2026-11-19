@@ -163,10 +163,16 @@ function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: s
     if (state.step !== 'live') return;
     const r = await outcome.run(`/calls/${state.callId}/outcome`, { outcome: o });
     if (!r.ok) return;
+    // the person's page goes on to the stage step in this same sheet, whose first line says what was saved
+    // ("Voicemail logged"): no toast says it a second time over that line (b19 fix pass M4), it is only spoken.
+    // Anywhere else the sheet closes as before, and the toast is where it is said.
+    if (stageStep && r.data.recordedAs === 'call') {
+      speak(`${OUTCOME_SAVED[o]}.`);
+      setLogged({ saved: OUTCOME_SAVED[o], suggested: r.data.suggestedStage ?? null });
+      return;
+    }
     announce(r.data.recordedAs === 'task_for_current_owner' ? `${who} was reassigned during the call, so your outcome was saved as a task for the new owner.` : 'Call outcome saved.');
-    // the person's page goes on to the stage step in this same sheet; anywhere else the sheet closes as before
-    if (stageStep && r.data.recordedAs === 'call') setLogged({ saved: OUTCOME_SAVED[o], suggested: r.data.suggestedStage ?? null });
-    else onClose();
+    onClose();
   };
 
   if (logged) return <StageStep contactId={contact.id} contactName={contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
@@ -225,11 +231,17 @@ function AppointmentSheet({ appointmentId, label, onClose, announce }: { appoint
   const pick = async (result: AppointmentResult) => {
     const r = await m.run(`/appointments/${appointmentId}/outcome`, note.trim() ? { result, note: note.trim() } : { result });
     if (!r.ok) return;
-    announce('Outcome saved.');
     const who = r.data.appointment.contact;
     const suggested = r.data.suggestedStage ?? null;
-    if (who && suggested) setLogged({ contact: who, saved: `Outcome saved: ${APPOINTMENT_RESULTS.find((o) => o.value === result)?.label ?? result}`, suggested });
-    else onClose();
+    if (who && suggested) {
+      // the stage step's first line says it; no toast over it
+      const saved = `Outcome saved: ${APPOINTMENT_RESULTS.find((o) => o.value === result)?.label ?? result}`;
+      speak(`${saved}.`);
+      setLogged({ contact: who, saved, suggested });
+      return;
+    }
+    announce('Outcome saved.');
+    onClose();
   };
   if (logged) return <StageStep contactId={logged.contact.id} contactName={logged.contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
   return (

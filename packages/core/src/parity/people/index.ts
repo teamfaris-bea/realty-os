@@ -57,6 +57,7 @@ export {
   type CallSignalOutcome,
   type StageSignal,
   type StageSuggestion,
+  activitySignal,
   suggestStageFromOutcome,
 } from './stageSuggestion.js';
 export { MAX_MENTIONS, type MentionResult, type MentionToken, addedMentions, mentionDedupeKey, mentionTitle, mentionToken, mentionTokens, parseMentions, renderMentions } from './mentions.js';

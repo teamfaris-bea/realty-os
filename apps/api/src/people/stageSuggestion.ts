@@ -8,7 +8,7 @@
 // STAGE_NEEDS_CONTACT): true means the route would refuse this stage for this actor now, so the screen shows the
 // suggestion locked ("Reach them first") instead of offering a tap that fails.
 import { type UserActor, can } from '@realty/core/foundation';
-import { type ActivityDirection, type ActivityKind, type CallOutcome, type Stage, type StageSignal, stageChangeAllowed, suggestStageFromOutcome } from '@realty/core/parity/people';
+import { type Stage, type StageSignal, activitySignal, stageChangeAllowed, suggestStageFromOutcome } from '@realty/core/parity/people';
 import type { Tx } from '@realty/db';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
@@ -25,19 +25,8 @@ export interface SuggestedStage {
   alsoOffer: { stage: Stage; locked: boolean }[];
 }
 
-/**
- * The signal of a logged outside activity (R-PAR-30), or null when it says nothing a stage could follow:
- *   - a text or email we sent is a try; one they sent is their reply;
- *   - an outgoing call reads by its outcome; a call logged with no outcome says nothing;
- *   - an incoming call is a conversation only when it connected. A voicemail THEY left, or a call of theirs we
- *     missed, is not our try to reach them, so it suggests nothing.
- */
-export function activitySignal(a: { kind: ActivityKind; direction: ActivityDirection; outcome: CallOutcome | null }): StageSignal | null {
-  if (a.kind === 'text' || a.kind === 'email') return { kind: 'message', channel: a.kind, direction: a.direction };
-  if (a.outcome === null) return null;
-  if (a.direction === 'inbound' && a.outcome !== 'connected') return null;
-  return { kind: 'call', outcome: a.outcome };
-}
+// The signal of a logged outside activity is core's (one function for this route and the web's Log sheet).
+export { activitySignal };
 
 /** The suggestion for `actor` in their own transaction (their RLS), or null. Reads only. */
 export async function suggestedStageInTx(tx: Tx, actor: UserActor, contactId: string, signal: StageSignal | null): Promise<SuggestedStage | null> {

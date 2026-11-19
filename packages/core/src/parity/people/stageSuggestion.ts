@@ -25,6 +25,7 @@
 // A wrong number, a bad number and a do-not-call request suggest nothing on purpose: they are not progress with the
 // person, and each has its own path (the wrong-number revoke, the person-level do-not-contact). "Not moving forward"
 // is never offered for them, because that stage is not an opt-out.
+import type { ActivityDirection, ActivityKind, CallOutcome } from './activity.js';
 import { STAGES, type Stage } from './stage.js';
 
 /** Every call outcome a suggestion reads: the platform's (POST /calls/:id/outcome) and the log sheet's (`other`). */
@@ -126,4 +127,20 @@ export function suggestStageFromOutcome(i: { current: Stage; signal: StageSignal
   // never demotes: every `from` stage of the table is earlier than its `to` (kept as a check, not an assumption)
   if (STAGES.indexOf(rule.to) <= at) return null;
   return { stage: rule.to, why: whyOf(i.signal), alsoOffer: rule.to === 'connected' && twoWayConversation(i.signal) ? ['nurture'] : [] };
+}
+
+/**
+ * The signal of a logged outside activity (R-PAR-30), or null when it says nothing a stage could follow:
+ *   - a text or email we sent is a try; one they sent is their reply;
+ *   - an outgoing call reads by its outcome; a call logged with no outcome says nothing;
+ *   - an incoming call is a conversation only when it connected. A voicemail THEY left, or a call of theirs we
+ *     missed, is not our try to reach them, so it suggests nothing.
+ * One function for the API's log route (which answers the suggestion after the save) and the web's Log sheet (which
+ * shows the same suggestion before the save, so one button can save the log and confirm the stage: R-STG-2, E775).
+ */
+export function activitySignal(a: { kind: ActivityKind; direction: ActivityDirection; outcome: CallOutcome | null }): StageSignal | null {
+  if (a.kind === 'text' || a.kind === 'email') return { kind: 'message', channel: a.kind, direction: a.direction };
+  if (a.outcome === null) return null;
+  if (a.direction === 'inbound' && a.outcome !== 'connected') return null;
+  return { kind: 'call', outcome: a.outcome };
 }

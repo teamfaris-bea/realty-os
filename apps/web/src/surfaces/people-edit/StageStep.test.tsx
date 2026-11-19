@@ -68,7 +68,10 @@ describe('the stage step after an outcome', () => {
     const radios = within(group).getAllByRole('radio');
     expect(radios.map((r) => r.getAttribute('aria-labelledby')!.split(' ').map((id) => document.getElementById(id)!.textContent).join(' '))).toEqual(['Trying to reach Suggested', 'Keep New lead']);
     expect(radios[0]).toBeChecked();
-    expect(radios[0]).toHaveAccessibleDescription(/We tried to reach them but have not had a two-way conversation yet\. A voicemail or an unanswered text is not a conversation\. You left a voicemail\. That is a try, not a conversation yet\./);
+    // its definition and why it is suggested. M4: the "does not mean" line is on demand, under "Another stage…"
+    // (asserted below, in the test of the full list), so the effect and the follow-up stay above the fold on a phone
+    expect(radios[0]).toHaveAccessibleDescription(/We tried to reach them but have not had a two-way conversation yet\. You left a voicemail\. That is a try, not a conversation yet\./);
+    expect(within(group).queryByText('A voicemail or an unanswered text is not a conversation.')).toBeNull();
     // nothing is offered that the outcome does not suggest
     expect(within(group).queryByText('Long-term follow-up')).toBeNull();
     expect(await previewBlock().findByText('No plan starts on this stage.')).toBeInTheDocument();
@@ -85,6 +88,39 @@ describe('the stage step after an outcome', () => {
     expect(stagePosts(fake).map((c) => c.body)).toEqual([{ stage: 'attempting' }]);
     expect(fake.callsTo('POST /tasks')).toHaveLength(0);
     expect(await within(screen.getByTestId('people-toast')).findByText('Stage: Trying to reach')).toBeInTheDocument();
+  });
+
+  it('M4: top to bottom the sheet reads what was logged, the suggested stage, "Keep", "Another stage…", ONE effect line with the running plan and Stop directly under it, the follow-up chips, then the one primary button; Close is in the header', async () => {
+    const E = '01900000-0000-7000-8000-0000000e0009';
+    const { onClose, u } = mount({
+      details: detailsFixture(C, 'attempting'),
+      props: { saved: 'Conversation logged', suggested: TALKED },
+      previews: { connected: preview({ wontStart: { plan: 'Buyer plan', reason: 'already_in_a_plan', sentence: 'Buyer plan will not start: they are already in Seller plan, and a person is in one plan at a time. Stop Seller plan first if you want Buyer plan.', alreadyIn: { enrollmentId: E, plan: 'Seller plan' } }, keepsRunning: { enrollmentId: E, plan: 'Seller plan', state: 'active', canStop: true } }) },
+    });
+    const s = await sheet();
+    await stages();
+    await within(s).findByText('Keeps running: Seller plan');
+    const order = [
+      within(s).getByRole('status'),
+      within(s).getByRole('radio', { name: 'Connected Suggested' }),
+      within(s).getByRole('radio', { name: 'Keep Trying to reach' }),
+      within(s).getByRole('radio', { name: 'Long-term follow-up' }),
+      within(s).getByRole('button', { name: 'Another stage…' }),
+      within(s).getByTestId('stage-step-effect'),
+      within(s).getByText('Keeps running: Seller plan'),
+      within(s).getByRole('button', { name: 'Stop Seller plan' }),
+      within(s).getByRole('group', { name: 'Follow-up' }),
+      within(s).getByTestId('stage-step-confirm'),
+    ];
+    for (let i = 1; i < order.length; i += 1) expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING, `item ${i} comes after item ${i - 1}`).toBeTruthy();
+    // the effect sentence is on the sheet once, and the button is described by it
+    expect(within(s).getAllByText(/Buyer plan will not start/)).toHaveLength(1);
+    expect(within(s).getByTestId('stage-step-confirm')).toHaveAccessibleDescription(/^Buyer plan will not start/);
+    // one primary button in the footer; the way out is the header's Close, and the sheet opens on its title
+    expect(within(s).getAllByRole('button', { name: /^(Change to|Keep) / })).toHaveLength(1);
+    expect(s).toHaveFocus();
+    await u.click(within(s).getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('"Keep New lead" changes nothing: the button is named for it, the preview says nothing starts, and no stage request is sent', async () => {

@@ -9,8 +9,8 @@ import { Button, Dialog, Notice } from '../../design/index.js';
 import { useReachability } from '../../reasons/index.js';
 import { type Details, type StageGuideRow, guideOf, labelIn } from './api.js';
 import { StageRow } from './StageChoices.js';
-import { KeepsRunning, PREVIEW_LOADING } from './StagePreview.js';
-import { AI_UNCHANGED, NEVER_STOPS, TASKS_UNCHANGED, effectLine, useStagePreview } from './stageFlow.js';
+import { KeepsRunning, NeverNote, PREVIEW_LOADING } from './StagePreview.js';
+import { effectLine, useStagePreview } from './stageFlow.js';
 import { useStageChange } from './useStageChange.js';
 
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not (stageFlow.ts has the words).
@@ -44,18 +44,6 @@ function RunningPlan({ contactId, anyStage }: { contactId: string; anyStage: str
           Stopped {stopped}.
         </p>
       ) : null}
-    </div>
-  );
-}
-
-/** Under the stages: what no stage change ever does. */
-function NeverNote() {
-  return (
-    <div className="mt-3 flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
-      <p>{NEVER_STOPS}</p>
-      <p className="text-ink-muted">
-        <span>{AI_UNCHANGED}</span> · <span>{TASKS_UNCHANGED}</span>
-      </p>
     </div>
   );
 }
@@ -113,7 +101,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
               </li>
             ))}
           </ul>
-          <NeverNote />
+          <NeverNote className="mt-3 rounded-xl bg-surface-2 px-3 py-2" />
           {act.error ? <Notice tone="error">{act.error}</Notice> : null}
         </Dialog>
       ) : null}

@@ -168,6 +168,14 @@ export function effectLabel(to: string, current: string, labelOf: (key: string) 
   return to === current ? `Keep ${labelOf(current)}` : `Change to ${labelOf(to)}`;
 }
 
+/** "Call logged. Stage: Connected. Started Buyer plan": the parts of one toast, each said once, with no doubled full stop. */
+export function joinWords(parts: readonly (string | null | undefined)[]): string {
+  return parts
+    .filter((p): p is string => typeof p === 'string' && p.trim() !== '')
+    .map((p) => p.trim().replace(/\.$/, ''))
+    .join('. ');
+}
+
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
 const SKIP_WORDS: Record<string, string> = {
   already_in_a_plan: "they're already in a plan",

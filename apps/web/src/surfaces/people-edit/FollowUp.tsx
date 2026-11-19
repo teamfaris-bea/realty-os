@@ -16,7 +16,7 @@ import { useCallback, useId, useRef, useState } from 'react';
 import { Button, Notice, announce } from '../../design/index.js';
 import { formatDateTime } from '../feed/lib/format.js';
 import type { TaskView } from '../feed/lib/types.js';
-import { Chip, selectClass, usePersonAction } from './hooks.js';
+import { selectClass, usePersonAction } from './hooks.js';
 
 const FOLLOW_UPS = [
   { key: 'none', label: 'None', days: 0 },
@@ -49,7 +49,7 @@ export function followUpSavedText(t: StoredFollowUp): string {
 
 const sameInstant = (a: string | null, b: string) => a !== null && Date.parse(a) === Date.parse(b);
 
-export type FollowUpSave = { ok: true; task: StoredFollowUp | null } | { ok: false };
+export type FollowUpSave = { ok: true; task: StoredFollowUp | null } | { ok: false; /** the server's reason, in words */ message: string; /** the answer was lost: the task may be stored */ uncertain: boolean };
 
 export function useFollowUp(contactId: string, firstName: string) {
   const [key, setKey] = useState<FollowUpKey>('none');
@@ -102,7 +102,7 @@ export function useFollowUp(contactId: string, firstName: string) {
     if (!due) return { ok: true, task: null };
     const want = due.toISOString();
     const r = await post.run('POST', '/tasks', { id: taskId.current, title, kind: 'follow_up', contactId, dueAt: want });
-    if (!r.ok) return { ok: false };
+    if (!r.ok) return { ok: false, message: r.message, uncertain: r.uncertain };
     let task: TaskView = r.data.task;
     if (r.data.replayed && !sameInstant(task.dueAt, want)) {
       // an earlier request of this sheet stored another date and its answer was lost: change the task for real
@@ -110,7 +110,7 @@ export function useFollowUp(contactId: string, firstName: string) {
       if (!p.ok) {
         setStored(task);
         setRemoved(false);
-        return { ok: false };
+        return { ok: false, message: p.message, uncertain: false };
       }
       task = p.data.task;
     }
@@ -149,7 +149,8 @@ export function useFollowUp(contactId: string, firstName: string) {
     applyPicked: () => (pickedOk ? change(new Date(picked)) : Promise.resolve(false)),
     save,
     working: post.pending || patch.pending,
-    error: post.error ?? patch.error,
+    /** a refused Change (said in place; a failed save is the sheet's to say, with what else was and was not saved) */
+    changeError: patch.error,
   };
 }
 
@@ -161,22 +162,45 @@ export function FollowUpChips({ f, disabled = false }: { f: FollowUpState; disab
   const off = disabled || f.working || locked;
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center gap-x-3">
+      {/* the heading and, beside it, what is true of the follow-up now (it wraps under on a narrow screen) */}
+      <div className="flex flex-wrap items-baseline gap-x-2">
         <p id={ids.label} className="text-[15px] font-medium text-ink">
           Follow-up
         </p>
+        <p className="min-w-0 flex-1 basis-40 text-[14px] leading-snug text-ink-muted [overflow-wrap:anywhere]" data-testid="follow-up-line">
+          {f.stored
+            ? `${followUpSavedText(f.stored)}.${f.changing ? ' Pick another time to change it, or None to remove it.' : ''}`
+            : f.due && f.dueOk
+              ? `Will add a task for you: “${f.title}”, due ${formatDateTime(f.due.toISOString())}.`
+              : f.key === 'pick'
+                ? 'Pick a date and time.'
+                : `${f.removed ? 'Follow-up removed. ' : ''}No follow-up task.`}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        {/* one row of five on a phone (390 px): segments, not separate pills, so they fit; they wrap on a narrower screen */}
+        <div role="group" aria-labelledby={ids.label} className="flex min-w-0 flex-1 flex-wrap overflow-hidden rounded-xl border border-line">
+          {FOLLOW_UPS.map((c) => {
+            const on = !f.stored && f.key === c.key;
+            return (
+              <button
+                key={c.key}
+                type="button"
+                aria-pressed={on}
+                disabled={off}
+                onClick={() => f.pick(c.key)}
+                className={`-ml-px -mt-px min-h-tap min-w-max flex-auto whitespace-nowrap border-l border-t border-line px-1.5 text-[14px] font-medium ${on ? 'bg-accent text-accent-ink' : 'bg-surface text-ink'} disabled:opacity-50`}
+              >
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
         {locked ? (
           <Button variant="quiet" className="px-2" aria-label="Change follow-up" disabled={disabled || f.working} onClick={() => f.setChanging(true)}>
             Change
           </Button>
         ) : null}
-      </div>
-      <div role="group" aria-labelledby={ids.label} className="flex flex-wrap gap-1.5">
-        {FOLLOW_UPS.map((c) => (
-          <Chip key={c.key} compact selected={!f.stored && f.key === c.key} disabled={off} onClick={() => f.pick(c.key)}>
-            {c.label}
-          </Chip>
-        ))}
       </div>
       {f.key === 'pick' && !locked ? (
         <div className="flex flex-col gap-1.5">
@@ -191,16 +215,7 @@ export function FollowUpChips({ f, disabled = false }: { f: FollowUpState; disab
           ) : null}
         </div>
       ) : null}
-      <p className="text-[14px] leading-snug text-ink-muted [overflow-wrap:anywhere]" data-testid="follow-up-line">
-        {f.stored
-          ? `${followUpSavedText(f.stored)}.${f.changing ? ' Pick another time to change it, or None to remove it.' : ''}`
-          : f.due && f.dueOk
-            ? `Will add a task for you: “${f.title}”, due ${formatDateTime(f.due.toISOString())}.`
-            : f.key === 'pick'
-              ? 'Pick a date and time.'
-              : `${f.removed ? 'Follow-up removed. ' : ''}No follow-up task.`}
-      </p>
-      {f.error ? <Notice tone="error">{f.error}</Notice> : null}
+      {f.changeError && f.stored ? <Notice tone="error">{f.changeError}</Notice> : null}
     </div>
   );
 }
