@@ -213,15 +213,23 @@ function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: s
 
 // ---- appointment outcome ----------------------------------------------------------------------
 
+// R-STG-2: when the server answers a stage for the logged result (only a signed agreement suggests one: "Active
+// client"), the same sheet goes on to the stage step, wherever the sheet was opened (the feed, tasks). Any other
+// result closes it with "Outcome saved." as before. The outcome is saved by its own tap either way.
 function AppointmentSheet({ appointmentId, label, onClose, announce }: { appointmentId: string; label?: string | undefined; onClose: () => void; announce: (t: string) => void }) {
-  const m = useMutate<{ result: AppointmentResult; note?: string }, { appointment: AppointmentView }>('POST', { invalidate: [['feed'], ['appointments'], ['tasks']] });
+  const m = useMutate<{ result: AppointmentResult; note?: string }, { appointment: AppointmentView; suggestedStage?: SuggestedStage | null }>('POST', { invalidate: [['feed'], ['appointments'], ['tasks']] });
   const [note, setNote] = useState('');
+  const [logged, setLogged] = useState<{ contact: { id: string; name: string }; saved: string; suggested: SuggestedStage } | null>(null);
   const pick = async (result: AppointmentResult) => {
     const r = await m.run(`/appointments/${appointmentId}/outcome`, note.trim() ? { result, note: note.trim() } : { result });
     if (!r.ok) return;
-    onClose();
     announce('Outcome saved.');
+    const who = r.data.appointment.contact;
+    const suggested = r.data.suggestedStage ?? null;
+    if (who && suggested) setLogged({ contact: who, saved: `Outcome saved: ${APPOINTMENT_RESULTS.find((o) => o.value === result)?.label ?? result}`, suggested });
+    else onClose();
   };
+  if (logged) return <StageStep contactId={logged.contact.id} contactName={logged.contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
   return (
     <Dialog title={label ?? 'How did it go?'} onClose={onClose} footer={<CloseButton onClose={onClose} />}>
       <div className="flex flex-col gap-4">

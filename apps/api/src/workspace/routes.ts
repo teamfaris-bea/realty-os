@@ -19,6 +19,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { withTenantTx } from '@realty/db';
 import { contactFacts } from '../comms/repos/contacts.js';
+import { suggestedStageInTx } from '../people/stageSuggestion.js';
 import { syncReviewCards } from '../marketing/cards.js';
 import { systemActor } from '../worker/systemActor.js';
 import { authorize } from '../rbac.js';
@@ -117,12 +118,18 @@ async function register(app: FastifyInstance): Promise<void> {
       return appointmentById(tx, req.params.id);
     }),
   }));
-  r.post('/appointments/:id/outcome', { config: { auth: 'self' }, schema: { params: S.IdParams, body: S.OutcomeBody, response: { 200: S.AppointmentResponse } } }, async (req) => ({
-    appointment: await wsTx(req, async (tx, now, actor) => {
+  // R-STG-2: the answer also carries the stage this result suggests, read after the outcome is written, as the caller
+  // (their RLS) and by the same function as the two other outcome routes (people/stageSuggestion.ts). It is only a
+  // suggestion to confirm: this route never changes a stage. Only a signed agreement suggests one ("active"), and
+  // only for a person in an earlier stage whom the caller may edit; an appointment with no person suggests nothing.
+  r.post('/appointments/:id/outcome', { config: { auth: 'self' }, schema: { params: S.IdParams, body: S.OutcomeBody, response: { 200: S.AppointmentOutcomeResponse } } }, async (req) =>
+    wsTx(req, async (tx, now, actor) => {
       await logOutcome(tx, actor, req.params.id, req.body, now);
-      return appointmentById(tx, req.params.id);
+      const appointment = await appointmentById(tx, req.params.id);
+      const suggestedStage = appointment.contact ? await suggestedStageInTx(tx, actor, appointment.contact.id, { kind: 'appointment', result: req.body.result }) : null;
+      return { appointment, suggestedStage };
     }),
-  }));
+  );
 
   // ---- deals ----
   const dealView = authorize('deal.view', (req) => facts(req, (tx) => dealFacts(tx, idOf(req))));

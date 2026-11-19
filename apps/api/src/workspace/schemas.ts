@@ -3,6 +3,7 @@
 // R-TEN-3: no input carries a tenant id (bodies are strict, so an extra `tenant_id` is a 422).
 // R-AST-13: no response carries a confidence field; assistant-made work shows evidence and needs-review
 // flags instead. The feed shows reasons, not its internal score. Snapshot-tested in schemas.test.ts.
+import { STAGES } from '@realty/core/parity/people';
 import { OneTapActionSchema } from '@realty/core/priority';
 import { z } from 'zod';
 
@@ -131,6 +132,13 @@ export const AppointmentSchema = z.object({
   createdByKind: z.enum(['user', 'assistant', 'system', 'import']),
 });
 export const AppointmentResponse = z.object({ appointment: AppointmentSchema });
+/**
+ * R-STG-2: the stage a logged appointment result suggests, to confirm (the same shape the two other outcome routes
+ * answer: people/schemas.ts SuggestedStage). `locked`: the stage route would refuse it for this caller now.
+ */
+export const AppointmentSuggestedStage = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean(), alsoOffer: z.array(z.object({ stage: z.enum(STAGES), locked: z.boolean() })) });
+/** POST /appointments/:id/outcome: the appointment as logged, and the stage its result suggests (null: nothing). */
+export const AppointmentOutcomeResponse = z.object({ appointment: AppointmentSchema, suggestedStage: AppointmentSuggestedStage.nullable() });
 export const AppointmentsResponse = z.object({ appointments: z.array(AppointmentSchema) });
 export const AppointmentsQuery = z.strictObject({ from: isoDate.optional(), to: isoDate.optional(), contactId: uuid.optional(), awaitingOutcome: z.enum(['true', 'false']).optional() });
 export const CreateAppointmentBody = z
@@ -426,6 +434,7 @@ export const WORKSPACE_RESPONSE_SCHEMAS = {
   CreateTaskResponse,
   TasksResponse,
   AppointmentResponse,
+  AppointmentOutcomeResponse,
   AppointmentsResponse,
   DealResponse,
   DealsResponse,

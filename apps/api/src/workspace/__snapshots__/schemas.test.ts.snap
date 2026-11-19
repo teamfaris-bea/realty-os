@@ -2,6 +2,224 @@
 
 exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response schemas have no confidence* fields, no score, and no tenant id fields (snapshot) 1`] = `
 {
+  "AppointmentOutcomeResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "appointment": {
+        "additionalProperties": false,
+        "properties": {
+          "awaitingOutcome": {
+            "type": "boolean",
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "import",
+            ],
+            "type": "string",
+          },
+          "dealId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "endsAt": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "enum": [
+              "buyer_consult",
+              "listing_appointment",
+              "consult",
+              "other",
+            ],
+            "type": "string",
+          },
+          "location": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "agreement_signed",
+                  "follow_up",
+                  "not_a_fit",
+                  "no_decision",
+                ],
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "outcomeLoggedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "outcomeNote": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "startsAt": {
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "held",
+              "no_show",
+              "canceled",
+              "rescheduled",
+            ],
+            "type": "string",
+          },
+          "userId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "startsAt",
+          "endsAt",
+          "location",
+          "status",
+          "outcome",
+          "outcomeNote",
+          "outcomeLoggedAt",
+          "userId",
+          "contact",
+          "dealId",
+          "awaitingOutcome",
+          "createdByKind",
+        ],
+        "type": "object",
+      },
+      "suggestedStage": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "alsoOffer": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "locked": {
+                      "type": "boolean",
+                    },
+                    "stage": {
+                      "enum": [
+                        "new",
+                        "attempting",
+                        "connected",
+                        "nurture",
+                        "active",
+                        "under_contract",
+                        "closed",
+                        "lost",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "stage",
+                    "locked",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "locked": {
+                "type": "boolean",
+              },
+              "stage": {
+                "enum": [
+                  "new",
+                  "attempting",
+                  "connected",
+                  "nurture",
+                  "active",
+                  "under_contract",
+                  "closed",
+                  "lost",
+                ],
+                "type": "string",
+              },
+              "why": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "stage",
+              "why",
+              "locked",
+              "alsoOffer",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+    },
+    "required": [
+      "appointment",
+      "suggestedStage",
+    ],
+    "type": "object",
+  },
   "AppointmentResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
