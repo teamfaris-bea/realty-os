@@ -16,7 +16,8 @@ import { SOURCE_KEYS, useMembers } from './hooks.js';
 import { sentenceFor } from './messages.js';
 import type { CoverageMember, SourceCoverage, SourceOverview } from './types.js';
 
-export const COVERAGE_INTRO = "Name who answers for this source's leads and who backs them up. Naming someone here moves no lead and changes nobody's leads.";
+export const COVERAGE_INTRO =
+  "Name who answers for this source's leads and who backs them up. While a source is covered, its backup is alerted when a new lead has had no call, text or email from a person after 3 minutes of staffed time, and an untouched lead is not sent back to the pond after 30 minutes. Naming someone here moves no lead.";
 export const COVERED_HINT_READY = 'On only while an owner and a backup are both named.';
 export const COVERED_HINT_NEEDS_BOTH = 'Name an owner and a backup first.';
 

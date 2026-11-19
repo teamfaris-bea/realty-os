@@ -819,6 +819,10 @@ function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: Decisio
     if (state.firstTouchDueAt !== null) b.effect({ kind: 'resolveFeed', dedupeKey: firstTouchFeedKey(ctx.contactId, period), userId: state.ownerUserId as UserId });
   }
   b.effect({ kind: 'recordHumanTouch', at: ctx.now });
+  // R-TEAMQ-16 (b19): the backup's access was given because nobody had made a human attempt. The OWNER's own attempt
+  // ends it (the backup's own attempt does not: they keep their window). Written by the owner, who may manage the
+  // collaborators of their own lead, in this same transaction.
+  if (state.ownerUserId === u.userId && ctx.backupAccessLive === true) b.effect({ kind: 'endBackupAccess' });
   // R-OWN-23: any touch resets the stored inactivity deadlines, computed with the settings in force now.
   const old = ctx.inactivity;
   const oldKeys = [
@@ -1130,6 +1134,7 @@ export function effectPlacement(e: Effect, actor: Actor): 'inline' | 'followup' 
     case 'membershipAutoPause':
     case 'missedOfferCounter':
       return e.userId === actor.userId ? 'inline' : 'followup';
+    case 'endBackupAccess': // only ever emitted for the owner's own touch: their own lead's collaborator rows
     case 'enqueueTimer':
     case 'cancelTimers':
     case 'notify':

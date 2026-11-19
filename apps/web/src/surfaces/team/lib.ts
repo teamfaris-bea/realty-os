@@ -224,7 +224,7 @@ export interface ResponseInquiry {
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
   offHours: boolean;
   countedFrom: string;
-  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
+  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   automatedReplyAt: string | null;
   within5: boolean;
@@ -292,7 +292,7 @@ export function responseLines(r: ResponseRollup, rules: ResponseRules): { label:
 }
 
 const ATTEMPT_KIND: Record<NonNullable<ResponseInquiry['attempt']>['kind'], string> = { call: 'a call', text: 'a text', email: 'an email', chat: 'a chat reply' };
-const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], string> = { owner: 'the lead’s owner', collaborator: 'a collaborator on the lead', other: 'who was not the owner' };
+const ATTEMPT_ROLE: Record<NonNullable<ResponseInquiry['attempt']>['role'], string> = { owner: 'the lead’s owner', backup: 'the backup, after the backup alert', collaborator: 'a collaborator on the lead', other: 'who was not the owner' };
 
 /** What happened to one inquiry, in a sentence or two: still waiting, or who tried, how, in what role and after how long. */
 export function responseInquiryLine(i: ResponseInquiry): string {

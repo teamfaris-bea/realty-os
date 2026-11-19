@@ -81,8 +81,10 @@ function kindOf(r: repo.InquiryResponseRow): AttemptKind {
   return r.attempt_channel === 'email' ? 'email' : r.attempt_channel === 'web_chat' ? 'chat' : 'text';
 }
 
+/** R-TEAMQ-18: the owner at that moment is `owner`; else the alerted backup, after the alert, is `backup`. */
 function roleOf(r: repo.InquiryResponseRow): AttemptRole {
   if (r.attempt_by !== null && r.owner_then !== null && r.attempt_by === r.owner_then) return 'owner';
+  if (r.backup_then) return 'backup';
   return r.collaborator_then ? 'collaborator' : 'other';
 }
 

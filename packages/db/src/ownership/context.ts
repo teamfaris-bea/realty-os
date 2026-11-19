@@ -285,12 +285,17 @@ export async function loadSourceCovered(tx: Tx, contactId: ContactId): Promise<b
   return r.rows[0]?.covered === true;
 }
 
-export async function loadIsCollaborator(tx: Tx, contactId: ContactId, userId: UserId, now: Instant): Promise<boolean> {
-  const r = await sql<{ ok: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM contact_collaborators WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
-                     AND user_id = ${userId} AND removed_at IS NULL
-                     AND (expires_at IS NULL OR expires_at > ${toIso(now)}::timestamptz)) AS ok`.execute(tx);
-  return r.rows[0]?.ok ?? false;
+/**
+ * The touch command's collaborator facts, in one statement (the round trip the touch always made): whether the actor
+ * is a live collaborator, and (b19 R-TEAMQ-16) whether a time-boxed `backup` grant is live on the contact (anyone's).
+ */
+export async function loadCollaboration(tx: Tx, contactId: ContactId, userId: UserId, now: Instant): Promise<{ actorIsCollaborator: boolean; backupAccessLive: boolean }> {
+  const r = await sql<{ ok: boolean; backup: boolean }>`
+    SELECT COALESCE(bool_or(user_id = ${userId}), false) AS ok, COALESCE(bool_or(role = 'backup'), false) AS backup
+      FROM contact_collaborators
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND removed_at IS NULL
+       AND (expires_at IS NULL OR expires_at > ${toIso(now)}::timestamptz)`.execute(tx);
+  return { actorIsCollaborator: r.rows[0]?.ok ?? false, backupAccessLive: r.rows[0]?.backup ?? false };
 }
 
 // ---- routing (system actor only) -----------------------------------------------------------------

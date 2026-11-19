@@ -8,7 +8,8 @@ import { sql } from 'kysely';
 
 export interface NotifySpec {
   userId: string;
-  kind: 'handback' | 'handback_hot' | 'inbound_message' | 'missed_call' | 'opt_out' | 'system' | 'exception' | 'ai_isa_handoff' | 'ai_isa_handoff_hot' | 'ai_isa_escalation' | 'ai_isa_ended' | 'ai_isa_paused' | 'ai_isa_handoff_overdue';
+  /** 'first_touch_due': the minute-three backup alert (leads/backupAlert.ts; b19 R-TEAMQ-15), a critical kind */
+  kind: 'first_touch_due' | 'handback' | 'handback_hot' | 'inbound_message' | 'missed_call' | 'opt_out' | 'system' | 'exception' | 'ai_isa_handoff' | 'ai_isa_handoff_hot' | 'ai_isa_escalation' | 'ai_isa_ended' | 'ai_isa_paused' | 'ai_isa_handoff_overdue';
   priority: 'critical' | 'high' | 'normal' | 'low';
   title: string;
   body?: string | null;

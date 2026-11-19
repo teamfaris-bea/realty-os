@@ -124,6 +124,14 @@ describe('Lead response report', () => {
     expect(row).toHaveTextContent('First tried after 20 min: a text by Ava Agent, the lead’s owner. It arrived outside staffed hours, so it is counted from opening (6 h 20 min on the clock). No automatic reply went out.');
   });
 
+  it('R-TEAMQ-18: an attempt by the alerted backup is said as the backup\'s, apart from the owner\'s and from anyone else\'s', async () => {
+    const byBackup = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, attempt: { at: '2026-11-09T16:06:00.000Z', kind: 'call', by: { userId: ID.ben, name: 'Ben Agent' }, role: 'backup', wallSeconds: 360, staffedSeconds: 360 }, waiting: null, automatedReplyAt: null });
+    leadAdminApp(fake(report({ sources: [{ sourceId: SRC.web, sourceName: 'Website form', ...rollup(), notWithin5: [byBackup], notWithin5More: 0 }] })), '/team/scoreboard', 'team_lead');
+    const region = await section();
+    const row = (await within(region).findByRole('link', { name: 'Nia Night' })).closest('li')!;
+    expect(row).toHaveTextContent('First tried after 6 min: a call by Ben Agent, the backup, after the backup alert. No automatic reply went out.');
+  });
+
   it('R-TEAMQ-8 E832: imports and closed people are said apart, never in the measure; the staffed hours and the minimum samples are stated', async () => {
     leadAdminApp(fake(), '/team/scoreboard', 'admin');
     const region = await section();

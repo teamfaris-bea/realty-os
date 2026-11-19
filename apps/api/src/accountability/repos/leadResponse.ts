@@ -7,10 +7,12 @@
 //     (repos/teamQueue.ts HUMAN_MESSAGE / HUMAN_CALL, migration 0053), with who made it;
 //   - that person's role to the lead AT THAT MOMENT: `owner` when the ledger's latest event at or before the
 //     attempt names them as the owner (lead_ownership_events.owner_user_id is the owner AFTER the event),
+//     `backup` when this inquiry's minute-three alert had gone to them before the attempt (lead_backup_alerts, b19
+//     R-TEAMQ-18: read through its own policy, so a caller sees it exactly when they see the inquiry),
 //     `collaborator` when contact_collaborators held them then, else `other`;
 //   - the first automated message that went out after the arrival (reported apart, never an attempt).
 // Indexes: see the header of repos/teamQueue.ts (inquiries by source and time; a person's messages and calls;
-// the ledger's primary key; imports by loe_type_time_idx). No migration.
+// the ledger's primary key; imports by loe_type_time_idx; an inquiry's backup alert by lead_backup_alerts_inquiry_once).
 import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -34,6 +36,13 @@ export interface InquiryResponseRow extends HolderColumns {
   /** the lead's owner when the attempt was made (null: nobody owned it then, or the ledger is not the caller's to read) */
   owner_then: string | null;
   collaborator_then: boolean;
+  /** the attempt was made by the person this inquiry's backup alert went to, at or after the alert */
+  backup_then: boolean;
+  /** this inquiry's backup alert, when one was raised: when, to whom (their name), and whether as the fallback */
+  backup_alert_at: Date | null;
+  backup_alert_user: string | null;
+  backup_alert_name: string | null;
+  backup_alert_recipient: 'backup' | 'team_lead' | null;
   automated_at: Date | null;
 }
 
@@ -59,6 +68,8 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
                       WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND k.user_id = h.by_user
                         AND k.created_at <= h.at AND (k.removed_at IS NULL OR k.removed_at > h.at)
                         AND (k.expires_at IS NULL OR k.expires_at > h.at)), false) AS collaborator_then,
+           COALESCE(ba.alerted_user_id = h.by_user AND h.at >= ba.decided_at, false) AS backup_then,
+           ba.decided_at AS backup_alert_at, ba.alerted_user_id AS backup_alert_user, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
            (SELECT min(m.dispatched_at) FROM messages m
              WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.received_at) AS automated_at
       FROM inq i
@@ -75,6 +86,8 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
             ORDER BY k.started_at ASC LIMIT 1)) x
          ORDER BY x.at ASC LIMIT 1) h ON true
       LEFT JOIN users hu ON hu.id = h.by_user
+      LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = c.tenant_id AND ba.inquiry_id = i.id AND ba.outcome = 'alerted'
+      LEFT JOIN users bau ON bau.id = ba.alerted_user_id
      WHERE c.deleted_at IS NULL AND ${TEAM_SCOPE}
      ORDER BY i.received_at DESC, i.id DESC
      LIMIT ${cap + 1}`.execute(tx);

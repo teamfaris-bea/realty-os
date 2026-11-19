@@ -85,6 +85,17 @@ export {
   measureInquiry,
   rollUpResponses,
 } from './leadResponse.js';
+export {
+  BACKUP_ALERT_AFTER_SECONDS,
+  BACKUP_GRANT_MS,
+  ALERT_TITLE_MAX,
+  ALERT_BODY_MAX,
+  type AlertHolder,
+  type BackupAlertFacts,
+  backupAlertDueAt,
+  backupAlertText,
+  shortMemberName,
+} from './backupAlert.js';
 export { feedGroupOfItem, contactGroup, taskGroup, appointmentGroup, dealDateGroup, splitFeedInputs, nextFeedChange } from './incremental.js';
 export {
   FeedItemSchema,

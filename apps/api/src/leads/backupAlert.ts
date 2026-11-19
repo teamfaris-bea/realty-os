@@ -1,0 +1,168 @@
+// The minute-three backup alert (b19 team-queue lane, step 2; owner decisions 1 and 2 of 2026-11-19; DATA_MODEL
+// R-TEAMQ-14 to R-TEAMQ-17, E846 to E856).
+//
+//   job `leads.backup_alert` { inquiryId }   queue realtime, as the system actor (via timer), one transaction
+//
+// QUEUED at intake (leads/intake.ts), in the intake's own transaction, for every inbound inquiry that is an arrival
+// (new_contact, attached, reinquiry; never an ignored duplicate) of a source whose coverage switch is on. Due three
+// minutes of STAFFED time after the arrival (core backupAlertDueAt: an off-hours arrival counts from opening).
+//
+// WHEN IT RUNS it decides once per inquiry and writes ONE lead_backup_alerts row saying what it decided and why:
+//   lead_closed          the person was closed, deleted or merged away since
+//   source_not_covered   the source's coverage was switched off in between
+//   human_attempt        a person has called, texted, emailed or replied in chat since the arrival: exactly the team
+//                        work queue's predicate (step 1). An automated reply never counts.
+//   answered_call        a person answered the lead's own call since the arrival
+//   alerted              otherwise: the source's named backup is alerted or, when that person is not an active
+//                        member, the team lead of whoever has the lead (owner decision 2), by the existing critical
+//                        notification path (in-app, push, and a text to the member's verified alert phone)
+//   no_recipient         the backup is unavailable and whoever has the lead has no team lead
+//
+// WHAT IT NEVER DOES: it never changes the owner, the offer or the pond (no ownership command is issued here), never
+// sends, drafts or queues anything for the client (it does not import the send path at all), never decides twice for
+// one inquiry (lead_backup_alerts_inquiry_once), and does nothing for a source that is not covered when it runs.
+//
+// ACCESS: a backup is usually neither the owner nor a collaborator, so the alert would name a lead they cannot open.
+// The alerted backup therefore gets a `backup` collaborator row on that one lead, for 24 hours (core
+// BACKUP_GRANT_MS) or until the owner's own human attempt ends it (core decide.ts, endBackupAccess). It is the
+// existing collaborator mechanism: that one person, that one lead, nothing once it has expired, audited. It works on
+// a lead still on offer, in a pond or unassigned too (a collaborator row does not need an owner); there, a call or a
+// text by the backup is made and stored under the backup's own id, and no first touch is written to the ownership
+// ledger, because a first touch belongs to an ownership period and nobody owns the lead yet. A team lead alerted as
+// the fallback gets no grant: they already reach the leads of their team.
+import type { IdGenerator, Instant, SystemActor } from '@realty/core/foundation';
+import { businessMsBetween, instantFromDate } from '@realty/core/foundation';
+import { type AlertHolder, BACKUP_GRANT_MS, backupAlertDueAt, backupAlertText } from '@realty/core/priority';
+import { type Tx, defaultIds, enqueueJob, loadTenantFacts } from '@realty/db';
+import { audit, redactSnapshot } from '../audit.js';
+import { contactLabel, notifyUser } from '../comms/repos/notify.js';
+import { jobPayload, zId } from '../worker/payload.js';
+import type { TxJobHandler } from '../worker/types.js';
+import * as repo from './repos/backupAlert.js';
+
+export const BACKUP_ALERT_JOB = {
+  kind: 'leads.backup_alert' as const,
+  queue: 'realtime' as const,
+  priority: 15,
+  dedupeKey: (inquiryId: string) => `leads.backup_alert:${inquiryId}`,
+};
+export const BackupAlertPayload = jobPayload({ inquiryId: zId });
+export type BackupAlertPayload = { inquiryId: string };
+
+/** notifications.dedupe_key of an inquiry's backup alert (one per inquiry and member). */
+export const backupAlertNoteKey = (inquiryId: string) => `backup_alert:${inquiryId}`;
+
+/**
+ * Queues the one job of an inquiry, in the caller's (intake) transaction. `receivedAt` is the arrival the source
+ * reported, `reachedAt` the moment the lead reached the team: the later of the two starts the three staffed minutes.
+ */
+export async function queueBackupAlert(tx: Tx, a: { inquiryId: string; receivedAt: Instant; reachedAt: Instant }): Promise<void> {
+  const facts = await loadTenantFacts(tx);
+  const runAt = backupAlertDueAt(a.receivedAt, a.reachedAt, facts.calendar);
+  await enqueueJob(tx, { queue: BACKUP_ALERT_JOB.queue, kind: BACKUP_ALERT_JOB.kind, priority: BACKUP_ALERT_JOB.priority, payload: { inquiryId: a.inquiryId }, dedupeKey: BACKUP_ALERT_JOB.dedupeKey(a.inquiryId), runAt });
+}
+
+export type BackupAlertOutcome = repo.AlertInsert['outcome'];
+export type BackupAlertResult =
+  | { outcome: BackupAlertOutcome; alertedUserId: string | null }
+  /** the inquiry does not exist for this tenant (or is an ignored duplicate): nothing is written */
+  | { outcome: 'no_inquiry' }
+  /** an earlier run decided this inquiry: nothing is written */
+  | { outcome: 'already_decided' }
+  /** woken before three staffed minutes have passed (the staffed hours changed, a job run by hand): nothing is written */
+  | { outcome: 'not_due'; dueAt: Instant };
+
+/** The minute-three decision of one inquiry, in `tx` as the system actor of its tenant. Idempotent on the inquiry. */
+export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: string, now: Instant, actor: SystemActor): Promise<BackupAlertResult> {
+  const q = await repo.inquiryForAlert(tx, inquiryId);
+  if (!q || q.outcome === 'duplicate_ignored') return { outcome: 'no_inquiry' };
+  if (await repo.alreadyDecided(tx, inquiryId)) return { outcome: 'already_decided' };
+  const { calendar } = await loadTenantFacts(tx);
+  const arrivedAt = instantFromDate(q.received_at);
+  const dueAt = backupAlertDueAt(arrivedAt, instantFromDate(q.created_at), calendar);
+  if (now < dueAt) return { outcome: 'not_due', dueAt };
+
+  const person = await repo.personNow(tx, q.contact_id);
+  const live = person !== null && !person.deleted && person.ownership_state !== 'closed';
+  const holder: repo.AlertInsert['holder'] = !live ? null : person.ownership_state === 'owned' ? 'owner' : person.ownership_state === 'offered' ? 'on_offer' : person.ownership_state === 'in_pond' ? 'pond' : 'unassigned';
+  const holderUserId = holder === 'owner' ? person!.owner_user_id : holder === 'on_offer' ? person!.offered_to_user_id : null;
+  const row = (outcome: BackupAlertOutcome, o: Partial<repo.AlertInsert> = {}): repo.AlertInsert => ({
+    id: ids.next<'BackupAlertId'>(),
+    inquiryId,
+    leadSourceId: q.lead_source_id,
+    arrivedAt: q.received_at,
+    dueAt: new Date(dueAt),
+    decidedAt: new Date(now),
+    outcome,
+    alertedUserId: null,
+    recipient: null,
+    holder,
+    holderUserId,
+    holderPondId: holder === 'pond' ? person!.pond_id : null,
+    grantExpiresAt: null,
+    ...o,
+  });
+  const record = async (outcome: Exclude<BackupAlertOutcome, 'alerted'>): Promise<BackupAlertResult> => ((await repo.insertAlert(tx, row(outcome))) ? { outcome, alertedUserId: null } : { outcome: 'already_decided' });
+
+  if (!live) return record('lead_closed');
+  // the source stopped being covered in between: nothing happens (R-TEAMQ-14)
+  if (!q.covered || q.backup_user_id === null) return record('source_not_covered');
+  if (await repo.humanAttemptSince(tx, person.id, q.received_at)) return record('human_attempt');
+  if (await repo.answeredCallSince(tx, person.id, q.received_at)) return record('answered_call');
+
+  // owner decision 2: the named backup; absent or suspended, the team lead of whoever has the lead
+  let to: { userId: string; kind: 'backup' | 'team_lead' } | null = null;
+  if (q.backup_status === 'active') to = { userId: q.backup_user_id, kind: 'backup' };
+  else if (holderUserId !== null) {
+    const lead = (await repo.teamLeadsOf(tx, holderUserId))[0];
+    if (lead) to = { userId: lead.user_id, kind: 'team_lead' };
+  }
+  if (to === null) return record('no_recipient');
+
+  // the row first: it is the claim on this inquiry (a concurrent run stops here and alerts nobody)
+  const grantUntil = to.kind === 'backup' && to.userId !== holderUserId ? new Date(now + BACKUP_GRANT_MS) : null;
+  const granted = grantUntil === null ? null : await repo.grantBackupAccess(tx, person.id, to.userId, grantUntil);
+  if (!(await repo.insertAlert(tx, row('alerted', { alertedUserId: to.userId, recipient: to.kind, grantExpiresAt: granted })))) {
+    // the insert above waited for the other run and lost; that run's transaction made the same grant
+    return { outcome: 'already_decided' };
+  }
+  if (granted !== null) {
+    await audit(tx, actor, {
+      action: 'collaborator.added',
+      entity: { type: 'contact', id: person.id },
+      changes: redactSnapshot({ collaborator_user_id: to.userId, role: 'backup', expires_at: granted.toISOString() }, { entity: 'contact_collaborator' }),
+      reason: 'BACKUP_ALERT',
+    });
+  }
+  const alertHolder: AlertHolder =
+    holder === 'owner' ? { kind: 'owner', name: person.owner_name } : holder === 'on_offer' ? { kind: 'on_offer', name: person.offered_to_name } : holder === 'pond' ? { kind: 'pond', name: person.pond_name } : { kind: 'unassigned' };
+  const text = backupAlertText({
+    person: await contactLabel(tx, person.id),
+    sourceName: q.source_name,
+    waitedSeconds: Math.max(0, Math.floor((now - arrivedAt) / 1000)),
+    staffedSeconds: Math.floor(businessMsBetween(arrivedAt, now, calendar) / 1000),
+    holder: alertHolder,
+    recipient: to.kind,
+  });
+  // a member's notification, never a message to the client: in-app, push, and (critical) a text to their alert phone
+  await notifyUser(tx, ids, { userId: to.userId, kind: 'first_touch_due', priority: 'critical', title: text.title, body: text.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
+  return { outcome: 'alerted', alertedUserId: to.userId };
+}
+
+/** The `leads.backup_alert` job. An early wake goes back to sleep until the inquiry's stored due time. */
+export function backupAlertHandler(): TxJobHandler<BackupAlertPayload> {
+  const ids = defaultIds();
+  return {
+    kind: BACKUP_ALERT_JOB.kind,
+    queue: BACKUP_ALERT_JOB.queue,
+    via: 'timer',
+    priority: BACKUP_ALERT_JOB.priority,
+    schema: BackupAlertPayload,
+    async run(ctx, p) {
+      const r = await decideBackupAlert(ctx.tx, ids, p.inquiryId, ctx.now, ctx.actor);
+      if (r.outcome === 'not_due') return { retryAt: r.dueAt };
+      ctx.log.info('backup alert decided', { inquiryId: p.inquiryId, outcome: r.outcome });
+      return undefined;
+    },
+  };
+}

@@ -24,8 +24,11 @@ export const RESPONSE_P90_MIN_SAMPLE = 10;
 /** Inquiries not within 5 minutes listed under a source; the rest is a count. */
 export const RESPONSE_NOT_WITHIN_CAP = 20;
 
-/** The attempter's role to the lead at the moment of the attempt. */
-export type AttemptRole = 'owner' | 'collaborator' | 'other';
+/**
+ * The attempter's role to the lead at the moment of the attempt. `backup` (b19 R-TEAMQ-18): the person the
+ * minute-three backup alert of this inquiry went to, attempting after it; the owner at that moment is always `owner`.
+ */
+export type AttemptRole = 'owner' | 'backup' | 'collaborator' | 'other';
 export type AttemptKind = 'call' | 'text' | 'email' | 'chat';
 
 export interface ResponseInquiryFacts {

@@ -417,6 +417,11 @@ export interface DecisionContext {
   /** The actor is a live collaborator on the contact (touch). */
   actorIsCollaborator?: boolean;
   /**
+   * touch only (b19 R-TEAMQ-16): a time-boxed `backup` collaborator grant is live on the contact (the minute-three
+   * backup alert gave it). The owner's own human attempt ends it.
+   */
+  backupAccessLive?: boolean;
+  /**
    * `auto_release` timer only (b19 R-TEAMQ-13): the lead's source is COVERED now (its coverage switch is on and its
    * named owner and backup are both active members). The lead's source is the source of the person's latest
    * inquiry, else the one they first came from. db reads it under the contact lock; unknown reads as not covered.
@@ -491,6 +496,8 @@ export type Effect =
   /** memberships.consecutive_missed_offers: +1 on a missed/declined offer, 0 on accept (R-OWN-12). */
   | { kind: 'missedOfferCounter'; userId: UserId; op: 'increment' | 'reset' }
   | { kind: 'addCollaborator'; userId: UserId; role: 'isa'; expiresAt: Instant }
+  /** b19 R-TEAMQ-16: the owner made a human attempt: live `backup` collaborator grants on the contact end now. */
+  | { kind: 'endBackupAccess' }
   | { kind: 'rehomeHandbacks'; toUserId: UserId | null }
   | { kind: 'route' }
   /** Stored inactivity deadlines (non-guarded columns; must be null outside `owned`). */

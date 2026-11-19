@@ -304,6 +304,14 @@ export async function applyEffects(tx: Tx, c: EffectContext, effects: readonly E
           ON CONFLICT (tenant_id, contact_id, user_id) DO UPDATE SET role = EXCLUDED.role, expires_at = EXCLUDED.expires_at,
                  removed_at = NULL`.execute(tx);
         break;
+      case 'endBackupAccess':
+        // b19 R-TEAMQ-16: the owner's own human attempt ends the backup's time-boxed access (the owner may manage the
+        // collaborators of their own lead under row-level security). The row stays, as the record of the grant.
+        await sql`
+          UPDATE contact_collaborators SET expires_at = ${toIso(c.now)}::timestamptz
+           WHERE tenant_id = app.tenant_id() AND contact_id = ${c.contactId} AND role = 'backup' AND removed_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ${toIso(c.now)}::timestamptz)`.execute(tx);
+        break;
       case 'route':
         await flush();
         // Only reachable for a system actor without a routing snapshot: route in the follow-up job.

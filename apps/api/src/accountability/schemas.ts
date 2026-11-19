@@ -196,7 +196,7 @@ export const ResponseInquirySchema = z.object({
     at: z.string(),
     kind: z.enum(['call', 'text', 'email', 'chat']),
     by: Person.nullable(),
-    role: z.enum(['owner', 'collaborator', 'other']),
+    role: z.enum(['owner', 'backup', 'collaborator', 'other']),
   }).nullable(),
   waiting: Waited.nullable(),
   automatedReplyAt: z.string().nullable(),

@@ -47,7 +47,7 @@ import {
   importOwnersPending,
   loadClaimStats,
   loadInquiry,
-  loadIsCollaborator,
+  loadCollaboration,
   loadMember,
   loadPond,
   loadRoutingSnapshot,
@@ -282,7 +282,11 @@ async function buildContext(
       }
       break;
     case 'touch':
-      if (u) ctx.actorIsCollaborator = await loadIsCollaborator(tx, contactId, u.userId, now);
+      if (u) {
+        const k = await loadCollaboration(tx, contactId, u.userId, now);
+        ctx.actorIsCollaborator = k.actorIsCollaborator;
+        ctx.backupAccessLive = k.backupAccessLive; // b19 R-TEAMQ-16: the owner's own attempt ends it
+      }
       break;
     case 'reinquiry':
       if (state?.state === 'in_pond' && state.pondId) {

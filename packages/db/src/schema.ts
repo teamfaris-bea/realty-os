@@ -1452,6 +1452,25 @@ export interface JurisdictionPacksTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.lead_backup_alerts (table) */
+export interface LeadBackupAlertsTable {
+  tenant_id: string;
+  id: string;
+  inquiry_id: string;
+  lead_source_id: string;
+  arrived_at: Timestamp;
+  due_at: Timestamp;
+  decided_at: Timestamp;
+  outcome: string;
+  alerted_user_id: string | null;
+  recipient: string | null;
+  holder: string | null;
+  holder_user_id: string | null;
+  holder_pond_id: string | null;
+  grant_expires_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.lead_email_inbox_keys (table) */
 export interface LeadEmailInboxKeysTable {
   tenant_id: string;
@@ -3092,6 +3111,7 @@ export interface DB {
   invites: InvitesTable;
   jobs: JobsTable;
   jurisdiction_packs: JurisdictionPacksTable;
+  lead_backup_alerts: LeadBackupAlertsTable;
   lead_email_inbox_keys: LeadEmailInboxKeysTable;
   lead_email_messages: LeadEmailMessagesTable;
   lead_inquiries: LeadInquiriesTable;
@@ -3271,6 +3291,7 @@ export const TABLE_NAMES = [
   'invites',
   'jobs',
   'jurisdiction_packs',
+  'lead_backup_alerts',
   'lead_email_inbox_keys',
   'lead_email_messages',
   'lead_inquiries',

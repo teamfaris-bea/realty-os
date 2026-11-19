@@ -27,6 +27,9 @@
 //   6 the 60-second first response job (R-AST-16) is enqueued in this transaction for a new contact;
 //     api/assistant's handler decides at send time whether anything may go out (approved playbook,
 //     speed_to_lead_reply enabled, the lead has not opted out) and never counts as a touch (R-AST-15).
+//   6b R-TEAMQ-14 (b19): an arrival (new_contact, attached, reinquiry; never a duplicate) of a source whose coverage
+//     switch is on queues the minute-three backup alert job in this transaction (leads/backupAlert.ts). It alerts a
+//     member of the team only, so it is queued for a "No automated contact" source too: nothing goes to the client.
 //   7 E38 / R-CONSENT-4: the consent language the person saw (the body's `consentDisclosure`, else the
 //     source's configured disclosure) is stored and cited by the inquiry, and its grants are recorded
 //     in the consent ledger (intakeConsent.ts) for new_contact / attached / reinquiry, never for a
@@ -61,6 +64,7 @@ import { authorize } from '../rbac.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { systemActor } from '../worker/systemActor.js';
 import { withdrawAutomatedDrafts } from './automatedContact.js';
+import { queueBackupAlert } from './backupAlert.js';
 import { leadsTx, platformOf } from './common.js';
 import * as contacts from './repos/contacts.js';
 import * as repo from './repos/intake.js';
@@ -458,6 +462,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: 
     if (opts.firstResponse !== false) {
       await enqueueJob(tx, { queue: FIRST_RESPONSE_JOB.queue, kind: FIRST_RESPONSE_JOB.kind, priority: FIRST_RESPONSE_JOB.priority, payload: { contactId }, dedupeKey: FIRST_RESPONSE_JOB.dedupeKey(contactId) });
     }
+    // 6b R-TEAMQ-14: the minute-three backup alert of a covered source's arrival
+    if (source.covered) await queueBackupAlert(tx, { inquiryId, receivedAt, reachedAt: at });
     return { contactId, outcome: 'new_contact', inquiryId };
   }
 
@@ -496,6 +502,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: 
     // decided on the row read above under this contact's lock, a live record (merges were followed): a refusal is a bug
     if (!r.outcome.ok) throw new AppError('INTERNAL_ERROR');
   }
+  // 6b R-TEAMQ-14: a second inquiry of the same person is its own arrival, with its own minute-three job
+  if (source.covered) await queueBackupAlert(tx, { inquiryId, receivedAt, reachedAt: at });
   // b18 review B18S-1: a source marked "No AI care for leads from this source" sent someone already in the CRM. This
   // inquiry row is what app.person_no_ai_care_source (0096) now reads, so start, Continue and resume are refused; care
   // already running for them gets a turn now, whose chain (link 11) pauses it with the note, as turning the setting on
