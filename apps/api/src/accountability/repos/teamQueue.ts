@@ -26,7 +26,8 @@
 //
 // Bounded reads and the index that serves each:
 //   inquiries of a window        lead_inquiries_source_arrival_idx (tenant_id, lead_source_id, created_at DESC)
-//                                (migration 0109), one range scan per lead source (LATERAL), capped
+//                                (migration 0109), one range scan per lead source (LATERAL), each capped inside
+//                                (R-TEAMQ-29)
 //   a person's human messages    messages_contact_idx (tenant_id, contact_id, occurred_at DESC), its
 //                                (tenant_id, contact_id) prefix; dispatched_at is filtered
 //   a person's human calls       calls_contact_idx (tenant_id, contact_id, started_at DESC); the same index serves
@@ -35,7 +36,10 @@
 //                                WHERE direction = 'outbound' AND initiator IN ('assistant','system')
 //   people who wrote lately      contacts_list_activity_idx (tenant_id, GREATEST(last_human_touch_at,
 //                                last_inbound_at) DESC NULLS LAST, id) WHERE deleted_at IS NULL AND
-//                                merged_into_contact_id IS NULL; then messages_contact_idx / calls_contact_idx per person
+//                                merged_into_contact_id IS NULL; then messages_contact_idx / calls_contact_idx per person.
+//                                For a Team Lead the read starts from their scope instead (R-TEAMQ-29):
+//                                contacts_owner_idx and contacts_offeree_idx for their members, the activity index
+//                                for pond leads only
 //   a member's past-due tasks    tasks_assignee_idx (tenant_id, assignee_user_id, status, due_at), one range per member
 //   a member's ended appointments appointments_user_idx (tenant_id, user_id, starts_at), one range per member
 //   who owned the lead then      lead_ownership_events primary key (tenant_id, contact_id, seq)
@@ -161,11 +165,18 @@ export interface WaitingInquiryRow extends HolderColumns {
 
 /**
  * Inbound inquiries that arrived in (since, now] (ARRIVAL) whose person has had no human attempt at or after the
- * arrival, longest waiting first, at most `cap` + 1 (the extra row says the cap was reached). An ignored duplicate
- * (a replayed delivery) is not an arrival. Imports and people a member typed in never write lead_inquiries.
+ * arrival that could have reached them, longest waiting first, at most `cap` + 1 (the extra row says the cap was
+ * reached). An ignored duplicate (a replayed delivery) is not an arrival. Imports and people a member typed in never
+ * write lead_inquiries.
+ *
+ * Bounded (R-TEAMQ-29, review step 7): one range scan per lead source on lead_inquiries_source_arrival_idx
+ * (tenant_id, lead_source_id, created_at DESC; migration 0109), oldest arrival first, with every filter that decides
+ * "waiting" INSIDE the per-source subquery and its own LIMIT, so a source stops at `cap` + 1 waiting rows instead of
+ * returning its whole window. A source whose window holds few waiting inquiries is still read to the end of its
+ * window (each inquiry costs two index probes on the person's messages and calls): the 14-day window is that bound.
  */
-export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap: number): Promise<WaitingInquiryRow[]> {
-  const r = await sql<WaitingInquiryRow>`
+export function waitingInquiriesSql(since: Instant, now: Instant, cap: number): RawBuilder<WaitingInquiryRow> {
+  return sql<WaitingInquiryRow>`
     SELECT i.id, i.contact_id, i.arrived_at, s.name AS source_name, ${HOLDER_COLUMNS},
            (SELECT min(m.dispatched_at) FROM messages m
              WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
@@ -177,11 +188,16 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
       FROM lead_sources s
       CROSS JOIN LATERAL (
         SELECT i.id, i.contact_id, i.external_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i
+          JOIN contacts c ON c.tenant_id = i.tenant_id AND c.id = i.contact_id
          WHERE i.tenant_id = s.tenant_id AND i.lead_source_id = s.id
            AND ${ARRIVAL} > ${iso(since)}::timestamptz AND ${ARRIVAL} <= ${iso(now)}::timestamptz
            AND i.outcome <> 'duplicate_ignored'
-           -- no LIMIT here: the window is the bound, and the longest-waiting rows are the oldest ones
-        ) i
+           AND c.deleted_at IS NULL AND c.ownership_state <> 'closed' AND ${TEAM_SCOPE}
+           -- no human attempt that could have reached them: a send the provider reported as failed does not clear the row (R-TEAMQ-27)
+           AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = i.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND NOT ${SEND_FAILED} AND m.dispatched_at >= ${ARRIVAL})
+           AND NOT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = i.tenant_id AND k.contact_id = i.contact_id AND ${HUMAN_CALL} AND k.started_at >= ${ARRIVAL})
+         ORDER BY ${ARRIVAL} ASC, i.id ASC
+         LIMIT ${cap + 1}) i
       JOIN contacts c ON c.tenant_id = s.tenant_id AND c.id = i.contact_id
       ${HOLDER_JOINS}
       -- b19 R-TEAMQ-18: the inquiry's backup alert (lead_backup_alerts_inquiry_once; read through its own policy)
@@ -193,13 +209,13 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
          WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND ${SEND_FAILED} AND m.dispatched_at >= i.arrived_at
          ORDER BY m.dispatched_at DESC LIMIT 1) fa ON true
       LEFT JOIN users fau ON fau.id = fa.initiated_by_user_id
-     WHERE s.tenant_id = app.tenant_id() AND c.deleted_at IS NULL AND c.ownership_state <> 'closed' AND ${TEAM_SCOPE}
-       -- no human attempt that could have reached them: a send the provider reported as failed does not clear the row (R-TEAMQ-27)
-       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND NOT ${SEND_FAILED} AND m.dispatched_at >= i.arrived_at)
-       AND NOT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${HUMAN_CALL} AND k.started_at >= i.arrived_at)
+     WHERE s.tenant_id = app.tenant_id()
      ORDER BY i.arrived_at ASC, i.id ASC
-     LIMIT ${cap + 1}`.execute(tx);
-  return r.rows;
+     LIMIT ${cap + 1}`;
+}
+
+export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap: number): Promise<WaitingInquiryRow[]> {
+  return (await waitingInquiriesSql(since, now, cap).execute(tx)).rows;
 }
 
 // ---- unanswered replies ---------------------------------------------------------------------------------------
@@ -216,14 +232,42 @@ export interface WaitingInbound {
   capped: boolean;
 }
 
+/** Whose leads the caller answers for: everyone's (Owner, Admin), or the members of the teams they lead and themself. */
+export interface CallerScope {
+  wide: boolean;
+  members: string[];
+}
+
+/** The caller's scope, read once in their own transaction (app.is_tenant_wide, app.my_team_member_ids). */
+export async function callerScope(tx: Tx): Promise<CallerScope> {
+  const r = await sql<{ wide: boolean; members: string[] }>`SELECT (SELECT app.is_tenant_wide()) AS wide, ${MY_MEMBERS} AS members`.execute(tx);
+  return { wide: r.rows[0]?.wide === true, members: r.rows[0]?.members ?? [] };
+}
+
 /**
- * The people who wrote or called since `since` (contacts.last_inbound_at, which every inbound message and call
- * moves), with their inbound messages and missed calls after their last human touch and every later touch: the
- * feed's own reads (workspace/repos/feedInputs.ts), for a team instead of one agent. Core decides who is waiting.
+ * The people who wrote or called since `since`, most recently active first, at most `cap` + 1.
+ *
+ * R-TEAMQ-29 (review step 7): a tenant-wide caller walks contacts_list_activity_idx as before. A TEAM LEAD used to walk
+ * the same index over the whole tenant and drop everyone outside their scope row by row; their read now STARTS from
+ * the scope, each branch on its own index: the leads their members own (contacts_owner_idx), the leads on offer to
+ * their members (contacts_offeree_idx) and the pond leads (ownership_state = 'in_pond', through the activity index:
+ * a Team Lead sees every pond lead). TEAM_SCOPE stays on the outer row as well, so the result is exactly what it was.
  */
-export async function waitingInbound(tx: Tx, since: Instant, now: Instant, cap: number): Promise<WaitingInbound> {
+export function waitingInboundPeopleSql(since: Instant, cap: number, scope: CallerScope): RawBuilder<WaitingPersonRow & { since: Date }> {
   const sinceIso = iso(since);
-  const people = await sql<WaitingPersonRow & { since: Date }>`
+  const candidates = scope.wide
+    ? sql`true`
+    : sql`c.id IN (
+        SELECT o.id FROM contacts o
+         WHERE o.tenant_id = app.tenant_id() AND o.owner_user_id = ANY (${scope.members}::uuid[]) AND o.deleted_at IS NULL AND o.last_inbound_at > ${sinceIso}::timestamptz
+        UNION ALL
+        SELECT f.id FROM contacts f
+         WHERE f.tenant_id = app.tenant_id() AND f.offered_to_user_id = ANY (${scope.members}::uuid[]) AND f.ownership_state = 'offered' AND f.last_inbound_at > ${sinceIso}::timestamptz
+        UNION ALL
+        SELECT q.id FROM contacts q
+         WHERE q.tenant_id = app.tenant_id() AND q.ownership_state = 'in_pond' AND q.deleted_at IS NULL AND q.merged_into_contact_id IS NULL
+           AND GREATEST(q.last_human_touch_at, q.last_inbound_at) > ${sinceIso}::timestamptz AND q.last_inbound_at > ${sinceIso}::timestamptz)`;
+  return sql<WaitingPersonRow & { since: Date }>`
     SELECT c.id AS contact_id, ls.name AS source_name, ${HOLDER_COLUMNS},
            GREATEST(${sinceIso}::timestamptz, COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)) AS since
       FROM contacts c
@@ -233,8 +277,19 @@ export async function waitingInbound(tx: Tx, since: Instant, now: Instant, cap: 
        AND GREATEST(c.last_human_touch_at, c.last_inbound_at) > ${sinceIso}::timestamptz
        AND c.last_inbound_at > ${sinceIso}::timestamptz
        AND c.ownership_state <> 'closed' AND ${TEAM_SCOPE}
+       AND ${candidates}
      ORDER BY GREATEST(c.last_human_touch_at, c.last_inbound_at) DESC NULLS LAST, c.id
-     LIMIT ${cap + 1}`.execute(tx);
+     LIMIT ${cap + 1}`;
+}
+
+/**
+ * The people who wrote or called since `since` (contacts.last_inbound_at, which every inbound message and call
+ * moves), with their inbound messages and missed calls after their last human touch and every later touch: the
+ * feed's own reads (workspace/repos/feedInputs.ts), for a team instead of one agent. Core decides who is waiting.
+ */
+export async function waitingInbound(tx: Tx, since: Instant, now: Instant, cap: number): Promise<WaitingInbound> {
+  const sinceIso = iso(since);
+  const people = await waitingInboundPeopleSql(since, cap, await callerScope(tx)).execute(tx);
   const capped = people.rows.length > cap;
   const rows = people.rows.slice(0, cap);
   if (rows.length === 0) return { people: [], inbound: [], capped };

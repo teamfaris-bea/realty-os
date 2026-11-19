@@ -37,6 +37,10 @@
 --      The alerted backup's access is time-boxed by construction (0108); this makes it a rule of the database, so no
 --      path can turn a `backup` row permanent. A person's manual share of that member writes another role (isa, tc,
 --      co_agent: the API's own choices) with its own audit entry, which this check does not touch.
+--   5. (review step 7, R-TEAMQ-29) lead_inquiries_source_arrival_idx (tenant_id, lead_source_id, created_at DESC):
+--      the queue, the report and the alert sweep range on the one arrival instant (R-TEAMQ-19: the moment the inquiry
+--      reached the team, lead_inquiries.created_at), per lead source. 0062's lead_inquiries_source_received_idx stays
+--      for the readers of the source-claimed time (the sources overview).
 --   No table, no policy and no retention change: the new columns of part 2 are read and written under
 --   lead_backup_alerts' existing policies.
 
@@ -198,3 +202,6 @@ BEGIN
     RAISE EXCEPTION '0109: contact_collaborators_backup_time_boxed is missing';
   END IF;
 END $$;
+
+-- 5. inquiries by source and arrival
+CREATE INDEX lead_inquiries_source_arrival_idx ON lead_inquiries (tenant_id, lead_source_id, created_at DESC);
