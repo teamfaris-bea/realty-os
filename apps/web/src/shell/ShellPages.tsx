@@ -5,6 +5,8 @@ import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, Icon } from '../design/index.js';
 import { useSession } from './context.js';
 import { ROLE_LABEL, useNav } from './Layout.js';
+import { useNavMode } from './exploreNavModel.js';
+import { PhoneMoreGroups, useExploreNav } from './NavExplore.js';
 import type { NavItem } from './pages.js';
 
 export function AccountPage() {
@@ -64,6 +66,10 @@ const MORE_SECTIONS: readonly { section: NavItem['section']; label: string }[] =
 export function MorePage() {
   const nav = useNav();
   const id = useId();
+  // navigation exploration (?nav=a|b): the same page, with the exploration's groups
+  const { mode } = useNavMode();
+  const explore = useExploreNav();
+  if (mode !== 'current') return <PhoneMoreGroups groups={explore.phoneMore} />;
   const groups = MORE_SECTIONS.map((g) => ({ ...g, items: nav.more.filter((i) => i.section === g.section) })).filter((g) => g.items.length > 0);
   return (
     <nav aria-label="More" className="flex flex-col gap-4">

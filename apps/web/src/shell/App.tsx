@@ -8,6 +8,7 @@ import { pathAfterAuth, sessionGate } from './authApi.js';
 import { SessionSync, ShellProvider, useSession, useShell } from './context.js';
 import { messageFor } from './errorMessages.js';
 import { AppLayout, PageFrame, PageLoading } from './Layout.js';
+import { SEARCH_PATH, useNavMode } from './exploreNavModel.js';
 import { type PageTable, buildPageTable, canOpen } from './pages.js';
 import { surfaces } from './registry.js';
 import { ReauthProvider } from './reauth.js';
@@ -71,9 +72,21 @@ function RegistryPage({ page }: { page: PageDef }) {
   const C = page.component;
   return (
     <PageFrame title={page.title} detail={page.nav === undefined && page.path !== '/more'}>
-      <C />
+      {page.path === SEARCH_PATH ? <SearchPageSlot C={C} /> : <C />}
     </PageFrame>
   );
+}
+
+/**
+ * Navigation exploration (?nav=a|b): "See all results" in the top-bar search opens /search?q=…, also from the Search
+ * page itself. The page reads `q` once, when it mounts, so in the exploration it is keyed by `q` and starts again with
+ * the new words. The current navigation renders the page exactly as before (no key).
+ */
+function SearchPageSlot({ C }: { C: PageDef['component'] }) {
+  const { mode } = useNavMode();
+  const { search } = useLocation();
+  if (mode === 'current') return <C />;
+  return <C key={new URLSearchParams(search).get('q') ?? ''} />;
 }
 
 export function buildRoutes(table: PageTable): RouteObject[] {

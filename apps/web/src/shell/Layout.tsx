@@ -10,6 +10,9 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { Icon, Notice, Spinner } from '../design/index.js';
 import type { SessionInfo } from './authApi.js';
 import { useSession, useShell } from './context.js';
+import { GlobalSearch } from './GlobalSearch.js';
+import { NAV_MODE_KEY, type NavMode, NavModeContext, type NavModeValue, resolveNavMode, useNavMode } from './exploreNavModel.js';
+import { ExploreTabBar, Rail, TopBarA, TopBarB, useExploreNav } from './NavExplore.js';
 import { type NavItem, type NavModel, activeNavPath, navFor, pagesFor } from './pages.js';
 import { TeamLinkPrompt } from './TeamLinkPrompt.js';
 
@@ -39,6 +42,13 @@ export function usePageTitle(title: string | null): void {
   }, [title, setTitle]);
 }
 
+/**
+ * Where the page column sits on desktop in the exploration: beside the rail it starts at the left, as today; under
+ * the top bar (no rail) it is centered. Its width is the pages' own 1024 px in every navigation (see the report:
+ * the pages were built to that width, so a wider window gives margin, not content).
+ */
+const FRAME: Record<NavMode, string> = { current: 'md:mx-0', a: 'md:mx-0', b: 'md:mx-auto' };
+
 /** Wraps every registry page: header with the h1, document title, focus on navigation. */
 export function PageFrame({ title, detail, children }: { title: string; detail: boolean; children: ReactNode }) {
   const { session } = useSession();
@@ -47,6 +57,11 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
   const h1 = useRef<HTMLHeadingElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  // navigation exploration (?nav=a|b): the phone's top bar also holds the search field, and on desktop the top bar
+  // above the page holds Add person, so the page header there is the h1 alone
+  const { mode } = useNavMode();
+  const explore = mode !== 'current';
+  const exploreNav = useExploreNav();
 
   useEffect(() => {
     document.title = session?.tenant ? `${shown} · ${session.tenant.name}` : shown;
@@ -62,7 +77,7 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
   return (
     <TitleContext.Provider value={value}>
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur md:static md:border-0 md:bg-transparent md:backdrop-blur-none">
-        <div className="mx-auto flex min-h-[52px] max-w-5xl items-center gap-2 px-2 md:mx-0 md:min-h-0 md:px-8 md:pb-2 md:pt-8">
+        <div className={explore ? `relative mx-auto flex min-h-[52px] max-w-5xl items-center gap-2 px-2 max-md:py-1.5 md:min-h-0 md:px-8 md:pb-2 md:pt-6 ${FRAME[mode]}` : 'mx-auto flex min-h-[52px] max-w-5xl items-center gap-2 px-2 md:mx-0 md:min-h-0 md:px-8 md:pb-2 md:pt-8'}>
           {detail ? (
             <button
               type="button"
@@ -77,15 +92,20 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
           <h1 ref={h1} tabIndex={-1} className="min-w-0 flex-1 text-[17px] font-semibold text-ink outline-none [overflow-wrap:anywhere] md:text-[28px] md:font-bold">
             {shown}
           </h1>
+          {explore && session?.tenant ? (
+            <div className="md:hidden">
+              <GlobalSearch variant="compact" pages={exploreNav.all} tight={detail} />
+            </div>
+          ) : null}
           {/* FUB parity module 58: the global + opens Add person (PARITY_PLAN §5); not for TCs, who create no contacts */}
           {session?.tenant && session.tenant.role !== 'tc' && location.pathname !== '/people/new' ? (
-            <Link to="/people/new" aria-label="Add person" className="inline-flex min-h-tap min-w-tap items-center justify-center rounded-xl text-[28px] font-semibold leading-none text-accent">
+            <Link to="/people/new" aria-label="Add person" className={`inline-flex min-h-tap min-w-tap items-center justify-center rounded-xl text-[28px] font-semibold leading-none text-accent${explore ? ' md:hidden' : ''}`}>
               <span aria-hidden="true">+</span>
             </Link>
           ) : null}
         </div>
       </header>
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6 pt-4 md:mx-0 md:px-8">{children}</div>
+      <div className={explore ? `mx-auto w-full max-w-5xl px-4 pb-6 pt-4 md:px-8 ${FRAME[mode]}` : 'mx-auto w-full max-w-5xl px-4 pb-6 pt-4 md:mx-0 md:px-8'}>{children}</div>
     </TitleContext.Provider>
   );
 }
@@ -215,21 +235,89 @@ export function PageLoading() {
   );
 }
 
+/** `?nav=a|b|current` (remembered in localStorage) picks the navigation; without it, the current one. */
+function useResolvedNavMode(): NavModeValue {
+  const { search } = useLocation();
+  const storage = () => {
+    try {
+      return typeof window === 'undefined' ? null : window.localStorage;
+    } catch {
+      return null;
+    }
+  };
+  const [mode, setModeState] = useState<NavMode>(() => resolveNavMode(search, storage()));
+  useEffect(() => {
+    if (new URLSearchParams(search).has('nav')) setModeState(resolveNavMode(search, storage()));
+  }, [search]);
+  return useMemo(
+    () => ({
+      mode,
+      setMode(m: NavMode) {
+        try {
+          storage()?.setItem(NAV_MODE_KEY, m);
+        } catch {
+          // not remembered; the choice still holds for this visit
+        }
+        setModeState(m);
+      },
+    }),
+    [mode],
+  );
+}
+
+const SKIP_LINK = 'sr-only z-50 rounded-lg bg-surface px-4 py-3 text-accent focus:not-sr-only focus:fixed focus:left-3 focus:top-3';
+
+function Offline() {
+  return (
+    <div className="px-4 pt-3 md:px-8">
+      <Notice tone="warn">You're offline. What you see may be out of date, and nothing you do will send until you're back online.</Notice>
+    </div>
+  );
+}
+
 export function AppLayout() {
+  const navMode = useResolvedNavMode();
+  return <NavModeContext.Provider value={navMode}>{navMode.mode === 'current' ? <CurrentLayout /> : <ExploreLayout mode={navMode.mode} />}</NavModeContext.Provider>;
+}
+
+/** The exploration's frame: A = rail + top bar, B = top bar only; the phone gets the tab bar in both. */
+function ExploreLayout({ mode }: { mode: 'a' | 'b' }) {
+  const nav = useExploreNav();
+  const online = useOnline();
+  const { session } = useSession();
+  const roleLabel = session?.tenant ? ROLE_LABEL[session.tenant.role] : '';
+  return (
+    <div data-nav={mode} className={`min-h-dvh bg-canvas ${mode === 'a' ? 'md:flex' : ''}`}>
+      <a href="#main" className={SKIP_LINK}>
+        Skip to content
+      </a>
+      {mode === 'a' ? <Rail nav={nav} /> : null}
+      <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
+        {mode === 'a' ? <TopBarA nav={nav} roleLabel={roleLabel} /> : <TopBarB nav={nav} roleLabel={roleLabel} />}
+        {!online ? <Offline /> : null}
+        <TeamLinkPrompt />
+        <main id="main" tabIndex={-1} className="flex-1 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+16px)] outline-none md:pb-0">
+          <Suspense fallback={<PageLoading />}>
+            <Outlet />
+          </Suspense>
+        </main>
+      </div>
+      <ExploreTabBar nav={nav} mode={mode} />
+    </div>
+  );
+}
+
+function CurrentLayout() {
   const nav = useNav();
   const online = useOnline();
   return (
     <div className="min-h-dvh bg-canvas md:flex">
-      <a href="#main" className="sr-only z-50 rounded-lg bg-surface px-4 py-3 text-accent focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
+      <a href="#main" className={SKIP_LINK}>
         Skip to content
       </a>
       <Sidebar nav={nav} />
       <div className="flex min-w-0 flex-1 flex-col">
-        {!online ? (
-          <div className="px-4 pt-3 md:px-8">
-            <Notice tone="warn">You're offline. What you see may be out of date, and nothing you do will send until you're back online.</Notice>
-          </div>
-        ) : null}
+        {!online ? <Offline /> : null}
         <TeamLinkPrompt />
         <main id="main" tabIndex={-1} className="flex-1 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+16px)] outline-none md:pb-0">
           <Suspense fallback={<PageLoading />}>
