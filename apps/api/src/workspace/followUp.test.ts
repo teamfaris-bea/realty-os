@@ -157,7 +157,7 @@ describe('R-TODAY-1: every follow-up card says why, what was last discussed and 
     expect(bare.why ?? null).toBeNull();
   });
 
-  it('a logged outside call is the last touch, marked as the agent’s own report, never as a call the system placed', async () => {
+  it('R-TODAY-4: a logged outside call is the last touch, marked as the agent’s own report, never as a call the system placed', async () => {
     const c = await contactOf(a, { firstName: 'Odile' });
     await dueTask(a, c.id, 'Send the comps');
     const log = await call(a, 'POST', `/contacts/${c.id}/activities`, { kind: 'call', direction: 'outbound', at: new Date(Date.now() - 600_000).toISOString(), outcome: 'left_voicemail', noteId: randomUUID() });
@@ -170,7 +170,7 @@ describe('R-TODAY-1: every follow-up card says why, what was last discussed and 
 });
 
 describe('R-TODAY-9: a logged outside call is idempotent on its client id', () => {
-  it('a double tap or a retry makes one record: the same noteId again answers the first note (200, replayed) and writes nothing; the card shows one logged call', async () => {
+  it('E851: a double tap or a retry makes one record: the same noteId again answers the first note (200, replayed) and writes nothing; the card shows one logged call', async () => {
     const c = await contactOf(a, { firstName: 'Twice' });
     await dueTask(a, c.id, 'Call about the appraisal');
     const noteId = randomUUID();
@@ -187,7 +187,7 @@ describe('R-TODAY-9: a logged outside call is idempotent on its client id', () =
 });
 
 describe('R-TODAY-2: an automated message is never the last thing discussed', () => {
-  it('only an automatic text: no last touch, and the text is its own line; a person’s text then is the last touch; a later automatic one never replaces it', async () => {
+  it('E840: only an automatic text: no last touch, and the text is its own line; a person’s text then is the last touch; a later automatic one never replaces it', async () => {
     const c = await ownedContact(a, { firstName: 'Ilse' });
     await dueTask(a, c.id, 'Check in about the open house', { kind: 'follow_up' });
     const autoAt = new Date(Date.now() - 3 * 86_400_000);
@@ -217,7 +217,7 @@ describe('R-TODAY-2: an automated message is never the last thing discussed', ()
 });
 
 describe('R-TODAY-5: nothing past row-level security', () => {
-  it('a note the viewer cannot see never leaks: the reader as another agent returns nothing for a person they cannot open; a pond member who sees the card still reads no history', async () => {
+  it('E842: a note the viewer cannot see never leaks: the reader as another agent returns nothing for a person they cannot open; a pond member who sees the card still reads no history', async () => {
     const { contactId, owner } = await acceptedLead(h, w, { fullName: 'Sol Marchetti' });
     const other = w.agents.find((x) => x.userId !== owner.userId)!;
     const secret = `Private to the owner ${randomUUID()}`;
@@ -241,7 +241,7 @@ describe('R-TODAY-5: nothing past row-level security', () => {
     expect((await readAs(other, [contactId])).byContact.get(contactId)?.lastTouch ?? null).toBeNull();
   });
 
-  it('a redacted message stays redacted: the stored placeholder is what the card quotes, and a token stored before the redaction existed is hidden', async () => {
+  it('E843: a redacted message stays redacted: the stored placeholder is what the card quotes, and a token stored before the redaction existed is hidden', async () => {
     const c = await contactOf(a, { firstName: 'Tove' });
     await dueTask(a, c.id, 'Send the portal link again');
     const token = `tok_${randomUUID().replace(/-/g, '')}`;
@@ -260,7 +260,7 @@ describe('R-TODAY-5: nothing past row-level security', () => {
   });
 });
 
-describe('bounded reads', () => {
+describe('R-TODAY-5: bounded reads', () => {
   it(`the lines of a page of cards cost ${FOLLOW_UP_CONTEXT_QUERIES} queries, for 1 person and for 30 alike (no per-card query)`, async () => {
     const people: string[] = [];
     for (let i = 0; i < 30; i++) people.push((await contactOf(a, { firstName: `Batch${i}` })).id);
@@ -281,7 +281,7 @@ describe('bounded reads', () => {
 });
 
 describe('R-TODAY-3: overdue is decided in the team’s time zone', () => {
-  it('an all-day task is overdue only once its day has ended in the team’s zone, whatever the UTC date says', async () => {
+  it('E844: an all-day task is overdue only once its day has ended in the team’s zone, whatever the UTC date says', async () => {
     const w2 = await commsWorld(h, { agents: 1, timezone: 'America/New_York' });
     const agent = w2.agents[0]!;
     const c = await contactOf(agent, { firstName: 'Zone' });

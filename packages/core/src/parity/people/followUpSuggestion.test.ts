@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { CALL_SIGNAL_OUTCOMES, type StageSignal, suggestedFollowUpDays } from './index.js';
 
-describe('suggestedFollowUpDays', () => {
+describe('R-TODAY-7: suggestedFollowUpDays, the follow-up a one-pass sheet preselects', () => {
   const TABLE: [string, StageSignal | null, number | null][] = [
     ['left a voicemail: try again tomorrow', { kind: 'call', outcome: 'left_voicemail' }, 1],
     ['no answer: try again tomorrow', { kind: 'call', outcome: 'no_answer' }, 1],

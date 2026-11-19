@@ -329,7 +329,7 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     }
   });
 
-  it('R-TODAY-9: left at "Just now", the log carries the instant of the save, to the second (not the minute the sheet opened)', async () => {
+  it('R-TODAY-9 E852: left at "Just now", the log carries the instant of the save, to the second (not the minute the sheet opened)', async () => {
     const { fake, tap } = mount();
     const s = await sheet();
     await tap(within(s).getByRole('button', { name: 'No answer' }));

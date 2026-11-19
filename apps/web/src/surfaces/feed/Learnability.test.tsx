@@ -44,7 +44,7 @@ function open(contact: 'hold' | 'error' | 'card' | 'full', c: FeedCard = textCar
 
 const theCard = () => screen.findByRole('article', { name: 'Dana Reyes' });
 
-describe('plain words while a thing loads, when it fails, and when there is nothing', () => {
+describe('R-TODAY-8: plain words while a thing loads, when it fails, and when there is nothing', () => {
   it('Text from a card: "Loading" while the person is read, then the same compose box', async () => {
     const { release, u } = open('hold');
     await u.click(within(await theCard()).getByRole('button', { name: 'Text' }));
@@ -57,7 +57,7 @@ describe('plain words while a thing loads, when it fails, and when there is noth
     expect(screen.getByRole('dialog', { name: 'Text Dana Reyes' })).toContainElement(box);
   });
 
-  it('when the person cannot be read the sheet says so and offers Try again; nothing is sent, and the page is still Today', async () => {
+  it('E858: when the person cannot be read the sheet says so and offers Try again; nothing is sent, and the page is still Today', async () => {
     const { fake, recover, u } = open('error');
     await u.click(within(await theCard()).getByRole('button', { name: 'Text' }));
     const sheet = await screen.findByRole('dialog', { name: 'Text Dana Reyes' });
@@ -70,7 +70,7 @@ describe('plain words while a thing loads, when it fails, and when there is noth
     expect(screen.getByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
   });
 
-  it('a person the viewer sees only as a card cannot be texted from here, and the sheet says why instead of an empty box', async () => {
+  it('E858: a person the viewer sees only as a card cannot be texted from here, and the sheet says why instead of an empty box', async () => {
     const { u } = open('card');
     await u.click(within(await theCard()).getByRole('button', { name: 'Text' }));
     const sheet = await screen.findByRole('dialog', { name: 'Text Dana Reyes' });

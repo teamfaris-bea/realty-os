@@ -49,7 +49,7 @@ function open(path = '/', role: Parameters<typeof agentApp>[2] = 'agent', o: { p
 const entry = () => screen.findByRole('button', { name: 'Log a call or conversation' });
 const picker = () => screen.findByRole('dialog', { name: 'Log a call or conversation' });
 
-describe('"Log a call or conversation" from any screen', () => {
+describe('R-TODAY-9: "Log a call or conversation" from any screen', () => {
   it.each([
     ['Today', '/', 'Home'],
     ['Search', '/search', 'Search'],
@@ -69,7 +69,7 @@ describe('"Log a call or conversation" from any screen', () => {
     expect(e).toHaveTextContent(/^Log/);
   });
 
-  it('a Transaction Coordinator, who cannot log an activity, is not offered it', async () => {
+  it('E855: a Transaction Coordinator, who cannot log an activity, is not offered it', async () => {
     open('/', 'tc');
     await screen.findByRole('heading', { level: 1, name: 'Home' });
     expect(screen.queryByRole('button', { name: 'Log a call or conversation' })).toBeNull();
@@ -110,7 +110,7 @@ describe('"Log a call or conversation" from any screen', () => {
     await waitFor(() => expect(fake.callsTo('GET /people?sort=last_activity_desc').length).toBeGreaterThan(readsBefore));
   });
 
-  it('typing a name searches (from 2 letters); a person the viewer sees only as a card is not offered', async () => {
+  it('E855: typing a name searches (from 2 letters); a person the viewer sees only as a card is not offered', async () => {
     const { u } = open('/tasks');
     await u.click(await entry());
     const p = await picker();
@@ -138,7 +138,7 @@ describe('"Log a call or conversation" from any screen', () => {
     expect(within(p).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
-  it('a double tap on the one button makes one record: one request, one client id', async () => {
+  it('E851: a double tap on the one button makes one record: one request, one client id', async () => {
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
     const { notes, fake, u } = open('/', 'agent', { hold });
@@ -170,7 +170,7 @@ describe('"Log a call or conversation" from any screen', () => {
     expect(e).toHaveFocus();
   });
 
-  it('R-TODAY-10: with the on-screen keyboard up (a shorter visual viewport) the sheet opened from the entry ends where the keyboard begins, its one button inside it', async () => {
+  it('R-TODAY-10 E857: with the on-screen keyboard up (a shorter visual viewport) the sheet opened from the entry ends where the keyboard begins, its one button inside it', async () => {
     type Listener = () => void;
     const listeners = new Map<string, Set<Listener>>();
     const vv = { height: 664, offsetTop: 0, scale: 1, addEventListener: (t: string, fn: Listener) => void (listeners.get(t) ?? listeners.set(t, new Set()).get(t)!).add(fn), removeEventListener: (t: string, fn: Listener) => void listeners.get(t)?.delete(fn) };

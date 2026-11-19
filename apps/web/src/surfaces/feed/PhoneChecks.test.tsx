@@ -41,7 +41,7 @@ const tap44 = (el: Element) => {
   expect(el.className, `"${el.textContent}" is a 44 px target`).toMatch(/\bmin-h-tap\b/);
 };
 
-describe('the new controls on a phone', () => {
+describe('R-TODAY-10: the new controls on a phone', () => {
   it('every control of a "Follow up today" row is a 44 px target: Call, Log, Text, Email, the name, Why this', async () => {
     open();
     const r = within(await screen.findByRole('region', { name: 'Follow up today' })).getByRole('article', { name: 'Dana Reyes' });
@@ -52,7 +52,7 @@ describe('the new controls on a phone', () => {
     expect(buttons.slice(0, 2)).toEqual(['Call', 'Log a call or conversation with Dana Reyes']);
   });
 
-  it('a 24-character stage label is shown whole on the row, in its reason and in the Log sheet’s stage step: nothing truncates', async () => {
+  it('E856: a 24-character stage label is shown whole on the row, in its reason and in the Log sheet’s stage step: nothing truncates', async () => {
     const u = open();
     const r = within(await screen.findByRole('region', { name: 'Follow up today' })).getByRole('article', { name: 'Dana Reyes' });
     const stage = within(r).getByTestId('card-stage');

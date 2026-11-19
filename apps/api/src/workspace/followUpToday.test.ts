@@ -126,7 +126,7 @@ describe('R-TODAY-6: who is in "Follow up today"', () => {
     expect(p.people.find((x) => x.contact!.id === never)!.reasons[0]).toEqual({ code: 'WARM_NEVER_CONTACTED', label: 'Connected: no conversation yet' });
   });
 
-  it('a call the agent logs from outside the app is a contact for the plan: the person leaves it, and nothing was counted as a touch', async () => {
+  it('E846: a call the agent logs from outside the app is a contact for the plan: the person leaves it, and nothing was counted as a touch', async () => {
     const c = await contactOf(a, { firstName: 'Odile' });
     await quiet(c.id, 'connected', 12);
     expect(await rowOf(a, c.id)).toBeDefined();
@@ -139,7 +139,7 @@ describe('R-TODAY-6: who is in "Follow up today"', () => {
     expect(after?.getTime()).toBe(before?.getTime());
   });
 
-  it('a dated next step takes a quiet person out until it is due', async () => {
+  it('E850: a dated next step takes a quiet person out until it is due', async () => {
     const c = await contactOf(a, { firstName: 'Planned' });
     await quiet(c.id, 'connected', 20);
     expect(await rowOf(a, c.id)).toBeDefined();
@@ -149,7 +149,7 @@ describe('R-TODAY-6: who is in "Follow up today"', () => {
 });
 
 describe('R-TODAY-6: who is never in it', () => {
-  it('someone who asked not to be contacted at all (every channel closed), a promise due included', async () => {
+  it('E847: someone who asked not to be contacted at all (every channel closed), a promise due included', async () => {
     const c = await contactOf(a, { firstName: 'Quiet' });
     await task(a, c.id, 'Promised a call', { kind: 'promise' });
     await quiet(c.id, 'connected', 15);
@@ -159,7 +159,7 @@ describe('R-TODAY-6: who is never in it', () => {
     expect(await rowOf(a, c.id)).toBeUndefined();
   });
 
-  it('someone closed as not a lead, and someone who is another agent’s (a task of mine on them does not make them mine)', async () => {
+  it('E849: someone closed as not a lead, and someone who is another agent’s (a task of mine on them does not make them mine)', async () => {
     const closed = await contactOf(a, { firstName: 'Closed' });
     await task(a, closed.id, 'Call them back', { kind: 'promise' });
     expect(await rowOf(a, closed.id)).toBeDefined();
@@ -174,7 +174,7 @@ describe('R-TODAY-6: who is never in it', () => {
     expect(await rowOf(b, theirs.id)).toBeDefined();
   });
 
-  it('a person from a source marked "No automated contact" still appears: the restriction is on automated contact, not on the agent’s own follow-up', async () => {
+  it('E848: a person from a source marked "No automated contact" still appears: the restriction is on automated contact, not on the agent’s own follow-up', async () => {
     const { contactId, owner } = await acceptedLead(h, w, { fullName: 'Remy Castellan' });
     await freshReauth(h, w.owner);
     expect((await call(w.owner, 'PUT', `/lead-sources/${w.sourceId}/ai-care`, { noAiCare: true })).status).toBe(200);
@@ -204,7 +204,7 @@ describe('R-TODAY-6: reading the plan creates nothing', () => {
 });
 
 describe('R-TODAY-6: capped, ordered, bounded', () => {
-  it(`at most ${FOLLOW_UP_TODAY_CAP} people, most overdue first, with the total; and the same number of statements for 2 people and for 25`, async () => {
+  it(`E859: at most ${FOLLOW_UP_TODAY_CAP} people, most overdue first, with the total; and the same number of statements for 2 people and for 25`, async () => {
     const w2 = await commsWorld(h, { agents: 1 });
     const agent = w2.agents[0]!;
     const read = async () => {

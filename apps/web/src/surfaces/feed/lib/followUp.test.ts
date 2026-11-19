@@ -53,7 +53,7 @@ describe('the Last line', () => {
     expect(NO_CONVERSATION_YET).toBe('No conversation yet.');
     expect(lastTouchLine(null, NOW)).toBe('No conversation yet.');
   });
-  it('no last touch here, but history was imported: says so, and never calls it a conversation', () => {
+  it('E845: no last touch here, but history was imported: says so, and never calls it a conversation', () => {
     expect(lastTouchLine(null, NOW, local(12))).toBe('No conversation yet in Realty OS. Earlier history was imported (latest entry Nov 12).');
   });
 });

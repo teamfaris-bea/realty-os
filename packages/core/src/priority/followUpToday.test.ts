@@ -23,7 +23,7 @@ describe('R-TODAY-6: the thresholds are constants an owner can read', () => {
   });
 });
 
-describe('who is due by a promise or a task', () => {
+describe('R-TODAY-6: who is due by a promise or a task', () => {
   it('a promise due later today is in the plan, with the task; one due tomorrow is not', () => {
     expect(startOfTomorrow(NOW, NY)).toBe(at('2026-11-20T05:00:00Z'));
     const r = plan([person({ tasks: [task()] }), person({ contactId: 'c2', tasks: [task({ taskId: 't2', dueAt: at('2026-11-20T05:00:00Z') })] })]);
@@ -47,7 +47,7 @@ describe('who is due by a promise or a task', () => {
   });
 });
 
-describe('who is warm and quiet', () => {
+describe('R-TODAY-6 E850: who is warm and quiet (and not someone whose next step is already dated)', () => {
   const WARM: [string, FollowUpPersonFacts, boolean][] = [
     ['Connected, last contact 8 days ago', person({ lastContactAt: ago(8 * DAY_MS) }), true],
     ['Connected, last contact exactly 7 days ago (not longer than the threshold)', person({ lastContactAt: ago(7 * DAY_MS) }), false],
@@ -72,7 +72,7 @@ describe('who is warm and quiet', () => {
   });
 });
 
-describe('who is never in the plan', () => {
+describe('R-TODAY-6 E847: who is never in the plan', () => {
   const sms: GateSummary = { sms: DENY };
   const everyChannel: GateSummary = { sms: DENY, voice: { outcome: 'deny', explanation: 'Asked not to be called' }, email: { outcome: 'deny', explanation: 'Unsubscribed from email' } };
   it('someone who opted out of every channel the agent could use (a promise due included)', () => {
@@ -96,7 +96,7 @@ describe('who is never in the plan', () => {
   });
 });
 
-describe('order and cap', () => {
+describe('R-TODAY-6 E859: order and cap', () => {
   it('most overdue first, whatever the reason; ties by person', () => {
     const r = plan([
       person({ contactId: 'warm-2d', lastContactAt: ago(9 * DAY_MS) }),
@@ -121,7 +121,7 @@ describe('order and cap', () => {
   });
 });
 
-describe('the reason, in words', () => {
+describe('R-TODAY-6: the reason, in words', () => {
   const say = (p: FollowUpPersonFacts, stageLabel = 'Connected') => followUpTodayReasons(plan([p]).people[0]!, { now: NOW, stageLabel }).map((r) => r.label);
   it('a promise: the words the feed already uses for one', () => {
     expect(say(person({ tasks: [task()] }))).toEqual(['You promised this; due in 7 h']);
@@ -142,7 +142,7 @@ describe('the reason, in words', () => {
   });
 });
 
-describe('what the row offers: the agent’s own one-to-one follow-up, never a send', () => {
+describe('R-TODAY-6: what the row offers: the agent’s own one-to-one follow-up, never a send', () => {
   it('call first, then text and email; Done for the due task; the person’s page last', () => {
     expect(followUpActions('c1' as never, undefined, 't1')).toEqual({
       primaryAction: { kind: 'call', label: 'Call', contactId: 'c1' },

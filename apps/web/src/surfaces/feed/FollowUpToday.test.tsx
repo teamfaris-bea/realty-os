@@ -38,7 +38,7 @@ function open(body: FeedResponse) {
 }
 const group = () => screen.findByRole('region', { name: 'Follow up today' });
 
-describe('"Follow up today" on Today', () => {
+describe('R-TODAY-6: "Follow up today" on Today', () => {
   it('sits between "Due now" and "Next up", and lists each person with their reason and the three lines', async () => {
     open(withPlan(feed([offerCard()], [card({ contact: { id: IDS.pat, name: 'Pat L.' }, primaryAction: { kind: 'text', label: 'Text', contactId: IDS.pat } })]), [person()]));
     const g = await group();
@@ -53,7 +53,7 @@ describe('"Follow up today" on Today', () => {
     expect(within(row).queryByRole('button', { name: 'Dismiss' })).toBeNull();
   });
 
-  it('a person due by a task is shown once: their task’s own card leaves "Next up" for the row', async () => {
+  it('E854: a person due by a task is shown once: their task’s own card leaves "Next up" for the row', async () => {
     const taskCard: FeedCard = card({ itemType: 'task_due', contact: { id: IDS.jane, name: 'Dana Reyes' }, task: { id: IDS.task, title: 'Send the comps' }, reasons: [{ code: 'TASK_OVERDUE', label: 'Overdue by 3 h' }], primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane }, subjectType: 'task', subjectId: IDS.task });
     const other = card({ contact: { id: IDS.pat, name: 'Pat L.' }, primaryAction: { kind: 'text', label: 'Text', contactId: IDS.pat } });
     open(withPlan(feed([], [taskCard, other]), [person({ itemType: 'task_due', task: { id: IDS.task, title: 'Send the comps' }, taskIds: [IDS.task], reasons: [{ code: 'TASK_OVERDUE', label: 'Overdue by 3 h' }], why: ['Overdue by 3 h'], subjectType: 'task', subjectId: IDS.task })]));
@@ -63,7 +63,7 @@ describe('"Follow up today" on Today', () => {
     expect(within(screen.getByRole('region', { name: 'Next up' })).getAllByRole('article')).toHaveLength(1);
   });
 
-  it('a person in the plan is shown once even when another task of theirs has a card (the follow-up just set for tomorrow): that card leaves "Next up" too', async () => {
+  it('E854: a person in the plan is shown once even when another task of theirs has a card (the follow-up just set for tomorrow): that card leaves "Next up" too', async () => {
     const tomorrow: FeedCard = card({ itemType: 'task_due', contact: { id: IDS.jane, name: 'Dana Reyes' }, task: { id: IDS.task, title: 'Follow up with Dana' }, reasons: [{ code: 'TASK_DUE', label: 'Due in 14 h' }], primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane }, subjectType: 'task', subjectId: IDS.task });
     // a card about the same person that is not a task (their reply is waiting) stays: it is other work
     const reply: FeedCard = card({ contact: { id: IDS.jane, name: 'Dana Reyes' }, reasons: [{ code: 'CLIENT_WAITING', label: 'They texted 5 min ago; no reply yet' }], primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane } });
@@ -91,7 +91,7 @@ describe('"Follow up today" on Today', () => {
     expect(screen.queryByText("You're caught up")).toBeNull();
   });
 
-  it('the count has its denominator when the plan is capped ("Showing 2 of 27 people due"), and says "at least" when the total is a lower bound', async () => {
+  it('E859: the count has its denominator when the plan is capped ("Showing 2 of 27 people due"), and says "at least" when the total is a lower bound', async () => {
     const two = [person(), person({ id: IDS.pat, contact: { id: IDS.pat, name: 'Pat Lindqvist' }, primaryAction: { kind: 'call', label: 'Call', contactId: IDS.pat } })];
     open(withPlan(feed(), two, 27));
     expect(within(await group()).getByText('Showing 2 of 27 people due')).toBeInTheDocument();

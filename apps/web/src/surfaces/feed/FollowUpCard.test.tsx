@@ -45,7 +45,7 @@ function open(c: FeedCard) {
 }
 const lines = async () => within(await screen.findByRole('article', { name: 'Dana Reyes' })).getByTestId('follow-up-lines');
 
-describe('a follow-up card on Today', () => {
+describe('R-TODAY-1: a follow-up card on Today', () => {
   it('says why they are due, what was last discussed and the next promise, each on its own labelled line', async () => {
     open(promiseCard());
     const l = await lines();

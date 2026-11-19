@@ -93,7 +93,7 @@ describe('R-TODAY-2: an automated message is never the last thing discussed', ()
     expect(selectLastContact([msg({ initiator: 'assistant', channel: 'mms' })], NOW).lastAutomatic?.kind).toBe('text');
   });
 
-  it('a newer automatic text never replaces an older conversation: the call stays the last touch and the text is a separate line', () => {
+  it('E841: a newer automatic text never replaces an older conversation: the call stays the last touch and the text is a separate line', () => {
     const r = selectLastContact([call({ at: ago(3 * DAY_MS) }), msg({ id: 'm2', initiator: 'system', at: ago(DAY_MS) })], NOW);
     expect(r.lastTouch).toMatchObject({ kind: 'call', at: ago(3 * DAY_MS) });
     expect(r.lastAutomatic).toEqual({ kind: 'text', at: ago(DAY_MS), bulk: false });
@@ -195,7 +195,7 @@ describe('R-TODAY-4: an outside call is the agent’s own report', () => {
   });
 });
 
-describe('imported history is neither a conversation here nor an automatic message', () => {
+describe('E845: imported history is neither a conversation here nor an automatic message', () => {
   const IMPORTED: [string, ContactCandidate][] = [
     ['an imported text', msg({ imported: true, initiator: 'import' })],
     ['an imported call', call({ imported: true, initiator: 'import' })],
@@ -210,7 +210,7 @@ describe('imported history is neither a conversation here nor an automatic messa
   });
 });
 
-describe('the snippet', () => {
+describe('R-TODAY-1: the snippet', () => {
   it('is at most about 140 characters, cut on a word, with an ellipsis; white space is collapsed', () => {
     expect(SNIPPET_MAX).toBe(140);
     const long = `${'word '.repeat(60)}end`;
@@ -250,7 +250,7 @@ describe('R-TODAY-3: the next promise', () => {
     expect(selectNextPromise([task({ dueAt: ago(MINUTE_MS) })], NOW, NY)?.overdue).toBe(true);
     expect(selectNextPromise([task({ dueAt: (NOW + MINUTE_MS) as typeof NOW })], NOW, NY)?.overdue).toBe(false);
   });
-  it('overdue is computed in the team’s time zone: an all-day task due "today" in New York is not overdue at 11:30 PM there, though the UTC date has changed', () => {
+  it('E844: overdue is computed in the team’s time zone: an all-day task due "today" in New York is not overdue at 11:30 PM there, though the UTC date has changed', () => {
     const dueDay = at('2026-11-19T05:00:00Z'); // Thu 00:00 in New York
     const allDay = task({ dueAt: dueDay, dueAllDay: true, dueTz: null });
     const lateThu = at('2026-11-20T04:30:00Z'); // Thu 11:30 PM in New York; already Friday in UTC
@@ -269,7 +269,7 @@ describe('R-TODAY-3: the next promise', () => {
   });
 });
 
-describe('which cards are follow-up cards', () => {
+describe('R-TODAY-1: which cards are follow-up cards', () => {
   it('first contact due, reply waiting, promise due, task due, re-inquiry and the warm follow-up, and nothing whose detail the viewer may not open', () => {
     for (const t of ['first_touch_due', 'unanswered_inbound', 'missed_call', 'promise_due', 'task_due', 'reinquiry', 'warm_follow_up']) expect(isFollowUpItemType(t)).toBe(true);
     for (const t of ['lead_offer', 'pond_new', 'deal_date', 'weekly_plan', 'coaching_fix']) expect(isFollowUpItemType(t)).toBe(false);

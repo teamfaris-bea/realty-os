@@ -75,7 +75,7 @@ function open(c: FeedCard = followCard()) {
 const theCard = () => screen.findByRole('article', { name: 'Dana Reyes' });
 const toastText = () => screen.getByTestId('people-toast').textContent ?? '';
 
-describe('one pass from a follow-up card on Today', () => {
+describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
   it('a call the app placed: Call → "Left voicemail" → the one button = 3 taps to a logged outcome, a confirmed stage and a next step, without leaving Today; the result is said once', async () => {
     const { fake, tasks, n, tap } = open();
     await tap(within(await theCard()).getByRole('button', { name: 'Call' })); // 1
@@ -168,7 +168,7 @@ describe('one pass from a follow-up card on Today', () => {
     expect(within(sheet).getByRole('link', { name: 'Open the full conversation' })).toHaveAttribute('href', `/contacts/${IDS.jane}/thread`);
   });
 
-  it('a due "Follow up with …" task the card is about is marked done by the same button when a new follow-up is set, and the sheet says so before the tap; a promise is never marked done for you', async () => {
+  it('E853: a due "Follow up with …" task the card is about is marked done by the same button when a new follow-up is set, and the sheet says so before the tap; a promise is never marked done for you', async () => {
     const followUpCard = followCard({
       itemType: 'task_due',
       task: { id: OLD_TASK, title: 'Follow up with Dana' },
@@ -191,7 +191,7 @@ describe('one pass from a follow-up card on Today', () => {
     await waitFor(() => expect(toastText()).toMatch(/^Call logged \(left voicemail\)\. Stage: Trying to reach\. Follow-up saved for .+ 9:00 AM\. Marked done: “Follow up with Dana”(Undo)?$/));
   });
 
-  it('… and a promise the card is about is left open', async () => {
+  it('E853: … and a promise the card is about is left open', async () => {
     const { fake, tap } = open();
     await tap(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
