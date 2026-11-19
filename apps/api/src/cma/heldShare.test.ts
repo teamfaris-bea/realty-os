@@ -48,8 +48,8 @@ async function heldShare() {
   return { ...s, cmaId: tap.body.cma.id, messageId: r.message.id };
 }
 
-describe('R-CMA-7 E759 (VERIFY 9): the re-tap of a held CMA share re-checks client readiness', () => {
-  it('R-CMA-7 R-CMA-9 E759 E612: the report stopped being ready (the MLS feed went stale) before the re-tap: refused with that blocker, the email canceled, nothing dispatched', async () => {
+describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks client readiness', () => {
+  it('R-CMA-7 R-CMA-9 E790 E612: the report stopped being ready (the MLS feed went stale) before the re-tap: refused with that blocker, the email canceled, nothing dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     await withPlatformCmaCleared(h, async () => {
@@ -70,7 +70,7 @@ describe('R-CMA-7 E759 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect(sentTo(q.email)).toBe(before);
   });
 
-  it('R-CMA-7 E759: counsel review of platform:cma is not recorded at the re-tap: refused PLATFORM_NOT_CLEARED, nothing dispatched', async () => {
+  it('R-CMA-7 E790: counsel review of platform:cma is not recorded at the re-tap: refused PLATFORM_NOT_CLEARED, nothing dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     const r = await retap(q.messageId);
@@ -80,7 +80,7 @@ describe('R-CMA-7 E759 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect(await msg(q.messageId)).toEqual({ status: 'canceled', status_reason: 'CMA_PLATFORM_NOT_CLEARED', dispatched_at: null });
   });
 
-  it('E759 E27 R-CMA-9: a held share whose CMA is still client-ready is sent by the re-tap, once', async () => {
+  it('E790 E27 R-CMA-9: a held share whose CMA is still client-ready is sent by the re-tap, once', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     const r = await withPlatformCmaCleared(h, () => retap(q.messageId));
@@ -89,7 +89,7 @@ describe('R-CMA-7 E759 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect((await msg(q.messageId)).status).toBe('sent');
   });
 
-  it('E759 E27 R-GATE-14: the send-time gate still decides a ready held share: the seller unsubscribed since, so the re-tap is blocked by the gate and nothing is dispatched', async () => {
+  it('E790 E27 R-GATE-14: the send-time gate still decides a ready held share: the seller unsubscribed since, so the re-tap is blocked by the gate and nothing is dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     expect((await call(agent(), 'POST', `/contacts/${q.c}/do-not-contact`, {})).status).toBe(200);

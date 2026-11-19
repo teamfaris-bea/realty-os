@@ -63,7 +63,7 @@ async function contactLockFree(contactId: string): Promise<boolean> {
 const revokes = async (messageId: string) => (await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM consent_events WHERE tenant_id = $1 AND evidence_message_id = $2 AND event_type = 'revoke' AND source = 'provider_report'`, [w.tenantId, messageId])).rows[0]!.n;
 
 describe('a provider-reported opt-out takes the address lock before the contact lock (ARCHITECTURE §10)', () => {
-  it('R-CONSENT-12 E761: dispatch TX2, when the provider refuses the send as opted out, waits for the address without holding the contact', async () => {
+  it('R-CONSENT-12 E792: dispatch TX2, when the provider refuses the send as opted out, waits for the address without holding the contact', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const fake = h.providers.telephony;
@@ -97,7 +97,7 @@ describe('a provider-reported opt-out takes the address lock before the contact 
     expect(await revokes(id)).toBe(1);
   });
 
-  it('R-CONSENT-12 E761: the status callback, on a carrier opt-out code, waits for the address without holding the contact', async () => {
+  it('R-CONSENT-12 E792: the status callback, on a carrier opt-out code, waits for the address without holding the contact', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const r = await sendText(agent, c.id, 'Lock order: status opt-out');

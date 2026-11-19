@@ -1,4 +1,4 @@
-// R-ISA-20, E760 (docs/AI_ISA.md §3.7, §4.2): the team's model-budget lock is held only while one call is reserved.
+// R-ISA-20, E791 (docs/AI_ISA.md §3.7, §4.2): the team's model-budget lock is held only while one call is reserved.
 // Synthetic PostgreSQL and FakeIsaAi only. Each case makes ONE turn slow at a point the test controls (the provider
 // call, or the person's own contact lock) and shows that nobody else in the team waits behind it, and that the
 // 12-per-person and 1,000-per-team budgets still hold exactly on reserved calls.
@@ -76,7 +76,7 @@ async function recordedToday(w: IsaWorld, n: number): Promise<void> {
 const heldCodes = async (assignmentId: string) => (await h.su.query<{ status: string; code: string | null }>(
   `SELECT status, decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_kind = 'inbound' ORDER BY seq`, [assignmentId])).rows;
 
-it('R-ISA-20 R-ISA-31 E760: while one person\'s model call is slow, another person\'s turn reserves and completes, and that person\'s STOP is recorded at once', async () => {
+it('R-ISA-20 R-ISA-31 E791: while one person\'s model call is slow, another person\'s turn reserves and completes, and that person\'s STOP is recorded at once', async () => {
   const { w, people: [a, b] } = await team(2);
   const slow = slowProvider(w, a!.marker);
   const sentBefore = (await aiMessages(h, a!.lead.id)).length;
@@ -110,7 +110,7 @@ it('R-ISA-20 R-ISA-31 E760: while one person\'s model call is slow, another pers
   expect(await teamRuns(w.tenantId)).toBe(2);
 });
 
-it('R-ISA-20 R-ISA-31 E760: a turn waiting on its own person\'s lock holds up nobody else: another person\'s model turn and a third person\'s stop turn both finish', async () => {
+it('R-ISA-20 R-ISA-31 E791: a turn waiting on its own person\'s lock holds up nobody else: another person\'s model turn and a third person\'s stop turn both finish', async () => {
   const { w, people: [a, b, c] } = await team(3);
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
@@ -148,7 +148,7 @@ it('R-ISA-20 R-ISA-31 E760: a turn waiting on its own person\'s lock holds up no
   expect(callsFor(w, a!.marker)).toBe(1);
 });
 
-it('R-ISA-20 E760: with 1,000 team calls recorded today, concurrent turns make no provider call and each is held until the next team-local day; the held turn then runs once', async () => {
+it('R-ISA-20 E791: with 1,000 team calls recorded today, concurrent turns make no provider call and each is held until the next team-local day; the held turn then runs once', async () => {
   const { w, people } = await team(3);
   await recordedToday(w, 1000);
   const before = w.ai.calls.length;
@@ -169,7 +169,7 @@ it('R-ISA-20 E760: with 1,000 team calls recorded today, concurrent turns make n
   expect(callsFor(w, p.marker)).toBe(1);
 });
 
-it('R-ISA-20 E760: with 999 recorded, two concurrent turns: exactly one calls the provider, and the other is held while that call is still in flight (reserved calls are what is counted)', async () => {
+it('R-ISA-20 E791: with 999 recorded, two concurrent turns: exactly one calls the provider, and the other is held while that call is still in flight (reserved calls are what is counted)', async () => {
   const { w, people: [a, b] } = await team(2);
   await recordedToday(w, 999);
   const slow = slowProvider(w, 'Maple Court number');
@@ -193,7 +193,7 @@ it('R-ISA-20 E760: with 999 recorded, two concurrent turns: exactly one calls th
   expect(await teamRuns(w.tenantId)).toBe(1000);
 });
 
-it('R-ISA-20 E760: a provider failure keeps its reservation, recorded as failed with the PROVIDER error and no token counts, so the next turn is held at the limit', async () => {
+it('R-ISA-20 E791: a provider failure keeps its reservation, recorded as failed with the PROVIDER error and no token counts, so the next turn is held at the limit', async () => {
   const { w, people: [a, b] } = await team(2);
   await recordedToday(w, 999);
   w.ai.failing = true;
@@ -209,7 +209,7 @@ it('R-ISA-20 E760: a provider failure keeps its reservation, recorded as failed 
   expect(await teamRuns(w.tenantId)).toBe(1000);
 });
 
-it('R-ISA-20 R-ISA-4 R-ISA-31 E760: a reservation waiting for the team lock holds none of the person\'s own locks: their STOP is recorded and a pause applies while it waits', async () => {
+it('R-ISA-20 R-ISA-4 R-ISA-31 E791: a reservation waiting for the team lock holds none of the person\'s own locks: their STOP is recorded and a pause applies while it waits', async () => {
   const { w, people: [a, b] } = await team(2);
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
@@ -257,7 +257,7 @@ it('R-ISA-20 R-ISA-4 R-ISA-31 E760: a reservation waiting for the team lock hold
   expect((await aiMessages(h, b!.lead.id)).filter((m) => m.status === 'queued' || m.status === 'scheduled')).toEqual([]);
 });
 
-it('R-ISA-20 E760: a held call resumes on the retry of the job that owns its turn, also when that job is the start job that read the first inbound', async () => {
+it('R-ISA-20 E791: a held call resumes on the retry of the job that owns its turn, also when that job is the start job that read the first inbound', async () => {
   const w = await isaWorld(h);
   const lead = await isaLead(h, w.agents[0]!);
   expect((await startCare(w.agents[0]!, lead.id)).status).toBe(200);
