@@ -20,6 +20,9 @@
 //      every tap counted (M6); the stage step is in the Log sheet itself;
 //  10. a stage change that fails after the log saved: the sheet says what was saved and what was not, and the retry
 //      makes no second note (the first stage request is aborted in the browser; the API is real);
+//  11. Text never leaves the person's page (M3): the stage pill's "Reach them first: Text", the header's Text and, on
+//      the phone, the bar's Text all open the same sheet; a text sent with the fake provider suggests "Trying to
+//      reach" for a new lead, and the agent confirms: Text → Send → confirm = 3 taps (typing is not a tap);
 //  at 390 × 664 (the phone project's viewport) the suggested choice, the one effect line and the follow-up chips are
 //  inside the sheet's visible body when the step opens, with the primary button on screen (M4).
 // The existing checks stay on: axe on the page and on the sheet, 44 px targets and no sideways scroll on the phone.
@@ -27,7 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { type BrowserContext, type Locator, type Page, type TestInfo, expect, test } from 'playwright/test';
 import { phoneProblems } from '../a11y/checks.js';
-import { isPhone, shot, signIn, tap } from './helpers.js';
+import { isPhone, pollSends, shot, signIn, tap } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
 
 const require = createRequire(import.meta.url);
@@ -598,4 +601,69 @@ test('J10.10 (M6): the stage change fails after the log saved: the sheet says wh
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await loggedNotes(remy.id), 'the retry made no second note').toHaveLength(1);
   expect((await stageEvents(remy.id)).slice(before).map((e) => e.to_stage)).toEqual(['attempting']);
+});
+
+test('J10.11 (M3): Text opens the text sheet on the person\'s page from the pill\'s "Reach them first", the header and the phone bar, never the conversation page; a sent text suggests "Trying to reach" and the agent confirms: Text → Send → confirm = 3 taps', async ({ page }, info) => {
+  test.setTimeout(180_000);
+  const tess = await assignedLead('Tess', suffix(info));
+  const before = (await stageEvents(tess.id)).length;
+  await signInAgent(page);
+  await openPerson(page, tess);
+  const here = new RegExp(`/contacts/${tess.id}$`);
+  const sheet = page.getByRole('dialog', { name: `Text ${tess.name}` });
+  const closeSheet = async () => {
+    await tap(page, sheet.getByRole('button', { name: 'Close' }));
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  };
+
+  // (a) the stage pill: an accepted lead nobody has reached yet has locked stages, and "Reach them first: Text"
+  await tap(page, page.getByRole('button', { name: 'Stage: New lead. Change stage' }));
+  const picker = page.getByRole('dialog', { name: `Stage for ${tess.name}` });
+  await expect(picker.getByText('Reach them first.')).toBeVisible();
+  await tap(page, picker.getByRole('button', { name: 'Text', exact: true }));
+  await expect(sheet.getByRole('textbox', { name: 'Text message' })).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(here);
+  await expect(sheet.getByRole('link', { name: 'Open the full conversation' })).toHaveAttribute('href', `/contacts/${tess.id}/thread`);
+  await closeSheet();
+
+  // (b) the header's Text button (on the phone and on desktop)
+  await tap(page, page.getByRole('button', { name: 'Text', exact: true }));
+  await expect(sheet.getByRole('textbox', { name: 'Text message' })).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(here);
+  await closeSheet();
+
+  // (c) the counted path: the phone bar's Text on the phone, the header's on desktop
+  const n = { taps: 0 };
+  await tap(page, isPhone(page) ? page.getByTestId('person-phone-bar').getByRole('button', { name: `Text ${tess.name}` }) : page.getByRole('button', { name: 'Text', exact: true }), n);
+  const words = `Hi ${tess.first}, this is your agent. Is now a good time to talk about your search?`;
+  await sheet.getByRole('textbox', { name: 'Text message' }).fill(words);
+  const send = sheet.getByRole('button', { name: 'Send', exact: true });
+  await expect(send).toBeEnabled({ timeout: 15_000 });
+  if (isPhone(page)) expect(await smallTargets(sheet), 'text sheet targets').toEqual([]);
+  expect(await axeViolations(page), 'text sheet').toEqual([]);
+  await shot(page, info, 'j10', '11a-text-sheet');
+  await tap(page, send, n);
+  // the same flow goes on to the stage step: the fake provider took the text, and nothing left the page
+  const s = step(page, tess);
+  await expect(s.getByRole('status')).toHaveText(`Sent to ${tess.first}.`, { timeout: 20_000 });
+  await expect(page.getByTestId('toast')).toBeEmpty();
+  const suggested = s.getByRole('radio', { name: 'Trying to reach Suggested' });
+  await expect(suggested).toBeChecked({ timeout: 15_000 });
+  await expect(suggested).toContainText('You sent a text and they have not replied yet.');
+  await expect(s.getByTestId('stage-step-effect')).toHaveText('No plan starts on this stage.', { timeout: 15_000 });
+  await expectAtOpen(page, s, s.getByTestId('stage-step-confirm'), stepParts(s, 'Trying to reach'));
+  await expect(page).toHaveURL(here);
+  const sms = await pollSends(stack, (x) => x.sms.filter((m) => m.to === tess.phone), (list) => list.length === 1);
+  expect(sms[0]!.body).toContain(words);
+  expect(await stageOf(tess.id), 'a sent text changes no stage by itself').toBe('new');
+  await shot(page, info, 'j10', '11b-text-sheet-stage-step');
+  await tap(page, s.getByRole('button', { name: 'Change to Trying to reach' }), n);
+  await expect(peopleToast(page).getByText('Stage: Trying to reach')).toBeVisible({ timeout: 15_000 });
+  expect(n.taps, 'Text → Send → confirm (typing is not a tap)').toBe(3);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page).toHaveURL(here);
+  await expect(page.getByRole('button', { name: 'Stage: Trying to reach. Change stage' })).toBeVisible({ timeout: 15_000 });
+  expect((await stageEvents(tess.id)).slice(before).map((e) => e.to_stage)).toEqual(['attempting']);
+  // one text, sent once
+  expect((await stack.sends()).sms.filter((m) => m.to === tess.phone)).toHaveLength(1);
 });

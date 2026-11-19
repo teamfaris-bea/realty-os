@@ -139,12 +139,15 @@ describe('Contact: full view', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/calls`)).toHaveLength(1);
   });
 
-  it('Text opens the conversation with the compose box focused', async () => {
+  it('Text opens the text sheet on the person\'s page with the compose box focused, and never leaves the page (b19 fix pass M3; it used to open the conversation)', async () => {
     const fake = fullFake().on(`POST /contacts/${IDS.jane}/messages/preview`, { status: 200, body: { decision: decision({ phase: 'preview' }), body: '' } });
     const { router } = agentApp(fake, `/contacts/${IDS.jane}`);
     await user().click(await screen.findByRole('button', { name: 'Text' }));
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/contacts/${IDS.jane}/thread`));
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveFocus());
+    const sheet = await screen.findByRole('dialog', { name: 'Text Jane Doe' });
+    await waitFor(() => expect(within(sheet).getByRole('textbox', { name: 'Text message' })).toHaveFocus());
+    expect(router.state.location.pathname).toBe(`/contacts/${IDS.jane}`);
+    // the full conversation is one visible link away
+    expect(within(sheet).getByRole('link', { name: 'Open the full conversation' })).toHaveAttribute('href', `/contacts/${IDS.jane}/thread`);
   });
 
   it('texting from the contact is 2 taps when the assistant has a reply ready: Text → (prefilled) Send', async () => {
@@ -156,9 +159,11 @@ describe('Contact: full view', () => {
     agentApp(fake, `/contacts/${IDS.jane}`);
     const u = user();
     await u.click(await screen.findByRole('button', { name: 'Text' })); // tap 1
-    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    // M3: the box is in the text sheet on this page (the page's own "From the assistant" card is behind it, inert)
+    const sheet = await screen.findByRole('dialog', { name: 'Text Jane Doe' });
+    const box = await within(sheet).findByRole('textbox', { name: 'Text message' });
     await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?'));
-    await u.click(screen.getByRole('button', { name: 'Send' })); // tap 2
+    await u.click(within(sheet).getByRole('button', { name: 'Send' })); // tap 2
     await waitFor(() => expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1));
   });
 

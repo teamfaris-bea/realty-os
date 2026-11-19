@@ -4,7 +4,8 @@
 //   card (first name + last initial for pond cards, intent, source, area/summary, age) and the one
 //   action that makes it theirs: Accept (with the live offer countdown) / Decline, or Claim. No
 //   phone, email, timeline, task, deal or search is requested or shown until it is theirs.
-// - Full view: Call / Text / Email in one tap each (the send-time check runs at the tap), what the
+// - Full view: Call / Text / Email in one tap each (the send-time check runs at the tap; Text opens the text sheet on
+//   this page and never leaves it, b19 fix pass M3; Email opens the conversation), what the
 //   assistant has for this contact, saved searches, open tasks, deals (+ Start a deal, which copies
 //   the lead's attribution server-side, A7d), and the recent timeline. If texts or email to this
 //   contact would be blocked (they texted STOP, unsubscribed, asked not to be contacted, or the address
@@ -30,6 +31,7 @@ import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, Ti
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
 import { INQUIRY_REDACTION_NOTE } from '../thread/redaction.js';
 import { useStageGuide } from '../people/stageGuide.js';
+import { TextSheetProvider, useTextSheet } from '../people-edit/TextSheet.js';
 import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
@@ -53,7 +55,14 @@ function Contact() {
   if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
   if (q.isError || !q.data) return <Notice tone="error">{q.error ? messageFor(q.error, AGENT_ERROR_MESSAGES) : null}</Notice>;
   const c = q.data.contact;
-  return c.view === 'card' ? <CardView contact={c} /> : <FullView contact={c} />;
+  // M3: the page's one text sheet; the header's Text, the phone bar's Text and the stage pill's Text all open it
+  return c.view === 'card' ? (
+    <CardView contact={c} />
+  ) : (
+    <TextSheetProvider contact={c}>
+      <FullView contact={c} />
+    </TextSheetProvider>
+  );
 }
 
 // ---- card view (R-PERM-6) ---------------------------------------------------------------------
@@ -128,6 +137,7 @@ function ChannelAction({ label, icon, variant = 'secondary', missing, state, onC
 
 function FullView({ contact }: { contact: ContactFullView }) {
   const { call } = useAgentSheets();
+  const textSheet = useTextSheet();
   const navigate = useNavigate();
   const { hash } = useLocation();
   const now = useNow(1000);
@@ -177,7 +187,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
         ) : (
           <div className="grid grid-cols-3 gap-2">
             <ChannelAction label="Call" icon="phone" variant="primary" missing={contact.phones.length === 0} state={voice} onClick={() => call({ id: contact.id, name: contact.displayName })} />
-            <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} />
+            <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={textSheet.open} />
             <ChannelAction label="Email" icon="message" missing={contact.emails.length === 0} state={email} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)} />
           </div>
         )}

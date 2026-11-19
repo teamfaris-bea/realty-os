@@ -85,7 +85,9 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
     const madeInert = [...document.body.children].filter((c): c is HTMLElement => c !== el && c instanceof HTMLElement && !c.hasAttribute('inert'));
     for (const c of madeInert) c.setAttribute('inert', '');
     const items = () => (panel.current ? [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)] : []);
-    (initialFocus?.current ?? (closeButton ? panel.current : items()[0]) ?? panel.current)?.focus();
+    // a control inside that asked for focus itself (a compose box's autoFocus ran first) keeps it under closeButton
+    const claimed = closeButton && panel.current !== null && panel.current.contains(document.activeElement) && document.activeElement !== panel.current;
+    if (!claimed) (initialFocus?.current ?? (closeButton ? panel.current : items()[0]) ?? panel.current)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

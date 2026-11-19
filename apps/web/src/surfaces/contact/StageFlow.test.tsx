@@ -240,3 +240,54 @@ describe('one sheet, no navigation: text → stage step', () => {
     expect(within(group).getByRole('radio', { name: 'Keep New lead' })).toBeChecked();
   });
 });
+
+describe('M3 (E777): Text never leaves the person\'s page, from any of its three places', () => {
+  const message = { id: IDS.message, channel: 'sms', status: 'sent', statusReason: null, purpose: 'informational', body: 'x', subject: null, scheduledFor: null, dispatchedAt: iso(0) };
+  const LOCKED = ['connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'];
+
+  it('the header\'s Text opens the text sheet on the page (no navigation), with a visible link to the full conversation; after the send the same flow shows the stage step', async () => {
+    const fake = page().on(`POST /contacts/${C}/messages`, { status: 200, body: { message, decision: decision({}), result: 'sent' } });
+    const { router } = agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    await bar();
+    // the header's button is named "Text"; the bar's is "Text Jane Doe"
+    await u.click(await screen.findByRole('button', { name: 'Text' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Text Jane Doe' });
+    expect(router.state.location.pathname).toBe(`/contacts/${C}`);
+    expect(within(sheet).getByRole('link', { name: 'Open the full conversation' })).toHaveAttribute('href', `/contacts/${C}/thread`);
+    const box = await within(sheet).findByRole('textbox', { name: 'Text message' });
+    await u.type(box, 'Hi Jane, saw your note about Oak St.');
+    const send = within(sheet).getByRole('button', { name: 'Send' });
+    await waitFor(() => expect(send).toBeEnabled());
+    await u.click(send);
+    const s = await step();
+    expect(within(s).getByRole('status')).toHaveTextContent('Sent to Jane.');
+    expect(await within(s).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
+    expect(router.state.location.pathname).toBe(`/contacts/${C}`);
+  });
+
+  it('the stage pill\'s "Reach them first: Text" opens the same sheet on the page', async () => {
+    const fake = page().on(`GET /contacts/${C}/details`, { status: 200, body: { details: detailsFixture(C, 'new', { stage: stageFixture('new', { locked: LOCKED, lockedReason: 'STAGE_NEEDS_CONTACT' }) }) } });
+    const { router } = agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Stage: New lead. Change stage' }, { timeout: 10_000 }));
+    const picker = await screen.findByRole('dialog', { name: 'Stage for Jane Doe' });
+    expect(within(picker).getByText('Reach them first.')).toBeInTheDocument();
+    await u.click(within(picker).getByRole('button', { name: 'Text' }));
+    expect(await screen.findByRole('dialog', { name: 'Text Jane Doe' })).toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(router.state.location.pathname).toBe(`/contacts/${C}`);
+  });
+
+  it('the bar\'s Text, the header\'s Text and the pill\'s Text are one sheet: only one is ever open', async () => {
+    const fake = page();
+    agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    await u.click(await within(await bar()).findByRole('button', { name: 'Text Jane Doe' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Text Jane Doe' });
+    await u.click(within(sheet).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await u.click(screen.getByRole('button', { name: 'Text' }));
+    expect(await screen.findAllByRole('dialog', { name: 'Text Jane Doe' })).toHaveLength(1);
+  });
+});
