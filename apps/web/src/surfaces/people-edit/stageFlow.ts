@@ -181,6 +181,8 @@ const SKIP_WORDS: Record<string, string> = {
   source_no_automated_contact: 'their lead source is marked "No automated contact for leads from this source"',
   // R-LSRC-9 (owner decision 2026-11-14): an imported person whose source is not reviewed yet
   source_unclassified: 'they came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources)',
+  // R-STG-5: an undo moves the stage back and starts nothing
+  undo: 'this was an undo, and an undo never starts a plan',
 };
 
 /** The sentence after "Stage: Active client." on the toast; '' when no plan is set for that stage. */
@@ -234,4 +236,21 @@ export function originLine(s: PlaybookStatus, labelOf: (key: string) => string, 
     default:
       return null;
   }
+}
+
+// ---- undo (R-STG-5) ---------------------------------------------------------------------------------------------------
+
+/** Said when the server refuses an undo (STAGE_UNDO_INVALID): nothing was changed. */
+export const UNDO_REFUSED = 'Not undone: the stage has changed again since, so there is nothing to take back.';
+
+/**
+ * What an undo did, from the stage route's own answer. An undo only moves the stage back: a plan the change started
+ * keeps running (said plainly, with how to end it), and a plan of the stage undone into does not start. Nothing here
+ * says or implies that anything the plan already did was taken back.
+ */
+export function undoneText(r: Pick<StageResponse, 'stage' | 'automation' | 'stillRunning'>, labelOf: (key: string) => string): string {
+  const back = `Stage back to ${labelOf(r.stage.stage)}.`;
+  if (r.stillRunning) return `${back} ${r.stillRunning.plan} is still running; undo does not stop it.`;
+  const plan = automationText(r.automation);
+  return plan ? `${back} ${plan}` : back;
 }

@@ -91,7 +91,7 @@ test('R-PAR-16 Stage → Active starts the buyer plan, shown on the stage toast;
   await shot(page, 'stage-started');
   // Undo moves the stage back and says honestly that the plan keeps running
   await undo.click();
-  await expect(toast.getByText('Stage back to New lead. Buyer plan is still running')).toBeVisible();
+  await expect(toast.getByText('Stage back to New lead. Buyer plan is still running; undo does not stop it.')).toBeVisible();
 });
 
 test('R-PAR-16 D1 a person who opted out: the toast says why the plan did not start', async ({ page }) => {

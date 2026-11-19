@@ -68,9 +68,11 @@ export function peopleMessage(e: unknown): string {
 
 // ---- Undo toast -------------------------------------------------------------------------------------
 
-interface ToastSpec {
+export interface ToastSpec {
   text: string;
   undo?: () => void;
+  /** one more thing the toast offers (R-STG-5: "Stop" for a plan an undo leaves running); `name` is its full spoken name */
+  action?: { label: string; name?: string; run: () => void };
 }
 const ToastCtx = createContext<(t: ToastSpec) => void>(() => undefined);
 
@@ -86,7 +88,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastSpec | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const show = useCallback((t: ToastSpec) => {
-    announce(t.undo ? `${t.text}. Undo is available.` : t.text);
+    announce(t.undo ? `${t.text}. Undo is available.` : t.action ? `${t.text} ${t.action.label} is available.` : t.text);
     setToast(t);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setToast(null), 8000);
@@ -110,6 +112,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 }}
               >
                 Undo
+              </button>
+            ) : null}
+            {toast.action ? (
+              <button
+                type="button"
+                aria-label={toast.action.name}
+                className="min-h-tap min-w-tap shrink-0 whitespace-nowrap rounded-lg px-2 font-semibold text-surface underline"
+                onClick={() => {
+                  const a = toast.action;
+                  setToast(null);
+                  a?.run();
+                }}
+              >
+                {toast.action.label}
               </button>
             ) : null}
           </div>

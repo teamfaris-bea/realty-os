@@ -133,6 +133,8 @@ export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   STALE_CONTACT: 'Someone else changed this person a moment ago. Your view was refreshed; try again.',
   FIELD_NOT_EDITABLE: 'That field can’t be changed here.',
   // R-PAR-14: owner decision D8 made a reply in the website chat first contact too (R-OWN-14)
+  // R-STG-5: the undo names a stage event that is no longer the person's latest
+  STAGE_UNDO_INVALID: 'Not undone: the stage has changed again since, so there is nothing to take back.',
   STAGE_NEEDS_CONTACT: 'Reach them first (a call, text, email or reply in their website chat), or close the lead.',
   // R-STG-4: the pause, resume and stop routes' refusals (assistant/enrollments.ts), in the panel's words
   ENROLLMENT_NOT_LIVE: 'This plan has already ended, so there is nothing to pause or resume.',

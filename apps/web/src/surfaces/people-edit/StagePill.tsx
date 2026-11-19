@@ -10,8 +10,8 @@ import { useReachability } from '../../reasons/index.js';
 import { type Details, type StageGuideRow, guideOf, labelIn } from './api.js';
 import { StageRow } from './StageChoices.js';
 import { KeepsRunning, PREVIEW_LOADING } from './StagePreview.js';
-import { AI_UNCHANGED, NEVER_STOPS, type StageAutomation, TASKS_UNCHANGED, automationText, effectLine, useStagePreview } from './stageFlow.js';
-import { usePersonAction, useToast } from './hooks.js';
+import { AI_UNCHANGED, NEVER_STOPS, TASKS_UNCHANGED, effectLine, useStagePreview } from './stageFlow.js';
+import { useStageChange } from './useStageChange.js';
 
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not (stageFlow.ts has the words).
 export { type StageAutomation, automationText } from './stageFlow.js';
@@ -53,8 +53,6 @@ function RunningPlan({ contactId, anyStage }: { contactId: string; anyStage: str
 
 export function StagePill({ contactId, name, details, onCall, onText, onReplyChat }: { contactId: string; name: string; details: Details; onCall: () => void; onText: () => void; onReplyChat: () => void }) {
   const [open, setOpen] = useState(false);
-  const act = usePersonAction<{ stage: { stage: string; label: string }; previousStage: string; automation?: StageAutomation }>(contactId);
-  const toast = useToast();
   const lockedId = useId();
   // R-STG-1: the eight stages as the API describes them for this team
   const guide = guideOf(details.stageGuide);
@@ -65,20 +63,12 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
   const chat = useReachability(locked.size > 0 ? contactId : null)?.channels.web_chat;
   const chatOpen = chat?.session?.open === true && !chat.blocked;
 
+  // R-STG-5: the toast's Undo names the stage event (undoOf), so an undo never starts a plan, and it says plainly
+  // that a plan the change started keeps running (useStageChange.ts)
+  const act = useStageChange(contactId, (k) => labelIn(guide, k));
   const move = async (to: string) => {
-    const r = await act.run('POST', `/contacts/${contactId}/stage`, { stage: to });
-    if (!r.ok) return;
-    setOpen(false);
-    const prev = r.data.previousStage;
-    if (prev === to) return;
-    const plan = automationText(r.data.automation);
-    const a = r.data.automation;
-    // Undo moves the stage back; a plan that started keeps running (stop it from the plan itself), and says so
-    const still = a && 'started' in a ? `. ${a.started} is still running` : '';
-    toast({
-      text: plan ? `Stage: ${r.data.stage.label}. ${plan}` : `Stage: ${r.data.stage.label}`,
-      undo: () => void act.run('POST', `/contacts/${contactId}/stage`, { stage: prev }).then((u) => u.ok && toast({ text: `Stage back to ${labelIn(guide, prev)}${still}` })),
-    });
+    const r = await act.change(to);
+    if (r.ok) setOpen(false);
   };
 
   return (
