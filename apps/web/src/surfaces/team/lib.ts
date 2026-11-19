@@ -125,6 +125,10 @@ export function scoreboardLines(s: Scoreboard): MetricLine[] {
       text: `${stl.withinSla} of ${stl.total} within the first-touch window`,
       detail: stl.pending > 0 ? `${median} · ${stl.pending} still waiting` : median,
     },
+    // R-TEAMQ-23: the backup made the first touch (after the backup alert): shown apart, never as this member's own response
+    ...((stl.byBackup ?? 0) > 0
+      ? [{ label: 'First touch by the backup', text: `${stl.byBackup ?? 0} of ${stl.total + (stl.byBackup ?? 0)} first touched by the backup`, detail: 'The backup reached out first, after the backup alert. Not counted above as their own response, and not held against them.' }]
+      : []),
     // a reply in the website chat is a touch (owner decision D8) and is counted with the texts and emails. b18 item g
     // (E724, owner 2026-11-14): a touch is an ATTEMPT (app.scoreboard_activity counts every outbound call a person
     // placed, whatever its status, and every text, email or chat reply they sent), never a connected conversation

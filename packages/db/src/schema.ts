@@ -2974,6 +2974,8 @@ export interface VSpeedToLeadTable {
   first_touch_at: Timestamp | null;
   response_seconds: Int8 | null;
   within_sla: boolean | null;
+  first_touch_user_id: string | null;
+  first_touch_by_backup: boolean | null;
 }
 
 /** public.voice_settings (table) */

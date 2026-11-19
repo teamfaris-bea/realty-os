@@ -6,13 +6,14 @@
 //
 // It alerts only: after every case the owner, the offer and the pond are what they were, and nothing went to the client.
 import { randomUUID } from 'node:crypto';
-import type { Instant } from '@realty/core/foundation';
+import type { Instant, UserActor } from '@realty/core/foundation';
 import { businessCalendar, instantFromDate } from '@realty/core/foundation';
 import { backupAlertDueAt } from '@realty/core/priority';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { approvedPlaybook, assistantWorld, grantConsent, runJobs } from '../assistant/testing.js';
+import { teamScoreboard } from '../accountability/scoreboard.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { type CommsWorld, randomEmail, sendText } from '../comms/testing.js';
 import { marketingReady } from '../bulk/testing.js';
@@ -503,6 +504,58 @@ describe('R-TEAMQ-16 the backup\'s access', () => {
     expect(ended.removed_at).toBeNull(); // the row stays, as the record
     expect((await call(backup, 'GET', `/contacts/${lead.contactId}`)).status).toBe(404);
     expect((await call(backup, 'POST', `/contacts/${lead.contactId}/calls`, {})).status).toBe(404);
+  });
+
+  it('R-TEAMQ-23 E885 E886 (review fix M5): the backup makes the FIRST call on an owned lead: the owner\'s speed to lead does not improve (not "within", not "responded", no median), the period is shown as "first touch by the backup", and the speed-to-lead view says so; the owner\'s own first call on another lead still counts as theirs', async () => {
+    interface Board {
+      userId: string;
+      speedToLead: { medianSeconds: number | null; withinSla: number; total: number; responded: number; pending: number; byBackup: number };
+    }
+    const board = async (userId: string): Promise<Board['speedToLead']> => {
+      const r = await call<{ members: Board[] }>(w.owner, 'GET', '/team/scoreboard?range=7d');
+      if (r.status !== 200) throw new Error(`scoreboard: ${r.status}`);
+      return r.body.members.find((m) => m.userId === userId)!.speedToLead;
+    };
+    const src = await source('Backup calls first (alert test)');
+    const lead = await arrive(src);
+    const owner = await accept(lead);
+    const before = await board(owner.userId!);
+    await minutesPass(lead);
+    await run();
+    expect((await alertRows(lead.inquiryId))[0]).toMatchObject({ outcome: 'alerted', alerted_user_id: backup.userId, recipient: 'backup' });
+    const dial = await call<{ result: string }>(backup, 'POST', `/contacts/${lead.contactId}/calls`, {});
+    expect([dial.status, dial.body.result]).toEqual([200, 'dialing']);
+    // the ledger is unchanged in what it records: the first touch, on the owner's period, made by the backup
+    expect((await ledger(h, lead.contactId)).find((e) => e.type === 'first_touch_recorded')).toMatchObject({ actor_user_id: backup.userId, owner_user_id: owner.userId });
+
+    const after = await board(owner.userId!);
+    // the owner's own numbers did not improve
+    expect([after.withinSla, after.responded, after.medianSeconds]).toEqual([before.withinSla, before.responded, before.medianSeconds]);
+    // the period is no longer "still waiting" on the owner, and it is not a miss of theirs: it is the backup's first touch
+    expect(after.byBackup).toBe(before.byBackup + 1);
+    expect(after.pending).toBe(before.pending - 1);
+    expect(after.total).toBe(before.total);
+    // the same numbers from the all-live computation (no daily rollup)
+    const live = await withTenantTx(w.owner.actor(), (tx, now) => teamScoreboard(tx, w.owner.actor() as UserActor, '7d', now as Instant, 'live'), { db: h.database });
+    expect(live.members.find((m) => m.userId === owner.userId)!.speedToLead).toEqual(after);
+    // the speed-to-lead view shows the period as first touched by the backup, not as the owner's response
+    const view = (await h.su.query<{ user_id: string; first_touch_at: Date | null; first_touch_user_id: string | null; first_touch_by_backup: boolean; response_seconds: string | null; within_sla: boolean }>(
+      'SELECT user_id, first_touch_at, first_touch_user_id, first_touch_by_backup, response_seconds, within_sla FROM v_speed_to_lead WHERE contact_id = $1', [lead.contactId])).rows;
+    expect(view).toHaveLength(1);
+    expect(view[0]).toMatchObject({ user_id: owner.userId, first_touch_user_id: backup.userId, first_touch_by_backup: true, response_seconds: null, within_sla: false });
+    expect(view[0]!.first_touch_at).not.toBeNull();
+
+    // the owner's OWN first call on another lead is theirs, as before
+    const mine = await arrive(src);
+    const mineOwner = await accept(mine);
+    await alertPhone(mineOwner);
+    const base = await board(mineOwner.userId!);
+    const own = await call<{ result: string }>(mineOwner, 'POST', `/contacts/${mine.contactId}/calls`, {});
+    expect([own.status, own.body.result]).toEqual([200, 'dialing']);
+    const mineAfter = await board(mineOwner.userId!);
+    expect([mineAfter.withinSla, mineAfter.responded, mineAfter.byBackup]).toEqual([base.withinSla + 1, base.responded + 1, base.byBackup]);
+    const ownView = (await h.su.query<{ first_touch_by_backup: boolean; within_sla: boolean; first_touch_user_id: string }>('SELECT first_touch_by_backup, within_sla, first_touch_user_id FROM v_speed_to_lead WHERE contact_id = $1', [mine.contactId])).rows;
+    expect(ownView).toEqual([{ first_touch_by_backup: false, within_sla: true, first_touch_user_id: mineOwner.userId }]);
   });
 
   it('R-TEAMQ-16 E851: on a lead still ON OFFER the backup can open the person and call; the offer stands, no first touch is written to the ledger (nobody owns it yet), and the access ends on its own after 24 hours', async () => {

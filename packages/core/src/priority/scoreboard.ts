@@ -26,14 +26,21 @@ function median(sorted: readonly number[]): number {
  * `total` once it has an outcome: a human first touch, or a deadline that passed. With `now`,
  * untouched periods whose deadline is still ahead are `pending` (not counted against the agent);
  * without it every row counts, as in the view. The median is over responded periods only, and
- * `responded` is its denominator. Only human touches exist in the ledger (R-AST-15).
+ * `responded` is its denominator. Only human touches exist in the ledger (R-AST-15). A period whose first touch the
+ * source's BACKUP made (R-TEAMQ-23) is `byBackup`: outside every other number.
  */
 export function speedToLeadSummary(rows: readonly SpeedRow[], opts: { now?: Instant } = {}): SpeedToLeadSummary {
   const seconds: number[] = [];
   let withinSla = 0;
   let total = 0;
   let pending = 0;
+  let byBackup = 0;
   for (const r of rows) {
+    // R-TEAMQ-23: the backup made this period's first touch: counted apart, never as the owner's response
+    if (r.firstTouchAt !== null && r.firstTouchByBackup === true) {
+      byBackup += 1;
+      continue;
+    }
     if (r.firstTouchAt === null && opts.now !== undefined && opts.now < r.firstTouchDueAt) {
       pending += 1;
       continue;
@@ -44,7 +51,7 @@ export function speedToLeadSummary(rows: readonly SpeedRow[], opts: { now?: Inst
     if (r.firstTouchAt <= r.firstTouchDueAt) withinSla += 1;
   }
   seconds.sort((a, b) => a - b);
-  return { medianSeconds: seconds.length === 0 ? null : median(seconds), withinSla, total, responded: seconds.length, pending };
+  return { medianSeconds: seconds.length === 0 ? null : median(seconds), withinSla, total, responded: seconds.length, pending, byBackup };
 }
 
 /**

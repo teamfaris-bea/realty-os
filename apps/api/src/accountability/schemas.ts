@@ -106,7 +106,8 @@ const count = z.number().int().min(0);
 export const ScoreboardSchema = z.object({
   userId: uuid,
   name: z.string().nullable(),
-  speedToLead: z.object({ medianSeconds: z.number().int().min(0).nullable(), withinSla: count, total: count, responded: count, pending: count }),
+  // byBackup (R-TEAMQ-23): periods whose first touch the source's backup made; outside every other number
+  speedToLead: z.object({ medianSeconds: z.number().int().min(0).nullable(), withinSla: count, total: count, responded: count, pending: count, byBackup: count }),
   touches: z.object({ count, calls: count, textsAndEmails: count, days: count }),
   appointmentsSet: z.object({ count, days: count }),
   appointmentsHeld: z.object({ count, of: count }),

@@ -2201,6 +2201,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
           "speedToLead": {
             "additionalProperties": false,
             "properties": {
+              "byBackup": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
               "medianSeconds": {
                 "anyOf": [
                   {
@@ -2240,6 +2245,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "total",
               "responded",
               "pending",
+              "byBackup",
             ],
             "type": "object",
           },
@@ -2683,6 +2689,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "speedToLead": {
               "additionalProperties": false,
               "properties": {
+                "byBackup": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
                 "medianSeconds": {
                   "anyOf": [
                     {
@@ -2722,6 +2733,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                 "total",
                 "responded",
                 "pending",
+                "byBackup",
               ],
               "type": "object",
             },

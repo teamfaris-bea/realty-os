@@ -2100,6 +2100,11 @@ exports[`core/priority schemas > SpeedToLeadSummarySchema has no confidence fiel
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "byBackup": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
     "medianSeconds": {
       "anyOf": [
         {
@@ -2139,6 +2144,7 @@ exports[`core/priority schemas > SpeedToLeadSummarySchema has no confidence fiel
     "total",
     "responded",
     "pending",
+    "byBackup",
   ],
   "type": "object",
 }
