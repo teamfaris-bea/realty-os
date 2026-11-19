@@ -56,6 +56,13 @@ export function card(over: Partial<FeedCard> & Pick<FeedCard, 'primaryAction'>):
     subjectId: IDS.jane,
     assistantActionId: null,
     createdAt: iso(-60_000),
+    // not a follow-up card unless a test says so (the API sends null for these on every other card)
+    why: null,
+    stage: null,
+    lastTouch: null,
+    lastAutomatic: null,
+    importedHistoryAt: null,
+    nextPromise: null,
     ...over,
   };
 }

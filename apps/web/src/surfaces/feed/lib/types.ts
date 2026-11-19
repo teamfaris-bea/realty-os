@@ -34,6 +34,40 @@ export interface FeedCard {
   subjectId: string;
   assistantActionId: string | null;
   createdAt: string;
+  // warm follow-up (R-TODAY-1): set on a follow-up card about a person, null or absent on every other card
+  /** why the person is due: the card's own reason sentences */
+  why?: string[] | null;
+  stage?: { key: string; label: string } | null;
+  lastTouch?: LastTouchView | null;
+  lastAutomatic?: LastAutomaticView | null;
+  importedHistoryAt?: string | null;
+  nextPromise?: NextPromiseView | null;
+}
+
+/** The most recent HUMAN contact with the person the viewer may see (never an automated message). */
+export interface LastTouchView {
+  kind: 'call' | 'text' | 'email' | 'chat' | 'note' | 'appointment';
+  at: string;
+  byName: string | null;
+  byMe: boolean;
+  direction: 'inbound' | 'outbound' | null;
+  outcome: string | null;
+  snippet: string | null;
+  /** the agent's own report of something that happened outside the app: always labelled "Logged by …" */
+  reported: boolean;
+}
+export interface LastAutomaticView {
+  kind: 'text' | 'email' | 'chat';
+  at: string;
+  bulk: boolean;
+}
+export interface NextPromiseView {
+  taskId: string;
+  text: string;
+  kind: string;
+  dueAt: string | null;
+  dueAllDay: boolean;
+  overdue: boolean;
 }
 
 export interface FeedResponse {

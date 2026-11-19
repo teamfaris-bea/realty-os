@@ -2006,8 +2006,166 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
               "type": "string",
             },
+            "importedHistoryAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "itemType": {
               "type": "string",
+            },
+            "lastAutomatic": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "bulk": {
+                      "type": "boolean",
+                    },
+                    "kind": {
+                      "enum": [
+                        "text",
+                        "email",
+                        "chat",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "bulk",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "lastTouch": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "byName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "inbound",
+                            "outbound",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "kind": {
+                      "enum": [
+                        "call",
+                        "text",
+                        "email",
+                        "chat",
+                        "note",
+                        "appointment",
+                      ],
+                      "type": "string",
+                    },
+                    "outcome": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "reported": {
+                      "type": "boolean",
+                    },
+                    "snippet": {
+                      "anyOf": [
+                        {
+                          "maxLength": 140,
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "byName",
+                    "direction",
+                    "outcome",
+                    "snippet",
+                    "reported",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "nextPromise": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dueAllDay": {
+                      "type": "boolean",
+                    },
+                    "dueAt": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "kind": {
+                      "type": "string",
+                    },
+                    "overdue": {
+                      "type": "boolean",
+                    },
+                    "taskId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "text": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "taskId",
+                    "text",
+                    "kind",
+                    "dueAt",
+                    "dueAllDay",
+                    "overdue",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
             },
             "primaryAction": {
               "oneOf": [
@@ -2528,6 +2686,29 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
               "minItems": 1,
               "type": "array",
             },
+            "stage": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "subjectId": {
               "type": "string",
             },
@@ -2559,6 +2740,19 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 },
               ],
             },
+            "why": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
           },
           "required": [
             "id",
@@ -2574,6 +2768,12 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
             "subjectId",
             "assistantActionId",
             "createdAt",
+            "why",
+            "stage",
+            "lastTouch",
+            "lastAutomatic",
+            "importedHistoryAt",
+            "nextPromise",
           ],
           "type": "object",
         },
@@ -3137,8 +3337,166 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
               "type": "string",
             },
+            "importedHistoryAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "itemType": {
               "type": "string",
+            },
+            "lastAutomatic": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "bulk": {
+                      "type": "boolean",
+                    },
+                    "kind": {
+                      "enum": [
+                        "text",
+                        "email",
+                        "chat",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "bulk",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "lastTouch": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "byName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "inbound",
+                            "outbound",
+                          ],
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "kind": {
+                      "enum": [
+                        "call",
+                        "text",
+                        "email",
+                        "chat",
+                        "note",
+                        "appointment",
+                      ],
+                      "type": "string",
+                    },
+                    "outcome": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "reported": {
+                      "type": "boolean",
+                    },
+                    "snippet": {
+                      "anyOf": [
+                        {
+                          "maxLength": 140,
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "byName",
+                    "direction",
+                    "outcome",
+                    "snippet",
+                    "reported",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "nextPromise": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dueAllDay": {
+                      "type": "boolean",
+                    },
+                    "dueAt": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "kind": {
+                      "type": "string",
+                    },
+                    "overdue": {
+                      "type": "boolean",
+                    },
+                    "taskId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "text": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "taskId",
+                    "text",
+                    "kind",
+                    "dueAt",
+                    "dueAllDay",
+                    "overdue",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
             },
             "primaryAction": {
               "oneOf": [
@@ -3659,6 +4017,29 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
               "minItems": 1,
               "type": "array",
             },
+            "stage": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "subjectId": {
               "type": "string",
             },
@@ -3690,6 +4071,19 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 },
               ],
             },
+            "why": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
           },
           "required": [
             "id",
@@ -3705,6 +4099,12 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
             "subjectId",
             "assistantActionId",
             "createdAt",
+            "why",
+            "stage",
+            "lastTouch",
+            "lastAutomatic",
+            "importedHistoryAt",
+            "nextPromise",
           ],
           "type": "object",
         },

@@ -66,8 +66,12 @@
 import {
   type FeedItem,
   type FeedReason,
+  type LastAutomatic,
+  type LastTouch,
+  type NextPromise,
   type OneTapAction,
   feedGroupOfItem,
+  isFollowUpItemType,
   parseForeignFeedKey,
   reasonFromCode,
   renderFeedItem,
@@ -82,6 +86,7 @@ import { AppError } from '../errors.js';
 import { blockedPondIds, claimStatus } from '../leads/claimable.js';
 import { maskLastName } from '../leads/views.js';
 import { type FeedScope, loadFeedInputsScoped } from './repos/feedInputs.js';
+import { type FollowUpContext, loadFollowUpContext } from './repos/followUp.js';
 
 /** What a refresh needs besides the transaction: transcript evidence is encrypted; row ids are UUIDv7. */
 export interface FeedDeps {
@@ -137,7 +142,39 @@ export interface FeedCard {
   subjectId: string;
   assistantActionId: string | null;
   createdAt: string;
+  // ---- warm follow-up (batch 19, R-TODAY-1): set on a follow-up card about a person; null on every other card ----
+  /** why the person is due: the card's own reason sentences, unchanged */
+  why: string[] | null;
+  /** the person's stage, with the team's own label (null: the viewer may not open the person) */
+  stage: { key: string; label: string } | null;
+  /** the most recent HUMAN contact the viewer may see (never an automated message); null: none */
+  lastTouch: LastTouchView | null;
+  /** the most recent automated message after it, as its own line; never its text */
+  lastAutomatic: { kind: LastAutomatic['kind']; at: string; bulk: boolean } | null;
+  /** only with no last touch: when the latest imported entry of the person's history is dated */
+  importedHistoryAt: string | null;
+  /** the viewer's earliest open task for the person, worded as written */
+  nextPromise: NextPromiseView | null;
 }
+
+/** `byMe`: the viewer's own call, message, note or log (the teammate's id itself is not sent). */
+export type LastTouchView = Omit<LastTouch, 'at' | 'byUserId'> & { at: string; byMe: boolean };
+export type NextPromiseView = Omit<NextPromise, 'dueAt'> & { dueAt: string | null };
+
+/** The follow-up lines of one card, as GET /feed sends them (instants as ISO strings). */
+export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: string): Pick<FeedCard, 'stage' | 'lastTouch' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'> {
+  if (!ctx) return { stage: null, lastTouch: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
+  const { byUserId, ...touch } = ctx.lastTouch ?? { byUserId: null };
+  return {
+    stage: ctx.stage,
+    lastTouch: ctx.lastTouch ? { ...(touch as Omit<LastTouch, 'byUserId'>), at: iso(ctx.lastTouch.at), byMe: byUserId !== null && byUserId === viewerUserId } : null,
+    lastAutomatic: ctx.lastAutomatic ? { ...ctx.lastAutomatic, at: iso(ctx.lastAutomatic.at) } : null,
+    importedHistoryAt: ctx.importedHistoryAt === null ? null : iso(ctx.importedHistoryAt),
+    nextPromise: ctx.nextPromise ? { ...ctx.nextPromise, dueAt: ctx.nextPromise.dueAt === null ? null : iso(ctx.nextPromise.dueAt) } : null,
+  };
+}
+
+const NO_LINES: Pick<FeedCard, 'why' | 'stage' | 'lastTouch' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'> = { why: null, stage: null, lastTouch: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
 
 export interface FeedView {
   pinned: FeedCard[];
@@ -597,8 +634,12 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
     SELECT ((SELECT COALESCE(sum(n_open), 0) FROM feed_groups WHERE tenant_id = app.tenant_id() AND user_id = ${actor.userId})
           + (SELECT count(*) ${base} AND f.card IS NULL)
           - ${hidden.length > 0 ? sql`(SELECT count(*) ${base} AND f.card IS NOT NULL AND ${pondHidden})` : sql`0`})::int AS n`.execute(tx);
+  // R-TODAY-1: what each follow-up card says about its person, read once for the whole page (no per-card query)
+  const followUp = (row: ReadRow) => row.contact_id !== null && isFollowUpItemType(row.item_type);
+  const lines = await loadFollowUpContext(tx, actor, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string), now);
   const card = (row: ReadRow): FeedCard => {
     const actions = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
+    const reasons = row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons);
     // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards)
     const name = row.item_type === 'pond_new' && row.contact_name !== null
       ? maskLastName({ first_name: row.contact_first_name, last_name: row.contact_last_name, display_name: row.contact_name })
@@ -610,12 +651,13 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
       dueAt: row.due_at ? iso(row.due_at) : null,
       contact: row.contact_id && name ? { id: row.contact_id, name } : null,
       task: row.subject_type === 'task' && row.task_title !== null ? { id: row.subject_id, title: row.task_title } : null,
-      reasons: row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons),
+      reasons,
       ...actions,
       subjectType: row.subject_type,
       subjectId: row.subject_id,
       assistantActionId: row.assistant_action_id,
       createdAt: iso(row.created_at),
+      ...(followUp(row) ? { why: reasons.map((r) => r.label), ...followUpLines(lines.byContact.get(row.contact_id as string), actor.userId) } : NO_LINES),
     };
   };
   return { pinned: pinned.rows.map(card), scored: scored.rows.map(card), total: total.rows[0]?.n ?? 0, generatedAt: iso(now) };

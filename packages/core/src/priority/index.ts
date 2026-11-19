@@ -48,6 +48,25 @@ export { speedToLeadSummary, countTouches, momentum, MOMENTUM_FACTOR, MOMENTUM_M
 export { formatDuration, FOREIGN_CARD_LABEL, renderFeedLabel } from './format.js';
 export { feedGroupOfItem, contactGroup, taskGroup, appointmentGroup, dealDateGroup, splitFeedInputs, nextFeedChange } from './incremental.js';
 export {
+  FOLLOW_UP_ITEM_TYPES,
+  isFollowUpItemType,
+  NO_CONVERSATION_YET,
+  SNIPPET_MAX,
+  classifyCandidate,
+  selectLastContact,
+  selectNextPromise,
+  promiseDeadline,
+  snippetOf,
+  type CandidateClass,
+  type ContactCandidate,
+  type LastAutomatic,
+  type LastContact,
+  type LastTouch,
+  type LastTouchKind,
+  type NextPromise,
+  type PromiseTask,
+} from './followUp.js';
+export {
   FeedItemSchema,
   FeedReasonSchema,
   OneTapActionSchema,

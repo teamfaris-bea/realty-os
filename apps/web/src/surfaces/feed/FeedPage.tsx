@@ -22,6 +22,7 @@ import { ApiError, messageFor, useApi } from '../../shell/index.js';
 import { ReachabilityBatch } from '../../reasons/index.js';
 import { ActionButton } from './ActionButton.js';
 import { AgentSheetsProvider, useAgentSheets } from './lib/AgentSheets.js';
+import { automaticLine, lastTouchLine, nextPromiseLine } from './lib/followUp.js';
 import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } from './lib/format.js';
 import { useMutate, useNow } from './lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
@@ -159,6 +160,10 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
   // named only the person and "Due today", never what to do)
   const taskTitle = card.task?.title.trim() ? card.task.title : null;
   const titleId = `${whyId}-title`;
+  // R-TODAY-1: a follow-up card about a person says why they are due, what was last discussed and the next promise
+  const follow = card.contact !== null && Array.isArray(card.why) && card.why.length > 0;
+  // the Next line already says the card's own task when that task is the person's next promise
+  const taskSaidBelow = follow && card.task != null && card.nextPromise?.taskId === card.task.id;
   // a card whose one tap IS its details shows them in the same panel, under its own name
   const detailsFirst = card.primaryAction.kind === 'show_details';
   const details = { open: why, controls: whyId, onOpen: () => setWhy((w) => !w) };
@@ -166,7 +171,15 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
     <Card as="article" aria-labelledby={titleId} className={`flex flex-col gap-3 ${pinned ? 'border-accent/50' : ''}`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">{itemLabel(card.itemType)}</p>
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted [overflow-wrap:anywhere]">
+            {itemLabel(card.itemType)}
+            {follow && card.stage ? (
+              <>
+                {' · '}
+                <span data-testid="card-stage">{card.stage.label}</span>
+              </>
+            ) : null}
+          </p>
           {/* a name stays on one line; a card without a contact is headed by its first line, which wraps (it is the content) */}
           <h3 id={titleId} className={`text-[19px] font-semibold text-ink ${card.contact ? 'truncate' : 'break-words'}`}>
             {card.contact ? (
@@ -177,12 +190,13 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
               (taskTitle ?? lead?.label ?? itemLabel(card.itemType))
             )}
           </h3>
-          {taskTitle !== null && card.contact ? <p className="break-words text-[16px] font-medium text-ink">{taskTitle}</p> : null}
-          {lead && (card.contact || taskTitle !== null) && lead.label !== itemLabel(card.itemType) ? <p className="text-[15px] text-ink">{lead.label}</p> : null}
+          {taskTitle !== null && card.contact && !taskSaidBelow ? <p className="break-words text-[16px] font-medium text-ink">{taskTitle}</p> : null}
+          {!follow && lead && (card.contact || taskTitle !== null) && lead.label !== itemLabel(card.itemType) ? <p className="text-[15px] text-ink">{lead.label}</p> : null}
         </div>
         {pinned && card.dueAt ? <Countdown dueAt={card.dueAt} kind={isOffer ? 'offer' : 'deadline'} label={countdownLabel(card)} /> : null}
       </div>
       {expired ? <p className="text-[15px] text-ink-muted">This offer ended. The lead is going to the next agent.</p> : null}
+      {follow ? <FollowUpLines card={card} now={now} /> : null}
       <div className="flex flex-wrap items-start gap-2">
         <ActionButton action={card.primaryAction} card={card} expired={expired} details={details} className="min-w-[8rem]" />
         {inlineAlternatives(card).map((a, i) => (
@@ -223,6 +237,39 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
         </ul>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * Why the person is due, what was last discussed and the next promise (R-TODAY-1), each on its own labelled line.
+ * An automated message is never the Last line: it is its own line under it (R-TODAY-2). Everything wraps; nothing is
+ * cut off (a team's own 24-character stage label, a 140-character snippet).
+ */
+export function FollowUpLines({ card, now }: { card: FeedCard; now: number }) {
+  const line = 'flex gap-2';
+  const term = 'w-11 shrink-0 text-[13px] font-semibold uppercase leading-[22px] tracking-wide text-ink-muted';
+  const said = 'min-w-0 flex-1 [overflow-wrap:anywhere]';
+  return (
+    <dl data-testid="follow-up-lines" className="flex flex-col gap-1 text-[15px] leading-[22px] text-ink">
+      <div className={line}>
+        <dt className={term}>Due</dt>
+        <dd className={said}>{card.why?.[0]}</dd>
+      </div>
+      <div className={line}>
+        <dt className={term}>Last</dt>
+        <dd className={said}>{lastTouchLine(card.lastTouch, now, card.importedHistoryAt)}</dd>
+      </div>
+      {card.lastAutomatic ? (
+        <div className={line}>
+          <dt className="sr-only">Also</dt>
+          <dd className={`${said} pl-[3.25rem] text-ink-muted`}>{automaticLine(card.lastAutomatic, now)}</dd>
+        </div>
+      ) : null}
+      <div className={line}>
+        <dt className={term}>Next</dt>
+        <dd className={`${said} ${card.nextPromise?.overdue ? 'font-medium text-danger' : ''}`}>{nextPromiseLine(card.nextPromise, now)}</dd>
+      </div>
+    </dl>
   );
 }
 

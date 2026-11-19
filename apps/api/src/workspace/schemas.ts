@@ -17,6 +17,18 @@ export const IdParams = z.object({ id: uuid });
 // ---- feed ---------------------------------------------------------------------------------------------
 
 const Reason = z.object({ code: z.string(), label: z.string() });
+/** The most recent human contact with a person the viewer may see. `reported`: the agent's own report of something outside the app. */
+export const LastTouchSchema = z.object({
+  kind: z.enum(['call', 'text', 'email', 'chat', 'note', 'appointment']),
+  at: z.string(),
+  byName: z.string().nullable(),
+  byMe: z.boolean(),
+  direction: z.enum(['inbound', 'outbound']).nullable(),
+  outcome: z.string().nullable(),
+  snippet: z.string().max(140).nullable(),
+  reported: z.boolean(),
+});
+export const NextPromiseSchema = z.object({ taskId: uuid, text: z.string(), kind: z.string(), dueAt: z.string().nullable(), dueAllDay: z.boolean(), overdue: z.boolean() });
 export const FeedCardSchema = z.object({
   id: uuid,
   itemType: z.string(),
@@ -32,6 +44,13 @@ export const FeedCardSchema = z.object({
   subjectId: z.string(),
   assistantActionId: z.string().nullable(),
   createdAt: z.string(),
+  // warm follow-up (batch 19, R-TODAY-1): null on a card that is not about following up with a person
+  why: z.array(z.string()).nullable(),
+  stage: z.object({ key: z.string(), label: z.string() }).nullable(),
+  lastTouch: LastTouchSchema.nullable(),
+  lastAutomatic: z.object({ kind: z.enum(['text', 'email', 'chat']), at: z.string(), bulk: z.boolean() }).nullable(),
+  importedHistoryAt: z.string().nullable(),
+  nextPromise: NextPromiseSchema.nullable(),
 });
 export const FeedResponse = z.object({ pinned: z.array(FeedCardSchema), scored: z.array(FeedCardSchema), total: z.number().int().min(0), generatedAt: z.string() });
 export const SnoozeBody = z.strictObject({ until: isoDate });
