@@ -17,14 +17,14 @@
 // and one button named for its effect. Call → outcome → confirm is 3 taps. Elsewhere (the feed, the thread, tasks)
 // the call sheet closes after the outcome as it always did. An outcome that was saved as a task for a new owner (the
 // lead moved during the call) has no stage step: the caller no longer works that person.
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
 import { detailsKey } from '../../people-edit/api.js';
-import { ToastProvider, useToastSlot } from '../../people-edit/hooks.js';
+import { ToastProvider, useToastSlot, useToastStackSync } from '../../people-edit/hooks.js';
 import { StageStep } from '../../people-edit/StageStep.js';
 import type { SuggestedStage } from '../../people-edit/stageFlow.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
@@ -98,10 +98,14 @@ export function AgentSheetsProvider({ children, stageStep = false }: { children:
 /**
  * The announce toast: seen here, heard through announce() (aria-hidden, so a screen reader does not meet it twice).
  * It is drawn inside the page's one stack of toasts (people-edit/hooks.tsx; E788), so it sits above every bottom bar
- * (it used to sit on the person page's working bar) and above or below the stage toast, never over it.
+ * (it used to sit on the person page's working bar) and above or below the stage toast, never over it. The stack, not
+ * this aria-hidden box, is the fixed element: it is marked data-sticky while either toast shows (hooks.tsx).
  */
 function AnnounceToast({ text }: { text: string | null }) {
   const slot = useToastSlot();
+  // the stack is a bar of the page while this toast is in it: it is marked, and its room reserved, in the same commit
+  const sync = useToastStackSync();
+  useLayoutEffect(sync, [sync, slot, text]);
   const el = (
     <div aria-hidden="true" data-testid="toast" className="flex w-full justify-center">
       {text ? <p className="pointer-events-auto mb-2 max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{text}</p> : null}
