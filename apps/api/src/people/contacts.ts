@@ -4,7 +4,7 @@
 //                                        relationships, removed points, row version     contact.view_detail
 //   PATCH /contacts/:id                  names, type, intent, timezone, stage, pond summary (row_version)  contact.edit
 //   POST  /contacts/:id/stage            one stage change (the Undo toast posts the previous stage)  contact.edit
-//   GET   /stage-labels                  the eight stages with the tenant's labels        session (members)
+//   GET   /stage-labels                  the eight stages with the tenant's labels and what each means (R-STG-1)  session (members)
 //   PUT   /stage-labels                  Owner/Admin                                      settings.stage_labels
 //   POST  /contacts/:id/do-not-contact   person-level do-not-contact (R-CHAN-3 path): revokes every channel on
 //                                        every point and sets the person-level flag; tighten-only  contact.edit
@@ -15,7 +15,7 @@
 // change is checked by core first so the caller learns STAGE_NEEDS_CONTACT up front, and the DB guard
 // app.contacts_stage_guard refuses it anyway; the definer trigger writes the stage history (R-PAR-15).
 import { type UserActor, can } from '@realty/core/foundation';
-import { STAGES, type Stage, type StageFacts, isStage, lockedStages, stageChangeAllowed, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
+import { STAGE_GUIDE, type Stage, type StageFacts, isStage, lockedStages, stageChangeAllowed, stageGuide, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
 import { instantFromDate } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -45,7 +45,9 @@ export function stageFactsOf(r: repo.EditRow): StageFacts {
 export function stageInfo(r: repo.EditRow, actor: UserActor, labels: Record<string, string>) {
   const f = stageFactsOf(r);
   const locked = lockedStages(f, { kind: 'user', role: actor.role });
-  return { stage: f.stage, label: stageLabel(f.stage, labels), locked, lockedReason: locked.length > 0 ? 'STAGE_NEEDS_CONTACT' : null };
+  // R-STG-1: what the stage means travels with it (the label is the tenant's or the default; the two lines are the guide's)
+  const guide = STAGE_GUIDE[f.stage];
+  return { stage: f.stage, label: stageLabel(f.stage, labels), definition: guide.definition, notThis: guide.notThis, locked, lockedReason: locked.length > 0 ? 'STAGE_NEEDS_CONTACT' : null };
 }
 
 function editView(r: repo.EditRow) {
@@ -95,6 +97,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
             doNotContact: row.do_not_contact_at !== null,
             stage: stageInfo(row, actor, labels),
             stageLabels: labels,
+            stageGuide: stageGuide(labels),
             addresses: (await repo.addresses(tx, id)).map(addressView),
             collaborators: (await repo.collaborators(tx, id)).map(collaboratorView),
             relationships: (await repo.relationships(tx, id)).map((x) => relationshipView(x, id)),
@@ -187,7 +190,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
   r.get('/stage-labels', { config: { auth: 'self' }, schema: { response: { 200: S.StageLabelsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => {
       const labels = await repo.stageLabels(tx);
-      return { labels, stages: STAGES.map((key) => ({ key, label: stageLabel(key, labels) })) };
+      return { labels, stages: stageGuide(labels) };
     }),
   );
 
@@ -202,7 +205,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
         if (!(await repo.setStageLabels(tx, v.labels as Record<string, string>))) throw new AppError('NOT_FOUND');
         await audit(tx, actor, { action: 'settings.changed', entity: { type: 'tenant_settings', id: null }, changes: redactDiff({ stage_labels: before }, { stage_labels: v.labels }, { entity: 'tenant_settings' }), reason: 'STAGE_LABELS' });
         const labels = v.labels as Record<string, string>;
-        return { labels, stages: STAGES.map((key) => ({ key, label: stageLabel(key, labels) })) };
+        return { labels, stages: stageGuide(labels) };
       });
     },
   );

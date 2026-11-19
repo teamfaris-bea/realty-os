@@ -112,10 +112,12 @@ export const RestoreAddressBody = z.strictObject({ restoreToken: z.string().min(
 export const CollaboratorView = z.object({ userId: Id, displayName: z.string().nullable(), role: z.string(), expiresAt: Iso.nullable() });
 export const CollaboratorsResponse = z.object({ collaborators: z.array(CollaboratorView) });
 
-export const StageInfo = z.object({ stage: z.string(), label: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
+/** R-STG-1: one stage of the guide: the label shown (the tenant's, else the default), what it means and what it does not. */
+export const StageGuideRow = z.object({ key: z.string(), label: z.string(), definition: z.string(), notThis: z.string() });
+export const StageInfo = z.object({ stage: z.string(), label: z.string(), definition: z.string(), notThis: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
 // parity module 67 (flagged edit): what the stage entry started, or why not (null: no plan for this stage)
 export const StageResponse = z.object({ stage: StageInfo, previousStage: z.string(), rowVersion: z.number().int(), automation: AutomationOutcomeSchema });
-export const StageLabelsResponse = z.object({ labels: z.record(z.string(), z.string()), stages: z.array(z.object({ key: z.string(), label: z.string() })) });
+export const StageLabelsResponse = z.object({ labels: z.record(z.string(), z.string()), stages: z.array(StageGuideRow) });
 
 export const RelationshipView = z.object({ id: Id, kind: z.string(), label: z.string().nullable(), direction: z.enum(['outgoing', 'incoming']), other: z.object({ id: Id, displayName: z.string() }), createdAt: Iso });
 export const RelationshipsResponse = z.object({ relationships: z.array(RelationshipView) });
@@ -128,6 +130,7 @@ export const DetailsResponse = z.object({
     doNotContact: z.boolean(),
     stage: StageInfo,
     stageLabels: z.record(z.string(), z.string()),
+    stageGuide: z.array(StageGuideRow),
     addresses: z.array(AddressView),
     collaborators: z.array(CollaboratorView),
     relationships: z.array(RelationshipView),
