@@ -7,7 +7,8 @@
 //   PATCH  /notes/:id                          author only (body; a logged time/direction/outcome)  note.write
 //   POST   /notes/:id/pin                      author, or Owner/Admin              note.write
 //   DELETE /notes/:id                          author (manual/logged), or Owner/Admin (audited)  note.delete
-//   POST   /contacts/:id/activities            log an outside call/text/email (+ "remind me" task)  activity.log
+//   POST   /contacts/:id/activities            log an outside call/text/email (+ "remind me" task); answers the
+//                                              stage it suggests, never changes one (R-STG-2)   activity.log
 //
 // Mentions (R-PAR-2/3): each mentioned active member is checked AS THAT MEMBER, in a read-only transaction
 // in their own RLS context (no definer re-implements visibility for another user). Only those who see the
@@ -17,7 +18,7 @@
 // never grants access. A logged activity is never a messages/calls row and never a touch (R-PAR-5, R-PAR-32).
 import { type Actor, type UserActor, instantFromDate, instantFromIso, toIso } from '@realty/core/foundation';
 import { DAY_MS, plusMs } from '@realty/core/foundation';
-import { addedMentions, followUpTitle, mentionTokens, mentionDedupeKey, mentionTitle, parseMentions, suggestsDoNotContact, validateLoggedActivity } from '@realty/core/parity/people';
+import { type ActivityDirection, type ActivityKind, type CallOutcome, addedMentions, followUpTitle, mentionTokens, mentionDedupeKey, mentionTitle, parseMentions, suggestsDoNotContact, validateLoggedActivity } from '@realty/core/parity/people';
 import { withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -32,6 +33,7 @@ import { decodeCursor, detailFacts, liveDetailFacts, encodeCursor, peopleTx, pla
 import * as repo from './repos/people.js';
 import * as S from './schemas.js';
 import { noteView } from './views.js';
+import { activitySignal, suggestedStageInTx } from './stageSuggestion.js';
 
 const contactAuth = (req: FastifyRequest) => detailFacts(req);
 const writeAuth = (req: FastifyRequest) => liveDetailFacts(req);
@@ -238,8 +240,14 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
       const prior = await peopleTx(req, (tx) => repo.note(tx, b.noteId!));
       if (prior) {
         if (prior.author_user_id !== (req.actor as UserActor).userId || prior.contact_id !== contactId || prior.source !== 'logged_activity') throw new AppError('COMMAND_ID_REUSED');
+        // R-STG-2: a replay reads the suggestion again from the stored activity and the person's stage as it is now
+        // (so a double tap shows the same suggestion, and none once the stage was confirmed)
+        const view = noteView(prior, req.actor as UserActor, new Map());
+        const a = view.loggedActivity;
+        const signal = a ? activitySignal({ kind: a.kind as ActivityKind, direction: (a.direction ?? 'outbound') as ActivityDirection, outcome: a.outcome as CallOutcome | null }) : null;
+        const suggestedStage = await peopleTx(req, (tx, _now, actor) => suggestedStageInTx(tx, actor, contactId, signal));
         reply.status(200);
-        return { note: noteView(prior, req.actor as UserActor, new Map()), taskId: null, suggestDoNotContact: suggestsDoNotContact(prior.body), replayed: true };
+        return { note: view, taskId: null, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
       }
     }
     const out = await peopleTx(req, async (tx, now, actor) => {
@@ -253,7 +261,9 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
         // "Remind me in N days" is an ordinary task for the author (R-PAR-30)
         taskId = await createTask(tx, actor, p.ids, { title: followUpTitle(a.kind), kind: 'follow_up', contactId, dueAt: toIso(plusMs(now, a.remindInDays * DAY_MS)) });
       }
-      return { note: noteView((await repo.note(tx, id))!, actor, new Map()), taskId, suggestDoNotContact: suggestsDoNotContact(a.body), replayed: false };
+      // R-STG-2: the stage this outcome suggests, for the agent to confirm. Nothing here changes the stage.
+      const suggestedStage = await suggestedStageInTx(tx, actor, contactId, activitySignal(a));
+      return { note: noteView((await repo.note(tx, id))!, actor, new Map()), taskId, suggestDoNotContact: suggestsDoNotContact(a.body), suggestedStage, replayed: false };
     });
     reply.status(201);
     return out;

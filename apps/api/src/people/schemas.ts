@@ -161,7 +161,9 @@ export const MentionOutcome = z.object({ userId: Id, displayName: z.string().nul
 export const NoteResponse = z.object({ note: NoteView, mentions: z.array(MentionOutcome), replayed: z.boolean() });
 export const NotesResponse = z.object({ notes: z.array(NoteView), nextCursor: z.string().nullable(), audience: z.string() });
 export const MentionCandidatesResponse = z.object({ members: z.array(z.object({ userId: Id, displayName: z.string().nullable(), role: z.string(), canSee: z.boolean() })) });
-export const ActivityResponse = z.object({ note: NoteView, taskId: Id.nullable(), suggestDoNotContact: z.boolean(), replayed: z.boolean() });
+/** R-STG-2: the stage a logged outcome suggests, to confirm; `locked`: the stage route would refuse it now (STAGE_NEEDS_CONTACT). */
+export const SuggestedStage = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean() });
+export const ActivityResponse = z.object({ note: NoteView, taskId: Id.nullable(), suggestDoNotContact: z.boolean(), suggestedStage: SuggestedStage.nullable(), replayed: z.boolean() });
 export const DoNotContactResponse = z.object({ doNotContact: z.literal(true), alreadySet: z.boolean(), revokedPoints: z.number().int() });
 
 export const PEOPLE_RESPONSE_SCHEMAS = {

@@ -1,6 +1,7 @@
 // Zod request/response schemas of api/comms. No input schema carries tenant_id (R-TEN-3); no response
 // carries a confidence field (R-AST-13) — both asserted by schemas.test.ts.
 import { z } from 'zod';
+import { STAGES } from '@realty/core/parity/people';
 import { TelephonyMode } from './telephonyMode.js';
 
 /**
@@ -138,7 +139,9 @@ export const CallResponse = z.object({
 export const OutcomeBody = z.strictObject({
   outcome: z.enum(['connected', 'left_voicemail', 'no_answer', 'wrong_number', 'bad_number', 'do_not_call_request', 'callback_requested']),
 });
-export const OutcomeResponse = z.object({ callId: z.uuid(), outcome: z.string(), recordedAs: z.enum(['call', 'task_for_current_owner']) });
+/** R-STG-2: the stage the outcome suggests, to confirm (null: nothing); `locked`: the stage route would refuse it now. */
+export const SuggestedStageSchema = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean() });
+export const OutcomeResponse = z.object({ callId: z.uuid(), outcome: z.string(), recordedAs: z.enum(['call', 'task_for_current_owner']), suggestedStage: SuggestedStageSchema.nullable() });
 
 export const ConsentBody = z.strictObject({
   kind: z.enum(['record', 'revoke']),
