@@ -22,8 +22,15 @@ const WHY: Record<Exclude<SkipReason, 'source_no_automated_contact' | 'source_un
   undo: 'this change was an undo, and an undo never starts a plan.',
 };
 
-export function skipSentence(reason: SkipReason, plan: string, tense: Tense): string {
+/**
+ * `runningPlan` (the preview only, E763): the plan the person is in now, as the viewer may see its name. With it, an
+ * `already_in_a_plan` sentence names that plan and says how to get the new one instead.
+ */
+export function skipSentence(reason: SkipReason, plan: string, tense: Tense, runningPlan?: string): string {
   const head = `${cap(plan)} ${tense === 'will' ? 'will not start' : 'did not start'}`;
+  if (reason === 'already_in_a_plan' && runningPlan !== undefined) {
+    return `${head}: they are already in ${runningPlan}, and a person is in one plan at a time. Stop ${runningPlan} first if you want ${plan}.`;
+  }
   if (reason === 'source_no_automated_contact') return `${head}. ${sourceRefusalSentence(SOURCE_NO_AUTOMATED_CONTACT)}`;
   if (reason === 'source_unclassified') return `${head}. ${sourceRefusalSentence(SOURCE_UNCLASSIFIED)}`;
   return `${head}: ${WHY[reason]}`;

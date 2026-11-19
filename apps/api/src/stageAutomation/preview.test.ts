@@ -326,6 +326,55 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
   });
 });
 
+describe('already in a plan: the preview names the plan they are in and says the new one will not start (R-STG-3)', () => {
+  type Named = { wontStart: { plan: string; reason: string; sentence: string; alreadyIn: { enrollmentId: string; plan: string } | null } | null; keepsRunning: { enrollmentId: string; plan: string; state: string } | null };
+  const named = (by: TestClient, contactId: string, to: string) => call<Named>(by, 'GET', `/contacts/${contactId}/stage/preview?to=${to}`);
+
+  it('R-STG-3 E763 the running plan is named, the new one is said not to start, and the change then leaves the first running and starts nothing', async () => {
+    const c = await newContact(agent);
+    expect((await changeStage(agent, c, 'active')).body.automation).toEqual({ started: 'Buyer plan' });
+    const [live] = await enrollmentsOf(h, c);
+    const p = (await named(agent, c, 'under_contract')).body;
+    expect(p.wontStart).toEqual({
+      plan: 'Contract plan', reason: 'already_in_a_plan',
+      alreadyIn: { enrollmentId: live!.id, plan: 'Buyer plan' },
+      sentence: 'Contract plan will not start: they are already in Buyer plan, and a person is in one plan at a time. Stop Buyer plan first if you want Contract plan.',
+    });
+    expect(p.keepsRunning).toMatchObject({ enrollmentId: live!.id, plan: 'Buyer plan', state: 'active' });
+    // a paused plan is still the plan they are in
+    expect((await call(agent, 'POST', `/enrollments/${live!.id}/pause`, {})).status).toBe(200);
+    const paused = (await named(agent, c, 'under_contract')).body;
+    expect(paused.wontStart).toMatchObject({ reason: 'already_in_a_plan', alreadyIn: { enrollmentId: live!.id, plan: 'Buyer plan' } });
+    expect(paused.keepsRunning).toMatchObject({ state: 'paused' });
+    // and that is what happens
+    const r = await changeStage(agent, c, 'under_contract');
+    expect(r.body.automation).toEqual({ skipped: 'already_in_a_plan', plan: 'Contract plan' });
+    expect((await enrollmentsOf(h, c)).map((e) => [e.id, e.state])).toEqual([[live!.id, 'paused']]);
+  });
+
+  it('R-STG-3 E763 E769 R-PERM-12 a running plan the viewer may not see is named "the owner\'s plan", in the field and in the sentence', async () => {
+    const c = await newContact(agent2);
+    expect((await call(agent2, 'POST', `/contacts/${c}/collaborators`, { userId: agent.userId, role: 'co_agent' })).status).toBe(200);
+    expect((await changeStage(agent2, c, 'closed')).body.automation).toEqual({ started: SECRET_NAME });
+    const [live] = await enrollmentsOf(h, c);
+    const theirs = await named(agent, c, 'active');
+    expect(JSON.stringify(theirs.body)).not.toContain(SECRET_NAME);
+    expect(theirs.body.wontStart).toEqual({
+      plan: 'Buyer plan', reason: 'already_in_a_plan',
+      alreadyIn: { enrollmentId: live!.id, plan: "the owner's plan" },
+      sentence: "Buyer plan will not start: they are already in the owner's plan, and a person is in one plan at a time. Stop the owner's plan first if you want Buyer plan.",
+    });
+    // the plan's owner is told its name
+    expect((await named(agent2, c, 'active')).body.wontStart).toMatchObject({ alreadyIn: { plan: SECRET_NAME }, sentence: expect.stringContaining(`they are already in ${SECRET_NAME}`) });
+  });
+
+  it('R-STG-3 a plan that will not start for any other reason names no running plan', async () => {
+    const c = await newContact(agent);
+    expect((await named(agent, c, 'nurture')).body.wontStart).toMatchObject({ reason: 'plan_not_approved', alreadyIn: null });
+    expect((await named(agent, c, 'active')).body.wontStart).toBeNull();
+  });
+});
+
 describe('who may preview, and what they are shown (R-STG-3)', () => {
   it('R-STG-3 R-PAR-14 a stage the rule would refuse: allowed false with the reason, and no plan is promised', async () => {
     const r = await intake(h, w);

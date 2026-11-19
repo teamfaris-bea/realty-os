@@ -136,7 +136,8 @@ export const StagePreviewResponse = z.object({
   /** the person is already in this stage: saving changes nothing */
   sameStage: z.boolean(),
   starts: z.object({ plan: z.string(), firstStep: z.object({ channel: z.string(), dueAt: Iso }).nullable() }).nullable(),
-  wontStart: z.object({ plan: z.string(), reason: z.enum(SKIP_REASONS), sentence: z.string() }).nullable(),
+  /** `alreadyIn`: for reason already_in_a_plan, the plan the person is in (its name as the viewer may see it) */
+  wontStart: z.object({ plan: z.string(), reason: z.enum(SKIP_REASONS), sentence: z.string(), alreadyIn: z.object({ enrollmentId: Id, plan: z.string() }).nullable() }).nullable(),
   keepsRunning: z.object({ enrollmentId: Id, plan: z.string(), state: z.enum(['active', 'paused']), canStop: z.boolean() }).nullable(),
   /** a stage change never stops a plan: always empty */
   stops: z.array(z.never()),

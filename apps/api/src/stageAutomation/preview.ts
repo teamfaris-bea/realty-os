@@ -28,8 +28,12 @@ import { skipSentence } from './sentences.js';
 export interface EntryPreview {
   /** the plan the entry would start, and its first step (null: the plan has no step it would run for this person) */
   starts: { plan: string; firstStep: { channel: string; dueAt: string } | null } | null;
-  /** the plan the entry names but would not start, and why (the reason the decision row would carry) */
-  wontStart: { plan: string; reason: SkipReason; sentence: string } | null;
+  /**
+   * The plan the entry names but would not start, and why (the reason the decision row would carry). `alreadyIn`:
+   * when the reason is that the person is already in a plan, that plan (its name as the viewer may see it); the
+   * sentence then names it and says the new plan will not start. Null for every other reason.
+   */
+  wontStart: { plan: string; reason: SkipReason; sentence: string; alreadyIn: { enrollmentId: string; plan: string } | null } | null;
   /** the plan the person is in now: a stage change leaves it running (or paused) */
   keepsRunning: { enrollmentId: string; plan: string; state: 'active' | 'paused'; canStop: boolean } | null;
 }
@@ -65,9 +69,11 @@ export async function previewStageEntry(db: Database, viewer: UserActor, contact
     { db },
   );
   const nameOf = (p: { id: string; name: string } | null) => (p !== null && mine.visible.has(p.id) ? p.name : HIDDEN_PLAN);
+  // E763: the plan that keeps the new one from starting is the live enrollment the decision itself read
+  const alreadyIn = d.kind === 'skip' && d.reason === 'already_in_a_plan' && live ? { enrollmentId: live.id, plan: nameOf(livePlan) } : null;
   return {
     starts: d.kind === 'start' ? { plan: nameOf(d.playbook), firstStep: firstStep ? { channel: firstStep.channel, dueAt: new Date(firstStep.dueAt).toISOString() } : null } : null,
-    wontStart: d.kind === 'skip' ? { plan: nameOf(d.playbook), reason: d.reason, sentence: skipSentence(d.reason, nameOf(d.playbook), 'will') } : null,
+    wontStart: d.kind === 'skip' ? { plan: nameOf(d.playbook), reason: d.reason, sentence: skipSentence(d.reason, nameOf(d.playbook), 'will', alreadyIn?.plan), alreadyIn } : null,
     keepsRunning: live && (live.state === 'active' || live.state === 'paused') ? { enrollmentId: live.id, plan: nameOf(livePlan), state: live.state, canStop: mine.canStop } : null,
   };
 }
