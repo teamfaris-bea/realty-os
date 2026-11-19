@@ -287,6 +287,25 @@ describe('R-TEAMQ-6 who may read it, and whose inquiries', () => {
     expect(JSON.stringify(tl)).not.toContain('Thea Theirs');
   });
 
+  it('R-TEAMQ-6 (review fix L1): the team scope itself, where row-level security alone would show the inquiry: a Team Lead who is a COLLABORATOR on an outside agent\'s lead does not get its inquiry in their report; a pond lead\'s inquiry is theirs', async () => {
+    const src = await source('Ivy Lane portal (test)');
+    const shared = await acceptedFrom(src, { fullName: 'Sia Shared' });
+    expect((await command(w.owner, shared.contactId, 'reassign', { toUserId: outsider.userId })).status).toBe(200);
+    expect((await call(outsider, 'POST', `/contacts/${shared.contactId}/collaborators`, { userId: w.teamLead!.userId, role: 'co_agent' })).status).toBe(200);
+    // the Team Lead can open the person (a collaborator), so only the team scope keeps the inquiry out of their report
+    expect((await call(w.teamLead!, 'GET', `/contacts/${shared.contactId}`)).status).toBe(200);
+    const pond = await acceptedFrom(src, { fullName: 'Pia Pond' });
+    expect((await command(pond.owner, pond.contactId, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+    expect((await contactState(h, pond.contactId)).ownership_state).toBe('in_pond');
+
+    expect((await report(w.owner)).sources.find((s) => s.sourceId === src.id)).toMatchObject({ inquiries: 2 });
+    const tl = await report(w.teamLead!);
+    expect(tl.inquiries.map((i) => i.contact.id)).not.toContain(shared.contactId);
+    expect(tl.inquiries.map((i) => i.contact.id)).toContain(pond.contactId);
+    expect(tl.sources.find((s) => s.sourceId === src.id)).toMatchObject({ inquiries: 1 });
+    expect(JSON.stringify(tl)).not.toContain('Sia Shared');
+  });
+
   it('R-TEAMQ-6 R-TEN-3: another tenant’s inquiries never appear, and reading the report writes nothing', async () => {
     const other = await leadsWorld(h, { agents: 1 });
     const theirs = (await intake(h, other)).contactId;

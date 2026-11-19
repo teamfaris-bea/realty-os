@@ -339,6 +339,31 @@ describe('R-TEAMQ-6 who may read it, and whose rows', () => {
     expect(agentOf(outsider.userId!)).toBe(outsider);
   });
 
+  it('R-TEAMQ-6 (review fix L1): the team scope itself, where row-level security alone would show the row: a Team Lead who is a COLLABORATOR on an outside agent\'s lead does not get that lead in their queue; and an outside agent\'s past-due promise on a POND lead (a person every Team Lead can see) is not the Team Lead\'s row', async () => {
+    // 1. the outside agent owns the lead and shares it with the Team Lead: the Team Lead can open the person
+    const shared = await outsiderLead();
+    expect((await call(outsider, 'POST', `/contacts/${shared}/collaborators`, { userId: w.teamLead!.userId, role: 'co_agent' })).status).toBe(200);
+    expect((await call(w.teamLead!, 'GET', `/contacts/${shared}`)).status).toBe(200);
+    // 2. a pond lead (visible to every Team Lead) with a promise the outside agent made, three hours past due
+    const pond = await pondLead();
+    const promise = await promiseTask(h, w.tenantId, pond, outsider.userId!, { dueInMs: -3 * 3600_000 });
+    expect((await call(w.teamLead!, 'GET', `/contacts/${pond}`)).status).toBe(200);
+
+    const idsIn = (q: QueueT, key: string) => groupOf(q, key).rows.map((r) => r.contact.id);
+    const keysOf = (q: QueueT) => q.groups.flatMap((g) => g.rows.map((r) => r.key));
+    // the Owner sees all of it
+    const all = await queue(w.owner);
+    expect(idsIn(all, 'new_lead')).toEqual(expect.arrayContaining([shared, pond]));
+    expect(keysOf(all)).toContain(`task:${promise.taskId}`);
+    // the Team Lead: not the outside agent's lead (although they collaborate on it), and not the outside agent's promise
+    const tl = await queue(w.teamLead!);
+    expect(idsIn(tl, 'new_lead')).not.toContain(shared);
+    expect(tl.groups.flatMap((g) => g.rows.map((r) => r.contact.id))).not.toContain(shared);
+    expect(keysOf(tl)).not.toContain(`task:${promise.taskId}`);
+    // the pond lead itself is a row of theirs (R-TEAMQ-6: pond leads), so the promise was not dropped for want of the person
+    expect(idsIn(tl, 'new_lead')).toContain(pond);
+  });
+
   it('R-TEAMQ-6 R-TEN-3: another tenant’s rows never appear', async () => {
     const other = await leadsWorld(h, { agents: 1 });
     const theirs = (await intake(h, other)).contactId;
