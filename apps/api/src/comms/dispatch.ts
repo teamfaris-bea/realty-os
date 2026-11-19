@@ -577,11 +577,6 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
   const view = decisionView(decision, 'send');
   const out = await providerSend(plan, deps, tenantId);
   return asSystem(deps, tenantId, 'provider', async (tx, now) => {
-    // Global lock order (ARCHITECTURE §10; review D8-R5): a provider "recipient opted out" answer records a consent
-    // revoke for the recipient's address below (recordProviderOptOut), so that address is locked BEFORE the contact,
-    // the order inbound ingestion takes them: TX2 never holds the contact while it waits for an address an inbound
-    // (the person's own STOP) holds. recordConsentEvent's own address lock is then a no-op.
-    if (!out.ok && out.kind !== 'timeout' && out.code !== null && PROVIDER_OPT_OUT_CODES.has(out.code)) await lockAddresses(tx, [await recipientHmac(tx, deps, tenantId, m)]);
     await lockContact(tx, m.contactId as ContactId);
     if (out.ok) {
       // R-GMAIL-12: only the Message-ID the provider confirmed is hashed (TX2 runs as the system)
@@ -614,14 +609,10 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
   });
 }
 
-/** The HMAC (hex) of the address a message goes to: the key of its consent ledger and of its address lock. */
-async function recipientHmac(tx: Tx, deps: CommsDeps, tenantId: string, m: Pick<msgs.MessageRow, 'toAddress'>): Promise<string> {
-  return Buffer.from(await deps.envelope.inTx(tx, tenantId as TenantId).hmacAddress(tenantId as TenantId, m.toAddress)).toString('hex');
-}
-
 /** R-CONSENT-12: a provider "recipient opted out" error is a provider_report revoke; never retried. */
 async function recordProviderOptOut(tx: Tx, deps: CommsDeps, tenantId: string, m: msgs.MessageRow, now: Instant): Promise<void> {
-  const hmac = await recipientHmac(tx, deps, tenantId, m);
+  const env = deps.envelope.inTx(tx, tenantId as TenantId);
+  const hmac = Buffer.from(await env.hmacAddress(tenantId as TenantId, m.toAddress)).toString('hex');
   const channel: Channel = m.channel === 'email' ? 'email' : 'sms';
   await recordConsentEvent(tx, {
     id: deps.ids.next<'ConsentEventId'>(),
