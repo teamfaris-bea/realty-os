@@ -14,7 +14,7 @@ import { type Details, detailsKey } from './api.js';
 import { ToastProvider } from './hooks.js';
 import { StageStep, type StageStepProps, morningIn, suggestionFromSignal } from './StageStep.js';
 import type { StagePreview, StageResponse, SuggestedStage } from './stageFlow.js';
-import { detailsFixture, guideFixture, stageFixture } from './testing.js';
+import { detailsFixture, fakeTaskStore, guideFixture, stageFixture } from './testing.js';
 
 const C = '01900000-0000-7000-8000-0000000c0001';
 const EV = '01900000-0000-7000-8000-0000000e0002';
@@ -24,7 +24,7 @@ const VOICEMAIL: SuggestedStage = { stage: 'attempting', why: 'You left a voicem
 const TALKED: SuggestedStage = { stage: 'connected', why: 'You talked with them. That is a two-way conversation.', locked: false, alsoOffer: [{ stage: 'nurture', locked: false }] };
 const LOCKED = ['connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'];
 
-function mount(o: { details?: Details; cached?: Details; props?: Partial<StageStepProps>; previews?: Record<string, StagePreview>; extra?: (f: FakeFetch) => void } = {}) {
+function mount(o: { details?: Details; cached?: Details; props?: Partial<StageStepProps>; previews?: Record<string, StagePreview>; extra?: (f: FakeFetch) => void; loseTaskAnswer?: (n: number) => boolean } = {}) {
   const details = o.details ?? detailsFixture(C, 'new');
   const fake = new FakeFetch().on('GET /auth/session', { status: 200, body: sessionFixture() }).on(`GET /contacts/${C}/details`, { status: 200, body: { details } });
   for (const s of guideFixture()) fake.on(`GET /contacts/${C}/stage/preview?to=${s.key}`, { status: 200, body: o.previews?.[s.key] ?? preview({ sameStage: s.key === details.stage.stage }) });
@@ -32,8 +32,9 @@ function mount(o: { details?: Details; cached?: Details; props?: Partial<StageSt
     .on(`POST /contacts/${C}/stage`, (call) => {
       const to = (call.body as { stage: string }).stage;
       return { status: 200, body: { stage: stageFixture(to), previousStage: details.stage.stage, rowVersion: 2, eventId: EV, automation: null, stillRunning: null } satisfies StageResponse };
-    })
-    .on('POST /tasks', (call, n) => ({ status: n === 1 ? 201 : 200, body: { task: { id: (call.body as { id: string }).id }, replayed: n > 1 } }));
+    });
+  // POST /tasks and PATCH /tasks/:id as the API answers them: the first body is stored, a replay answers it
+  fakeTaskStore(fake, { lose: (n) => o.loseTaskAnswer?.(n) ?? false });
   o.extra?.(fake);
   const onClose = vi.fn();
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -190,7 +191,7 @@ describe('the stage step after an outcome', () => {
     expect(within(chips).getByRole('button', { name: 'None' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(s).getByTestId('follow-up-line')).toHaveTextContent('No follow-up task.');
     await u.click(within(chips).getByRole('button', { name: 'Tomorrow' }));
-    expect(within(s).getByTestId('follow-up-line')).toHaveTextContent(/^A task for you: “Follow up with Dana”, due .+9:00 AM\.$/);
+    expect(within(s).getByTestId('follow-up-line')).toHaveTextContent(/^Will add a task for you: “Follow up with Dana”, due .+9:00 AM\.$/);
     const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach + follow-up' });
     await waitFor(() => expect(confirm).toBeEnabled());
     await u.click(confirm);
@@ -199,7 +200,7 @@ describe('the stage step after an outcome', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.body).toEqual({ id: expect.stringMatching(UUID), title: 'Follow up with Dana', kind: 'follow_up', contactId: C, dueAt: morningIn(1).toISOString() });
     expect(stagePosts(fake)).toHaveLength(1);
-    expect(await within(screen.getByTestId('people-toast')).findByText(/^Stage: Trying to reach\. Follow-up added for .+9:00 AM$/)).toBeInTheDocument();
+    expect(await within(screen.getByTestId('people-toast')).findByText(/^Stage: Trying to reach\. Follow-up saved for .+9:00 AM$/)).toBeInTheDocument();
   });
 
   it('a double tap on the button sends one stage change and one task (R-STG-6)', async () => {
@@ -220,8 +221,8 @@ describe('the stage step after an outcome', () => {
   });
 
   it('a retry after a failed save sends the SAME task id, so the server answers the same task', async () => {
-    let fail = true;
-    const { fake, onClose, u } = mount({ extra: (f) => f.on('POST /tasks', (call) => (fail ? 'network-error' : { status: 200, body: { task: { id: (call.body as { id: string }).id }, replayed: true } })) });
+    // the first POST is stored, and its answer is lost
+    const { fake, onClose, u } = mount({ loseTaskAnswer: (n) => n === 1 });
     const s = await sheet();
     await stages();
     await u.click(within(s).getByRole('button', { name: '1 week' }));
@@ -232,7 +233,6 @@ describe('the stage step after an outcome', () => {
     // nothing was claimed, the sheet is still open, and the stage was not changed ahead of the follow-up
     expect(onClose).not.toHaveBeenCalled();
     expect(stagePosts(fake)).toHaveLength(0);
-    fail = false;
     await u.click(confirm);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     const ids = fake.callsTo('POST /tasks').map((c) => (c.body as { id: string }).id);
@@ -252,7 +252,7 @@ describe('the stage step after an outcome', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(fake.callsTo('POST /tasks')).toHaveLength(1);
     expect(stagePosts(fake)).toHaveLength(0);
-    expect(await within(screen.getByTestId('people-toast')).findByText(/^Follow-up added for /)).toBeInTheDocument();
+    expect(await within(screen.getByTestId('people-toast')).findByText(/^Follow-up saved for /)).toBeInTheDocument();
   });
 
   it('a refused stage change keeps the sheet open with the server\'s reason and claims nothing', async () => {

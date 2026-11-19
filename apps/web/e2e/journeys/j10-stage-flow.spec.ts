@@ -336,11 +336,11 @@ test('J10.7: a double tap on Save and on the confirm button, then a refresh: one
   await expect(s.getByRole('status')).toHaveText('Call logged (left voicemail)', { timeout: 15_000 });
   await expect(s.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
   await tap(page, s.getByRole('group', { name: 'Follow-up' }).getByRole('button', { name: 'Tomorrow' }));
-  await expect(s.getByTestId('follow-up-line')).toHaveText(new RegExp(`^A task for you: “Follow up with ${ivy.first}”, due .+9:00 AM\\.$`));
+  await expect(s.getByTestId('follow-up-line')).toHaveText(new RegExp(`^Will add a task for you: “Follow up with ${ivy.first}”, due .+9:00 AM\\.$`));
   const confirm = s.getByRole('button', { name: 'Change to Trying to reach + follow-up' });
   await expect(confirm).toBeEnabled({ timeout: 15_000 });
   await twice(confirm);
-  await expect(peopleToast(page).getByText(/^Stage: Trying to reach\. Follow-up added for /)).toBeVisible({ timeout: 15_000 });
+  await expect(peopleToast(page).getByText(/^Stage: Trying to reach\. Follow-up saved for /)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // a refresh shows what the server stored

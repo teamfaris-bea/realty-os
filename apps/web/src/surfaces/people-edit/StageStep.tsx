@@ -21,10 +21,10 @@ import { type StageSignal, suggestStageFromOutcome } from '@realty/core/parity/p
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
-import { formatDateTime } from '../feed/lib/format.js';
 import { useApi } from '../../shell/index.js';
 import { type Details, type StageGuideRow, detailsKey, firstNameOf, guideOf, labelIn } from './api.js';
-import { Chip, peopleMessage, selectClass, usePersonAction, useToast } from './hooks.js';
+import { FollowUpChips, followUpSavedText, morningIn, useFollowUp } from './FollowUp.js';
+import { peopleMessage, useToast } from './hooks.js';
 import { StageRow } from './StageChoices.js';
 import { PREVIEW_FAILED, PREVIEW_LOADING, StagePreviewBlock } from './StagePreview.js';
 import { type SuggestedStage, effectLabel, effectLine, useStagePreview } from './stageFlow.js';
@@ -47,26 +47,7 @@ export interface StageStepProps {
   onClose(): void;
 }
 
-const FOLLOW_UPS = [
-  { key: 'none', label: 'None', days: 0 },
-  { key: 'tomorrow', label: 'Tomorrow', days: 1 },
-  { key: '3d', label: '3 days', days: 3 },
-  { key: '1w', label: '1 week', days: 7 },
-  { key: 'pick', label: 'Pick a date', days: 0 },
-] as const;
-type FollowUpKey = (typeof FOLLOW_UPS)[number]['key'];
-
-/** 9:00 in the morning, local time, `days` from today. */
-export function morningIn(days: number, from: Date = new Date()): Date {
-  const d = new Date(from);
-  d.setDate(d.getDate() + days);
-  d.setHours(9, 0, 0, 0);
-  return d;
-}
-function localInput(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+export { morningIn };
 
 /** The suggestion for `signal` from the person's own details, by core's table; locked as the details say. */
 export function suggestionFromSignal(details: Pick<Details, 'stage'>, signal: StageSignal): SuggestedStage | null {
@@ -118,38 +99,29 @@ export function StageStep(props: StageStepProps) {
   const [pickedStage, setPickedStage] = useState<string | null>(null);
   const selected = pickedStage ?? (offer && !offerLocked ? offer.stage : current);
   const [all, setAll] = useState(false);
-  const [followUp, setFollowUp] = useState<FollowUpKey>('none');
-  const [picked, setPicked] = useState(() => localInput(morningIn(1)));
-  // R-STG-6: one id for this sheet's follow-up: a second tap, or a retry after a lost answer, is the same task
-  const taskId = useRef<string>(globalThis.crypto.randomUUID());
   const busy = useRef(false);
   const [working, setWorking] = useState(false);
   const stage = useStageChange(contactId, labelOf);
-  const task = usePersonAction<{ task: { id: string }; replayed: boolean }>(contactId);
   const toast = useToast();
-  const ids = { locked: useId(), follow: useId(), pick: useId(), effect: useId() };
+  const ids = { locked: useId(), effect: useId() };
   const first = firstNameOf(contactName);
+  // M1: what the screen says about the follow-up is the task the server answered (FollowUp.tsx)
+  const follow = useFollowUp(contactId, first);
 
   const preview = useStagePreview(contactId, canEdit ? selected : null);
   // never a control the server would refuse: the change waits for its preview, and a refused one cannot be sent
   const refused = selected !== current && preview.data !== undefined && !preview.data.allowed;
   const waiting = selected !== current && preview.isPending;
 
-  const due = followUp === 'none' ? null : followUp === 'pick' ? new Date(picked) : morningIn(FOLLOW_UPS.find((f) => f.key === followUp)!.days);
-  const dueOk = due === null || Number.isFinite(due.getTime());
-
   const confirm = async () => {
     if (busy.current) return;
     busy.current = true;
     setWorking(true);
     try {
-      let also: string | undefined;
-      // the follow-up first: the toast of the stage change may then say it, truthfully
-      if (due) {
-        const t = await task.run('POST', '/tasks', { id: taskId.current, title: `Follow up with ${first}`, kind: 'follow_up', contactId, dueAt: due.toISOString() });
-        if (!t.ok) return;
-        also = `Follow-up added for ${formatDateTime(due.toISOString())}`;
-      }
+      // the follow-up first: the toast of the stage change may then say it, in the words of the task the server stored
+      const f = await follow.save();
+      if (!f.ok) return;
+      const also = f.task ? followUpSavedText(f.task) : undefined;
       if (selected !== current) {
         const r = await stage.change(selected, also ? { also } : {});
         if (!r.ok) return;
@@ -187,7 +159,7 @@ export function StageStep(props: StageStepProps) {
   );
   const also = (offer?.alsoOffer ?? []).filter((a) => a.stage !== current && a.stage !== offer?.stage);
   const anyLocked = all ? lockedSet.size > 0 : offerLocked || also.some((a) => a.locked || lockedSet.has(a.stage));
-  const primary = `${effectLabel(selected, current, labelOf)}${due ? ' + follow-up' : ''}`;
+  const primary = `${effectLabel(selected, current, labelOf)}${follow.willAdd ? ' + follow-up' : ''}`;
 
   return (
     <Dialog
@@ -199,7 +171,7 @@ export function StageStep(props: StageStepProps) {
           <p id={ids.effect} data-testid="stage-step-effect" className="text-[14px] leading-snug text-ink [overflow-wrap:anywhere]">
             {refused ? 'Locked for now: reach them first.' : preview.data ? effectLine(preview.data) : preview.isError ? PREVIEW_FAILED : PREVIEW_LOADING}
           </p>
-          <Button block className="py-2" pending={working} disabled={refused || waiting || !dueOk} aria-describedby={ids.effect} onClick={() => void confirm()} data-testid="stage-step-confirm">
+          <Button block className="py-2" pending={working} disabled={refused || waiting || !follow.dueOk} aria-describedby={ids.effect} onClick={() => void confirm()} data-testid="stage-step-confirm">
             {primary}
           </Button>
           <Button block variant="quiet" onClick={onClose}>
@@ -239,30 +211,7 @@ export function StageStep(props: StageStepProps) {
           </Button>
         )}
         {refused ? <Notice tone="warn">This stage is locked for now: reach {first} first (a call, text, email or reply in their website chat).</Notice> : null}
-        <div className="flex flex-col gap-2">
-          <p id={ids.follow} className="text-[15px] font-medium text-ink">
-            Follow-up
-          </p>
-          <div role="group" aria-labelledby={ids.follow} className="flex flex-wrap gap-2">
-            {FOLLOW_UPS.map((f) => (
-              <Chip key={f.key} selected={followUp === f.key} disabled={working} onClick={() => setFollowUp(f.key)}>
-                {f.label}
-              </Chip>
-            ))}
-          </div>
-          {followUp === 'pick' ? (
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor={ids.pick} className="text-[15px] font-medium text-ink">
-                Follow up on
-              </label>
-              <input id={ids.pick} type="datetime-local" value={picked} onChange={(e) => setPicked(e.target.value)} className={selectClass} aria-invalid={!dueOk || undefined} />
-            </div>
-          ) : null}
-          <p className="text-[14px] text-ink-muted" data-testid="follow-up-line">
-            {due && dueOk ? `A task for you: “Follow up with ${first}”, due ${formatDateTime(due.toISOString())}.` : followUp === 'pick' ? 'Pick a date and time.' : 'No follow-up task.'}
-          </p>
-        </div>
-        {task.error ? <Notice tone="error">{task.error}</Notice> : null}
+        <FollowUpChips f={follow} disabled={working} />
         {stage.error ? <Notice tone="error">{stage.error}</Notice> : null}
       </div>
     </Dialog>

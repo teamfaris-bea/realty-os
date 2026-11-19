@@ -144,7 +144,7 @@ function OwnToast({ children }: { children: ReactNode }) {
 
 // ---- small controls ----------------------------------------------------------------------------------
 
-export function Chip({ selected, onClick, children, disabled, describedBy }: { selected: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; describedBy?: string }) {
+export function Chip({ selected, onClick, children, disabled, describedBy, compact = false }: { selected: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; describedBy?: string; /** a row of five on a phone: narrower sides, the same 44 px height */ compact?: boolean }) {
   return (
     <button
       type="button"
@@ -152,7 +152,7 @@ export function Chip({ selected, onClick, children, disabled, describedBy }: { s
       disabled={disabled}
       aria-describedby={describedBy}
       onClick={onClick}
-      className={`min-h-tap rounded-full border px-4 text-[15px] font-medium ${selected ? 'border-accent bg-accent text-accent-ink' : 'border-line bg-surface text-ink'} disabled:opacity-50`}
+      className={`min-h-tap rounded-full border ${compact ? 'px-3' : 'px-4'} text-[15px] font-medium ${selected ? 'border-accent bg-accent text-accent-ink' : 'border-line bg-surface text-ink'} disabled:opacity-50`}
     >
       {children}
     </button>
