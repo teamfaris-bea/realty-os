@@ -87,6 +87,14 @@ describe('R-TEAMQ-15 backupAlertText: who, from where, how long, who it is with'
     expect(long.title.endsWith('who is also the backup for this source.')).toBe(true);
   });
 
+  it('R-TEAMQ-27 E892 (review fix L6): a text that was tried and failed is said in the alert: the body never claims nobody tried', () => {
+    const t = backupAlertText({ ...base, holder: { kind: 'owner', name: 'Jordan Park' }, failedAttempt: 'text' });
+    expect(t.title).toBe('New lead waiting 3 min: Dana R. from Website form. With Jordan P. You are the backup.');
+    expect(t.body).toBe('A text was tried, but it failed. Nobody else has called, texted or emailed. You can open this lead and call or text for the next 24 hours.');
+    expect(backupAlertText({ ...base, holder: { kind: 'unassigned' }, failedAttempt: 'email' }).body).toMatch(/^An email was tried, but it failed\. Nobody else has called, texted or emailed\./);
+    expect(t.body.length).toBeLessThanOrEqual(240);
+  });
+
   it('R-TEAMQ-15 E850: the title always fits 120 characters and the body 240: a long source name, then a long holder name, is cut with an ellipsis, never the meaning', () => {
     const t = backupAlertText({ ...base, person: 'Maximiliana Q.', sourceName: 'The Riverside Collection open house weekend registration form (autumn)', holder: { kind: 'on_offer', name: 'Bartholomew Featherstonehaugh' } });
     expect(t.title.length).toBeLessThanOrEqual(120);

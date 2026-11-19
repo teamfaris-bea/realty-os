@@ -116,6 +116,19 @@ describe('Lead response report', () => {
     expect(within(web).getByText('4 not within 5 minutes. 2 more are not listed.')).toBeInTheDocument();
   });
 
+  it('R-TEAMQ-27 E893 (review fix L6): a first attempt whose text failed is still shown as the attempt, and says "Tried, but the text failed"; the source counts failed attempts of its attempts', async () => {
+    const failed = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000eb', attempt: { at: '2026-11-09T18:09:00.000Z', kind: 'text', by: { userId: ID.ben, name: 'Ben Agent' }, role: 'owner', failed: true, wallSeconds: 540, staffedSeconds: 540 }, waiting: null, automatedReplyAt: null });
+    const r = report();
+    r.sources[0] = { ...r.sources[0]!, failedAttempts: 1, notWithin5: [failed], notWithin5More: 0 };
+    leadAdminApp(fake(r), '/team/scoreboard', 'team_lead');
+    const region = await section();
+    const web = (await within(region).findByRole('heading', { level: 3, name: 'Website form' })).closest('li')!;
+    const rowEl = within(within(web).getByRole('list', { name: 'Not within 5 minutes, Website form' })).getAllByRole('listitem')[0]!;
+    expect(rowEl).toHaveTextContent(/First tried after 9 min: a text by Ben Agent, the lead’s owner\. Tried, but the text failed: it did not reach them\./);
+    expect(within(web).getByText('Tried, but the text or email failed')).toBeInTheDocument();
+    expect(within(web).getByText(`1 of the ${r.sources[0]!.attempted} with an attempt`)).toBeInTheDocument();
+  });
+
   it('R-TEAMQ-22 E883: an inquiry whose own call a person answered is its own state: never "no person has tried", never an attempt; the source counts it apart with its denominator', async () => {
     const answered = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000e8', state: 'answered_call', waiting: null, automatedReplyAt: null, answeredCall: { at: '2026-11-09T18:02:00.000Z', by: { userId: ID.ben, name: 'Ben Agent' }, wallSeconds: 120, staffedSeconds: 120 } });
     const r = report();

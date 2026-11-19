@@ -97,6 +97,20 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
     expect(buildTeamQueue(inputs()).groups.filter((x) => x.key !== 'new_lead').map((x) => x.answeredCalls)).toEqual([null, null, null, null]);
   });
 
+  it('R-TEAMQ-27 E892 (review fix L6): a text a person sent that the carrier reported as FAILED does not clear the row: it says who tried, when, and that it failed, never "nobody has called, texted or emailed yet" and never nothing', () => {
+    const failed = inq({ arrivedAt: t(-min(12)), holder: { kind: 'owner', userId: user(2), name: 'Jordan P.' }, failedAttempt: { at: t(-min(9)), kind: 'text', name: 'Jordan Park' } });
+    expect(whys(inputs({ inquiries: [failed] }), 'new_lead')).toEqual([
+      'Arrived 12 min ago from Website form. Owned by Jordan P. Jordan P. tried at 9:51 AM, but the text failed. Nobody else has called, texted or emailed. No automatic reply has gone out.',
+    ]);
+    expect(whys(inputs({ inquiries: [{ ...failed, failedAttempt: { at: t(-min(9)), kind: 'email', name: null } }] }), 'new_lead')[0]).toMatch(/A member tried at 9:51 AM, but the email failed\. Nobody else has called, texted or emailed\./);
+    const g = group(inputs({ inquiries: [failed, inq({ inquiryId: inquiry(2), contactId: contact(2) })] }), 'new_lead');
+    expect(g.rows.map((r) => r.failedAttemptAt)).toEqual([t(-min(9)), null]);
+    expect([g.failedAttempts, g.total]).toEqual([1, 2]);
+    // with an answered call as well: both true things are said
+    expect(whys(inputs({ inquiries: [{ ...failed, answeredCallAt: t(-min(10)) }] }), 'new_lead')[0]).toMatch(/A person answered their call at 9:50 AM\. Nobody has called back, texted or emailed since\. Jordan P\. tried at 9:51 AM, but the text failed\.$/);
+    expect(buildTeamQueue(inputs()).groups.filter((x) => x.key !== 'new_lead').map((x) => x.failedAttempts)).toEqual([null, null, null, null]);
+  });
+
   const holders: [string, QueueHolder, string, string][] = [
     ['owned', AVA, 'Owned by Ava Agent.', 'Ava Agent'],
     ['on offer', OFFER, 'On offer to Jordan P.', 'No owner yet: on offer to Jordan P.'],

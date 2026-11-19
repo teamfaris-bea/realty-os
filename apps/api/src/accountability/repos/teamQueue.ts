@@ -73,6 +73,12 @@ export const ARRIVAL: RawBuilder<Date> = sql<Date>`i.created_at`;
 /** The scoreboard's human text, email or chat reply, for a messages row aliased `m` (0053). */
 export const HUMAN_MESSAGE: RawBuilder<unknown> = sql`(m.direction = 'outbound' AND m.initiator = 'human' AND NOT m.imported
         AND m.dispatched_at IS NOT NULL AND m.bulk_action_id IS NULL AND m.marketing_piece_id IS NULL)`;
+/**
+ * R-TEAMQ-27 (review fix L6): the provider has reported this send as not having reached the person, for a messages
+ * row aliased `m`. A human message in this state is still the scoreboard's touch (the report keeps that definition
+ * and says "failed"); it does NOT take a lead out of the queue and does NOT stop the backup alert.
+ */
+export const SEND_FAILED: RawBuilder<unknown> = sql`(m.status IN ('failed', 'undelivered', 'bounced'))`;
 /** The scoreboard's human call, for a calls row aliased `k` (0053). */
 export const HUMAN_CALL: RawBuilder<unknown> = sql`(k.direction = 'outbound' AND k.initiator = 'human' AND NOT k.imported)`;
 /**
@@ -139,6 +145,10 @@ export interface WaitingInquiryRow extends HolderColumns {
   automated_at: Date | null;
   /** R-TEAMQ-22: when a person answered the lead's own call since the arrival (or the call that is this inquiry); null: none */
   answered_call_at: Date | null;
+  /** R-TEAMQ-27: the latest human send since the arrival that the provider reported as failed: when, on which channel, by whom (null: none) */
+  failed_at: Date | null;
+  failed_channel: string | null;
+  failed_by_name: string | null;
   /** b19 R-TEAMQ-18: this inquiry's backup decision when it alerted someone or found nobody to alert (else null) */
   backup_alert_at: Date | null;
   backup_alert_outcome: 'alerted' | 'no_recipient' | null;
@@ -161,6 +171,7 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
              WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
            (SELECT min(k.answered_at) FROM calls k
              WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${ANSWERED_CALL} AND ${ANSWERED_FOR_INQUIRY}) AS answered_call_at,
+           fa.dispatched_at AS failed_at, fa.channel AS failed_channel, fau.display_name AS failed_by_name,
            ba.decided_at AS backup_alert_at, ba.outcome AS backup_alert_outcome, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
            ba.fallback_reason AS backup_alert_reason, ba.alerted_count AS backup_alert_count
       FROM lead_sources s
@@ -176,8 +187,15 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
       -- b19 R-TEAMQ-18: the inquiry's backup alert (lead_backup_alerts_inquiry_once; read through its own policy)
       LEFT JOIN lead_backup_alerts ba ON ba.tenant_id = s.tenant_id AND ba.inquiry_id = i.id AND ba.outcome IN ('alerted', 'no_recipient')
       LEFT JOIN users bau ON bau.id = ba.alerted_user_id
+      -- R-TEAMQ-27: the latest send a person made since the arrival that the provider reported as failed
+      LEFT JOIN LATERAL (
+        SELECT m.dispatched_at, m.channel, m.initiated_by_user_id FROM messages m
+         WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND ${SEND_FAILED} AND m.dispatched_at >= i.arrived_at
+         ORDER BY m.dispatched_at DESC LIMIT 1) fa ON true
+      LEFT JOIN users fau ON fau.id = fa.initiated_by_user_id
      WHERE s.tenant_id = app.tenant_id() AND c.deleted_at IS NULL AND c.ownership_state <> 'closed' AND ${TEAM_SCOPE}
-       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.arrived_at)
+       -- no human attempt that could have reached them: a send the provider reported as failed does not clear the row (R-TEAMQ-27)
+       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${HUMAN_MESSAGE} AND NOT ${SEND_FAILED} AND m.dispatched_at >= i.arrived_at)
        AND NOT EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = s.tenant_id AND k.contact_id = i.contact_id AND ${HUMAN_CALL} AND k.started_at >= i.arrived_at)
      ORDER BY i.arrived_at ASC, i.id ASC
      LIMIT ${cap + 1}`.execute(tx);

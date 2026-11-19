@@ -50,6 +50,11 @@ export interface BackupAlertFacts {
   recipient: AlertRecipient;
   /** why it is not the backup who hears it (absent for `backup`; default `backup_unavailable`) */
   why?: AlertFallbackReason;
+  /**
+   * R-TEAMQ-27 (review fix L6): a person's text, email or chat reply since the arrival that the provider reported as
+   * failed. It reached nobody, so the alert still fires, and the body says it was tried.
+   */
+  failedAttempt?: 'text' | 'email' | 'chat';
 }
 
 /** lead_backup_alerts.recipient */
@@ -152,6 +157,12 @@ export function backupAlertText(f: BackupAlertFacts): { title: string; body: str
         : isHolder
           ? 'You are alerted as an Owner or Admin, because the backup named on this source is the person who has the lead, and they have no team lead.'
           : 'You are alerted as an Owner or Admin, because the backup named on its source cannot be reached and whoever has this lead has no team lead.';
-  const body = `${offHours}Nobody has called, texted or emailed. ${what}`;
-  return { title, body: body.length <= ALERT_BODY_MAX ? body : `Nobody has called, texted or emailed. ${what}` };
+  const nobody =
+    f.failedAttempt === undefined
+      ? 'Nobody has called, texted or emailed.'
+      : `${f.failedAttempt === 'email' ? 'An email' : f.failedAttempt === 'chat' ? 'A chat reply' : 'A text'} was tried, but it failed. Nobody else has called, texted or emailed.`;
+  const body = `${offHours}${nobody} ${what}`;
+  if (body.length <= ALERT_BODY_MAX) return { title, body };
+  const short = `${nobody} ${what}`;
+  return { title, body: short.length <= ALERT_BODY_MAX ? short : `Nobody else has called, texted or emailed. ${what}` };
 }

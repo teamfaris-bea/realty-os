@@ -87,6 +87,14 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
     expect(r.sources[0]!.notWithin5.map((m) => [m.inquiryId, m.state])).toEqual([[inquiry(903), 'waiting'], [inquiry(902), 'answered_call'], [inquiry(904), 'attempted']]);
   });
 
+  it('R-TEAMQ-27 E893 (review fix L6): a failed send is still the attempt (the scoreboard\'s definition), and is marked as failed; the roll-up says how many attempts failed', () => {
+    const failed = tried(120, {}, { kind: 'text', failed: true });
+    const m = measureInquiry(failed, NOW, CAL);
+    expect([m.state, m.within5, m.attempt?.failed]).toEqual(['attempted', true, true]);
+    expect(measureInquiry(tried(120), NOW, CAL).attempt?.failed ?? false).toBe(false);
+    expect(rollUpResponses([failed, tried(100), inq()], NOW, CAL).totals).toMatchObject({ inquiries: 3, attempted: 2, failedAttempts: 1, waiting: 1 });
+  });
+
   it('R-TEAMQ-7 E829: an off-hours arrival is counted from opening and marked: a call three minutes after opening is within 5 minutes', () => {
     const night = at('2026-11-10T07:00:00Z'); // 02:00 New York; opens 08:00 (13:00Z)
     const m = measureInquiry(inq({ arrivedAt: night, firstAttempt: { at: at('2026-11-10T13:03:00Z'), kind: 'text', byUserId: user(1), role: 'owner' } }), NOW, CAL);

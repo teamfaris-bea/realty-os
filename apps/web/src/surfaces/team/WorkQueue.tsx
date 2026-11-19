@@ -16,7 +16,7 @@ import { Link } from 'react-router-dom';
 import { Icon, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
-import { type TeamQueueGroup, type TeamQueueGroupKey, type TeamQueueResponse, queueAnsweredLine, queueBackupLine, queueCount, queueFootnote, queueMoreLine, queueWait } from './lib.js';
+import { type TeamQueueGroup, type TeamQueueGroupKey, type TeamQueueResponse, queueAnsweredLine, queueBackupLine, queueCount, queueFailedLine, queueFootnote, queueMoreLine, queueWait } from './lib.js';
 
 export const WORK_QUEUE_KEY = ['team', 'queue'] as const;
 const REFRESH_MS = 30_000;
@@ -71,6 +71,7 @@ function QueueGroup({ group: g, open, onToggle }: { group: TeamQueueGroup; open:
   const more = queueMoreLine(g);
   const backups = queueBackupLine(g);
   const answered = queueAnsweredLine(g);
+  const failed = queueFailedLine(g);
   if (g.total === 0) {
     // nothing to open: the label, a zero, and the group's own honest sentence
     return (
@@ -103,6 +104,8 @@ function QueueGroup({ group: g, open, onToggle }: { group: TeamQueueGroup; open:
           {backups ? <p className="pt-2 text-[14px] text-ink-muted">{backups}</p> : null}
           {/* R-TEAMQ-22: how many of the rows are leads whose own call a person answered (never an attempt) */}
           {answered ? <p className="pt-2 text-[14px] text-ink-muted">{answered}</p> : null}
+          {/* R-TEAMQ-27: how many of the rows had a text or email from a person that the provider reported as failed */}
+          {failed ? <p className="pt-2 text-[14px] text-ink-muted">{failed}</p> : null}
           <ul className="flex flex-col divide-y divide-line">
             {g.rows.map((r) => (
               <li key={r.key} className="flex flex-col gap-0.5 py-2">

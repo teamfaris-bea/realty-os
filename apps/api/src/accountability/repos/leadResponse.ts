@@ -21,7 +21,7 @@ import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { iso } from '../common.js';
-import { ANSWERED_CALL, ANSWERED_FOR_INQUIRY, ARRIVAL, AUTOMATED_MESSAGE, HOLDER_COLUMNS, HOLDER_JOINS, HUMAN_CALL, HUMAN_MESSAGE, type HolderColumns, TEAM_SCOPE } from './teamQueue.js';
+import { ANSWERED_CALL, ANSWERED_FOR_INQUIRY, ARRIVAL, AUTOMATED_MESSAGE, HOLDER_COLUMNS, HOLDER_JOINS, HUMAN_CALL, HUMAN_MESSAGE, type HolderColumns, SEND_FAILED, TEAM_SCOPE } from './teamQueue.js';
 
 /** Inquiries one report reads at most (the newest); a period that holds more says so (`truncated`). */
 export const RESPONSE_READ_CAP = 5000;
@@ -38,6 +38,8 @@ export interface InquiryResponseRow extends HolderColumns {
   attempt_channel: string | null;
   attempt_by: string | null;
   attempt_by_name: string | null;
+  /** R-TEAMQ-27: the provider reported that first attempt (a send) as failed, undelivered or bounced */
+  attempt_failed: boolean | null;
   /** the lead's owner when the attempt was made (null: nobody owned it then, or the ledger is not the caller's to read) */
   owner_then: string | null;
   collaborator_then: boolean;
@@ -72,7 +74,7 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
            ORDER BY ${ARRIVAL} DESC LIMIT ${cap + 1}) i
        WHERE s.tenant_id = app.tenant_id())
     SELECT i.id, i.contact_id, i.arrived_at, i.source_id, i.source_name, ${HOLDER_COLUMNS},
-           h.at AS attempt_at, h.kind AS attempt_kind, h.channel AS attempt_channel, h.by_user AS attempt_by, hu.display_name AS attempt_by_name,
+           h.at AS attempt_at, h.kind AS attempt_kind, h.channel AS attempt_channel, h.by_user AS attempt_by, hu.display_name AS attempt_by_name, h.failed AS attempt_failed,
            (SELECT e.owner_user_id FROM lead_ownership_events e
              WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.occurred_at <= h.at
              ORDER BY e.seq DESC LIMIT 1) AS owner_then,
@@ -89,12 +91,12 @@ export async function inquiryResponses(tx: Tx, from: Instant, to: Instant, cap: 
       JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = i.contact_id
       ${HOLDER_JOINS}
       LEFT JOIN LATERAL (
-        SELECT x.at, x.kind, x.channel, x.by_user FROM (
-          (SELECT m.dispatched_at AS at, 'message' AS kind, m.channel, m.initiated_by_user_id AS by_user FROM messages m
+        SELECT x.at, x.kind, x.channel, x.by_user, x.failed FROM (
+          (SELECT m.dispatched_at AS at, 'message' AS kind, m.channel, m.initiated_by_user_id AS by_user, ${SEND_FAILED} AS failed FROM messages m
             WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND ${HUMAN_MESSAGE} AND m.dispatched_at >= i.arrived_at
             ORDER BY m.dispatched_at ASC LIMIT 1)
           UNION ALL
-          (SELECT k.started_at, 'call', 'voice', k.agent_user_id FROM calls k
+          (SELECT k.started_at, 'call', 'voice', k.agent_user_id, false FROM calls k
             WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND ${HUMAN_CALL} AND k.started_at >= i.arrived_at
             ORDER BY k.started_at ASC LIMIT 1)) x
          ORDER BY x.at ASC LIMIT 1) h ON true

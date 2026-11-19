@@ -42,8 +42,12 @@ export interface ResponseInquiryFacts {
   sourceName: string | null;
   /** the arrival: the one arrival instant (arrival.ts, R-TEAMQ-19) */
   arrivedAt: Instant;
-  /** the first human attempt on the person at or after the arrival, by anyone; null: none yet */
-  firstAttempt: { at: Instant; kind: AttemptKind; byUserId: UserId | null; role: AttemptRole } | null;
+  /**
+   * the first human attempt on the person at or after the arrival, by anyone; null: none yet. `failed` (R-TEAMQ-27):
+   * the provider has reported that send as failed, undelivered or bounced. It is still the attempt (the scoreboard's
+   * definition, 0053), and is said as failed.
+   */
+  firstAttempt: { at: Instant; kind: AttemptKind; byUserId: UserId | null; role: AttemptRole; failed?: boolean } | null;
   /** the first automated message sent to the person after the arrival; never an attempt */
   automatedReplyAt: Instant | null;
   /**
@@ -84,6 +88,8 @@ export interface ResponseRollup {
   inquiries: number;
   /** with a human attempt */
   attempted: number;
+  /** R-TEAMQ-27: of `attempted`, those whose first attempt was a send the provider reported as failed */
+  failedAttempts: number;
   within5: number;
   within15: number;
   /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call (never counted as an attempt) */
@@ -156,6 +162,7 @@ function rollup(list: readonly MeasuredInquiry[]): ResponseRollup {
   return {
     inquiries: list.length,
     attempted: staffed.length,
+    failedAttempts: list.filter((m) => m.attempt?.failed === true).length,
     within5: list.filter((m) => m.within5).length,
     within15: list.filter((m) => m.within15).length,
     answeredCalls: list.filter((m) => m.state === 'answered_call').length,

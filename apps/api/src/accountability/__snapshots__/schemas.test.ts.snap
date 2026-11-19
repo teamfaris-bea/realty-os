@@ -594,6 +594,9 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                         },
                       ],
                     },
+                    "failed": {
+                      "type": "boolean",
+                    },
                     "kind": {
                       "enum": [
                         "call",
@@ -632,6 +635,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                     "kind",
                     "by",
                     "role",
+                    "failed",
                   ],
                   "type": "object",
                 },
@@ -911,6 +915,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
               "minimum": 0,
               "type": "integer",
             },
+            "failedAttempts": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
             "inquiries": {
               "maximum": 9007199254740991,
               "minimum": 0,
@@ -1031,6 +1040,9 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                               },
                             ],
                           },
+                          "failed": {
+                            "type": "boolean",
+                          },
                           "kind": {
                             "enum": [
                               "call",
@@ -1069,6 +1081,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                           "kind",
                           "by",
                           "role",
+                          "failed",
                         ],
                         "type": "object",
                       },
@@ -1293,6 +1306,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
           "required": [
             "inquiries",
             "attempted",
+            "failedAttempts",
             "within5",
             "within15",
             "answeredCalls",
@@ -1373,6 +1387,11 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "minimum": 0,
             "type": "integer",
           },
+          "failedAttempts": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
           "inquiries": {
             "maximum": 9007199254740991,
             "minimum": 0,
@@ -1431,6 +1450,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
         "required": [
           "inquiries",
           "attempted",
+          "failedAttempts",
           "within5",
           "within15",
           "answeredCalls",
@@ -2386,6 +2406,18 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "empty": {
               "type": "string",
             },
+            "failedAttempts": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "key": {
               "enum": [
                 "new_lead",
@@ -2487,6 +2519,12 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                       "name",
                     ],
                     "type": "object",
+                  },
+                  "failedAttemptAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
                   },
                   "key": {
                     "type": "string",
@@ -2593,6 +2631,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                   "offHours",
                   "backupAlert",
                   "answeredCallAt",
+                  "failedAttemptAt",
                 ],
                 "type": "object",
               },
@@ -2615,6 +2654,7 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
             "backupAlerted",
             "othersAlerted",
             "answeredCalls",
+            "failedAttempts",
           ],
           "type": "object",
         },

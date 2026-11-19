@@ -180,6 +180,12 @@ export interface QueueInquiryFacts {
    */
   answeredCallAt?: Instant | null;
   /**
+   * R-TEAMQ-27 (review fix L6): the latest text, email or chat reply a PERSON sent at or after the arrival that the
+   * provider has reported as failed (failed, undelivered, bounced). It did not reach the lead, so it does not take
+   * them out of the queue (`humanAttemptAt` is then the first attempt that was NOT reported failed). Absent or null: none.
+   */
+  failedAttempt?: { at: Instant; kind: 'text' | 'email' | 'chat'; name: string | null } | null;
+  /**
    * b19 R-TEAMQ-18: this inquiry's minute-three backup decision, when it alerted someone or found nobody to alert
    * (lead_backup_alerts): when, the alerted member's name, and whether they are the source's backup or the team lead
    * alerted in their place. Absent or null: no alert (not a covered source, not due yet, or not needed).
@@ -251,6 +257,8 @@ export interface TeamQueueRow {
   backupAlert: { at: Instant; alerted: boolean; recipient: AlertRecipient | null; line: string } | null;
   /** new_lead only (R-TEAMQ-22): when a person answered the lead's own call since the arrival (the why line says so); else null */
   answeredCallAt: Instant | null;
+  /** new_lead only (R-TEAMQ-27): when a person's text, email or chat reply to them was last reported failed (the why line says so); else null */
+  failedAttemptAt: Instant | null;
   subject: { kind: 'inquiry'; id: LeadInquiryId } | { kind: 'message' | 'call'; id: string } | { kind: 'task'; id: TaskId } | { kind: 'appointment'; id: AppointmentId };
 }
 
@@ -269,6 +277,8 @@ export interface TeamQueueGroup {
   othersAlerted: number | null;
   /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
   answeredCalls: number | null;
+  /** new_lead only (R-TEAMQ-27): of `total`, the rows where a person tried and the send was reported failed; null for the other groups */
+  failedAttempts: number | null;
 }
 
 export interface TeamQueue {
@@ -342,10 +352,16 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
     const answered = list.map((q) => q.answeredCallAt ?? null).filter((a): a is Instant => a !== null).sort((a, b) => a - b)[0] ?? null;
     const answeredWhen = answered === null ? '' : localDateOf(answered, i.calendar.zone) === localDateOf(now, i.calendar.zone) ? `at ${clockTime(answered, i.calendar)}` : ago(now, answered);
     // true words for both kinds of row; an answered row says its automatic reply only when one went out
+    // R-TEAMQ-27: the latest send a person made that the provider reported as failed
+    const failed = list.map((q) => q.failedAttempt ?? null).filter((f): f is NonNullable<QueueInquiryFacts['failedAttempt']> => f !== null).sort((a, b) => b.at - a.at)[0] ?? null;
+    const failedWhen = failed === null ? '' : localDateOf(failed.at, i.calendar.zone) === localDateOf(now, i.calendar.zone) ? `at ${clockTime(failed.at, i.calendar)}` : ago(now, failed.at);
+    const failedSentence = failed === null ? '' : `${capital(shortMemberName(failed.name))} tried ${failedWhen}, but the ${failed.kind === 'chat' ? 'chat reply' : failed.kind} failed.`;
     const tried =
-      answered === null
-        ? `Nobody has called, texted or emailed yet. ${automatedSentence(now, auto, i.calendar)}`
-        : `A person answered their call ${answeredWhen}. Nobody has called back, texted or emailed since.${auto === null ? '' : ` ${automatedSentence(now, auto, i.calendar)}`}`;
+      answered !== null
+        ? `A person answered their call ${answeredWhen}. Nobody has called back, texted or emailed since.${failed === null ? '' : ` ${failedSentence}`}${auto === null ? '' : ` ${automatedSentence(now, auto, i.calendar)}`}`
+        : failed !== null
+          ? `${failedSentence} Nobody else has called, texted or emailed. ${automatedSentence(now, auto, i.calendar)}`
+          : `Nobody has called, texted or emailed yet. ${automatedSentence(now, auto, i.calendar)}`;
     const alert = list.map((q) => q.backupAlert ?? null).filter((a): a is NonNullable<QueueInquiryFacts['backupAlert']> => a !== null).sort((a, b) => b.at - a.at)[0] ?? null;
     rows.push({
       group: 'new_lead',
@@ -361,6 +377,7 @@ function newLeadRows(i: TeamQueueInputs): TeamQueueRow[] {
       offHours: m.offHours,
       backupAlert: alert === null ? null : { at: alert.at, alerted: alert.outcome === 'alerted', recipient: alert.outcome === 'alerted' ? alert.recipient : null, line: backupAlertLine(now, alert, i.calendar) },
       answeredCallAt: answered,
+      failedAttemptAt: failed?.at ?? null,
       subject: { kind: 'inquiry', id: first.inquiryId },
     });
   }
@@ -403,6 +420,7 @@ function replyRows(i: TeamQueueInputs): TeamQueueRow[] {
       offHours: false,
       backupAlert: null,
       answeredCallAt: null,
+      failedAttemptAt: null,
       subject: { kind: missed ? 'call' : 'message', id: latest.id },
     });
   }
@@ -434,6 +452,7 @@ function taskRows(i: TeamQueueInputs, promise: boolean): TeamQueueRow[] {
       offHours: false,
       backupAlert: null,
       answeredCallAt: null,
+      failedAttemptAt: null,
       subject: { kind: 'task', id: t.taskId },
     });
   }
@@ -463,6 +482,7 @@ function appointmentRows(i: TeamQueueInputs): TeamQueueRow[] {
       offHours: false,
       backupAlert: null,
       answeredCallAt: null,
+      failedAttemptAt: null,
       subject: { kind: 'appointment', id: a.appointmentId },
     });
   }
@@ -486,7 +506,8 @@ export function buildTeamQueue(i: TeamQueueInputs): TeamQueue {
       const backupAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true && r.backupAlert.recipient === 'backup').length : null;
       const othersAlerted = key === 'new_lead' ? rows.filter((r) => r.backupAlert?.alerted === true && r.backupAlert.recipient !== 'backup').length : null;
       const answeredCalls = key === 'new_lead' ? rows.filter((r) => r.answeredCallAt !== null).length : null;
-      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted, othersAlerted, answeredCalls };
+      const failedAttempts = key === 'new_lead' ? rows.filter((r) => r.failedAttemptAt !== null).length : null;
+      return { key, ...TEAM_QUEUE_GROUP_WORDS[key], rows: rows.slice(0, cap), total: rows.length, more: Math.max(0, rows.length - cap), backupAlerted, othersAlerted, answeredCalls, failedAttempts };
     }),
   };
 }

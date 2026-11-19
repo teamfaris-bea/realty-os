@@ -7,7 +7,7 @@ import type { MembershipStatus } from '@realty/core/ownership';
 import type { AlertFallbackReason, AlertRecipient } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { ANSWERED_CALL, ANSWERED_FOR_INQUIRY, ARRIVAL, HUMAN_CALL, HUMAN_MESSAGE } from '../../accountability/repos/teamQueue.js';
+import { ANSWERED_CALL, ANSWERED_FOR_INQUIRY, ARRIVAL, HUMAN_CALL, HUMAN_MESSAGE, SEND_FAILED } from '../../accountability/repos/teamQueue.js';
 
 export interface AlertInquiryRow {
   id: string;
@@ -78,15 +78,26 @@ export async function personNow(tx: Tx, contactId: string): Promise<PersonRow | 
 }
 
 /**
- * Whether a person has made a human attempt on this person at or after `since`: exactly the team work queue's and
- * the scoreboard's touch (HUMAN_MESSAGE, HUMAN_CALL: never an assistant or system message, a bulk send, an invite,
- * imported history or a logged note).
+ * Whether a person has made a human attempt on this person at or after `since` that could have reached them: the
+ * team work queue's own predicate (HUMAN_MESSAGE, HUMAN_CALL: never an assistant or system message, a bulk send, an
+ * invite, imported history or a logged note; and, R-TEAMQ-27, never a send the provider has already reported as
+ * failed, undelivered or bounced).
  */
 export async function humanAttemptSince(tx: Tx, contactId: string, since: Date): Promise<boolean> {
   const r = await sql<{ x: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${contactId}::uuid AND ${HUMAN_MESSAGE} AND m.dispatched_at >= ${since.toISOString()}::timestamptz)
+    SELECT EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${contactId}::uuid AND ${HUMAN_MESSAGE} AND NOT ${SEND_FAILED} AND m.dispatched_at >= ${since.toISOString()}::timestamptz)
         OR EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = app.tenant_id() AND k.contact_id = ${contactId}::uuid AND ${HUMAN_CALL} AND k.started_at >= ${since.toISOString()}::timestamptz) AS x`.execute(tx);
   return r.rows[0]?.x === true;
+}
+
+/** R-TEAMQ-27: the channel of the latest human send at or after `since` that the provider reported as failed (null: none). */
+export async function failedAttemptSince(tx: Tx, contactId: string, since: Date): Promise<'text' | 'email' | 'chat' | null> {
+  const r = await sql<{ channel: string }>`
+    SELECT m.channel FROM messages m
+     WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${contactId}::uuid AND ${HUMAN_MESSAGE} AND ${SEND_FAILED} AND m.dispatched_at >= ${since.toISOString()}::timestamptz
+     ORDER BY m.dispatched_at DESC LIMIT 1`.execute(tx);
+  const c = r.rows[0]?.channel;
+  return c === undefined ? null : c === 'email' ? 'email' : c === 'web_chat' ? 'chat' : 'text';
 }
 
 /**

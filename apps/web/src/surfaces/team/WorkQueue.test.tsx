@@ -177,6 +177,16 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     expect(within(group).getByText('Backup alerted for 1 of 2. A team lead or the Owners and Admins were alerted instead for 1 of 2.')).toBeInTheDocument();
   });
 
+  it('R-TEAMQ-27 E892 (review fix L6): a row where a person tried and the text failed shows the server\'s words, and the group says how many rows that is, with its total', async () => {
+    const failed = row({ why: 'Arrived 12 min ago from Website form. Owned by Jordan P. Jordan P. tried at 2:05 PM, but the text failed. Nobody else has called, texted or emailed. No automatic reply has gone out.', failedAttemptAt: new Date(Date.now() - 9 * 60_000).toISOString() });
+    const plain = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' } });
+    leadAdminApp(fake(workQueue({ new_lead: [failed, plain] }, { new_lead: { failedAttempts: 1 } })), '/team');
+    const region = await loaded();
+    const group = within(region).getByRole('group', { name: 'New leads nobody has called, texted or emailed yet: 2' });
+    expect(within(group).getByText('A person tried 1 of 2, but the text or email failed.')).toBeInTheDocument();
+    expect(within(group).getByText(/Jordan P\. tried at 2:05 PM, but the text failed\. Nobody else has called, texted or emailed\./)).toBeInTheDocument();
+  });
+
   it('R-TEAMQ-22 E882: a row whose call a person answered shows the server\'s true words, and the group says how many of its rows that is, with its total', async () => {
     const answered = row({ why: 'Arrived 6 min ago from Website form. Owned by Jordan P. A person answered their call at 2:04 PM. Nobody has called back, texted or emailed since.', answeredCallAt: new Date(Date.now() - 4 * 60_000).toISOString() });
     const plain = row({ key: `new_lead:${P.opal}`, contact: { id: P.opal, name: 'Opal Reyes' }, answeredCallAt: null });

@@ -55,7 +55,8 @@ export interface ResponseInquiryView {
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` (the next opening) */
   offHours: boolean;
   countedFrom: string;
-  attempt: { at: string; kind: AttemptKind; by: { userId: string; name: string | null } | null; role: AttemptRole; wallSeconds: number; staffedSeconds: number } | null;
+  /** `failed` (R-TEAMQ-27): the provider reported that send as failed; it is still the attempt (the scoreboard's definition) */
+  attempt: { at: string; kind: AttemptKind; by: { userId: string; name: string | null } | null; role: AttemptRole; failed: boolean; wallSeconds: number; staffedSeconds: number } | null;
   /** R-TEAMQ-22: `attempted`, else `answered_call` (a person answered the lead's own call; never an attempt), else `waiting` */
   state: ResponseState;
   /** R-TEAMQ-22: the first call of the lead a person answered since the arrival: when, by whom, how long after the arrival (null: none) */
@@ -123,7 +124,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
       sourceId: r.source_id as LeadSourceId,
       sourceName: r.source_name,
       arrivedAt: ms(r.arrived_at),
-      firstAttempt: r.attempt_at === null ? null : { at: ms(r.attempt_at), kind: kindOf(r), byUserId: r.attempt_by as UserId | null, role: roleOf(r) },
+      firstAttempt: r.attempt_at === null ? null : { at: ms(r.attempt_at), kind: kindOf(r), byUserId: r.attempt_by as UserId | null, role: roleOf(r), failed: r.attempt_failed === true },
       automatedReplyAt: r.automated_at === null ? null : ms(r.automated_at),
       answeredCall: r.answered_call_at === null ? null : { at: ms(r.answered_call_at), byUserId: r.answered_call_by as UserId | null },
       backupAlert: r.backup_alert_at === null || r.backup_alert_user === null || r.backup_alert_recipient === null ? null : { at: ms(r.backup_alert_at), byUserId: r.backup_alert_user as UserId, recipient: r.backup_alert_recipient },
@@ -147,6 +148,7 @@ export async function leadResponse(tx: Tx, key: RangeKey, now: Instant): Promise
             kind: m.attempt.kind,
             by: m.attempt.byUserId === null ? null : { userId: m.attempt.byUserId, name: attemptNames.get(m.attempt.byUserId) ?? null },
             role: m.attempt.role,
+            failed: m.attempt.failed === true,
             wallSeconds: m.attempt.wallSeconds,
             staffedSeconds: m.attempt.staffedSeconds,
           },

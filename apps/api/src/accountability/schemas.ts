@@ -166,6 +166,8 @@ export const TeamQueueRowSchema = z.object({
   backupAlert: z.object({ at: z.string(), alerted: z.boolean(), recipient: z.enum(['backup', 'team_lead', 'admins']).nullable(), line: z.string().min(1) }).nullable(),
   /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived; else null */
   answeredCallAt: z.string().nullable(),
+  /** new leads only (R-TEAMQ-27): when a person's send to them was last reported failed by the provider; else null */
+  failedAttemptAt: z.string().nullable(),
 });
 export const TeamQueueResponse = z.object({
   groups: z.array(
@@ -183,6 +185,8 @@ export const TeamQueueResponse = z.object({
       othersAlerted: count.nullable(),
       /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
       answeredCalls: count.nullable(),
+      /** new_lead only (R-TEAMQ-27): of `total`, the rows where a person tried and the send was reported failed */
+      failedAttempts: count.nullable(),
     }),
   ),
   staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
@@ -209,6 +213,8 @@ export const ResponseInquirySchema = z.object({
     by: Person.nullable(),
     // R-TEAMQ-25: `backup` only for the source's named backup; a team lead or an Owner/Admin alerted in their place is said as that
     role: z.enum(['owner', 'backup', 'team_lead', 'admin', 'collaborator', 'other']),
+    /** R-TEAMQ-27: the provider reported this send as failed, undelivered or bounced (it is still the attempt) */
+    failed: z.boolean(),
   }).nullable(),
   /** R-TEAMQ-22: attempted, else answered_call (a person answered the lead's own call; never an attempt), else waiting */
   state: z.enum(['attempted', 'answered_call', 'waiting']),
@@ -223,6 +229,8 @@ export const ResponseInquirySchema = z.object({
 const ResponseRollupSchema = z.object({
   inquiries: count,
   attempted: count,
+  /** R-TEAMQ-27: of `attempted`, those whose first attempt was a send the provider reported as failed */
+  failedAttempts: count,
   within5: count,
   within15: count,
   /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call (attempted + answeredCalls + waiting = inquiries) */

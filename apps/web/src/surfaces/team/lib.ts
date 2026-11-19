@@ -169,6 +169,8 @@ export interface TeamQueueRow {
   backupAlert?: { at: string; alerted: boolean; recipient?: 'backup' | 'team_lead' | 'admins' | null; line: string } | null;
   /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived (the why line says so) */
   answeredCallAt?: string | null;
+  /** new leads only (R-TEAMQ-27): when a person's send to them was last reported failed (the why line says "tried … but the text failed") */
+  failedAttemptAt?: string | null;
 }
 
 export interface TeamQueueGroup {
@@ -186,6 +188,8 @@ export interface TeamQueueGroup {
   othersAlerted?: number | null;
   /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
   answeredCalls?: number | null;
+  /** new_lead only (R-TEAMQ-27): of `total`, the rows where a person tried and the send was reported failed */
+  failedAttempts?: number | null;
 }
 
 export interface TeamQueueResponse {
@@ -227,6 +231,12 @@ export function queueAnsweredLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 
   return `A person answered the call of ${g.answeredCalls} of ${queueCount(g)}; nobody has called back, texted or emailed.`;
 }
 
+/** "A person tried 1 of 5, but the text or email failed." (R-TEAMQ-27; null when no row has a failed send) */
+export function queueFailedLine(g: Pick<TeamQueueGroup, 'total' | 'atLeast' | 'failedAttempts'>): string | null {
+  if (g.failedAttempts === undefined || g.failedAttempts === null || g.failedAttempts <= 0) return null;
+  return `A person tried ${g.failedAttempts} of ${queueCount(g)}, but the text or email failed.`;
+}
+
 /** "Showing the 25 waiting longest. 7 more are not shown." (null when everything is shown) */
 export function queueMoreLine(g: Pick<TeamQueueGroup, 'rows' | 'more' | 'atLeast'>): string | null {
   if (g.more <= 0) return null;
@@ -259,7 +269,7 @@ export interface ResponseInquiry {
   /** it arrived outside staffed hours: staffed time counts from `countedFrom` */
   offHours: boolean;
   countedFrom: string;
-  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'team_lead' | 'admin' | 'collaborator' | 'other'; wallSeconds: number; staffedSeconds: number } | null;
+  attempt: { at: string; kind: 'call' | 'text' | 'email' | 'chat'; by: { userId: string; name: string | null } | null; role: 'owner' | 'backup' | 'team_lead' | 'admin' | 'collaborator' | 'other'; failed?: boolean; wallSeconds: number; staffedSeconds: number } | null;
   /** R-TEAMQ-22: a person answered the lead's own call since it arrived (never an attempt): when, by whom, how long after the arrival */
   answeredCall?: { at: string; by: { userId: string; name: string | null } | null; wallSeconds: number; staffedSeconds: number } | null;
   /** R-TEAMQ-22: attempted, else answered_call, else waiting */
@@ -275,6 +285,8 @@ export interface ResponseInquiry {
 export interface ResponseRollup {
   inquiries: number;
   attempted: number;
+  /** R-TEAMQ-27: of `attempted`, those whose first attempt was a send the provider reported as failed */
+  failedAttempts?: number;
   within5: number;
   within15: number;
   /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call */
@@ -332,6 +344,8 @@ export function responseLines(r: ResponseRollup, rules: ResponseRules): { label:
   return [
     { label: 'Inquiries', text: plural(r.inquiries, 'inquiry', 'inquiries') },
     { label: 'With a human attempt', text: of(r.attempted) },
+    // R-TEAMQ-27: a failed send is still the attempt (the scoreboard's definition), and is said
+    ...((r.failedAttempts ?? 0) <= 0 ? [] : [{ label: 'Tried, but the text or email failed', text: `${r.failedAttempts} of the ${r.attempted} with an attempt` }]),
     { label: `Within ${minutes(rules.within5Seconds)} minutes`, text: of(r.within5) },
     { label: `Within ${minutes(rules.within15Seconds)} minutes`, text: of(r.within15) },
     // R-TEAMQ-22: its own state: never an attempt, never "still waiting"
@@ -386,7 +400,9 @@ export function responseInquiryLine(i: ResponseInquiry): string {
   }
   const a = i.attempt;
   const off = i.offHours ? ` It arrived outside staffed hours, so it is counted from opening (${formatAge(a.wallSeconds)} on the clock).` : '';
-  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${off}${answered === '' ? '' : ` ${answered}`}${alert}${auto}`;
+  // R-TEAMQ-27: tried, but the send failed: still the attempt, and said
+  const failed = a.failed === true ? ` Tried, but the ${a.kind === 'email' ? 'email' : a.kind === 'chat' ? 'chat reply' : 'text'} failed: it did not reach them.` : '';
+  return `First tried after ${formatAge(a.staffedSeconds)}: ${ATTEMPT_KIND[a.kind]} by ${a.by?.name ?? 'a former member'}, ${ATTEMPT_ROLE[a.role]}.${failed}${off}${answered === '' ? '' : ` ${answered}`}${alert}${auto}`;
 }
 
 /** The lines under the report: imports and closed people apart, and the rules of the measure. */

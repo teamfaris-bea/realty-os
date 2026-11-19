@@ -11,7 +11,8 @@
 //   lead_closed          the person was closed, deleted or merged away since
 //   source_not_covered   the source's coverage was switched off in between
 //   human_attempt        a person has called, texted, emailed or replied in chat since the arrival: exactly the team
-//                        work queue's predicate (step 1). An automated reply never counts.
+//                        work queue's predicate (step 1). An automated reply never counts, and neither does a send
+//                        the provider has already reported as failed (R-TEAMQ-27: the alert then says it was tried).
 //   answered_call        a person answered the lead's own call since the arrival, or the call that is the inquiry
 //                        itself (R-TEAMQ-22: matched by the inquiry's own reference)
 //   alerted              otherwise someone OTHER than the person holding the lead is alerted (core
@@ -157,6 +158,7 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
       reason: 'BACKUP_ALERT',
     });
   }
+  const failedAttempt = await repo.failedAttemptSince(tx, person.id, q.arrived_at);
   const alertHolder: AlertHolder =
     holder === 'owner' ? { kind: 'owner', name: person.owner_name } : holder === 'on_offer' ? { kind: 'on_offer', name: person.offered_to_name } : holder === 'pond' ? { kind: 'pond', name: person.pond_name } : { kind: 'unassigned' };
   const text = backupAlertText({
@@ -167,6 +169,8 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     holder: alertHolder,
     recipient: to.recipient,
     ...(to.why === null ? {} : { why: to.why }),
+    // R-TEAMQ-27: a send a person made that the provider reported as failed is said, not hidden
+    ...(failedAttempt === null ? {} : { failedAttempt }),
   });
   // a member's notification, never a message to the client: in-app, push, and (critical) a text to their alert phone
   for (const userId of to.userIds) {

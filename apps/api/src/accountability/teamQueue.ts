@@ -74,6 +74,8 @@ export interface TeamQueueRowView {
   backupAlert: { at: string; alerted: boolean; recipient: 'backup' | 'team_lead' | 'admins' | null; line: string } | null;
   /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived (the why line says so); else null */
   answeredCallAt: string | null;
+  /** new leads only (R-TEAMQ-27): when a person's text, email or chat reply to them was last reported failed by the provider (the why line says so); else null */
+  failedAttemptAt: string | null;
 }
 
 export interface TeamQueueGroupView {
@@ -91,6 +93,8 @@ export interface TeamQueueGroupView {
   othersAlerted: number | null;
   /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
   answeredCalls: number | null;
+  /** new_lead only (R-TEAMQ-27): of `total`, the rows where a person tried and the send was reported failed; null for the other groups */
+  failedAttempts: number | null;
 }
 
 export interface TeamQueueView {
@@ -168,6 +172,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
       humanAttemptAt: null, // the read keeps only inquiries with no human attempt at or after the arrival
       automatedReplyAt: q.automated_at === null ? null : ms(q.automated_at),
       answeredCallAt: q.answered_call_at === null ? null : ms(q.answered_call_at),
+      failedAttempt: q.failed_at === null ? null : { at: ms(q.failed_at), kind: q.failed_channel === 'email' ? 'email' : q.failed_channel === 'web_chat' ? 'chat' : 'text', name: q.failed_by_name },
       backupAlert: q.backup_alert_at === null || q.backup_alert_outcome === null ? null : { at: ms(q.backup_alert_at), outcome: q.backup_alert_outcome, name: q.backup_alert_name, recipient: q.backup_alert_recipient, reason: q.backup_alert_reason, count: q.backup_alert_count ?? 1 },
     });
   }
@@ -221,6 +226,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
         offHours: r.offHours,
         backupAlert: r.backupAlert === null ? null : { at: iso(r.backupAlert.at), alerted: r.backupAlert.alerted, recipient: r.backupAlert.recipient, line: r.backupAlert.line },
         answeredCallAt: r.answeredCallAt === null ? null : iso(r.answeredCallAt),
+        failedAttemptAt: r.failedAttemptAt === null ? null : iso(r.failedAttemptAt),
       })),
       total: g.total,
       more: g.more,
@@ -228,6 +234,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
       backupAlerted: g.backupAlerted,
       othersAlerted: g.othersAlerted,
       answeredCalls: g.answeredCalls,
+      failedAttempts: g.failedAttempts,
     })),
     staffedHours: { open: hours.open, close: hours.close, zone: hours.zone },
     windows: {

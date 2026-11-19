@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { approvedPlaybook, assistantWorld, grantConsent, runJobs } from '../assistant/testing.js';
 import { teamScoreboard } from '../accountability/scoreboard.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { type CommsWorld, ownedContact, randomEmail, sendText } from '../comms/testing.js';
+import { type CommsWorld, ownedContact, randomEmail, sendText, telephonyWebhook } from '../comms/testing.js';
 import { marketingReady } from '../bulk/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { BACKUP_ALERT_JOB, decideBackupAlert } from './backupAlert.js';
@@ -369,6 +369,50 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
     expect(notes[0]!.title).toMatch(/In the pond .+\. The source's backup is unavailable\.$/);
     expect(notes[0]!.body).toBe('Nobody has called, texted or emailed. You are alerted as an Owner or Admin, because the backup named on its source cannot be reached and whoever has this lead has no team lead.');
     expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [lead.contactId])).rows).toEqual([]);
+  });
+});
+
+describe('R-TEAMQ-27 a send the provider reported as failed (review fix L6)', () => {
+  it('R-TEAMQ-27 E892 E893: the owner\'s text FAILED at the carrier: the lead stays in the queue with "tried … but the text failed", the backup is alerted and told a text was tried, and the report still shows it as the attempt (the scoreboard\'s definition), marked failed', async () => {
+    const src = await source('Carrier failure (alert test)');
+    const lead = await arrive(src);
+    const owner = await accept(lead);
+    await grantConsent(owner, lead.contactId, 'sms');
+    const sent = await sendText(owner, lead.contactId, 'Hi, thanks for reaching out. When is a good time to talk?');
+    expect(sent.body.result).toBe('sent');
+    const messageId = sent.body.message!.id;
+    // while it is only "sent" it is an attempt like any other: the lead is not waiting
+    const rowsOf = async () => (await call<{ groups: { key: string; rows: { contact: { id: string }; why: string; failedAttemptAt: string | null }[]; failedAttempts: number | null }[] }>(w.owner, 'GET', '/team/queue')).body.groups.find((g) => g.key === 'new_lead')!;
+    expect((await rowsOf()).rows.find((r) => r.contact.id === lead.contactId)).toBeUndefined();
+    // the carrier reports that the text was not delivered
+    const ref = (await h.su.query<{ provider_message_ref: string }>('SELECT provider_message_ref FROM messages WHERE id = $1', [messageId])).rows[0]!.provider_message_ref;
+    expect((await telephonyWebhook(h, `/webhooks/telephony/status?m=${messageId}`, { MessageSid: ref, MessageStatus: 'undelivered', ErrorCode: '30007', From: w.mainNumber, To: lead.phone })).statusCode).toBe(200);
+    expect((await h.su.query<{ status: string }>('SELECT status FROM messages WHERE id = $1', [messageId])).rows[0]!.status).toBe('undelivered');
+
+    const g = await rowsOf();
+    const row = g.rows.find((r) => r.contact.id === lead.contactId)!;
+    expect(row).toBeDefined();
+    expect(row.why).toMatch(/Owned by .+ \S+ \S\. tried at \d{1,2}:\d\d [AP]M, but the text failed\. Nobody else has called, texted or emailed\./);
+    expect(row.why).not.toMatch(/Nobody has called, texted or emailed yet/);
+    expect(row.failedAttemptAt).not.toBeNull();
+    expect(g.failedAttempts).toBeGreaterThanOrEqual(1);
+
+    // minute three: the failed text does not suppress the alert, and the alert says a text was tried
+    await minutesPass(lead);
+    await run();
+    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id])).toEqual([['alerted', backup.userId]]);
+    const notes = await alertNotes(lead.inquiryId);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.body).toBe('A text was tried, but it failed. Nobody else has called, texted or emailed. You can open this lead and call or text for the next 24 hours.');
+
+    // the report keeps the scoreboard's definition: it is the first attempt, and it says it failed
+    const rep = await call<{ inquiries: { inquiryId: string; state: string; attempt: { kind: string; role: string; failed: boolean; by: { userId: string } | null } | null }[]; sources: { sourceId: string; attempted: number; failedAttempts: number }[] }>(w.owner, 'GET', '/team/lead-response?range=7d');
+    expect(rep.body.inquiries.find((i) => i.inquiryId === lead.inquiryId)).toMatchObject({ state: 'attempted', attempt: { kind: 'text', role: 'owner', failed: true, by: { userId: owner.userId } } });
+    expect(rep.body.sources.find((x) => x.sourceId === src.id)).toMatchObject({ attempted: 1, failedAttempts: 1 });
+
+    // a second text that goes through takes the lead out of the queue
+    expect((await sendText(owner, lead.contactId, 'Trying again: when is a good time to talk?')).body.result).toBe('sent');
+    expect((await rowsOf()).rows.find((r) => r.contact.id === lead.contactId)).toBeUndefined();
   });
 });
 
