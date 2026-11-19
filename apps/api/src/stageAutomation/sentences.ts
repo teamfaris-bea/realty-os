@@ -81,3 +81,14 @@ const STOPPED: Record<string, string> = {
 export function stoppedSentence(code: string): string {
   return STOPPED[code] ?? 'Stopped.';
 }
+
+/**
+ * The plan's last message was handed to the carrier or the mail provider and no answer came (R-GATE-8, E753). It is
+ * never called sent or delivered, never "not delivered", and never retried: only that it could not be confirmed.
+ */
+export function deliveryUnconfirmedSentence(channel: string, checking: boolean): string {
+  const what = channel === 'email' ? 'email' : 'text';
+  return checking
+    ? `Delivery of the plan's last ${what} could not be confirmed yet. It may have reached them. We are still checking, and it is not submitted a second time.`
+    : `Delivery of the plan's last ${what} could not be confirmed. It may have reached them. It was not submitted a second time: check with them before you write the same thing yourself.`;
+}

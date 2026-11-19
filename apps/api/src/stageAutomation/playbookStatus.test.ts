@@ -29,6 +29,7 @@ interface Status {
     startedAt: string;
     next: { kind: string; channel: string; dueAt: string } | null;
     blocked: { code: string; sentence: string } | null;
+    deliveryUnconfirmed: { channel: string; at: string; checking: boolean; sentence: string } | null;
     canPause: boolean;
     canResume: boolean;
     canStop: boolean;
@@ -90,7 +91,7 @@ describe('the plan a person is in, and what it does next (R-STG-4)', () => {
       startedBy: { how: 'stage_change', userId: agent.userId, displayName: expect.any(String) },
       startedAt: expect.any(String),
       next: { kind: 'message', channel: 'sms', dueAt: expect.any(String) },
-      blocked: null, canPause: true, canResume: false, canStop: true,
+      blocked: null, deliveryUnconfirmed: null, canPause: true, canResume: false, canStop: true,
     });
     expect(Math.abs(Date.parse(s.plan!.startedAt) - t0)).toBeLessThan(60_000);
     expect(Math.abs(Date.parse(s.plan!.next!.dueAt) - t0)).toBeLessThan(60_000);
@@ -164,6 +165,57 @@ describe('the plan a person is in, and what it does next (R-STG-4)', () => {
     expect(s).toMatchObject({ enrollmentId: e!.id, name: 'Buyer plan', state: 'stopped', next: null, blocked: { code: 'manual', sentence: expect.stringMatching(/stopped/i) }, canPause: false, canResume: false, canStop: false });
     expect((await act(agent, e!.id, 'pause')).code).toBe('ENROLLMENT_NOT_LIVE');
     expect((await act(agent, e!.id, 'resume')).code).toBe('ENROLLMENT_NOT_LIVE');
+  });
+});
+
+describe('a message whose delivery could not be confirmed (R-STG-4)', () => {
+  const smsTo = (phone: string) => h.providers.telephony.sms.filter((m) => m.to === phone);
+  // never "sent", "delivered", "not delivered", "retried" or "resent": only that it could not be confirmed
+  const NEVER = /\bwas sent\b|\bdelivered\b|\bretried\b|\bresent\b|\bdid not send\b|\bnot sent\b/i;
+
+  it('R-STG-4 E768 the plan\'s last text was handed to the carrier and no answer came: the status says delivery could not be confirmed, in its own field; it is not "next", not sent and not sent again', async () => {
+    // a plan whose text went out normally has nothing to say here
+    const fine = await ownedContact(agent);
+    await changeStage(agent, fine.id, 'under_contract');
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    await stepNow(h, w.tenantId, (await enrollmentsOf(h, fine.id))[0]!.id);
+    await runJobs(h, w.tenantId, ['playbook.step'], 1, ['default']);
+    // this one's text gets no answer from the carrier (the fake's timeout)
+    const c = await ownedContact(agent);
+    expect((await changeStage(agent, c.id, 'under_contract')).body.automation).toEqual({ started: 'Follow-up plan' });
+    const [e] = await enrollmentsOf(h, c.id);
+    h.providers.telephony.failNext('timeout');
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    const msg = async () => (await h.su.query<{ id: string; status: string; status_reason: string | null }>('SELECT id, status, status_reason FROM messages WHERE contact_id = $1', [c.id])).rows;
+    expect((await msg()).map((m) => m.status)).toEqual(['dispatch_unknown']);
+
+    let s = (await status(agent, c.id)).body.plan!;
+    expect(s.state).toBe('active');
+    expect(s.blocked).toBeNull();
+    expect(s.deliveryUnconfirmed).toEqual({ channel: 'sms', at: expect.any(String), checking: true, sentence: expect.stringMatching(/could not be confirmed/i) });
+    expect(s.deliveryUnconfirmed!.sentence).toMatch(/may have reached them/i);
+    expect(s.deliveryUnconfirmed!.sentence).not.toMatch(NEVER);
+    // the text is with the carrier: it is not the "next" step (that would promise a send), and nothing later is promised yet
+    expect(s.next).toBeNull();
+    const other = (await status(agent, fine.id)).body.plan!;
+    expect(other.deliveryUnconfirmed).toBeNull();
+    expect(other.next).toMatchObject({ channel: 'email' });
+
+    // ten minutes of asking the carrier find nothing either way: still "could not be confirmed", never "not delivered"
+    await h.su.query("UPDATE messages SET dispatched_at = now() - interval '11 minutes' WHERE contact_id = $1", [c.id]);
+    await runJobs(h, w.tenantId, ['comms.reconcile']);
+    expect((await msg()).map((m) => [m.status, m.status_reason])).toEqual([['failed', 'DISPATCH_UNKNOWN_UNRESOLVED']]);
+    s = (await status(agent, c.id)).body.plan!;
+    expect(s.deliveryUnconfirmed).toEqual({ channel: 'sms', at: expect.any(String), checking: false, sentence: expect.stringMatching(/could not be confirmed/i) });
+    expect(s.deliveryUnconfirmed!.sentence).toMatch(/may have reached them/i);
+    expect(s.deliveryUnconfirmed!.sentence).not.toMatch(NEVER);
+    // the plan goes on to its next step; the unconfirmed text is not sent a second time by anything here
+    expect(s.next).toMatchObject({ kind: 'message', channel: 'email' });
+    await stepNow(h, w.tenantId, e!.id);
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch', 'comms.reconcile'], 2);
+    expect(await msg()).toHaveLength(1);
+    expect(smsTo(c.phone)).toHaveLength(0);
+    expect((await status(agent, c.id)).body.plan!.deliveryUnconfirmed).toMatchObject({ checking: false });
   });
 });
 

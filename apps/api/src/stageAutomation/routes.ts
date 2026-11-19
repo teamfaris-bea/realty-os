@@ -51,6 +51,8 @@ export const PlaybookStatusResponse = z.object({
       next: z.object({ kind: z.literal('message'), channel: z.string(), dueAt: Iso }).nullable(),
       /** why a paused or stopped plan is not moving */
       blocked: z.object({ code: z.string(), sentence: z.string() }).nullable(),
+      /** the plan's most recent message could not be confirmed delivered; `checking`: the provider is still being asked */
+      deliveryUnconfirmed: z.object({ channel: z.string(), at: Iso, checking: z.boolean(), sentence: z.string() }).nullable(),
       canPause: z.boolean(),
       canResume: z.boolean(),
       canStop: z.boolean(),

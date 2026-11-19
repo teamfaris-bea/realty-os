@@ -6,7 +6,8 @@
 //                    is still shown with why. `next` is the runner's own next step (assistant/enrollmentStatus.ts:
 //                    the planning walk the step runner acts on), never its wake-up time; null when the plan is not
 //                    active or the runner would not take a step next. `blocked` is why a paused or stopped plan is
-//                    not moving. canPause, canResume and canStop are the pause, resume and stop routes' own
+//                    not moving. `deliveryUnconfirmed`: the plan's most recent message was handed to the provider and
+//                    no answer came; it is said in its own field and sentence, never as sent and never as retried. canPause, canResume and canStop are the pause, resume and stop routes' own
 //                    authorization (comms.send on the person, as a marketing send) AND their own state checks
 //                    (assistant/enrollments.ts pauseCheck, resumeCheck, stopCheck), read in the viewer's own
 //                    transaction: a button is offered exactly when the viewer's request to that route would act.
@@ -22,14 +23,14 @@ import { type UserActor, plusMs } from '@realty/core/foundation';
 import { type Database, type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { pauseCheck, resumeCheck, stopCheck } from '../assistant/enrollments.js';
-import { enrollmentSendFacts, mayChangeEnrollment, nextStepOf } from '../assistant/enrollmentStatus.js';
+import { enrollmentSendFacts, lastMessageUnconfirmed, mayChangeEnrollment, nextStepOf } from '../assistant/enrollmentStatus.js';
 import * as P from '../assistant/repos/playbooks.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import { SCAN_WINDOW_MS } from './contract.js';
 import { HIDDEN_PLAN } from './planNames.js';
 import * as R from './repos.js';
-import { decisionSentence, pausedSentence, stoppedSentence } from './sentences.js';
+import { decisionSentence, deliveryUnconfirmedSentence, pausedSentence, stoppedSentence } from './sentences.js';
 
 export interface PlaybookStatus {
   plan: {
@@ -41,6 +42,8 @@ export interface PlaybookStatus {
     startedAt: string;
     next: { kind: 'message'; channel: string; dueAt: string } | null;
     blocked: { code: string; sentence: string } | null;
+    /** the plan's most recent message could not be confirmed delivered (never reported as sent, never as retried) */
+    deliveryUnconfirmed: { channel: string; at: string; checking: boolean; sentence: string } | null;
     canPause: boolean;
     canResume: boolean;
     canStop: boolean;
@@ -101,11 +104,12 @@ export async function playbookStatus(db: Database, viewer: UserActor, contactId:
     async (tx, now) => {
       await sql`SET LOCAL transaction_read_only = on`.execute(tx);
       const next = mine.e ? await nextStepOf(tx, mine.e, now) : null;
+      const unconfirmed = mine.e ? await lastMessageUnconfirmed(tx, mine.e.id) : null;
       // no decision row for the viewer: either the scan will still write one, or one was written since step 1 (shown
       // on the next read); in both cases the change is not reported as decided
       const undecided = mine.event !== null && mine.decision === null;
       const pending = undecided && ((await R.decisionOf(tx, mine.event!.id)) !== null || (await R.pendingStageEvents(tx, plusMs(now, -SCAN_WINDOW_MS), 1, { eventId: mine.event!.id })).length > 0);
-      return { next, pending };
+      return { next, unconfirmed, pending };
     },
     { db },
   );
@@ -128,6 +132,9 @@ export async function playbookStatus(db: Database, viewer: UserActor, contactId:
             startedAt: new Date(e.createdAt).toISOString(),
             next: sys.next ? { kind: sys.next.kind, channel: sys.next.channel, dueAt: new Date(sys.next.dueAt).toISOString() } : null,
             blocked: blocked(),
+            deliveryUnconfirmed: sys.unconfirmed
+              ? { channel: sys.unconfirmed.channel, at: new Date(sys.unconfirmed.at).toISOString(), checking: sys.unconfirmed.checking, sentence: deliveryUnconfirmedSentence(sys.unconfirmed.channel, sys.unconfirmed.checking) }
+              : null,
             canPause: can.pause,
             canResume: can.resume,
             canStop: can.stop,

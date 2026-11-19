@@ -11,8 +11,10 @@
 // send (assistant/routes.ts enrollmentAuth calls enrollmentSendFacts below), so a TC, who may only send
 // informational messages on a deal, is offered none of them.
 import { type PlaybookStep, stepDueAt } from '@realty/core/assistant';
-import { type Instant, type ResourceFacts, type UserActor, can } from '@realty/core/foundation';
+import { type Instant, type ResourceFacts, type UserActor, can, instantFromDate } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
+import { sql } from 'kysely';
+import { DISPATCH_UNKNOWN_UNRESOLVED } from '../comms/dispatch.js';
 import { contactFacts } from '../comms/repos/contacts.js';
 import { stepCapabilities } from '../nurture/capabilities.js';
 import { noAutomatedContact } from '../leads/automatedContact.js';
@@ -84,10 +86,33 @@ export async function nextStepOf(tx: Tx, e: P.EnrollmentRow, now: Instant): Prom
   const runs = await P.stepRunsOf(tx, e.id);
   const walk = walkSteps({ steps, runs, currentStep: e.currentStep, now, enrolledAt: e.createdAt, eventAt: anchor.eventAt, facts: await stopFacts(tx, e.contactId, e.createdAt, anchor.canceled), capabilities: await stepCapabilities(tx) });
   const end = walk.end;
-  // its message is queued, scheduled, being sent or unconfirmed: that step is what is next, due when the message is
+  // its message was handed to the provider and no answer came: it is not "next" (that would promise a send), and the
+  // step after it is not planned until this one is settled. lastMessageUnconfirmed says so in its own words.
+  if (end.kind === 'in_flight' && end.run.messageStatus === 'dispatch_unknown') return null;
+  // its message is queued, scheduled or being sent: that step is what is next, due when the message is
   if (end.kind === 'in_flight') return { kind: 'message', channel: end.step.channel, dueAt: end.run.messageScheduledFor ?? end.run.scheduledFor };
   if (end.kind === 'wait') return { kind: 'message', channel: end.step.channel, dueAt: end.until };
   // due now: the runner builds it on its next pass
   if (end.kind === 'run') return { kind: 'message', channel: end.step.channel, dueAt: now };
   return null;
+}
+
+/**
+ * Whether the enrollment's MOST RECENT message could not be confirmed delivered (R-GATE-8, E753, E754): it was handed
+ * to the provider and no answer came. `checking`: the provider is still being asked (status dispatch_unknown); false
+ * once ten minutes of asking found nothing either way (failed, DISPATCH_UNKNOWN_UNRESOLVED). Such a message was never
+ * proved sent and never proved undelivered, and it is never submitted a second time. Null: the last message has a
+ * known outcome, or the plan has sent nothing. Reads only.
+ */
+export async function lastMessageUnconfirmed(tx: Tx, enrollmentId: string): Promise<{ channel: string; at: Instant; checking: boolean } | null> {
+  const r = await sql<{ status: string; status_reason: string | null; channel: string; at: Date }>`
+    SELECT m.status, m.status_reason, m.channel, COALESCE(m.dispatched_at, m.created_at) AS at
+      FROM playbook_step_runs s JOIN messages m ON m.tenant_id = s.tenant_id AND m.id = s.message_id
+     WHERE s.tenant_id = app.tenant_id() AND s.enrollment_id = ${enrollmentId}
+     ORDER BY m.created_at DESC, m.id DESC LIMIT 1`.execute(tx);
+  const m = r.rows[0];
+  if (!m) return null;
+  const checking = m.status === 'dispatch_unknown';
+  if (!checking && !(m.status === 'failed' && m.status_reason === DISPATCH_UNKNOWN_UNRESOLVED)) return null;
+  return { channel: m.channel, at: instantFromDate(m.at), checking };
 }
