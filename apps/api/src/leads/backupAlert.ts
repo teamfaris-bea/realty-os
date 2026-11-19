@@ -24,6 +24,8 @@
 //                          pond or unassigned, or a holder on no team, has no team lead to tell
 //   no_recipient         the team has nobody but the person holding the lead
 //
+// A run that loses the claim on the inquiry to a concurrent run commits nothing (repos claimAlert: a savepoint).
+//
 // WHAT IT NEVER DOES: it never changes the owner, the offer or the pond (no ownership command is issued here), never
 // sends, drafts or queues anything for the client (it does not import the send path at all), never decides twice for
 // one inquiry (lead_backup_alerts_inquiry_once), and does nothing for a source that is not covered when it runs.
@@ -132,13 +134,16 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   if (to === null) return record('no_recipient');
   const first = to.userIds[0] as string;
 
-  // the row first: it is the claim on this inquiry (a concurrent run stops here and alerts nobody)
+  // The row is the claim on this inquiry, written together with the backup's grant (R-TEAMQ-17, review fix L2): a
+  // concurrent run that loses the claim stops here having committed nothing: no grant, no audit row, no notification.
   const grantUntil = to.recipient === 'backup' ? new Date(now + BACKUP_GRANT_MS) : null;
-  const granted = grantUntil === null ? null : await repo.grantBackupAccess(tx, person.id, first, grantUntil);
-  if (!(await repo.insertAlert(tx, row('alerted', { alertedUserId: first, recipient: to.recipient, fallbackReason: to.why, alertedCount: to.userIds.length, grantExpiresAt: granted })))) {
-    // the insert above waited for the other run and lost; that run's transaction made the same grant
-    return { outcome: 'already_decided' };
-  }
+  const claim = await repo.claimAlert(
+    tx,
+    row('alerted', { alertedUserId: first, recipient: to.recipient, fallbackReason: to.why, alertedCount: to.userIds.length }),
+    grantUntil === null ? null : { contactId: person.id, userId: first, expiresAt: grantUntil },
+  );
+  if (!claim.won) return { outcome: 'already_decided' };
+  const granted = claim.granted;
   if (granted !== null) {
     await audit(tx, actor, {
       action: 'collaborator.added',

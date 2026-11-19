@@ -167,3 +167,23 @@ export async function grantBackupAccess(tx: Tx, contactId: string, userId: strin
     RETURNING expires_at`.execute(tx);
   return r.rows[0]?.expires_at ?? null;
 }
+
+/**
+ * R-TEAMQ-17 (review fix L2): the alert row is the claim on its inquiry, and a run that loses the claim commits
+ * NOTHING. The backup's grant and the row are written inside one savepoint: when the row turns out to exist (a
+ * concurrent run decided this inquiry first; this insert waited for its commit), the savepoint is rolled back, which
+ * takes this run's write to the collaborator row with it. The row stores the grant actually given (null when the
+ * member already collaborates on the lead in another role: their own access is left as it is).
+ */
+export async function claimAlert(tx: Tx, a: Omit<AlertInsert, 'grantExpiresAt'>, grant: { contactId: string; userId: string; expiresAt: Date } | null): Promise<{ won: boolean; granted: Date | null }> {
+  await sql`SAVEPOINT backup_alert_claim`.execute(tx);
+  const granted = grant === null ? null : await grantBackupAccess(tx, grant.contactId, grant.userId, grant.expiresAt);
+  const won = await insertAlert(tx, { ...a, grantExpiresAt: granted });
+  if (!won) {
+    await sql`ROLLBACK TO SAVEPOINT backup_alert_claim`.execute(tx);
+    await sql`RELEASE SAVEPOINT backup_alert_claim`.execute(tx);
+    return { won: false, granted: null };
+  }
+  await sql`RELEASE SAVEPOINT backup_alert_claim`.execute(tx);
+  return { won: true, granted };
+}

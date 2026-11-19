@@ -628,6 +628,44 @@ describe('R-TEAMQ-17 once per inquiry', () => {
     expect((await holding(lead.contactId)).owner).toBe(owner.userId);
   });
 
+  it('R-TEAMQ-17 E887 (review fix L2): two runs decide the same inquiry in OVERLAPPING transactions: one alerts; the loser commits nothing at all: the backup\'s grant keeps the winner\'s expiry, one audit row, one notification', async () => {
+    const src = await source('Overlapping runs (alert test)');
+    const lead = await arrive(src);
+    const owner = await accept(lead);
+    await minutesPass(lead);
+    const actor = systemActor(w.tenantId, 'timer');
+    const t1 = Date.now() as Instant;
+    const t2 = (t1 + 5_000) as Instant; // the second run's clock is five seconds later: its grant would end five seconds later
+    let firstDecided!: () => void;
+    const decided = new Promise<void>((r) => (firstDecided = r));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // the first run decides (row, grant, notification written, not committed) and holds its transaction open
+    const first = withTenantTx(actor, async (tx) => {
+      const r = await decideBackupAlert(tx, h.app.platform.ids, lead.inquiryId, t1, actor);
+      firstDecided();
+      await gate;
+      return r;
+    }, { db: h.database });
+    await decided;
+    // the second run starts while the first is still open: it sees no row yet, and waits on the first run's writes
+    const second = withTenantTx(actor, (tx) => decideBackupAlert(tx, h.app.platform.ids, lead.inquiryId, t2, actor), { db: h.database });
+    await new Promise((r) => setTimeout(r, 400));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect([a.outcome, b.outcome]).toEqual(['alerted', 'already_decided']);
+    const rows = await alertRows(lead.inquiryId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.decided_at.getTime()).toBe(t1);
+    // the loser changed nothing: the grant's expiry is the winner's (24 hours after ITS decision), exactly what the alert row says
+    const grant = (await grantOf(lead.contactId, backup.userId))!;
+    expect(grant.expires_at!.getTime()).toBe(t1 + 24 * 3_600_000);
+    expect(grant.expires_at!.getTime()).toBe(rows[0]!.grant_expires_at!.getTime());
+    expect((await h.su.query(`SELECT 1 FROM audit_log WHERE action = 'collaborator.added' AND entity_id = $1`, [lead.contactId])).rows).toHaveLength(1);
+    expect(await alertNotes(lead.inquiryId)).toHaveLength(1);
+    expect((await holding(lead.contactId)).owner).toBe(owner.userId);
+  });
+
   it('R-TEAMQ-17 E856: a second inquiry from the same person is its own arrival: its own job, its own row, its own alert', async () => {
     const src = await source('Asked twice (alert test)');
     const first = await arrive(src);
