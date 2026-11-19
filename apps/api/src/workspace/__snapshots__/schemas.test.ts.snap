@@ -1460,6 +1460,32 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
             "items": {
               "additionalProperties": false,
               "properties": {
+                "alsoDue": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "taskId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "title": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "taskId",
+                      "title",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+                "alsoDueMore": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
                 "alternatives": {
                   "items": {
                     "oneOf": [
@@ -2955,6 +2981,8 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                 "lastConversation",
                 "quiet",
                 "taskIds",
+                "alsoDue",
+                "alsoDueMore",
               ],
               "type": "object",
             },

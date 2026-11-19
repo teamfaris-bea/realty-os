@@ -83,7 +83,13 @@ export interface NextPromiseView {
 }
 
 /** One person of the daily plan (R-TODAY-6), shaped like a card; `id` is the person's id. */
-export type FollowUpTodayCard = FeedCard & { taskIds: string[] };
+export type FollowUpTodayCard = FeedCard & {
+  /** the person's tasks due today or earlier; the first is the one the row leads with (a due promise when there is one) */
+  taskIds: string[];
+  /** R-TODAY-15: the other due tasks the row names in its "Also due" line, and how many more it only counts */
+  alsoDue?: { taskId: string; title: string }[];
+  alsoDueMore?: number;
+};
 
 export interface FeedResponse {
   pinned: FeedCard[];

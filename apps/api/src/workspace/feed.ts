@@ -64,6 +64,7 @@
 // The response carries no score: the reasons explain the order (A2 honesty; no numbers that pretend
 // precision). Pinned cards are live deadlines and close only by acting on them (FEED_ITEM_PINNED).
 import {
+  ALSO_DUE_NAMED,
   type FeedItem,
   type FeedReason,
   type LastAttempt,
@@ -79,6 +80,7 @@ import {
   parseForeignFeedKey,
   reasonFromCode,
   renderFeedItem,
+  selectNextPromise,
   renderFeedLabel,
   scoreFeed,
 } from '@realty/core/priority';
@@ -208,8 +210,14 @@ const NO_LINES: Pick<FeedCard, 'why'> & Lines = { why: null, stage: null, lastTo
 
 /** One person of the daily plan, shaped like a card so a screen draws both the same way. `id` is the person's id. */
 export type FollowUpTodayCard = FeedCard & {
-  /** the agent's tasks for the person that are due today or earlier, earliest first (their own cards are in `scored`) */
+  /**
+   * the agent's tasks for the person that are due today or earlier (their own cards are in `scored`). The first is the
+   * one the row leads with: a due promise when there is one (R-TODAY-15); the others follow, earliest first.
+   */
   taskIds: string[];
+  /** the other due tasks the row NAMES in its "Also due" line (at most core's ALSO_DUE_NAMED), and how many more it only counts */
+  alsoDue: { taskId: string; title: string }[];
+  alsoDueMore: number;
 };
 
 export interface FeedView {
@@ -714,10 +722,16 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedRe
   };
   const people = today.plan.people.map((e): FollowUpTodayCard => {
     const ctx = lines.byContact.get(e.contactId);
+    // R-TODAY-15: the row leads with taskIds[0] (a due promise when there is one) and names the others in one line
+    const dueTasks = e.taskIds.map((id) => ctx?.tasks.find((t) => t.taskId === id)).filter((t): t is NonNullable<typeof t> => t !== undefined);
+    const task = e.taskIds.length > 0 ? (dueTasks.find((t) => t.taskId === e.taskIds[0]) ?? null) : null;
+    const others = dueTasks.filter((t) => t !== task);
     // R-TODAY-14: a quiet person's Due line is worded from the same story as their Last line
-    const reasons = followUpTodayReasons(e, { now, stageLabel: ctx?.stage?.label ?? 'Follow-up', story: ctx?.quiet ?? undefined }).map(strip);
-    const firstTask = e.taskIds[0] ?? null;
-    const task = firstTask === null ? null : (ctx?.tasks.find((t) => t.taskId === firstTask) ?? null);
+    const reasons = followUpTodayReasons(e, { now, stageLabel: ctx?.stage?.label ?? 'Follow-up', story: ctx?.quiet ?? undefined, tasks: dueTasks, zone: lines.zone }).map(strip);
+    const firstTask = task?.taskId ?? null;
+    const said = followUpLines(ctx, actor.userId);
+    // the row's Next line is the task it leads with (the promise), not an earlier routine task named under "Also due"
+    const leadPromise = task ? selectNextPromise([task], now, lines.zone) : null;
     return {
       id: e.contactId,
       itemType: e.reason === 'warm' ? 'warm_follow_up' : e.reason === 'promise' ? 'promise_due' : 'task_due',
@@ -732,8 +746,11 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedRe
       assistantActionId: null,
       createdAt: iso(e.dueAt),
       why: reasons.map((r) => r.label),
-      ...followUpLines(ctx, actor.userId),
+      ...said,
+      ...(leadPromise ? { nextPromise: promiseView(leadPromise) } : {}),
       taskIds: e.taskIds,
+      alsoDue: others.slice(0, ALSO_DUE_NAMED).map((t) => ({ taskId: t.taskId, title: t.title })),
+      alsoDueMore: Math.max(0, others.length - ALSO_DUE_NAMED),
     };
   });
   return {

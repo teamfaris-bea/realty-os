@@ -42,8 +42,10 @@ interface Row {
   why: string[] | null;
   stage: { key: string; label: string } | null;
   lastTouch: { kind: string; reported: boolean; outcome: string | null } | null;
-  nextPromise: { text: string; overdue: boolean } | null;
+  nextPromise: { text: string; overdue: boolean; taskId?: string } | null;
   taskIds: string[];
+  alsoDue?: { taskId: string; title: string }[];
+  alsoDueMore?: number;
 }
 interface Feed {
   pinned: { id: string; itemType: string; subjectId: string; contact: { id: string } | null }[];
@@ -145,6 +147,40 @@ describe('R-TODAY-6: who is in "Follow up today"', () => {
     expect(await rowOf(a, c.id)).toBeDefined();
     await task(a, c.id, 'Follow up with Planned', { dueInMs: 5 * 86_400_000 });
     expect(await rowOf(a, c.id)).toBeUndefined();
+  });
+});
+
+// b19 Today fix 4 (M7; R-TODAY-15): a due promise is never hidden behind an earlier routine task
+describe('M7 (R-TODAY-15): a due promise leads the row', () => {
+  it('the reviewer’s case: a follow-up overdue 2 h and a promise overdue 1 h: the row is the promise (its own time), names the follow-up in "Also due", and its Next line is the promise', async () => {
+    const c = await contactOf(a, { firstName: 'Dana' });
+    const followUp = await task(a, c.id, 'Follow up with Dana', { dueInMs: -2 * 3_600_000 - 60_000 });
+    const promise = await task(a, c.id, 'Send lender intro', { kind: 'promise', dueInMs: -3_600_000 - 60_000 });
+    const f = await feed(a);
+    const row = f.followUpToday.people.find((p) => p.contact?.id === c.id)!;
+    expect(row).toMatchObject({ itemType: 'promise_due', task: { id: promise, title: 'Send lender intro' }, taskIds: [promise, followUp], alsoDue: [{ taskId: followUp, title: 'Follow up with Dana' }], alsoDueMore: 0 });
+    expect(row.reasons).toEqual([
+      { code: 'PROMISE_OVERDUE', label: 'You promised this; 1 h overdue' },
+      { code: 'ALSO_DUE', label: 'Also due: Follow up with Dana' },
+    ]);
+    expect(row.why).toEqual(['You promised this; 1 h overdue', 'Also due: Follow up with Dana']);
+    expect(row.nextPromise).toMatchObject({ taskId: promise, text: 'Send lender intro', overdue: true });
+    // Done on the row is the promise's, never the follow-up's
+    expect(row.alternatives.find((x) => x.kind === 'complete_task')).toMatchObject({ taskId: promise });
+    // both tasks still have their own cards in the feed; the screen decides which the row stands for
+    expect(f.scored.filter((x) => x.contact?.id === c.id).map((x) => x.itemType).sort()).toEqual(['promise_due', 'task_due']);
+  });
+
+  it('more due tasks than the line names: three are named and the rest counted', async () => {
+    const c = await contactOf(a, { firstName: 'Many' });
+    const promise = await task(a, c.id, 'Send the pre-approval letter', { kind: 'promise', dueInMs: -60_000 });
+    const others: string[] = [];
+    for (const [i, title] of ['Call the lender', 'Send the comps', 'Book the inspection', 'Order the survey'].entries()) others.push(await task(a, c.id, title, { kind: 'todo', dueInMs: -(5 - i) * 3_600_000 }));
+    const row = (await rowOf(a, c.id))!;
+    expect(row.task).toMatchObject({ id: promise });
+    expect(row.alsoDue).toEqual(others.slice(0, 3).map((taskId, i) => ({ taskId, title: ['Call the lender', 'Send the comps', 'Book the inspection'][i] })));
+    expect(row.alsoDueMore).toBe(1);
+    expect(row.why![1]).toBe('Also due: Call the lender, Send the comps, Book the inspection and 1 more');
   });
 });
 

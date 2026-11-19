@@ -97,9 +97,18 @@ function Feed() {
   // The same goes for any other task card of a person in the plan (the follow-up just set for tomorrow comes into the
   // feed a day ahead): their row is where their tasks are followed. Cards that are other work (a reply waiting, a
   // draft to review) stay.
-  const inPlan = new Set((plan?.people ?? []).flatMap((p) => p.taskIds));
-  const planPeople = new Set((plan?.people ?? []).map((p) => p.contact?.id));
-  const nextUp = data.scored.filter((c) => !(c.subjectType === 'task' && (inPlan.has(c.subjectId) || (c.contact !== null && planPeople.has(c.contact.id)))));
+  // R-TODAY-15: a PROMISE is never hidden this way. Its card leaves "Next up" only when the row itself shows that
+  // promise: as the task it leads with, or named in its "Also due" line.
+  const rows = plan?.people ?? [];
+  const shownInRow = new Set(rows.flatMap((p) => [...(p.task ? [p.task.id] : []), ...(p.alsoDue ?? []).map((t) => t.taskId)]));
+  const planPeople = new Set(rows.map((p) => p.contact?.id));
+  const inPlan = new Set(rows.flatMap((p) => p.taskIds));
+  const foldedIntoRow = (c: FeedCard) => {
+    if (c.subjectType !== 'task') return false;
+    if (c.itemType === 'promise_due') return shownInRow.has(c.subjectId);
+    return inPlan.has(c.subjectId) || (c.contact !== null && planPeople.has(c.contact.id));
+  };
+  const nextUp = data.scored.filter((c) => !foldedIntoRow(c));
   // one reachability request for every card whose one-tap action contacts someone (lane optout-visibility)
   const contactIds = [...new Set([...data.pinned, ...data.scored, ...(plan?.people ?? [])].flatMap((c) => (c.contact && [c.primaryAction, ...c.alternatives].some((a) => CONTACTING.has(a.kind)) ? [c.contact.id] : [])))];
   return (
@@ -277,7 +286,7 @@ export function FeedCardView({ card, pinned, plan = false }: { card: FeedCard; p
   // the Next line already says the card's own task when that task is the person's next promise
   const taskSaidBelow = follow && card.task != null && card.nextPromise?.taskId === card.task.id;
   // R-TODAY-7: a follow-up card's Call, Text and Log are one pass, here (the sheets of the person's page)
-  const onePass = follow ? { cardTask: cardTaskOf(card) } : undefined;
+  const onePass = follow ? { cardTask: cardTaskOf(card), alsoDue: ((card as Partial<FollowUpTodayCard>).alsoDue ?? []).map((t) => t.title) } : undefined;
   // a card whose one tap IS its details shows them in the same panel, under its own name
   const detailsFirst = card.primaryAction.kind === 'show_details';
   const details = { open: why, controls: whyId, onOpen: () => setWhy((w) => !w) };
@@ -368,12 +377,22 @@ export function FollowUpLines({ card, now }: { card: FeedCard; now: number }) {
   const term = 'w-11 shrink-0 text-[13px] font-semibold uppercase leading-[22px] tracking-wide text-ink-muted';
   const said = 'min-w-0 flex-1 [overflow-wrap:anywhere]';
   const last = lastLine(card, now);
+  const named = (card as Partial<FollowUpTodayCard>).alsoDue ?? [];
+  const more = (card as Partial<FollowUpTodayCard>).alsoDueMore ?? 0;
+  const also = named.length > 0 ? `Also due: ${named.map((t) => t.title).join(', ')}${more > 0 ? ` and ${more} more` : ''}` : null;
   return (
     <dl data-testid="follow-up-lines" className="flex flex-col gap-1 text-[15px] leading-[22px] text-ink">
       <div className={line}>
         <dt className={term}>Due</dt>
         <dd className={said}>{card.why?.[0]}</dd>
       </div>
+      {/* R-TODAY-15: the person's other due tasks, in one line under the reason the row leads with */}
+      {also ? (
+        <div className={line}>
+          <dt className="sr-only">Also due</dt>
+          <dd className={`${said} pl-[3.25rem]`}>{also}</dd>
+        </div>
+      ) : null}
       {/* R-TODAY-14: worded from the same story as the Due line; absent when the Due line already says there is none */}
       {last !== null ? (
         <div className={line}>

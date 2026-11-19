@@ -49,6 +49,7 @@ export { formatDuration, FOREIGN_CARD_LABEL, renderFeedLabel } from './format.js
 export { feedGroupOfItem, contactGroup, taskGroup, appointmentGroup, dealDateGroup, splitFeedInputs, nextFeedChange } from './incremental.js';
 export {
   FOLLOW_UP_ITEM_TYPES,
+  ALSO_DUE_NAMED,
   FOLLOW_UP_TODAY_CAP,
   WARM_FOLLOW_UP_DAYS,
   followUpActions,

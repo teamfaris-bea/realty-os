@@ -82,6 +82,8 @@ export interface OnePassOptions {
   /** the outcome's signal, when `signal` is not given because the server answered the stage suggestion itself (a call) */
   followUpSignal?: StageSignal | null | undefined;
   cardTask?: CardTask | null | undefined;
+  /** R-TODAY-15: the titles of the row's OTHER due tasks (its "Also due" line). The sheet never closes them, and says so when it adds a follow-up */
+  alsoDue?: readonly string[] | undefined;
 }
 
 /** The task a follow-up card or a row of the daily plan is about, as GET /feed says it (its `nextPromise`). */
@@ -210,10 +212,15 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
     if (cardTask && willClose) {
       const was = taskDueWords(cardTask, nowMs);
       parts.push(`Marks done: ${cardTask.title}${was ? ` (was due ${was})` : ''}.`);
-    } else if (cardTask && adds && !replacement.replace) {
-      const due = taskDueWords(cardTask, nowMs);
-      parts.push(replacement.twoFollowUps ? `${first} will have two follow-ups: “${cardTask.title}” (${due ? `due ${due}` : 'no date set'}) stays open.` : `Stays open: ${cardTask.title}.`);
     }
+    // what the same tap leaves open, so a new follow-up is never added beside a task the agent was not reminded of
+    const open = adds ? [...(onePass?.alsoDue ?? [])] : [];
+    if (cardTask && adds && !replacement.replace) {
+      const due = taskDueWords(cardTask, nowMs);
+      if (replacement.twoFollowUps) parts.push(`${first} will have two follow-ups: “${cardTask.title}” (${due ? `due ${due}` : 'no date set'}) stays open.`);
+      else open.unshift(cardTask.title);
+    }
+    if (open.length > 0) parts.push(`Stays open: ${open.join(', ')}.`);
     return parts.length > 0 ? parts.join(' ') : null;
   })();
 

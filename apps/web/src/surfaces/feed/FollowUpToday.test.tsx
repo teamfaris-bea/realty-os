@@ -242,3 +242,63 @@ describe('M5 (R-TODAY-14): the two lines of a quiet row never disagree', () => {
     expect(l).toHaveTextContent(new RegExp(`^Due\\s*Connected: only imported history, the latest 40 days ago\\s*Last\\s*Imported history only \\(latest entry ${WHEN_RE}\\)\\. No conversation in Realty OS yet\\.\\s*Next`));
   });
 });
+
+// b19 Today fix 4 (M7; R-TODAY-15): a due promise is never hidden
+describe('M7 (R-TODAY-15): a due promise is never hidden behind another task', () => {
+  const PROMISE = '01900000-0000-7000-8000-0000000ta0p1';
+  const FOLLOW = '01900000-0000-7000-8000-0000000ta0f1';
+  const promiseCard = (over: Partial<FeedCard> = {}): FeedCard => card({ itemType: 'promise_due', contact: { id: IDS.jane, name: 'Dana Reyes' }, task: { id: PROMISE, title: 'Send lender intro' }, reasons: [{ code: 'PROMISE_OVERDUE', label: 'You promised this; 1 h overdue' }], primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane }, subjectType: 'task', subjectId: PROMISE, ...over });
+  const followCard: FeedCard = card({ itemType: 'task_due', contact: { id: IDS.jane, name: 'Dana Reyes' }, task: { id: FOLLOW, title: 'Follow up with Dana' }, reasons: [{ code: 'TASK_OVERDUE', label: 'Overdue by 2 h' }], primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane }, subjectType: 'task', subjectId: FOLLOW });
+
+  it('the reviewer’s case: the row leads with the promise and names the other task in one line; the person is shown once', async () => {
+    const row = person({
+      itemType: 'promise_due',
+      task: { id: PROMISE, title: 'Send lender intro' },
+      taskIds: [PROMISE, FOLLOW],
+      alsoDue: [{ taskId: FOLLOW, title: 'Follow up with Dana' }],
+      alsoDueMore: 0,
+      reasons: [{ code: 'PROMISE_OVERDUE', label: 'You promised this; 1 h overdue' }, { code: 'ALSO_DUE', label: 'Also due: Follow up with Dana' }],
+      why: ['You promised this; 1 h overdue', 'Also due: Follow up with Dana'],
+      subjectType: 'task',
+      subjectId: PROMISE,
+      nextPromise: { taskId: PROMISE, text: 'Send lender intro', kind: 'promise', dueAt: new Date(Date.now() - 3_600_000).toISOString(), dueAllDay: false, overdue: true },
+    });
+    open(withPlan(feed([], [promiseCard(), followCard]), [row]));
+    const r = within(await group()).getByRole('article', { name: 'Dana Reyes' });
+    const l = within(r).getByTestId('follow-up-lines');
+    expect(within(l).getByText('You promised this; 1 h overdue')).toBeInTheDocument();
+    expect(within(l).getByText('Also due: Follow up with Dana')).toBeInTheDocument();
+    expect(within(l).getByText(/^Send lender intro, overdue since /)).toBeInTheDocument();
+    // shown once: the row stands for both tasks' cards
+    expect(screen.getAllByRole('article', { name: 'Dana Reyes' })).toHaveLength(1);
+    expect(screen.getAllByText(/Send lender intro/).length).toBeGreaterThan(0);
+  });
+
+  it('W2: a row that does NOT show the promise never hides the promise’s card: it stays in "Next up"', async () => {
+    // (an answer whose row leads with the routine task and does not name the promise, as the server answered before the fix)
+    const row = person({ itemType: 'task_due', task: { id: FOLLOW, title: 'Follow up with Dana' }, taskIds: [FOLLOW, PROMISE], reasons: [{ code: 'TASK_OVERDUE', label: 'Overdue by 2 h' }], why: ['Overdue by 2 h'], subjectType: 'task', subjectId: FOLLOW });
+    open(withPlan(feed([], [promiseCard(), followCard]), [row]));
+    await group();
+    const next = within(screen.getByRole('region', { name: 'Next up' })).getAllByRole('article');
+    expect(next).toHaveLength(1);
+    expect(within(next[0]!).getByText('Send lender intro')).toBeInTheDocument();
+    expect(within(next[0]!).getByText('You promised this; 1 h overdue')).toBeInTheDocument();
+  });
+
+  it('a promise that is not due today (its card is in "Next up" a day ahead) is not removed because the person is in the plan', async () => {
+    const tomorrow = promiseCard({ reasons: [{ code: 'PROMISE_DUE', label: 'You promised this; due in 20 h' }] });
+    open(withPlan(feed([], [tomorrow]), [person()]));
+    await group();
+    const next = within(screen.getByRole('region', { name: 'Next up' })).getAllByRole('article');
+    expect(next).toHaveLength(1);
+    expect(within(next[0]!).getByText('Send lender intro')).toBeInTheDocument();
+  });
+
+  it('a promise the row only counts ("and 2 more") keeps its card', async () => {
+    const row = person({ itemType: 'promise_due', task: { id: IDS.task, title: 'Another promise' }, taskIds: [IDS.task, FOLLOW, PROMISE], alsoDue: [{ taskId: FOLLOW, title: 'Follow up with Dana' }], alsoDueMore: 1, why: ['You promised this; 3 h overdue', 'Also due: Follow up with Dana and 1 more'], subjectType: 'task', subjectId: IDS.task });
+    open(withPlan(feed([], [promiseCard(), followCard]), [row]));
+    await group();
+    const next = within(screen.getByRole('region', { name: 'Next up' })).getAllByRole('article');
+    expect(next.map((a) => within(a).queryByText('Send lender intro') !== null)).toEqual([true]);
+  });
+});

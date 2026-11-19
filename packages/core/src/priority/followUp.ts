@@ -455,11 +455,14 @@ export interface FollowUpPersonFacts {
 
 export interface FollowUpTodayEntry {
   contactId: string;
-  /** promise / task: a task of the agent's is due today or earlier; warm: quiet for longer than the stage's threshold */
+  /** promise: a promise of the agent's is among their tasks due today or earlier; task: only other tasks are; warm: quiet for longer than the stage's threshold */
   reason: 'promise' | 'task' | 'warm';
-  /** since when they are due: the earliest due task's deadline, or the last contact plus the threshold */
+  /** since when they are due (the plan's order): the earliest due task's deadline, or the last contact plus the threshold */
   dueAt: Instant;
-  /** the tasks due today or earlier, earliest first (empty for warm) */
+  /**
+   * the tasks due today or earlier (empty for warm). The first is the one the row LEADS with: the earliest due promise
+   * when there is one, else the earliest due task (R-TODAY-15); the others follow, earliest first.
+   */
   taskIds: string[];
   /** warm: whole days since the last contact (since they became the agent's when never contacted) */
   quietDays: number | null;
@@ -481,7 +484,11 @@ export function planFollowUpToday(i: { now: Instant; zone: IanaZone; people: rea
     const due = dated.filter((x) => (x.t.dueAllDay ? (x.t.dueAt as Instant) : x.deadline) < tomorrow).sort((a, b) => a.deadline - b.deadline || a.t.createdAt - b.t.createdAt || (a.t.taskId < b.t.taskId ? -1 : 1));
     const first = due[0];
     if (first) {
-      out.push({ contactId: p.contactId, reason: first.t.kind === 'promise' ? 'promise' : 'task', dueAt: first.deadline, taskIds: due.map((x) => x.t.taskId), quietDays: null, neverContacted: false });
+      // R-TODAY-15: a due promise is never hidden behind an earlier routine task. The row LEADS with the earliest due
+      // promise when there is one (taskIds[0]); the others follow, earliest first. The person is still ordered by
+      // their earliest deadline of all.
+      const lead = due.find((x) => x.t.kind === 'promise') ?? first;
+      out.push({ contactId: p.contactId, reason: lead.t.kind === 'promise' ? 'promise' : 'task', dueAt: first.deadline, taskIds: [lead, ...due.filter((x) => x !== lead)].map((x) => x.t.taskId), quietDays: null, neverContacted: false });
       continue;
     }
     const days = WARM_FOLLOW_UP_DAYS[p.stage];
@@ -526,23 +533,37 @@ export function warmReason(story: QuietStory, o: { now: Instant; stageLabel: str
   }
 }
 
+/** How many of a row's other due tasks are named in its "Also due" line before the rest are counted. */
+export const ALSO_DUE_NAMED = 3;
+
 /**
- * Why a person is in the plan, in words. Never scored: these reasons carry no points. `story` (R-TODAY-14): the
- * person's quiet story, which words a warm row; without it the entry's own facts word it as before.
+ * Why a person is in the plan, in words. Never scored: these reasons carry no points.
+ *   `story` (R-TODAY-14): the person's quiet story, which words a warm row; without it the entry's own facts do.
+ *   `tasks` and `zone` (R-TODAY-15): the person's tasks. With them the first reason is said in the LEAD task's own
+ *   time (a promise overdue 1 h is "1 h overdue" though a routine task has been overdue for 2), and the others are
+ *   named in one line: "Also due: Follow up with Dana". Without them, as before: the entry's instant and a count.
  */
-export function followUpTodayReasons(e: FollowUpTodayEntry, o: { now: Instant; stageLabel: string; story?: QuietStory | undefined }): FeedReason[] {
+export function followUpTodayReasons(e: FollowUpTodayEntry, o: { now: Instant; stageLabel: string; story?: QuietStory | undefined; tasks?: readonly PromiseTask[] | undefined; zone?: IanaZone | undefined }): FeedReason[] {
   const f = textLabels(o.now);
   if (e.reason === 'warm') {
     if (o.story) return [warmReason(o.story, o)];
     if (e.neverContacted) return [{ code: 'WARM_NEVER_CONTACTED', label: `${o.stageLabel}: no conversation yet` }];
     return [{ code: 'WARM_NO_CONTACT', label: `${o.stageLabel}: no conversation for ${days(e.quietDays ?? 0)}` }];
   }
-  const overdue = o.now >= e.dueAt;
+  const byId = new Map((o.tasks ?? []).map((t) => [t.taskId, t]));
+  const lead = byId.get(e.taskIds[0] ?? '');
+  const leadDue = (lead && o.zone ? promiseDeadline(lead, o.zone) : null) ?? e.dueAt;
+  const overdue = o.now >= leadDue;
   const promise = e.reason === 'promise';
   const first: FeedReason = promise
-    ? { code: overdue ? 'PROMISE_OVERDUE' : 'PROMISE_DUE', label: overdue ? `You promised this; ${f.since(e.dueAt)} overdue` : `You promised this; due ${f.in(e.dueAt)}` }
-    : { code: overdue ? 'TASK_OVERDUE' : 'TASK_DUE', label: overdue ? `Overdue by ${f.since(e.dueAt)}` : `Due ${f.in(e.dueAt)}` };
-  return e.taskIds.length > 1 ? [first, { code: 'MORE_DUE', label: `${e.taskIds.length} tasks due today or earlier` }] : [first];
+    ? { code: overdue ? 'PROMISE_OVERDUE' : 'PROMISE_DUE', label: overdue ? `You promised this; ${f.since(leadDue)} overdue` : `You promised this; due ${f.in(leadDue)}` }
+    : { code: overdue ? 'TASK_OVERDUE' : 'TASK_DUE', label: overdue ? `Overdue by ${f.since(leadDue)}` : `Due ${f.in(leadDue)}` };
+  if (e.taskIds.length <= 1) return [first];
+  const others = e.taskIds.slice(1).map((id) => byId.get(id)?.title);
+  if (others.some((t) => t === undefined)) return [first, { code: 'MORE_DUE', label: `${e.taskIds.length} tasks due today or earlier` }];
+  const named = (others as string[]).slice(0, ALSO_DUE_NAMED);
+  const more = others.length - named.length;
+  return [first, { code: 'ALSO_DUE', label: `Also due: ${named.join(', ')}${more > 0 ? ` and ${more} more` : ''}` }];
 }
 
 /**

@@ -62,7 +62,7 @@ export const FeedCardSchema = z.object({
     .nullable(),
 });
 /** R-TODAY-6: one person of the daily plan, shaped like a card; `id` is the person's id, `taskIds` their due tasks. */
-export const FollowUpTodayCardSchema = FeedCardSchema.extend({ taskIds: z.array(uuid) });
+export const FollowUpTodayCardSchema = FeedCardSchema.extend({ taskIds: z.array(uuid), alsoDue: z.array(z.object({ taskId: uuid, title: z.string() })), alsoDueMore: z.number().int().min(0) });
 export const FeedResponse = z.object({
   pinned: z.array(FeedCardSchema),
   scored: z.array(FeedCardSchema),

@@ -23,7 +23,7 @@ import { TextSheet } from '../people-edit/TextSheet.js';
 import { AGENT_ERROR_MESSAGES } from './lib/messages.js';
 
 type Who = { id: string; name: string };
-type Opts = Pick<OnePassOptions, 'cardTask'>;
+type Opts = Pick<OnePassOptions, 'cardTask' | 'alsoDue'>;
 
 export interface OnePass {
   log(contact: Who, o?: Opts): void;

@@ -260,3 +260,18 @@ describe('M2 (R-TODAY-11): a partial save says exactly what was saved and what w
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/stage`)).toHaveLength(1);
   });
 });
+
+describe('M7 (R-TODAY-15) in the sheet: a row that leads with a promise and names another due task', () => {
+  it('the footer names every due task of the row that stays open; nothing is marked done', async () => {
+    const PROMISE = '01900000-0000-7000-8000-0000000ta0p1';
+    const base = taskCard({ kind: 'promise', title: 'Send lender intro' });
+    const row = { ...base, id: IDS.jane, itemType: 'promise_due', task: { id: PROMISE, title: 'Send lender intro' }, subjectId: PROMISE, nextPromise: { ...base.nextPromise!, taskId: PROMISE }, taskIds: [PROMISE, OLD], alsoDue: [{ taskId: OLD, title: 'Follow up with Dana' }], alsoDueMore: 0 };
+    const { u, fake } = open(taskCard());
+    fake.on('GET /feed', { status: 200, body: { ...feed(), followUpToday: { people: [row], total: 1, totalIsMinimum: false, checked: 1, complete: true } } });
+    const { sheet, save } = await logFromCard(u, 'Left voicemail');
+    expect(effects(sheet)).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\. Stays open: Send lender intro, Follow up with Dana\.$/);
+    await u.click(save);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(fake.calls.filter((c) => c.method === 'PATCH')).toEqual([]);
+  });
+});

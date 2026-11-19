@@ -36,9 +36,22 @@ describe('R-TODAY-6: who is due by a promise or a task', () => {
     // the same instant read by a team in London is tomorrow there
     expect(planFollowUpToday({ now: NOW, zone: zone('Europe/London'), people: [person({ tasks: [lateTask] })] }).people).toHaveLength(0);
   });
-  it('an overdue task counts, any kind; the earliest due task names the reason and every due task is folded into the one row', () => {
+  // (b19 Today fix 4, M7 / R-TODAY-15: this test used to say "the earliest due task names the reason", which hid a due
+  // promise behind an earlier routine task. A due promise now leads the row; the person is still ordered by their
+  // earliest deadline, and every due task is still folded into the one row.)
+  it('an overdue task counts, any kind; a due promise LEADS the row even when a routine task is due earlier, and every due task is folded into the one row', () => {
     const r = plan([person({ tasks: [task({ taskId: 'b', kind: 'todo', title: 'Send the comps', dueAt: ago(3 * DAY_MS) }), task({ taskId: 'a' }), task({ taskId: 'later', dueAt: ahead(5 * DAY_MS) })] })]);
-    expect(r.people).toEqual([{ contactId: 'c1', reason: 'task', dueAt: ago(3 * DAY_MS), taskIds: ['b', 'a'], quietDays: null, neverContacted: false }]);
+    expect(r.people).toEqual([{ contactId: 'c1', reason: 'promise', dueAt: ago(3 * DAY_MS), taskIds: ['a', 'b'], quietDays: null, neverContacted: false }]);
+  });
+  it('M7: with no promise among the due tasks the earliest one leads, as before; with two promises the earlier promise leads', () => {
+    const noPromise = plan([person({ tasks: [task({ taskId: 'x', kind: 'follow_up', dueAt: ago(HOUR_MS) }), task({ taskId: 'y', kind: 'todo', dueAt: ago(2 * HOUR_MS) })] })]);
+    expect(noPromise.people[0]).toMatchObject({ reason: 'task', taskIds: ['y', 'x'], dueAt: ago(2 * HOUR_MS) });
+    const two = plan([person({ tasks: [task({ taskId: 'p2', dueAt: ago(HOUR_MS) }), task({ taskId: 'f', kind: 'follow_up', dueAt: ago(3 * HOUR_MS) }), task({ taskId: 'p1', dueAt: ago(2 * HOUR_MS) })] })]);
+    expect(two.people[0]).toMatchObject({ reason: 'promise', taskIds: ['p1', 'f', 'p2'] });
+  });
+  it('M7: a promise that is not due yet (tomorrow) does not lead: the due task does', () => {
+    const r = plan([person({ tasks: [task({ taskId: 'p', dueAt: ahead(2 * DAY_MS) }), task({ taskId: 'f', kind: 'follow_up', dueAt: ago(HOUR_MS) })] })]);
+    expect(r.people[0]).toMatchObject({ reason: 'task', taskIds: ['f'] });
   });
   it('an all-day task due today is due until the end of the team’s day, and an undated task makes nobody due', () => {
     const allDay = task({ dueAt: at('2026-11-19T05:00:00Z'), dueAllDay: true });
@@ -129,7 +142,25 @@ describe('R-TODAY-6: the reason, in words', () => {
   });
   it('a task, and how many are due when there are several', () => {
     expect(say(person({ tasks: [task({ kind: 'follow_up', dueAt: ago(3 * HOUR_MS) })] }))).toEqual(['Overdue by 3 h']);
-    expect(say(person({ tasks: [task({ taskId: 'a', kind: 'todo', dueAt: ahead(HOUR_MS) }), task({ taskId: 'b' })] }))).toEqual(['Due in 1 h', '2 tasks due today or earlier']);
+    expect(say(person({ tasks: [task({ taskId: 'a', kind: 'todo', dueAt: ahead(HOUR_MS) }), task({ taskId: 'b', kind: 'follow_up', dueAt: ahead(2 * HOUR_MS) })] }))).toEqual(['Due in 1 h', '2 tasks due today or earlier']);
+  });
+  // b19 Today fix 4 (M7; R-TODAY-15): a due promise is never hidden behind an earlier routine task
+  it('M7, the reviewer’s case: a follow-up overdue 2 h and a promise overdue 1 h: the row leads with the promise, in the promise’s own time, and names the other in one line', () => {
+    const tasks = [task({ taskId: 'f', kind: 'follow_up', title: 'Follow up with Dana', dueAt: ago(2 * HOUR_MS) }), task({ taskId: 'p', title: 'Send lender intro', dueAt: ago(HOUR_MS) })];
+    const e = plan([person({ tasks })]).people[0]!;
+    expect(e).toMatchObject({ reason: 'promise', taskIds: ['p', 'f'], dueAt: ago(2 * HOUR_MS) });
+    expect(followUpTodayReasons(e, { now: NOW, stageLabel: 'Connected', tasks, zone: NY })).toEqual([
+      { code: 'PROMISE_OVERDUE', label: 'You promised this; 1 h overdue' },
+      { code: 'ALSO_DUE', label: 'Also due: Follow up with Dana' },
+    ]);
+  });
+  it('M7: several others are named up to three, then counted; a promise due later today leads in its own words', () => {
+    const tasks = [
+      task({ taskId: 'p', title: 'Send lender intro', dueAt: ahead(3 * HOUR_MS) }),
+      ...['Call the lender', 'Send the comps', 'Book the inspection', 'Order the survey', 'Check the title'].map((title, i) => task({ taskId: `t${i}`, kind: 'todo', title, dueAt: ago((5 - i) * HOUR_MS) })),
+    ];
+    const e = plan([person({ tasks })]).people[0]!;
+    expect(followUpTodayReasons(e, { now: NOW, stageLabel: 'Connected', tasks, zone: NY }).map((r) => r.label)).toEqual(['You promised this; due in 3 h', 'Also due: Call the lender, Send the comps, Book the inspection and 2 more']);
   });
   it('warm: the team’s own stage label, and how long without a conversation', () => {
     expect(say(person({ lastContactAt: ago(9 * DAY_MS) }))).toEqual(['Connected: no conversation for 9 days']);
