@@ -263,6 +263,28 @@ export async function loadDealOpen(tx: Tx, contactId: ContactId): Promise<boolea
   return r.rows[0]?.open ?? false;
 }
 
+/**
+ * b19 R-TEAMQ-13: whether the lead's source is COVERED now: its coverage switch is on and its named owner and backup
+ * are both active members (core sourceCoverage's rule). The lead's source is the source of the person's latest
+ * inquiry that is not an ignored duplicate (lead_inquiries_contact_idx), else the source they first came from; a
+ * person with neither (typed in, imported with no source) is not covered. Read by the `auto_release` timer only, as
+ * the system actor, under the contact lock.
+ */
+export async function loadSourceCovered(tx: Tx, contactId: ContactId): Promise<boolean> {
+  const r = await sql<{ covered: boolean | null }>`
+    SELECT (s.covered AND om.status = 'active' AND bm.status = 'active') AS covered
+      FROM contacts c
+      JOIN lead_sources s ON s.tenant_id = c.tenant_id AND s.id = COALESCE(
+             (SELECT i.lead_source_id FROM lead_inquiries i
+               WHERE i.tenant_id = c.tenant_id AND i.contact_id = c.id AND i.outcome <> 'duplicate_ignored'
+               ORDER BY i.received_at DESC, i.id DESC LIMIT 1),
+             c.original_lead_source_id)
+      LEFT JOIN memberships om ON om.tenant_id = s.tenant_id AND om.user_id = s.owner_user_id
+      LEFT JOIN memberships bm ON bm.tenant_id = s.tenant_id AND bm.user_id = s.backup_user_id
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}`.execute(tx);
+  return r.rows[0]?.covered === true;
+}
+
 export async function loadIsCollaborator(tx: Tx, contactId: ContactId, userId: UserId, now: Instant): Promise<boolean> {
   const r = await sql<{ ok: boolean }>`
     SELECT EXISTS (SELECT 1 FROM contact_collaborators WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}

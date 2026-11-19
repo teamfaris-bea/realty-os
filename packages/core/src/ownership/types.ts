@@ -173,6 +173,8 @@ export interface OwnershipEventPayload {
   closedReason?: CloseReason;
   /** owned → owned event that starts a new ownership period without an owner change (re-inquiry SLA). */
   newPeriod?: boolean;
+  /** sla_waived: which deadline of the period was waived (its releaseDueAt is then null). */
+  waived?: 'auto_release';
   [k: string]: unknown;
 }
 
@@ -414,6 +416,12 @@ export interface DecisionContext {
   ownerInActorTeam?: boolean;
   /** The actor is a live collaborator on the contact (touch). */
   actorIsCollaborator?: boolean;
+  /**
+   * `auto_release` timer only (b19 R-TEAMQ-13): the lead's source is COVERED now (its coverage switch is on and its
+   * named owner and backup are both active members). The lead's source is the source of the person's latest
+   * inquiry, else the one they first came from. db reads it under the contact lock; unknown reads as not covered.
+   */
+  sourceCovered?: boolean;
   /** Offeree's memberships.consecutive_missed_offers before this command (R-OWN-12). */
   offereeMissedOffers?: number;
   people?: PeopleFacts;

@@ -51,6 +51,7 @@ import {
   loadMember,
   loadPond,
   loadRoutingSnapshot,
+  loadSourceCovered,
   loadCommandFacts,
   lockMemberships,
   myTeamMemberIds,
@@ -293,6 +294,10 @@ async function buildContext(
       break;
     case 'deactivate_owner':
       if (opts.deactivation) ctx.deactivation = opts.deactivation;
+      break;
+    case 'timer':
+      // b19 R-TEAMQ-13: a covered source's lead is not auto-released; read when the timer fires, for that timer only
+      if (cmd.deadline === 'auto_release' && state?.state === 'owned') ctx.sourceCovered = await loadSourceCovered(tx, contactId);
       break;
     default:
       break;

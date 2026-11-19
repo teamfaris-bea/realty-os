@@ -743,6 +743,23 @@ function decideTimer(state: OwnershipProjection, cmd: Cmd<'timer'>, ctx: Decisio
       // E70: the breach advanced the seq but not the period, so this fence still matches.
       if (!inPeriod || state.releaseDueAt !== fence.dueAt || state.firstTouchAt !== null) return noop(state);
       if (now < fence.dueAt) return noop(state, [rescheduleTimer(ctx.contactId, cmd.deadline, fence, fence.dueAt, now)]);
+      // Precedence of the auto-release, decided here when the timer fires (b19 R-TEAMQ-13; owner decision 3 of
+      // 2026-11-19, for the pilot):
+      //   1. a first touch already recorded, a stale period or a stale deadline: nothing to release (above);
+      //   2. the lead's source is COVERED now (ctx.sourceCovered: the switch on, its owner and its backup both
+      //      active): the auto-release does NOT fire, whatever the tenant's first_touch_release_seconds says. The
+      //      lead stays with its owner; the stored release deadline is cleared by a ledgered `sla_waived` event (so
+      //      the sweeper stops asking and no screen promises a return to the pond); nobody is notified by this.
+      //      The first-touch breach is a separate timer on the same period and still fires and alerts as before,
+      //      and the source's backup is alerted at minute three (apps/api leads/backupAlert.ts);
+      //   3. otherwise the tenant setting decides, exactly as before: the lead goes to the default pond.
+      // Coverage is read at this moment, not when the period started: a source covered since then is honoured, and
+      // one that stopped being covered (switched off, or its owner or backup suspended) releases as before.
+      if (ctx.sourceCovered === true) {
+        const w = new Builder(state, ctx.contactId, ctx);
+        w.emit('sla_waived', 'owned', { reasonCode: 'AUTO_RELEASE_OFF_COVERED_SOURCE', payload: { waived: 'auto_release', releaseDueAt: null } });
+        return accepted(w, null);
+      }
       const b = new Builder(state, ctx.contactId, ctx);
       b.emit('auto_released', 'in_pond', { reasonCode: 'FIRST_TOUCH_MISSED', pondId: s.defaultPondId });
       const key = `auto_released:${ctx.contactId}:${fence.periodSeq}`;
