@@ -31,11 +31,16 @@ export interface TurnCall {
   pinnedSeq: number;
   /** the repair call of the turn (the second call after a schema failure) */
   repair: boolean;
-  /** who resumes the turn if it is held: the worker job that runs it (its id); null for a run outside a job (tests) */
+  /** who resumes the turn if it is held: the worker job that runs it (its id), or RESUME_OWNER; null for a run outside a job (tests) */
   owner: string | null;
+  /** true: the job that runs the turn is parked until the rollover; false (E798, a sweep-triggered turn): it finishes and a resume job is queued */
+  park: boolean;
   /** the person's reply waits for this call (the machine's inboundUnanswered); false for a start or a follow-up */
   inboundUnanswered: boolean;
 }
+
+/** E798: the owner written on a held turn that the resume job resumes (never a job id: those are digits). */
+export const RESUME_OWNER = 'resume';
 
 /**
  * E794: every held turn of a team would otherwise resume at the same instant (the rollover). Each assignment's resume
@@ -126,7 +131,15 @@ async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t:
   } else {
     await budgetHoldNoticeInTx(tx, deps, a, refused.reset, now);
   }
-  return { kind: 'retry', retryAt: (refused.reset.getTime() + budgetResumeSpreadMs(a.id)) as Instant };
+  const resumeAt = (refused.reset.getTime() + budgetResumeSpreadMs(a.id)) as Instant;
+  if (!t.park) {
+    // E798: the sweep's job is not parked. One resume job per care and epoch (a live one makes this a no-op, and it
+    // resumes this turn: the owner written above is RESUME_OWNER); a resume job refused again parks itself (park).
+    await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch, resume: true },
+      dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:budget`, runAt: resumeAt });
+    return { kind: 'done', code: 'HELD_FOR_RESUME' };
+  }
+  return { kind: 'retry', retryAt: resumeAt };
 }
 
 /**
@@ -152,7 +165,7 @@ export async function reopenHeldTurn(tx: Tx, turnId: string): Promise<void> {
 /** The count, the reservation or the hold, and the reopening in ONE transaction whose caller holds the team lock. */
 export async function reserveModelCall(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, turnId: string, repair: boolean): Promise<Reservation> {
   const r = await countAndReserve(tx, deps, a, turnId);
-  if ('code' in r) return holdTurn(tx, deps, a, { id: turnId, pinnedSeq: Number.MAX_SAFE_INTEGER, repair, owner: null, inboundUnanswered: a.machine.inboundUnanswered }, r, Date.now() as Instant);
+  if ('code' in r) return holdTurn(tx, deps, a, { id: turnId, pinnedSeq: Number.MAX_SAFE_INTEGER, repair, owner: null, park: true, inboundUnanswered: a.machine.inboundUnanswered }, r, Date.now() as Instant);
   await reopenHeldTurn(tx, turnId);
   return r;
 }

@@ -7,7 +7,10 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { inboundSms } from '../comms/testing.js';
 import { BUDGET_HOLD_ACTIVITY, BUDGET_HOLD_OUTREACH, BUDGET_HOLD_REPLY } from './sentences.js';
-import { aiMessages, assignmentOf, feedItems, handbacksOf, type IsaLead, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
+import { withTenantTx } from '@realty/db';
+import { systemActor } from '../worker/systemActor.js';
+import { sweepInTx } from './handlers.js';
+import { aiMessages, assignmentOf, feedItems, handbacksOf, type IsaLead, isaLead, isaWorker, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
 import { budgetResumeSpreadMs, BUDGET_RESUME_SPREAD_MS } from './spend.js';
 import { runTurn } from './turn.js';
 
@@ -246,4 +249,87 @@ it('E795 R-ISA-20: a follow-up held at a budget tells the owner the same way, on
   expect(await notices(c, 'ai_isa_paused')).toHaveLength(1);
   expect(await outbound(c)).toBe(outBefore);
   expect(w.ai.calls.length).toBe(callsBefore);
+});
+
+// ---- F7: a hold owned by the sweep's job does not park the sweep --------------------------------------------------
+
+/** The periodic sweep's body, once (it enqueues this assignment's `…:sweep` turn job), without running anything. */
+async function sweepOnce(c: Care): Promise<void> {
+  const actor = systemActor(c.w.tenantId as never, 'assistant');
+  await withTenantTx(actor, (tx, now) => sweepInTx(tx, depsFromPlatform(h.app.platform), actor, now), { db: h.database });
+}
+const jobsByKey = async (c: Care, suffix: string) => (await h.su.query<{ status: string; run_at: Date; payload: Record<string, unknown> }>(
+  `SELECT status, run_at, payload FROM jobs WHERE tenant_id = $1 AND dedupe_key = $2 AND status IN ('pending','running')`, [c.w.tenantId, `ai_isa.turn:${c.assignmentId}:${c.epoch}:${suffix}`])).rows;
+/** Runs the assignment's sweep job (and whatever it enqueues for now), and no other turn job. */
+async function runSweepJob(c: Care): Promise<void> {
+  await h.su.query(`UPDATE jobs SET run_at = now() + interval '1 hour' WHERE tenant_id = $1 AND kind = 'ai_isa.turn' AND status = 'pending' AND dedupe_key NOT LIKE '%:sweep'`, [c.w.tenantId]);
+  await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND kind = 'ai_isa.turn' AND status = 'pending' AND dedupe_key LIKE '%:sweep'`, [c.w.tenantId]);
+  await isaWorker(h).drain(30);
+}
+/** A reply the sweep's job reads first (the reply's own job is still inside its debounce), with the person at the limit. */
+async function sweepOwnedHold(body: string): Promise<Care> {
+  const c = await care();
+  await recordedToday(c, 12);
+  expect((await inboundSms(h, c.lead.phone, c.w.mainNumber, body)).statusCode).toBe(200);
+  await h.su.query(`UPDATE conversations SET last_inbound_at = now() - interval '1 minute' WHERE contact_id = $1`, [c.lead.id]);
+  await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE contact_id = $1 AND direction = 'inbound'`, [c.lead.id]);
+  await sweepOnce(c);
+  expect(await jobsByKey(c, 'sweep')).toHaveLength(1);
+  await runSweepJob(c);
+  expect((await h.su.query(`SELECT trigger_kind, status, decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_key LIKE 'sweep:%'`, [c.assignmentId])).rows)
+    .toEqual([{ trigger_kind: 'sweep', status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT' }]);
+  return c;
+}
+
+it('E798 R-ISA-20: a turn the sweep\'s job read and that is held at a budget does not park the sweep job: it finishes, a separate resume job waits for the rollover, and the next sweep for the same care is accepted and does its other duties', async () => {
+  const c = await sweepOwnedHold('We want to buy a home near Oak Hollow this spring.');
+  // the sweep job finished; it is not parked until midnight under its dedupe key
+  expect(await jobsByKey(c, 'sweep')).toEqual([]);
+  // a separate job, with its own key, resumes the held turn after the rollover (plus the assignment's spread)
+  const reset = (await h.su.query<{ at: Date }>(`SELECT (((now() AT TIME ZONE default_timezone)::date + 1)::timestamp AT TIME ZONE default_timezone) AS at FROM tenant_settings WHERE tenant_id = $1`, [c.w.tenantId])).rows[0]!.at;
+  const resume = await jobsByKey(c, 'budget');
+  expect(resume).toHaveLength(1);
+  expect(resume[0]!.payload).toMatchObject({ assignmentId: c.assignmentId, trigger: 'sweep', epoch: c.epoch, resume: true });
+  expect(resume[0]!.run_at.getTime()).toBe(reset.getTime() + budgetResumeSpreadMs(c.assignmentId));
+  // the hold was told to the owner like any other (E795)
+  expect((await feedItems(h, c.lead.id)).filter((f) => f.item_type === 'unanswered_inbound')).toHaveLength(1);
+  // a later sweep enqueue for the same assignment is accepted, and an ordinary sweep job leaves the held turn alone
+  await sweepOnce(c);
+  expect(await jobsByKey(c, 'sweep')).toHaveLength(1);
+  await runSweepJob(c);
+  expect((await h.su.query(`SELECT status, attempt FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_key LIKE 'sweep:%'`, [c.assignmentId])).rows).toEqual([{ status: 'deferred', attempt: 1 }]);
+  // ... and its other duties run today, not at midnight: counsel's clearance is withdrawn, the next sweep pauses care
+  await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:ai_isa'`);
+  try {
+    await sweepOnce(c);
+    expect(await jobsByKey(c, 'sweep')).toHaveLength(1);
+    await runSweepJob(c);
+    expect((await assignmentOf(h, c.lead.id))!.pause_reason).toBe('pack_withdrawn');
+  } finally {
+    await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:ai_isa'`);
+  }
+});
+
+it('E798 R-ISA-20: after the rollover the resume job answers the reply the sweep\'s job had read: one provider call, one reply', async () => {
+  const c = await sweepOwnedHold('We want to buy a home near Pine Reach this spring.');
+  const callsBefore = c.w.ai.calls.length;
+  const outBefore = await outbound(c);
+  await rollover(c);
+  await runIsa(h, c.w.tenantId, 1);
+  expect(c.w.ai.calls.length).toBe(callsBefore + 1);
+  expect(c.w.ai.calls.at(-1)!.user).toContain('Pine Reach');
+  expect(await outbound(c)).toBe(outBefore + 1);
+  expect(await jobsByKey(c, 'budget')).toEqual([]);
+  expect((await h.su.query(`SELECT status FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_key LIKE 'sweep:%'`, [c.assignmentId])).rows).toEqual([{ status: 'sent' }]);
+});
+
+it('E798 R-ISA-20: a resume job that is refused again (the team is still at its limit) parks itself for the next day: the care keeps exactly one resume job', async () => {
+  const c = await sweepOwnedHold('We want to buy a home near Quince Lane this spring.');
+  const callsBefore = c.w.ai.calls.length;
+  // made due while the budget is still used up
+  await runIsa(h, c.w.tenantId, 1);
+  expect(c.w.ai.calls.length).toBe(callsBefore);
+  expect(await jobsByKey(c, 'budget')).toHaveLength(1);
+  expect((await h.su.query(`SELECT status, decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_key LIKE 'sweep:%'`, [c.assignmentId])).rows)
+    .toEqual([{ status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT' }]);
 });

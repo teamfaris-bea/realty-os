@@ -27,7 +27,7 @@ import {
 } from './coreSeam.js';
 import { backstopInTx } from './backstop.js';
 import { ACTIVITY_ANSWERING, ACTIVITY_WAITING_BUDGET } from './sentences.js';
-import { reserveForTurn, supersedeHeldTurns } from './spend.js';
+import { RESUME_OWNER, reserveForTurn, supersedeHeldTurns } from './spend.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
@@ -54,6 +54,8 @@ export interface TurnPayload {
   epoch: number;
   /** E796: the sweep's job for a turn stuck `deciding` (handlers.ts sweepInTx): it adopts the turn again, or gives it up */
   recover?: boolean;
+  /** E798: the job queued for the rollover when a sweep-triggered turn is held at a budget (spend.ts holdTurn); it owns that turn */
+  resume?: boolean;
 }
 
 export type TurnResult = { kind: 'done'; code: string } | { kind: 'retry'; retryAt: Instant };
@@ -211,8 +213,10 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, me: string 
       if (open) {
         const held = open.status === 'deferred';
         const ownTrigger = open.trigger_key.startsWith(`${p.trigger}:${a.epoch}:`) && (p.trigger !== 'timer' || open.trigger_key === `timer:${a.epoch}:${p.timer ?? 'start'}`);
-        // a turn held by a run outside a job, or resumed by one, has no owner to compare (tests); every worker run has
-        const adopt = held ? ownTrigger && (open.job === null || me === null || open.job === me)
+        // held: the recorded owner decides (a job id, or the resume job: E798, whose turn may carry any trigger, e.g. a
+        // recovered inbound turn). A turn held by a run outside a job, or resumed by one, has no owner to compare
+        // (tests): there the trigger decides, as before. Every worker run has an identity.
+        const adopt = held ? (open.job !== null && me !== null ? open.job === me : ownTrigger)
           : (me !== null && open.job === me) || (p.recover === true && open.stuck);
         if (adopt && !held && p.recover === true && open.attempt >= ISA_TURN_MAX_ATTEMPTS) {
           // E796: recovered too often. The turn is given up and the machine must not be left awaiting it: care is
@@ -328,13 +332,18 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
 
 /** One full turn (the job body). */
 export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRun = {}): Promise<TurnResult> {
-  const me = run.jobId ?? null;
+  // E798: a job with trigger `sweep` runs under a dedupe key every later sweep enqueue shares (…:sweep, :chain, :hold,
+  // :replan, :recover). Parked until the rollover it would make those enqueues no-ops, and the sweep's other duties for
+  // the care would wait with it. So it never parks at a budget: it finishes, and one resume job per care and epoch
+  // (payload `resume`, its own key) owns the held turn. Every other job parks itself, and owns its turn by its job id.
+  const park = p.trigger !== 'sweep' || p.resume === true;
+  const me = p.resume === true ? RESUME_OWNER : run.jobId ?? null;
   const pre = await txA(deps, tenantId, p, me);
   if ('kind' in pre) return pre;
   let note: string | undefined;
   for (let call = pre.repair ? 1 : 0; call < 2; call += 1) {
     // R-ISA-20: every provider call is reserved first, with no turn lock held; at a daily limit the turn is held here
-    const reservation = await reserveForTurn(deps, tenantId, pre.a, { id: pre.turnId, pinnedSeq: pre.pinnedSeq, repair: call > 0, owner: me, inboundUnanswered: pre.a.machine.inboundUnanswered });
+    const reservation = await reserveForTurn(deps, tenantId, pre.a, { id: pre.turnId, pinnedSeq: pre.pinnedSeq, repair: call > 0, owner: park ? me : RESUME_OWNER, park, inboundUnanswered: pre.a.machine.inboundUnanswered });
     if ('kind' in reservation) return reservation;
     const { runId } = reservation;
     const started = Date.now();

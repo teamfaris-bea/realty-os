@@ -29,7 +29,7 @@ type DepsFor = (providers: Providers) => CommsDeps;
 const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers });
 
 const TurnPayload = jobPayload({ assignmentId: zId, trigger: z.enum(['start', 'inbound', 'timer', 'control', 'sweep']), timer: z.enum(['follow_up', 'offer_expiry', 'pause_expiry', 'inactivity_warning']).optional(), epoch: z.number().int().min(1),
-  recover: z.boolean().optional() });
+  recover: z.boolean().optional(), resume: z.boolean().optional() });
 const SendResultPayload = jobPayload({ messageId: zId, status: z.string().regex(/^[a-z_]{2,20}$/) });
 const SignalPayload = jobPayload({ signalId: zId });
 const AssignmentPayload = jobPayload({ assignmentId: zId, epoch: z.number().int().min(1).optional() });

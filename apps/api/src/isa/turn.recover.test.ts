@@ -152,6 +152,29 @@ it('E796 R-ISA-4: a deciding turn whose job is gone is recovered by the sweep af
   expect((await machine(c)).awaiting).toBe(false);
 });
 
+it('E796 E798 R-ISA-20: a recovered turn that meets a used-up budget is held for the resume job (the recover job is the sweep\'s and does not park), and is answered once after the rollover', async () => {
+  const c = await care();
+  const calls = c.w.ai.calls.length;
+  const out = await outbound(c);
+  await text(c, 'We want to buy a home near Rowan Gate this spring.');
+  await settle(c);
+  await arm('reserve');
+  await expect(runTurn(depsFromPlatform(h.app.platform), c.w.tenantId, { assignmentId: c.assignmentId, trigger: 'inbound', epoch: c.epoch }, { jobId: 'job-that-died' })).rejects.toThrow(/B19_INJECTED_FAILURE/);
+  await disarm();
+  await recordedToday(c, 12);
+  await ageTurns(c);
+  await sweepNow(h, c.w.tenantId, 1);
+  expect(await inboundTurns(c)).toEqual([{ status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT', attempt: 2 }]);
+  expect(c.w.ai.calls.length).toBe(calls);
+  const keys = (await h.su.query<{ k: string }>(`SELECT dedupe_key AS k FROM jobs WHERE tenant_id = $1 AND kind = 'ai_isa.turn' AND status = 'pending' AND payload->>'resume' = 'true'`, [c.w.tenantId])).rows;
+  expect(keys).toEqual([{ k: `ai_isa.turn:${c.assignmentId}:${c.epoch}:budget` }]);
+  await h.su.query(`UPDATE ai_runs SET created_at = created_at - interval '1 day' WHERE tenant_id = $1`, [c.w.tenantId]);
+  await runIsa(h, c.w.tenantId, 1);
+  expect((await inboundTurns(c)).map((t) => t.status)).toEqual(['sent']);
+  expect(c.w.ai.calls.length).toBe(calls + 1);
+  expect(await outbound(c)).toBe(out + 1);
+});
+
 it('E796 R-ISA-4: a turn recovered too often is given up: care is paused for a person to check, the machine no longer awaits the model, and the unanswered reply is pinned for the owner', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
