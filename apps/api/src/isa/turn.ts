@@ -291,7 +291,9 @@ export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload):
     let inputTokens: number | null = null;
     let outputTokens: number | null = null;
     try {
-      const res = await deps.providers.ai.complete({ templateKey: pre.prompt.templateKey, system: pre.prompt.system, user: note ? `${pre.prompt.user}\n\nnote: ${note}` : pre.prompt.user, maxOutputTokens: pre.prompt.maxOutputTokens });
+      // E793 (R-ISA-20): one reservation is one provider request; the adapter makes no retry of its own (the turn has its
+      // own repair call, reserved separately, and its own failure handling)
+      const res = await deps.providers.ai.complete({ templateKey: pre.prompt.templateKey, system: pre.prompt.system, user: note ? `${pre.prompt.user}\n\nnote: ${note}` : pre.prompt.user, maxOutputTokens: pre.prompt.maxOutputTokens, singleRequest: true });
       text = res.text;
       model = res.model;
       inputTokens = res.inputTokens;

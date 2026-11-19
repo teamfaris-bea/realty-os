@@ -157,6 +157,13 @@ export interface AiRequest {
   system: string;
   user: string;
   maxOutputTokens: number;
+  /**
+   * At most ONE provider request for this call: the adapter makes no transport-level retry (a 5xx, a rate limit, a
+   * lost connection or a timeout fails the call). Set by a caller that reserved exactly one call in a budget before
+   * calling (the AI assistant's turn, R-ISA-20; E793): a request that timed out may already have been processed.
+   * Absent: the adapter's own retries apply.
+   */
+  singleRequest?: boolean;
 }
 
 export interface AiResponse {

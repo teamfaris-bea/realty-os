@@ -65,6 +65,17 @@ it('R-ISA-20: records exact tokens, with a separate row for the repair', async (
   spy.mockRestore();
 });
 
+it('E793 R-ISA-20: every provider call of a turn (the original and the repair) asks the adapter for a single request, one per reservation', async () => {
+  const { w, a, run } = await ready();
+  w.ai.script.push('invalid schema');
+  const spy = vi.spyOn(w.ai, 'complete');
+  await run();
+  expect(spy).toHaveBeenCalledTimes(2);
+  expect(spy.mock.calls.map((c) => c[0].singleRequest)).toEqual([true, true]);
+  expect((await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_runs WHERE input_refs->>'assignmentId' = $1 AND purpose = 'ai_isa_turn'`, [a.id])).rows[0]!.n).toBe(2);
+  spy.mockRestore();
+});
+
 it('R-ISA-20: the twelfth call cannot sneak in a thirteenth repair; held repair resumes next local day', async () => {
   const { w, a, run } = await ready();
   await seedCalls(w.tenantId, a.id, 11);
