@@ -198,7 +198,7 @@ describe('R-TEAMQ-11 a named member is suspended or deactivated', () => {
 });
 
 describe('R-TEAMQ-10 who may read and change coverage', () => {
-  it('R-TEAMQ-10 R-PERM-1 R-PERM-5: the role matrix: Owner and Admin read and change it; a Team Lead, an Agent, an ISA and a TC get 404 on both and change nothing', async () => {
+  it('R-TEAMQ-10 E837 R-PERM-1 R-PERM-5: the role matrix: Owner and Admin read and change it; a Team Lead, an Agent, an ISA and a TC get 404 on both and change nothing', async () => {
     const id = await newSource('Role matrix source (coverage test)');
     const got: Record<string, string> = {};
     const want: Record<string, string> = {};
@@ -219,7 +219,7 @@ describe('R-TEAMQ-10 who may read and change coverage', () => {
     expect((await h.client().request('GET', `/api/lead-sources/${id}/coverage`)).statusCode).toBe(401);
   });
 
-  it('R-TEAMQ-10 R-TEN-1: tenant isolation: another team\'s source is 404 to read and to change, another team\'s member cannot be named, and the overview never lists it', async () => {
+  it('R-TEAMQ-10 E837 R-TEN-1: tenant isolation: another team\'s source is 404 to read and to change, another team\'s member cannot be named, and the overview never lists it', async () => {
     const a = w.agents[0]!;
     expect((await read(other.sourceId)).status).toBe(404);
     expect((await put({ ownerUserId: a.userId, backupUserId: a.userId, highIntent: true, covered: true }, other.sourceId)).status).toBe(404);
