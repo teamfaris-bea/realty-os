@@ -6,14 +6,21 @@
 // refuse them nothing and stop nothing: their plan keeps running and a new plan may start. The commit that attaches the
 // record to them is what refuses them, and stops their plan then. Before 0103 the dry run alone refused the matched
 // person as the marked source's lead, their plan stopped at its next step for good, and abandoning the import changed
-// nothing. Made-up labels and sources; fakes only.
+// nothing.
+//
+// E755, R-LSRC-10: an import's OWN review row and summary (GET /imports/:id/parity and /report) say who that is, in
+// numbers: how many people the file carries under the label, how many of them were imported or attached (the ones the
+// marked source's setting covers), and how many were already in the CRM and are not imported from this file, whom the
+// mapping does not cover. Before this the row said "(3 people) ... nothing automatic reaches the people imported with
+// it" while one of the three, only matched, went on getting the plan's texts.
+// Made-up labels and sources; fakes only.
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { approvedPlaybook, auditRows, enrollmentRow, runJobs, smsStep } from '../assistant/testing.js';
+import { approvedPlaybook, auditRows, enrollmentRow, messagesOf, runJobs, smsStep } from '../assistant/testing.js';
 import type { TestClient } from '../auth/testHarness.js';
 import { type CommsWorld, commsWorld, ownedContact, randomPhone } from '../comms/testing.js';
-import { SOURCE_NO_AUTOMATED_CONTACT, noAutomatedContact } from '../leads/automatedContact.js';
+import { NO_AUTOMATED_CONTACT_LABEL, SOURCE_NO_AUTOMATED_CONTACT, noAutomatedContact } from '../leads/automatedContact.js';
 import { askPlanForAStep } from '../leads/sourceStop.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type ImportsHarness, type RecordView, approve, call, commitStage, csvBase64, dryRunStage, freshReauth, importsHarness, records, verify, writtenBulkPhone } from './testing.js';
@@ -35,6 +42,7 @@ interface Row {
   unlabeledImportId: string | null;
   people: number;
   committedPeople: number;
+  matchedOnlyPeople: number | null;
   state: string;
   leadSourceId: string | null;
   noAutomatedContact: boolean;
@@ -96,6 +104,11 @@ const stepNow = async (enrollmentId: string) => {
   await runJobs(h(), w.tenantId, ['playbook.step', 'comms.dispatch']);
 };
 const matchedRecord = (rs: RecordView[], contactId: string) => rs.find((r) => r.matchContactId === contactId)!;
+const report = async (batchId: string) => (await call<{ sourceLabels: Row[] }>(w.owner, 'GET', `/imports/${batchId}/report`)).body.sourceLabels;
+/** What the row says of the marked source it is mapped to (the label's row; the no-label group's row). */
+const becauseLabel = () => `the label is mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on`;
+const becauseGroup = () => `the people of this import with no source label are counted as ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on`;
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 describe('R-LSRC-8 E735 E755: a dry run, a record waiting for review and an abandoned import block nobody, under a label mapped to a marked source and in a no-label group counted as one', () => {
   let first: string;
@@ -126,6 +139,17 @@ describe('R-LSRC-8 E735 E755: a dry run, a record waiting for review and an aban
       ['', first, 1, 0, 'mapped', marked.id, true],
     ]);
     expect((await list()).map((r) => [r.label, r.unlabeledImportId, r.people])).toEqual([[PARTNER, null, 0], ['', first, 0]]);
+    // ...and in words, with the numbers: nobody is imported yet, the mapping covers a person only once their row is
+    // imported or attached, and the people the file only matched are named as not covered (Nia and Oz under the label,
+    // Quin with none); Pip is new and simply not imported yet
+    expect(rows.map((r) => r.matchedOnlyPeople)).toEqual([2, 1]);
+    expect(rows[0]!.sentence).toBe(
+      `"${PARTNER}": 3 people in this file. None has been imported from this file yet. ${cap(becauseLabel())}: that covers a person once their row is imported or attached, not before. 2 were already in the CRM and are not imported from this file, so this mapping does not cover them unless their row is attached. 1 other is not imported yet.`,
+    );
+    expect(rows[1]!.sentence).toBe(
+      `No source label: 1 person in this file. None has been imported from this file yet. ${cap(becauseGroup())}: that covers a person once their row is imported or attached, not before. 1 was already in the CRM and is not imported from this file, so this does not cover them unless their row is attached.`,
+    );
+    expect(rows.map((r) => r.sentence).join(' ')).not.toMatch(/nothing automatic reaches the people imported/);
   }, 300_000);
 
   it('abandoning the import changes nothing for them either: still not refused, both plans running', async () => {
@@ -171,10 +195,29 @@ describe('R-LSRC-8 E735 E755: a dry run, a record waiting for review and an aban
     const again = await call(agent, 'POST', `/contacts/${native.nia.id}/enrollments`, { playbookId: planId });
     expect([again.status, again.code]).toEqual([409, SOURCE_NO_AUTOMATED_CONTACT]);
 
-    // Oz: only matched, in both imports. Nothing is refused, and his plan runs on
+    // Oz: only matched, in both imports. Nothing is refused, and his plan runs on: its automated text went to him
     expect(await refusalOf(native.oz.id)).toBeNull();
     await stepNow(ozPlan);
     expect((await enrollmentRow(h(), ozPlan)).state).toBe('active');
+    expect((await messagesOf(h(), native.oz.id)).filter((m) => m.initiator !== 'human').map((m) => [m.action_category, m.status])).toEqual([['nurture_step', 'sent']]);
+
+    // E755: so the import's own row and its summary do not say "nothing automatic reaches" the file's three people.
+    // They say the numbers and what each means: 3 in the file, 2 imported or attached and covered (Nia, Pip), and 1
+    // already in the CRM whom this file did not import, so the mapping does not cover him (Oz). The contacts are
+    // committed, so his row can no longer be attached in this import, and the row does not suggest it can
+    const labelSentence = `"${PARTNER}": 3 people in this file. 2 were imported or attached and get no automated contact, because ${becauseLabel()}. 1 was already in the CRM and is not imported from this file, so this mapping does not cover them: their row is not attached.`;
+    const groupSentence = `No source label: 1 person in this file. 1 was imported or attached and gets no automated contact, because ${becauseGroup()}.`;
+    for (const rows of [await preview(second), await report(second)]) {
+      expect(rows.map((r) => [r.label, r.unlabeledImportId, r.people, r.committedPeople, r.matchedOnlyPeople, r.state, r.noAutomatedContact])).toEqual([
+        [PARTNER, null, 3, 2, 1, 'mapped', true],
+        ['', second, 1, 1, 0, 'mapped', true],
+      ]);
+      expect(rows.map((r) => r.sentence)).toEqual([labelSentence, groupSentence]);
+    }
+    // the CRM-wide list counts committed people only, so its sentence is about exactly the people it counts
+    const wide = await list();
+    expect(wide.map((r) => r.matchedOnlyPeople)).toEqual([null, null, null]);
+    expect(wide[0]!.sentence).toBe(`"${PARTNER}" (2 people): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.`);
 
     // the CRM-wide list counts the people an import committed, and only them: Nia and Pip under the label, Quin in this
     // import's no-label group, nobody in the abandoned import's
@@ -183,5 +226,28 @@ describe('R-LSRC-8 E735 E755: a dry run, a record waiting for review and an aban
       ['', second, 1, marked.id],
       ['', first, 0, marked.id],
     ]);
+  }, 300_000);
+
+  it('E755: the same file uploaded once more: the people an earlier import already committed under the label are not counted as "not covered" (the mapping covers them, whichever import committed them); only Oz, whom no import committed, is', async () => {
+    const third = await upload();
+    await dryRunStage(ih, w.owner, third, 'contacts');
+    const rs = await records(w.owner, third, 'contacts');
+    // every person of the file is in the CRM by now (Pip since the second import), so every row matched someone
+    const pip = (await h().su.query<{ id: string }>('SELECT id FROM contacts WHERE first_name = $1 AND id = ANY ($2)', ['Pip', rs.map((r) => r.matchContactId)])).rows[0]!.id;
+    for (const id of [native.nia.id, native.oz.id, native.quin.id, pip]) expect(matchedRecord(rs, id)).toBeDefined();
+    expect(rs.filter((r) => r.targetId !== null)).toEqual([]);
+    const rows = await preview(third);
+    // the label: Nia and Pip are covered already (the second import committed them under this label), Oz is not; the
+    // no-label group is this import's own and nobody has mapped it, so its row is in review and counts nothing of the kind
+    expect(rows.map((r) => [r.label, r.unlabeledImportId, r.people, r.committedPeople, r.matchedOnlyPeople, r.state])).toEqual([
+      [PARTNER, null, 3, 0, 1, 'mapped'],
+      ['', third, 1, 0, null, 'in_review'],
+    ]);
+    expect(rows[0]!.sentence).toBe(
+      `"${PARTNER}": 3 people in this file. None has been imported from this file yet. ${cap(becauseLabel())}: that covers a person once their row is imported or attached, not before. 1 was already in the CRM and is not imported from this file, so this mapping does not cover them unless their row is attached. 2 others are not imported yet.`,
+    );
+    expect(await refusalOf(native.oz.id)).toBeNull();
+    expect(await refusalOf(native.nia.id)).toBe(SOURCE_NO_AUTOMATED_CONTACT);
+    expect(await refusalOf(pip)).toBe(SOURCE_NO_AUTOMATED_CONTACT);
   }, 300_000);
 });

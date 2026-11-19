@@ -74,7 +74,9 @@ const FieldActionView = z.union([
  * in the import, exactly as imported, or its no-label group (`label` '' and `unlabeledImportId` set). The same shape,
  * states and counts as GET /lead-sources/import-labels (leads/sourcesSchemas.ts ImportLabel): `state` mapped |
  * suggested (with `suggestion`; never applied until the Owner confirms) | ambiguous | in_review; `people` the people of
- * this import who carry it and `committedPeople` how many of them it has committed.
+ * this import who carry it and `committedPeople` how many of them it has committed. E755: on a row mapped to a marked
+ * source, `matchedOnlyPeople` is how many of them were already in the CRM and are not imported from this import (the
+ * mapping does not cover them; the sentence says all three numbers); null on every other row.
  */
 const SourceLabel = z.object({
   id: z.string().nullable(),
@@ -82,6 +84,7 @@ const SourceLabel = z.object({
   unlabeledImportId: z.string().nullable(),
   people: z.number(),
   committedPeople: z.number(),
+  matchedOnlyPeople: z.number().nullable(),
   state: z.enum(['mapped', 'suggested', 'ambiguous', 'in_review']),
   leadSourceId: z.string().nullable(),
   leadSourceName: z.string().nullable(),

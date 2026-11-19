@@ -14,7 +14,9 @@
 //   state      mapped (to a named lead source) | suggested (an exact known match, with the suggested source: never
 //              applied until the Owner confirms) | ambiguous (two lead sources match or hold it) | in_review
 //   people     how many people carry it (the CRM-wide list: people an import COMMITTED with it; an import's own review:
-//              the people of that import), and committedPeople
+//              the people of that import), and committedPeople. On an import's own row mapped to a MARKED source,
+//              matchedOnlyPeople too: the people of the file who were already in the CRM and are not imported from it,
+//              whom the mapping does not cover (0103, E755); the row's sentence says all three numbers
 //   firstSeen  the import that first committed a person with it, that import's kind, and when (import_source_labels, 0102)
 //   changedBy / changedAt  who last mapped, re-mapped or un-mapped it, and when
 // The only suggestion logic is core suggestLeadSource (an exact lead-source name or Owner-confirmed label, apart from
@@ -63,6 +65,13 @@ export interface ImportLabelRow {
   people: number;
   /** of those, the people an import has COMMITTED with it (imported or merged): the ones in review while it is unmapped */
   committedPeople: number;
+  /**
+   * E755 (0103): only on an import's own row whose label, or no-label group, is mapped to a marked source; null on every
+   * other row (not counted there). Of `people`, those the file only MATCHED: already in the CRM, not imported or merged
+   * from this import, and not committed under this same label (or group) by any import. The mapping does not cover
+   * them: automated contact still reaches them unless something else refuses it.
+   */
+  matchedOnlyPeople: number | null;
   state: ImportLabelState;
   leadSourceId: string | null;
   leadSourceName: string | null;
@@ -104,15 +113,57 @@ type Reading =
   | { state: 'in_review' };
 
 /**
- * The plain sentence of one label: who it labels, which source it means, and whether that source is marked. A mapping
- * covers the people an import COMMITTED with the label (0103), so the sentence speaks of "the people imported with it":
- * true of the CRM-wide list's count and of an import's own row, whose count is the file's people (some of whom may not
- * be imported yet, or only matched someone already here).
+ * How an import's own row counts its people (E755): what the import is, how many of the file's people it has committed,
+ * how many it only matched, and whether a row can still be imported or attached.
  */
-export function importLabelSentence(label: string, people: number, r: Reading): string {
+export interface InThisImport {
+  kind: ImportKind;
+  committed: number;
+  matchedOnly: number;
+  /** the contacts are not imported yet (or are being imported now): a row can still be imported, or attached to the person it matched */
+  open: boolean;
+}
+
+/**
+ * E755 (0103): an import's own row for a label, or a no-label group, mapped to a MARKED source. A mapping covers only
+ * the people an import COMMITTED (imported, or their row attached to the person it matched), so the row never says
+ * "nothing automatic reaches" the file's people. It says the numbers and what each means: how many people the file
+ * carries, how many were imported or attached and get no automated contact, how many were already in the CRM and are
+ * not imported from this file (the mapping does not cover them; while the contacts are not imported yet, "unless their
+ * row is attached"), and how many others are simply not imported. `because` is how the source comes to cover them;
+ * `this` names the mapping in the not-covered clause.
+ */
+function inThisImportSentence(head: string, people: number, f: InThisImport, because: string, thisMapping: string): string {
+  // a Follow Up Boss account is "this import"; a CSV or an export is a file
+  const from = f.kind === 'fub_api' ? 'by this import' : 'from this file';
+  const where = f.kind === 'fub_api' ? 'in this import' : 'in this file';
+  const rest = Math.max(0, people - f.committed - f.matchedOnly);
+  const out = [`${head}: ${peopleWords(people)} ${where}.`];
+  if (f.committed > 0) out.push(`${f.committed} ${f.committed === 1 ? 'was' : 'were'} imported or attached and ${f.committed === 1 ? 'gets' : 'get'} no automated contact, because ${because}.`);
+  else out.push(`${f.open ? `None has been imported ${from} yet` : `None is imported ${from}`}. ${because.charAt(0).toUpperCase()}${because.slice(1)}: that covers a person once their row is imported or attached, not before.`);
+  if (f.matchedOnly > 0) {
+    out.push(
+      `${f.matchedOnly} ${f.matchedOnly === 1 ? 'was' : 'were'} already in the CRM and ${f.matchedOnly === 1 ? 'is' : 'are'} not imported ${from}, so ${thisMapping} does not cover them${
+        f.open ? ' unless their row is attached' : ': their row is not attached'
+      }.`,
+    );
+  }
+  if (rest > 0 && f.committed + f.matchedOnly > 0) out.push(`${rest} other${rest === 1 ? ' is' : 's are'} not imported ${f.open ? 'yet' : from}.`);
+  return out.join(' ');
+}
+
+/**
+ * The plain sentence of one label: who it labels, which source it means, and whether that source is marked. A mapping
+ * covers the people an import COMMITTED with the label (0103). The CRM-wide list counts exactly those, so its sentence
+ * speaks of "the people imported with it". An import's own row counts the FILE's people, some of whom are not imported
+ * yet or only matched someone already here: `file` is given for it, and when the label is mapped to a marked source
+ * the sentence says the numbers instead (inThisImportSentence), never that nothing automatic reaches all of them.
+ */
+export function importLabelSentence(label: string, people: number, r: Reading, file: InThisImport | null = null): string {
   const who = `"${label}" (${peopleWords(people)})`;
   switch (r.state) {
     case 'mapped':
+      if (r.m.noAutomatedContact && file) return inThisImportSentence(`"${label}"`, people, file, `the label is mapped to ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on`, 'this mapping');
       return r.m.noAutomatedContact ? `${who}: mapped to ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.` : `${who}: mapped to ${r.m.name}.`;
     case 'suggested':
       return `${who}: not reviewed yet. It reads the same as the lead source ${r.suggested.name}, or a label already mapped to it, apart from capital letters and spaces around it, so ${r.suggested.name} is suggested. Nothing is mapped until the Owner confirms it${
@@ -129,15 +180,17 @@ export function importLabelSentence(label: string, people: number, r: Reading): 
 
 /**
  * The sentence of one import's no-label group. `kind` (the CRM-wide list) names which sort of import it was; an
- * import's own review says "in this import".
+ * import's own review says "in this import", and is given `file`: counted as a marked source, its row says the numbers
+ * (inThisImportSentence), as a label's row does.
  */
-export function unlabeledSentence(people: number, r: Reading, kind: ImportKind | null = null): string {
+export function unlabeledSentence(people: number, r: Reading, kind: ImportKind | null = null, file: InThisImport | null = null): string {
   const who = `${kind ? `No source label in one ${KIND_WORDS[kind]}` : 'No source label in this import'} (${peopleWords(people)})`;
   if (r.state !== 'mapped') {
     return r.state === 'ambiguous'
       ? `${who}: more than one lead source holds these people, so they are not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`
       : `${who}: not reviewed yet. Nothing automatic goes to the people imported without a label until the Owner chooses their lead source.`;
   }
+  if (r.m.noAutomatedContact && file) return inThisImportSentence('No source label', people, file, `the people of this import with no source label are counted as ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on`, 'this');
   if (r.m.noAutomatedContact) return `${who}: counted as ${r.m.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported without a label.`;
   return `${who}: counted as ${r.m.name}.`;
 }
@@ -234,6 +287,8 @@ async function provenance(tx: Tx, only?: { label: string } | { unlabeledImportId
 interface Counts {
   people: number;
   committedPeople: number;
+  /** an import's own row: what the import is and what it matched without importing (null on the CRM-wide list's rows) */
+  file?: Omit<InThisImport, 'committed'> | null;
 }
 
 /**
@@ -256,15 +311,17 @@ function labelRow(label: string, n: Counts, cat: SourceCatalog, prov: Provenance
       reading = { state: 'suggested', suggested: { name: src.name, noAutomatedContact: src.marked } };
     } else reading = s.status === 'ambiguous' ? { state: 'ambiguous', held: false } : { state: 'in_review' };
   }
-  return { ...common(n, held ? m : null, m?.noAutomatedContact ?? false, reading.state, prov), label, unlabeledImportId: null, suggestion, sentence: importLabelSentence(label, n.people, reading) };
+  return { ...common(n, held ? m : null, m?.noAutomatedContact ?? false, reading.state, prov), label, unlabeledImportId: null, suggestion, sentence: importLabelSentence(label, n.people, reading, inThisImport(n)) };
 }
+
+const inThisImport = (n: Counts): InThisImport | null => (n.file ? { ...n.file, committed: n.committedPeople } : null);
 
 /** The row of one import's no-label group. Nothing is ever suggested for it: there is no label to match. */
 function groupRow(importId: string, n: Counts, cat: SourceCatalog, prov: Provenance | null, kind: ImportKind | null): ImportLabelRow {
   const m = cat.byBatch.get(importId) ?? null;
   const held = m !== null && m.ambiguous !== true;
   const reading: Reading = held ? { state: 'mapped', m } : m ? { state: 'ambiguous', held: true } : { state: 'in_review' };
-  return { ...common(n, held ? m : null, m?.noAutomatedContact ?? false, reading.state, prov), label: '', unlabeledImportId: importId, suggestion: null, sentence: unlabeledSentence(n.people, reading, kind) };
+  return { ...common(n, held ? m : null, m?.noAutomatedContact ?? false, reading.state, prov), label: '', unlabeledImportId: importId, suggestion: null, sentence: unlabeledSentence(n.people, reading, kind, inThisImport(n)) };
 }
 
 function common(n: Counts, held: Mapped | null, marked: boolean, state: ImportLabelState, prov: Provenance | null) {
@@ -274,6 +331,8 @@ function common(n: Counts, held: Mapped | null, marked: boolean, state: ImportLa
     id: prov?.id ?? null,
     people: n.people,
     committedPeople: n.committedPeople,
+    // counted only where the sentence speaks of it: an import's own row mapped to a marked source (E755)
+    matchedOnlyPeople: n.file && state === 'mapped' && marked ? n.file.matchedOnly : null,
     state,
     leadSourceId: held?.id ?? null,
     leadSourceName: held?.name ?? null,
@@ -337,12 +396,21 @@ async function importKinds(tx: Tx, ids: readonly string[]): Promise<Map<string, 
   return new Map(r.rows.map((x) => [x.id, { kind: x.source, at: x.created_at.toISOString() }]));
 }
 
+/** The contacts stage statuses in which a row can still be imported or attached (the web's sourceReviewIsAStep, and a commit under way). */
+const OPEN_STAGE = ['pending', 'dry_run_running', 'dry_run_ready', 'approved', 'failed', 'committing'];
+
 /**
  * One import's review rows (the preview, GET /imports/:id/parity, and the summary, GET /imports/:id/report): the same
- * rows, states and counts as the CRM-wide list, for the labels this import carries and its own no-label group.
- * `inImport` is how many people of this import carry each label (null: no label); `people` on a row is that number,
- * and `committedPeople` how many of them this import has committed so far. Reads the import's own records and the
- * review records; it writes nothing (a preview has no side effects).
+ * rows and states as the CRM-wide list, for the labels this import carries and its own no-label group. `inImport` is
+ * how many people of this import carry each label (null: no label); `people` on a row is that number, and
+ * `committedPeople` how many of them this import has committed so far. For a row mapped to a marked source it also
+ * counts the people the import only matched (E755; `matchedOnlyPeople`, and the row's sentence says all three numbers):
+ * each of the import's uncommitted records that matched a person is asked, by target contact (the index
+ * import_records_target_contact is there for it), whether a committed record of the same label (any import) or of this
+ * import's no-label group targets that person (the merge tree, app.contact_person_ids); only the labels and the group
+ * a marked source holds are asked, so the cost is one probe per matched row of those (not measured at volume). Reads
+ * the import's own records, committed records of the same labels and the review records; it writes nothing (a preview
+ * has no side effects).
  */
 export async function importLabelRows(tx: Tx, importId: string, inImport: ReadonlyMap<string | null, number>): Promise<ImportLabelRow[]> {
   const committed = await sql<{ label: string | null; people: string }>`
@@ -354,13 +422,44 @@ export async function importLabelRows(tx: Tx, importId: string, inImport: Readon
   const done = new Map<string | null, number>(committed.rows.map((x) => [x.label, Number(x.people)]));
   const cat = await sourceCatalog(tx);
   const prov = await provenance(tx);
+  const about = await sql<{ source: ImportKind; status: string; stage_status: string | null }>`
+    SELECT b.source, b.status,
+           (SELECT st.status FROM import_stages st WHERE st.tenant_id = b.tenant_id AND st.batch_id = b.id AND st.category = 'contacts') AS stage_status
+      FROM import_batches b WHERE b.tenant_id = app.tenant_id() AND b.id = ${importId}::uuid`.execute(tx);
+  const b = about.rows[0];
+  const kind: ImportKind = b?.source ?? 'csv';
+  const open = !!b && !['abandoned', 'reverting', 'reverted'].includes(b.status) && (b.stage_status === null || OPEN_STAGE.includes(b.stage_status));
+  // E755: the people this import only matched, for the labels (and the group) a marked source holds
+  const markedLabels = [...inImport.keys()].filter((l): l is string => l !== null && cat.byLabel.get(l)?.noAutomatedContact === true);
+  const markedGroup = cat.byBatch.get(importId)?.noAutomatedContact === true;
+  const matched = new Map<string | null, number>();
+  if (markedLabels.length > 0 || markedGroup) {
+    const m = await sql<{ label: string | null; people: string }>`
+      SELECT x.label, count(DISTINCT x.match_contact_id) AS people
+        FROM (SELECT CASE WHEN btrim(coalesce(r.normalized ->> 'leadSourceLabel', '')) <> '' THEN r.normalized ->> 'leadSourceLabel' END AS label, r.match_contact_id, r.stage_id
+                FROM import_stages st JOIN import_records r ON r.tenant_id = st.tenant_id AND r.stage_id = st.id
+               WHERE st.tenant_id = app.tenant_id() AND st.batch_id = ${importId}::uuid AND st.category = 'contacts'
+                 AND r.normalized ->> 'category' = 'contacts' AND r.outcome <> 'skipped' AND r.match_contact_id IS NOT NULL
+                 AND (r.target_table = 'contacts' AND r.outcome IN ('imported', 'merged')) IS NOT TRUE) x
+       WHERE CASE WHEN x.label IS NULL THEN ${markedGroup}::boolean ELSE x.label = ANY (${markedLabels}::text[]) END
+         AND NOT EXISTS (
+               SELECT 1 FROM import_records c
+                WHERE c.tenant_id = app.tenant_id() AND c.target_table = 'contacts'
+                  AND c.target_id = ANY (app.contact_person_ids(app.tenant_id(), x.match_contact_id))
+                  AND c.outcome IN ('imported', 'merged') AND c.normalized ->> 'category' = 'contacts'
+                  AND CASE WHEN x.label IS NULL THEN btrim(coalesce(c.normalized ->> 'leadSourceLabel', '')) = '' AND c.stage_id = x.stage_id
+                           ELSE c.normalized ->> 'leadSourceLabel' = x.label END)
+       GROUP BY 1`.execute(tx);
+    for (const x of m.rows) matched.set(x.label, Number(x.people));
+  }
+  const counts = (label: string | null, people: number): Counts => ({ people, committedPeople: done.get(label) ?? 0, file: { kind, matchedOnly: matched.get(label) ?? 0, open } });
   const rows: ImportLabelRow[] = [];
   for (const [label, people] of inImport) {
-    if (label !== null) rows.push(labelRow(label, { people, committedPeople: done.get(label) ?? 0 }, cat, prov.byLabel.get(label) ?? null));
+    if (label !== null) rows.push(labelRow(label, counts(label, people), cat, prov.byLabel.get(label) ?? null));
   }
   rows.sort(byLabel);
   const unlabeled = inImport.get(null) ?? 0;
-  if (unlabeled > 0 || (done.get(null) ?? 0) > 0) rows.push(groupRow(importId, { people: unlabeled, committedPeople: done.get(null) ?? 0 }, cat, prov.byBatch.get(importId) ?? null, null));
+  if (unlabeled > 0 || (done.get(null) ?? 0) > 0) rows.push(groupRow(importId, counts(null, unlabeled), cat, prov.byBatch.get(importId) ?? null, null));
   return rows;
 }
 

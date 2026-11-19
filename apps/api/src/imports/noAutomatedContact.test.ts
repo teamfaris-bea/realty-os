@@ -165,7 +165,9 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     const p1 = await call<{ sourceLabels: LabelRow[] }>(w.owner, 'GET', `/imports/${b.id}/parity`);
     const row = p1.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!;
     expect([row.leadSourceId, row.noAutomatedContact]).toEqual([marked.id, true]);
-    expect(row.sentence).toBe(`"${PARTNER_LABEL}" (3 people): mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on, so nothing automatic reaches the people imported with it.`);
+    // E755: an import's own row says the numbers. Nothing is imported yet, and the mapping covers a person only once
+    // their row is imported or attached (a Follow Up Boss import is "this import", not a file)
+    expect(row.sentence).toBe(`"${PARTNER_LABEL}": 3 people in this import. None has been imported by this import yet. The label is mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on: that covers a person once their row is imported or attached, not before.`);
     expect(p1.body.sourceLabels.find((l) => l.label === 'Open house (test)')!.sentence).toBe(`"Open house (test)" (1 person): mapped to ${open.name}.`);
 
     // the dry run matched Ana and Ivy, who were already here with an owner: their rows wait for a person's review. A
@@ -189,6 +191,10 @@ describe('R-LSRC-8 E728: imported people are covered once the Owner maps their i
     // the summary lists them too
     const rep = await call<{ sourceLabels: LabelRow[] }>(w.owner, 'GET', `/imports/${b.id}/report`);
     expect(rep.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)).toMatchObject({ people: 3, committedPeople: 2, leadSourceId: marked.id, noAutomatedContact: true });
+    // E755: ...in both numbers: Rae and Ana are covered; Ivy, already here and left waiting, is not, and the row says so
+    expect(rep.body.sourceLabels.find((l) => l.label === PARTNER_LABEL)!.sentence).toBe(
+      `"${PARTNER_LABEL}": 3 people in this import. 2 were imported or attached and get no automated contact, because the label is mapped to ${marked.name}, which has "${NO_AUTOMATED_CONTACT_LABEL}" on. 1 was already in the CRM and is not imported by this import, so this mapping does not cover them: their row is not attached.`,
+    );
 
     await noAutomatedContactFor(agent, rae);
     // Ana: the commit attached the partner's record to her, so she is the marked source's person from then on

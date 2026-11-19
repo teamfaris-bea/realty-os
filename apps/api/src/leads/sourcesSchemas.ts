@@ -78,6 +78,9 @@ const ImportKind = z.enum(['csv', 'fub_api', 'fub_export']);
  *   inReview           true unless state is mapped: the people committed with it get no automated contact
  *   people             the CRM-wide list: people an import committed with it; an import's rows: that import's people
  *   committedPeople    of those, the people an import has committed with it
+ *   matchedOnlyPeople  E755: only on an import's own row mapped to a marked source (null on every other row, so always
+ *                      null on the CRM-wide list and on a mapping's answer): of `people`, those already in the CRM whom
+ *                      the import only matched; the mapping does not cover them
  *   firstSeen          the import that first committed a person with it, its kind and when
  *   changedBy/At       who last mapped, re-mapped or un-mapped it, and when
  */
@@ -87,6 +90,7 @@ export const ImportLabel = z.object({
   unlabeledImportId: Id.nullable(),
   people: z.number().int(),
   committedPeople: z.number().int(),
+  matchedOnlyPeople: z.number().int().nullable(),
   state: z.enum(['mapped', 'suggested', 'ambiguous', 'in_review']),
   leadSourceId: Id.nullable(),
   leadSourceName: z.string().nullable(),

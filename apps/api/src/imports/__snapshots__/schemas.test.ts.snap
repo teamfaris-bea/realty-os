@@ -2510,6 +2510,12 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 "null",
               ],
             },
+            "matchedOnlyPeople": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
             "noAutomatedContact": {
               "type": "boolean",
             },
@@ -2568,6 +2574,7 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "unlabeledImportId",
             "people",
             "committedPeople",
+            "matchedOnlyPeople",
             "state",
             "leadSourceId",
             "leadSourceName",
@@ -3419,6 +3426,12 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 "null",
               ],
             },
+            "matchedOnlyPeople": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
             "noAutomatedContact": {
               "type": "boolean",
             },
@@ -3477,6 +3490,7 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "unlabeledImportId",
             "people",
             "committedPeople",
+            "matchedOnlyPeople",
             "state",
             "leadSourceId",
             "leadSourceName",
