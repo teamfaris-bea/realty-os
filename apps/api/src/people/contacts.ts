@@ -247,8 +247,9 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
       const db = platformOf(req).db;
       const viewer = actorOf(req);
       const automation = res.eventId === null ? null : changed ? await stageChangeAutomation(db, viewer.tenantId, res.eventId, req.log, viewer) : await stageRepeatAutomation(db, viewer.tenantId, res.eventId, req.log, viewer);
-      // R-STG-5: an undo never stops a plan either. The plan still running is named, with whether this caller may stop
-      // it themselves (the stop route's own answer), so the screen can say so and offer Stop.
+      // R-STG-5: an undo never stops a plan either. The plan the person is still in is named with its state (running
+      // or paused, E782) and whether this caller may stop it themselves (the stop route's own answer), so the screen
+      // can say so and offer Stop.
       const stillRunning = undoOf === undefined ? null : await runningPlan(db, viewer, req.params.id);
       // E784: the same decision in words, by the function the status words it with: one vocabulary for the toast, the
       // preview and the panel. The plan's name in `automation` is already the one this viewer may see.

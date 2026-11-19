@@ -130,8 +130,11 @@ export const StageResponse = z.object({
    * `automation` is null. It rides beside `automation` (whose two shapes many callers compare exactly), not inside it.
    */
   automationSentence: z.string().nullable(),
-  /** R-STG-5: for an undo, the plan the person is still in (an undo never stops it); null otherwise or when none */
-  stillRunning: z.object({ enrollmentId: Id, plan: z.string(), canStop: z.boolean() }).nullable(),
+  /**
+   * R-STG-5: for an undo, the plan the person is still in (an undo never stops it); null otherwise or when none.
+   * `state` (E782): 'active' or 'paused'; an undo resumes nothing either, and a paused plan is not called running.
+   */
+  stillRunning: z.object({ enrollmentId: Id, plan: z.string(), state: z.enum(['active', 'paused']), canStop: z.boolean() }).nullable(),
 });
 /** R-STG-3: GET /contacts/:id/stage/preview?to=<stage> */
 export const StagePreviewQuery = z.strictObject({ to: z.enum(STAGES) });

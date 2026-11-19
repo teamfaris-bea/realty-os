@@ -5,6 +5,7 @@
 //                                                 or why not, in the SERVER's sentence (E784: one vocabulary);
 //                                                 the second button scrolls to the page's panel (b19 fix pass M5)
 //   "Stage back to Trying to reach. Buyer plan is still running; undo does not stop it."   + Stop when canStop
+//   "Stage back to Trying to reach. Buyer plan is still paused; undo does not resume or stop it."   (E782)
 //   "Stopped Buyer plan."                                                    only after the stop route answered
 // A refusal says nothing was undone, or that the plan was not stopped, with the server's reason.
 import { useCallback } from 'react';

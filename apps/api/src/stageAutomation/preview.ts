@@ -79,10 +79,11 @@ export async function previewStageEntry(db: Database, viewer: UserActor, contact
 }
 
 /**
- * The plan the person is in now, for this viewer (R-STG-5: what an undo leaves running): its enrollment, its name as
- * the viewer may see it, and whether the stop route would let them stop it. Null: no live plan. Read-only.
+ * The plan the person is in now, for this viewer (R-STG-5: what an undo leaves as it was): its enrollment, its name as
+ * the viewer may see it, its state (E782: a paused plan is not "still running"), and whether the stop route would let
+ * them stop it. Null: no live plan. Read-only.
  */
-export async function runningPlan(db: Database, viewer: UserActor, contactId: string): Promise<{ enrollmentId: string; plan: string; canStop: boolean } | null> {
+export async function runningPlan(db: Database, viewer: UserActor, contactId: string): Promise<{ enrollmentId: string; plan: string; state: 'active' | 'paused'; canStop: boolean } | null> {
   const k = (await previewStageEntry(db, viewer, contactId, null)).keepsRunning;
-  return k ? { enrollmentId: k.enrollmentId, plan: k.plan, canStop: k.canStop } : null;
+  return k ? { enrollmentId: k.enrollmentId, plan: k.plan, state: k.state, canStop: k.canStop } : null;
 }

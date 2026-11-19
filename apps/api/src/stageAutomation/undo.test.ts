@@ -27,7 +27,7 @@ interface StageRes {
   rowVersion: number;
   eventId: string | null;
   automation: { started: string } | { skipped: string; plan: string } | null;
-  stillRunning: { enrollmentId: string; plan: string; canStop: boolean } | null;
+  stillRunning: { enrollmentId: string; plan: string; state?: string; canStop: boolean } | null;
 }
 const post = (by: TestClient, contactId: string, body: Record<string, unknown>) => call<StageRes>(by, 'POST', `/contacts/${contactId}/stage`, body);
 const stageOf = async (id: string) => (await h.su.query<{ stage: string }>('SELECT stage FROM contacts WHERE id = $1', [id])).rows[0]!.stage;
@@ -125,6 +125,23 @@ describe('an undo never starts a plan (R-STG-5)', () => {
     expect((await enrollmentsOf(h, c)).map((e) => e.state)).toEqual(['stopped']);
   });
 
+  it('L3 E782 the plan an undo leaves is named with its state: a running plan is "active", a paused one is "paused" (it is not running), and the undo changes neither', async () => {
+    const c = await newContact(agent);
+    const change = await post(agent, c, { stage: 'active' });
+    expect(change.body.automation).toEqual({ started: 'Buyer plan' });
+    const [e] = await enrollmentsOf(h, c);
+    expect((await call(agent, 'POST', `/enrollments/${e!.id}/pause`, {})).status).toBe(200);
+    const undo = await post(agent, c, { stage: 'new', undoOf: change.body.eventId });
+    expect(undo.status).toBe(200);
+    expect(undo.body.stillRunning).toEqual({ enrollmentId: e!.id, plan: 'Buyer plan', state: 'paused', canStop: true });
+    expect((await enrollmentsOf(h, c)).map((x) => x.state)).toEqual(['paused']);
+    // a running one says so
+    const c2 = await newContact(agent);
+    const change2 = await post(agent, c2, { stage: 'active' });
+    const undo2 = await post(agent, c2, { stage: 'new', undoOf: change2.body.eventId });
+    expect(undo2.body.stillRunning).toMatchObject({ plan: 'Buyer plan', state: 'active', canStop: true });
+  });
+
   it('R-STG-5 E764 an undo back INTO a stage that has a plan does not start it: the decision is skipped with reason undo; the same move without undoOf starts it', async () => {
     const setUp = async () => {
       const c = await newContact(agent);
@@ -177,7 +194,7 @@ describe('an undo never starts a plan (R-STG-5)', () => {
     const [live] = await enrollmentsOf(h, c);
     const undo = await post(agent, c, { stage: 'new', undoOf: change.body.eventId });
     expect(JSON.stringify(undo.body)).not.toContain(SECRET_NAME);
-    expect(undo.body.stillRunning).toEqual({ enrollmentId: live!.id, plan: "the owner's plan", canStop: true });
+    expect(undo.body.stillRunning).toEqual({ enrollmentId: live!.id, plan: "the owner's plan", state: 'active', canStop: true });
     expect((await call(agent, 'POST', `/enrollments/${live!.id}/stop`, {})).status).toBe(200);
   });
 });

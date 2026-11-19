@@ -88,6 +88,15 @@ describe('R-STG-5 undo of a stage change', () => {
     expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
+  it('L3 (E782): a PAUSED plan is not said to be running: "is still paused; undo does not resume or stop it", with Stop when the server allows it', async () => {
+    const { u } = mount({ undo: undone({ stillRunning: { enrollmentId: E, plan: 'Buyer plan', state: 'paused', canStop: true } }), stop: 'ok' });
+    const toast = await changeThenUndo(u);
+    expect(await within(toast).findByText('Stage back to Trying to reach. Buyer plan is still paused; undo does not resume or stop it.')).toBeInTheDocument();
+    expect(toast.textContent).not.toMatch(/still running/);
+    expect(within(toast).getByRole('button', { name: 'Stop Buyer plan' })).toBeInTheDocument();
+    expect(undoneText(undone({ stillRunning: { enrollmentId: E, plan: 'Buyer plan', state: 'active', canStop: true } }), labelOf)).toBe('Stage back to Trying to reach. Buyer plan is still running; undo does not stop it.');
+  });
+
   it('no Stop on the toast for a viewer the server would refuse; the sentence is the same', async () => {
     const { u } = mount({ undo: undone({ stillRunning: { enrollmentId: E, plan: 'Buyer plan', canStop: false } }) });
     const toast = await changeThenUndo(u);

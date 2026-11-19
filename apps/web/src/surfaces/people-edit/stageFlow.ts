@@ -43,7 +43,7 @@ export interface StageResponse {
   /** E784: `automation` in the server's words, the sentence the panel shows for this change (null: nothing to say) */
   automationSentence?: string | null;
   /** only on an undo: the plan the person is still in */
-  stillRunning?: { enrollmentId: string; plan: string; canStop: boolean } | null;
+  stillRunning?: { enrollmentId: string; plan: string; /** E782: a paused plan is not called running */ state?: 'active' | 'paused'; canStop: boolean } | null;
 }
 
 /** What POST /contacts/:id/activities and POST /calls/:id/outcome answer beside the saved outcome. */
@@ -263,12 +263,14 @@ export const UNDO_REFUSED = 'Not undone: the stage has changed again since, so t
 
 /**
  * What an undo did, from the stage route's own answer. An undo only moves the stage back: a plan the change started
- * keeps running (said plainly, with how to end it), and a plan of the stage undone into does not start. Nothing here
+ * keeps running, or stays paused if it was paused since (said plainly, with how to end it), and a plan of the stage
+ * undone into does not start. Nothing here
  * says or implies that anything the plan already did was taken back.
  */
 export function undoneText(r: Pick<StageResponse, 'stage' | 'automation' | 'automationSentence' | 'stillRunning'>, labelOf: (key: string) => string): string {
   const back = `Stage back to ${labelOf(r.stage.stage)}.`;
-  if (r.stillRunning) return `${back} ${r.stillRunning.plan} is still running; undo does not stop it.`;
+  // E782: a paused plan stays paused (an undo resumes nothing either), and is never called running
+  if (r.stillRunning) return r.stillRunning.state === 'paused' ? `${back} ${r.stillRunning.plan} is still paused; undo does not resume or stop it.` : `${back} ${r.stillRunning.plan} is still running; undo does not stop it.`;
   const plan = automationWords(r);
   return plan ? `${back} ${plan}` : back;
 }
