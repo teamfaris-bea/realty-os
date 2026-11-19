@@ -47,6 +47,11 @@ describe('M8 (R-TODAY-16): a card about a person the viewer cannot open', () => 
     // nothing the server would refuse is offered
     const kinds = [task.primaryAction.kind, ...task.alternatives.map((x) => x.kind)];
     for (const refused of ['call', 'text', 'email', 'reply_chat', 'send_draft']) expect(kinds).not.toContain(refused);
+    // … and nothing is claimed about how the lead can be reached: the viewer cannot see their phone or email, so
+    // "No working phone number" would be a statement about a person they cannot open (and not one the read can prove)
+    expect((task.reasons as { code: string }[]).map((r) => r.code)).not.toContain('CANT_CONTACT');
+    expect(JSON.stringify(task)).not.toMatch(/phone number|email address/i);
+    expect((task.reasons as { code: string }[]).length).toBeGreaterThan(0);
     // the task is still theirs to do, and the card still says what it is about
     expect(task).toMatchObject({ task: { title: 'Chase the paperwork' } });
     // (what the server refuses, as before: logging on a lead that is not theirs)

@@ -723,7 +723,11 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedRe
     const closed = notOpenable(row);
     const stored = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
     const actions = closed ? withoutContacting(stored, row.contact_id as string) : stored;
-    const reasons = row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons);
+    const said = row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons);
+    // R-TODAY-16: nothing is claimed about how a person the viewer cannot open can be reached. The stored card's
+    // "Can't reach them right now: No working phone number" is read through the viewer's own eyes, who cannot see
+    // the person's phone or email at all: it is not something the read can prove, so it is not said.
+    const reasons = closed ? said.filter((r) => r.code !== 'CANT_CONTACT') : said;
     // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards).
     // R-TODAY-16: so does any follow-up card about a person the viewer cannot open. (The name is read by this file's
     // older code, before this batch; it is masked here, where the batch decorates the card.)
