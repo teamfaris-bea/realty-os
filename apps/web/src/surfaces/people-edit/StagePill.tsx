@@ -2,11 +2,12 @@
 // with the team's labels. Stages an agent cannot pick yet (R-PAR-14: a routed lead nobody has reached) are
 // shown locked BEFORE the tap, with why and what to do instead ("Reach them first: Call · Text · Close", with Reply
 // in chat first while the lead's website chat is open: owner decision D8 made a chat reply first contact, R-OWN-14),
-// never failing after it.
+// never failing after it. Each stage shows what it means and what it does not (R-STG-1; StageChoices.tsx).
 import { useId, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useReachability } from '../../reasons/index.js';
 import { type Details, guideOf, labelIn } from './api.js';
+import { StageRow } from './StageChoices.js';
 import { usePersonAction, useToast } from './hooks.js';
 
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
@@ -73,7 +74,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
         onClick={() => setOpen(true)}
         disabled={!details.canEdit}
         aria-label={`Stage: ${details.stage.label}. Change stage`}
-        className="inline-flex min-h-tap items-center gap-1 self-start rounded-full border border-line bg-surface-2 px-4 text-[15px] font-semibold text-ink disabled:opacity-60"
+        className="inline-flex min-h-tap max-w-full items-center gap-1 self-start rounded-3xl border border-line bg-surface-2 px-4 py-1.5 text-left text-[15px] font-semibold text-ink [overflow-wrap:anywhere] disabled:opacity-60"
       >
         {details.stage.label} <span aria-hidden="true">▾</span>
       </button>
@@ -92,24 +93,11 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
             </div>
           ) : null}
           <ul className="flex flex-col gap-1" aria-label="Stages">
-            {guide.map(({ key: s, label }) => {
-              const isLocked = locked.has(s);
-              return (
-                <li key={s}>
-                  <button
-                    type="button"
-                    disabled={isLocked || act.pending}
-                    aria-current={s === current ? 'true' : undefined}
-                    aria-describedby={isLocked ? lockedId : undefined}
-                    onClick={() => void move(s)}
-                    className={`flex min-h-tap w-full items-center justify-between rounded-xl px-3 text-left text-[17px] ${s === current ? 'bg-accent-soft font-semibold text-ink' : 'text-ink'} disabled:text-ink-muted`}
-                  >
-                    <span>{label}</span>
-                    <span className="text-[14px] text-ink-muted">{s === current ? 'Current' : isLocked ? 'Locked' : ''}</span>
-                  </button>
-                </li>
-              );
-            })}
+            {guide.map((g) => (
+              <li key={g.key}>
+                <StageRow mode="pick" stage={g} current={g.key === current} locked={locked.has(g.key)} lockedBy={lockedId} disabled={act.pending} onPick={() => void move(g.key)} />
+              </li>
+            ))}
           </ul>
           {act.error ? <Notice tone="error">{act.error}</Notice> : null}
         </Dialog>
