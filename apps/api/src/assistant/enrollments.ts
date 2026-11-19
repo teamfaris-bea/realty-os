@@ -15,7 +15,7 @@
 // the post-closing path, and the step runner stops one that is live anyway. Nothing enrolls (or resumes) a person a
 // source marked "No automated contact for leads from this source" sent either (b18 review B18S-5): the direct route
 // refuses SOURCE_NO_AUTOMATED_CONTACT, the post-closing path skips them, and the step runner stops a live plan.
-import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, planNextStep, type StopCondition } from '@realty/core/assistant';
+import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, type StopCondition } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { plusMs } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
@@ -33,11 +33,8 @@ import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
 import { type Anchor, CHECK_BACK_MS, anchorBelongsTo, anchorFacts, buildStep } from './steps.js';
+import { RAN, walkSteps } from './stepWalk.js';
 import type { AssistantDeps, StepOutcome } from './types.js';
-
-const RAN = new Set<P.StepRunRow['status']>(['sent', 'skipped_ineligible', 'converted_to_draft', 'failed', 'canceled_paused']);
-const MESSAGE_DONE = new Set(['sent', 'delivered', 'failed', 'undelivered', 'bounced', 'blocked', 'canceled']);
-const IN_FLIGHT = new Set(['queued', 'scheduled', 'dispatching', 'dispatch_unknown']);
 
 /** Enqueues the playbook.step job for an enrollment at `dueAt` (the sweeper re-issues lost ones). */
 export async function enqueueStep(tx: Tx, enrollmentId: string, dueAt: Instant): Promise<void> {
@@ -161,65 +158,46 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
   }
   const anchor = await anchorFacts(tx, { anchorKind: e.anchorKind, anchorId: e.anchorId, enrolledBy: e.enrolledBy, contactId: e.contactId });
   const runs = await P.stepRunsOf(tx, e.id);
-  let current = e.currentStep;
-  let previousStepAt: Instant | null = null;
-  for (const r of runs) if (RAN.has(r.status) && (previousStepAt === null || r.updatedAt > previousStepAt)) previousStepAt = r.updatedAt;
   const facts = await stopFacts(tx, e.contactId, e.createdAt, anchor.canceled);
-
-  for (let guard = 0; guard <= steps.length + 1; guard++) {
-    const step = steps[current];
-    const run = step ? runs.find((r) => r.stepKey === step.stepKey) : undefined;
-    let existingRunId: string | null = null;
-    if (step && run) {
-      const messageLeft = run.messageId !== null && run.messageStatus !== null && MESSAGE_DONE.has(run.messageStatus);
-      if (RAN.has(run.status) || messageLeft) {
-        current += 1;
-        previousStepAt = run.updatedAt > (previousStepAt ?? 0) ? run.updatedAt : previousStepAt;
-        continue;
-      }
-      if (run.messageId !== null && IN_FLIGHT.has(run.messageStatus ?? '')) {
-        const until = plusMs(run.messageScheduledFor !== null && run.messageScheduledFor > now ? run.messageScheduledFor : now, CHECK_BACK_MS);
-        await P.scheduleEnrollment(tx, e.id, until, current);
-        return { kind: 'waiting', until, reason: 'MESSAGE_IN_FLIGHT' };
-      }
-      existingRunId = run.id; // rebuilt after a version migration
-    }
-    const plan = planNextStep({ state: 'active', steps, currentStep: current, now, anchors: { enrolledAt: e.createdAt, previousStepAt, eventAt: anchor.eventAt }, facts, capabilities: await stepCapabilities(tx) });
-    switch (plan.action) {
-      case 'none':
-        return { kind: 'noop', reason: plan.reason };
-      case 'complete':
-        await P.endEnrollment(tx, e.id, 'completed', null, now);
-        return { kind: 'completed' };
-      case 'stop':
-        await P.endEnrollment(tx, e.id, 'stopped', `stop_if:${plan.condition}`, now);
-        return { kind: 'stopped', reason: `stop_if:${plan.condition}` };
-      case 'wait':
-        await P.scheduleEnrollment(tx, e.id, plan.until, current);
-        await enqueueStep(tx, e.id, plan.until);
-        return { kind: 'waiting', until: plan.until, reason: 'STEP_NOT_DUE' };
-      case 'skip': {
-        if (existingRunId) await P.updateStepRun(tx, existingRunId, { status: 'skipped_ineligible' });
-        else await P.insertStepRun(tx, { id: deps.ids.next<'PlaybookStepRunId'>(), enrollmentId: e.id, versionId: version.id, stepKey: plan.step.stepKey, status: 'skipped_ineligible', scheduledFor: now, actionId: null });
-        current += 1;
-        previousStepAt = now;
-        continue;
-      }
-      case 'run': {
-        const out = await buildStep(tx, deps, tenantId, { enrollment: e, playbook, version, step: plan.step, existingRunId, contact, anchor, now });
-        if (out.kind === 'queued') {
-          await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
-          return out;
-        }
-        // drafted or skipped: the step is done; the next one is planned on the following pass
-        await P.scheduleEnrollment(tx, e.id, now, current + 1);
-        await enqueueStep(tx, e.id, plusMs(now, 1_000));
+  // the planning is one pure walk (stepWalk.ts), shared with the read-only "what is next" of the playbook status
+  // (R-STG-4): which steps to skip on the way, and where the walk ends. Everything written is written here.
+  const walk = walkSteps({ steps, runs, currentStep: e.currentStep, now, enrolledAt: e.createdAt, eventAt: anchor.eventAt, facts, capabilities: await stepCapabilities(tx) });
+  for (const s of walk.skips) {
+    if (s.existingRunId) await P.updateStepRun(tx, s.existingRunId, { status: 'skipped_ineligible' });
+    else await P.insertStepRun(tx, { id: deps.ids.next<'PlaybookStepRunId'>(), enrollmentId: e.id, versionId: version.id, stepKey: s.step.stepKey, status: 'skipped_ineligible', scheduledFor: now, actionId: null });
+  }
+  const current = walk.current;
+  switch (walk.end.kind) {
+    case 'in_flight':
+      await P.scheduleEnrollment(tx, e.id, walk.end.until, current);
+      return { kind: 'waiting', until: walk.end.until, reason: 'MESSAGE_IN_FLIGHT' };
+    case 'none':
+      return { kind: 'noop', reason: walk.end.reason };
+    case 'complete':
+      await P.endEnrollment(tx, e.id, 'completed', null, now);
+      return { kind: 'completed' };
+    case 'stop':
+      await P.endEnrollment(tx, e.id, 'stopped', `stop_if:${walk.end.condition}`, now);
+      return { kind: 'stopped', reason: `stop_if:${walk.end.condition}` };
+    case 'wait':
+      await P.scheduleEnrollment(tx, e.id, walk.end.until, current);
+      await enqueueStep(tx, e.id, walk.end.until);
+      return { kind: 'waiting', until: walk.end.until, reason: 'STEP_NOT_DUE' };
+    case 'run': {
+      const out = await buildStep(tx, deps, tenantId, { enrollment: e, playbook, version, step: walk.end.step, existingRunId: walk.end.existingRunId, contact, anchor, now });
+      if (out.kind === 'queued') {
+        await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
         return out;
       }
+      // drafted or skipped: the step is done; the next one is planned on the following pass
+      await P.scheduleEnrollment(tx, e.id, now, current + 1);
+      await enqueueStep(tx, e.id, plusMs(now, 1_000));
+      return out;
     }
+    case 'loop_guard':
+      await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
+      return { kind: 'waiting', until: plusMs(now, CHECK_BACK_MS), reason: 'LOOP_GUARD' };
   }
-  await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
-  return { kind: 'waiting', until: plusMs(now, CHECK_BACK_MS), reason: 'LOOP_GUARD' };
 }
 
 /** BUILD_PLAN interface: authorize → queue → (comms.dispatch) dispatchOutbound. */
