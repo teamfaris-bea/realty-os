@@ -19,8 +19,7 @@
 // change is checked by core first so the caller learns STAGE_NEEDS_CONTACT up front, and the DB guard
 // app.contacts_stage_guard refuses it anyway; the definer trigger writes the stage history (R-PAR-15).
 import { type UserActor, can } from '@realty/core/foundation';
-import { STAGE_GUIDE, type Stage, type StageFacts, isStage, lockedStages, stageChangeAllowed, stageGuide, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
-import { instantFromDate } from '@realty/core/foundation';
+import { STAGE_GUIDE, type Stage, lockedStages, stageChangeAllowed, stageGuide, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
 import type { Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { sql } from 'kysely';
@@ -32,6 +31,7 @@ import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
 import { actorOf, detailFacts, liveDetailFacts, idOf, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
+import { stageFactsOf } from './stageFacts.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
 import { automationSentenceOf, stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
@@ -45,14 +45,6 @@ import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
  */
 export const UNDO_WINDOW_MS = 15 * 60_000;
 
-export function stageFactsOf(r: repo.EditRow): StageFacts {
-  return {
-    stage: (isStage(r.stage) ? r.stage : 'new') as Stage,
-    ownershipState: r.ownership_state,
-    firstTouchDueAt: r.first_touch_due_at ? instantFromDate(r.first_touch_due_at) : null,
-    firstTouchAt: r.first_touch_at ? instantFromDate(r.first_touch_at) : null,
-  };
-}
 
 export function stageInfo(r: repo.EditRow, actor: UserActor, labels: Record<string, string>) {
   const f = stageFactsOf(r);

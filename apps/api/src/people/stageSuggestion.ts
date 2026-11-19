@@ -12,7 +12,7 @@ import { type Stage, type StageSignal, activitySignal, stageChangeAllowed, sugge
 import type { Tx } from '@realty/db';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
-import { stageFactsOf } from './contacts.js';
+import { stageFactsOf } from './stageFacts.js';
 import * as repo from './repos/people.js';
 
 export interface SuggestedStage {
