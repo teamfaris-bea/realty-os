@@ -70,6 +70,30 @@ describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect(sentTo(q.email)).toBe(before);
   });
 
+  it('E799 R-AUDIT-5 R-CMA-7: the audit log says what the re-tap was: refused and canceled (message.held_send_refused, the blocker as its reason) when the CMA is no longer ready, never "held send"; a re-tap that goes on to the gate is message.held_send, once', async () => {
+    const audits = async (messageId: string) => (await h.su.query<{ action: string; reason: string | null; actor_user_id: string | null; changes: unknown }>(
+      `SELECT action, reason, actor_user_id, changes FROM audit_log WHERE tenant_id = $1 AND entity_id = $2 AND action LIKE 'message.held%' ORDER BY seq`, [w.tenantId, messageId])).rows;
+    // refused: counsel review of platform:cma is not recorded at the re-tap
+    const refused = await heldShare();
+    const r = await retap(refused.messageId);
+    expect([r.status, r.body.error?.code]).toEqual([409, 'CMA_NOT_SHAREABLE']);
+    expect(await msg(refused.messageId)).toMatchObject({ status: 'canceled', status_reason: 'CMA_PLATFORM_NOT_CLEARED' });
+    const a = await audits(refused.messageId);
+    expect(a.map((x) => x.action)).toEqual(['message.held_send_refused']);
+    expect(a[0]).toMatchObject({ reason: 'CMA_PLATFORM_NOT_CLEARED', actor_user_id: agent().userId });
+    expect(JSON.stringify(a[0]!.changes)).toContain('canceled');
+    // a second tap finds nothing to send and adds no entry
+    expect((await retap(refused.messageId)).body.error?.code).toBe('MESSAGE_NOT_SENDABLE');
+    expect(await audits(refused.messageId)).toHaveLength(1);
+    // sent: the CMA is still ready, the tap is the audited decision as before
+    const ready = await heldShare();
+    const ok = await withPlatformCmaCleared(h, () => retap(ready.messageId));
+    expect([ok.status, ok.body.result]).toEqual([200, 'sent']);
+    const b = await audits(ready.messageId);
+    expect(b.map((x) => x.action)).toEqual(['message.held_send']);
+    expect(b[0]).toMatchObject({ reason: 'CLIENT_REPLIED_SINCE_SCHEDULED', actor_user_id: agent().userId });
+  });
+
   it('R-CMA-7 E790: counsel review of platform:cma is not recorded at the re-tap: refused PLATFORM_NOT_CLEARED, nothing dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);

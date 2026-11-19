@@ -9,6 +9,12 @@
 // is held for that moment only: never across a provider call, never together with a contact, turn or assignment
 // lock (§3.7 locks 1–6), and never by a turn that makes no model call. The hold of a refused turn is written after
 // that transaction has committed, without the lock.
+//
+// The day (documented, not built for; docs/AI_ISA.md §3.7): a call is counted in the team-local day its reservation
+// transaction STARTED in (now() is the transaction's start, and created_at defaults to it), so a reservation that
+// starts just before midnight and waits for the team lock past it is counted in the day that ended. The day's bounds
+// are read from the team's time zone each time: changing the zone moves the window from the next reservation on
+// (a day can be shorter or longer once, and calls already counted are counted by their instants in the new window).
 import { createHash } from 'node:crypto';
 import type { Instant } from '@realty/core/foundation';
 import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
@@ -155,25 +161,12 @@ export async function supersedeHeldTurns(tx: Tx, assignmentId: string, exceptTur
   return r.rows.length;
 }
 
-/** Only a budget hold reopens. Terminal and other deferred turns keep the TX-B replay fence. */
-export async function reopenHeldTurn(tx: Tx, turnId: string): Promise<void> {
-  await sql`UPDATE ai_isa_turns SET status = 'deciding', not_before = NULL, decision = '{}'::jsonb
-    WHERE tenant_id = app.tenant_id() AND id = ${turnId} AND status = 'deferred'
-      AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')`.execute(tx);
-}
-
-/** The count, the reservation or the hold, and the reopening in ONE transaction whose caller holds the team lock. */
-export async function reserveModelCall(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, turnId: string, repair: boolean): Promise<Reservation> {
-  const r = await countAndReserve(tx, deps, a, turnId);
-  if ('code' in r) return holdTurn(tx, deps, a, { id: turnId, pinnedSeq: Number.MAX_SAFE_INTEGER, repair, owner: null, park: true, inboundUnanswered: a.machine.inboundUnanswered }, r, Date.now() as Instant);
-  await reopenHeldTurn(tx, turnId);
-  return r;
-}
-
 /**
  * What a turn does before each provider call (the original and the repair), with no other lock held: one short
  * transaction takes the team lock, counts and reserves, and commits. A refused call is then held in a second
- * transaction, after the lock is gone (one UPDATE of the turn's own row, guarded by its status).
+ * transaction, after the lock is gone (holdTurn: the UPDATE of the turn's own row, guarded by its status, and with it
+ * what tells the owner, E795, and for a sweep-triggered turn the resume job, E798). This is the only reservation path:
+ * turn.spend.test.ts and turn.budgetLock.test.ts exercise it, as runTurn does.
  */
 export async function reserveForTurn(deps: Pick<IsaDeps, 'ids' | 'db'>, tenantId: string, a: AssignmentRow, t: TurnCall): Promise<Reservation> {
   const actor = systemActor(tenantId as never, 'assistant');

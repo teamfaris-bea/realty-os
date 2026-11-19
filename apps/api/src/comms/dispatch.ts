@@ -4,7 +4,8 @@
 //
 //   TX1  app.lock_contact → message FOR UPDATE (scheduled|queued, else no-op) → DB clock
 //        a human re-tap of a held CMA share (R-CMA-7; E612): module 71's readiness re-check first; a CMA that is no
-//        longer client-ready cancels the email ('CMA_' + the blocker) and nothing is sent
+//        longer client-ready cancels the email ('CMA_' + the blocker) and nothing is sent. The tap is audited here
+//        (E799): message.held_send_refused for that refusal, message.held_send when the re-tap goes on to the gate
 //        re-read: pause, the client's replies since a human scheduled it (E27), the sender's authority
 //        for this contact NOW (E15), the assistant approval / playbook approval + live enrollment +
 //        the agent playbook still belonging to the contact owner, core.authorizeAutonomousAction,
@@ -43,7 +44,7 @@ import { MINUTE_MS, can, plusMs } from '@realty/core/foundation';
 import type { TouchVia } from '@realty/core/ownership';
 import { type Tx, applyOwnershipCommandInTx, dbNow, derivedCommandId, lockAddresses, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
-import { audit } from '../audit.js';
+import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
 import { COMMS_RECONCILE } from '../worker/contracts.js';
@@ -178,8 +179,13 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     const refusal = await heldCmaShareRefusalInTx(tx, now, m.id);
     if (refusal !== null) {
       await msgs.markCanceled(tx, m.id, refusal.reason, null);
+      // E799: the tap is audited as what it was: refused and canceled, nothing sent (codes only)
+      if (userTx) await audit(tx, c.actor, { action: 'message.held_send_refused', entity: { type: 'message', id: m.id }, changes: redactDiff({ status: m.status }, { status: 'canceled' }, { entity: 'message' }), reason: refusal.reason });
       return { kind: 'done', result: { kind: 'noop', messageId, status: 'canceled', refused: { code: 'CMA_NOT_SHAREABLE', blockers: refusal.blockers } } };
     }
+    // the human tap is the audited decision (R-AUDIT-5), written with what this transaction does next: the send-time
+    // gate below still decides the message, and its outcome is on the message itself
+    if (userTx) await audit(tx, c.actor, { action: 'message.held_send', entity: { type: 'message', id: m.id }, changes: redactSnapshot({ status: m.status, statusReason: m.statusReason }, { entity: 'message' }), reason: m.statusReason ?? 'RETAP' });
   }
   if (human && c.opts.retap && conv) await msgs.repin(tx, m.id, conv.inboundSeq);
 
