@@ -1,8 +1,11 @@
 // W8 (batch 18 review: a duplicate-send risk): a text or email whose provider answer never came, or came back
 // unreadable, was never proved undelivered. After 10 minutes with no confirmation the API marks it failed with reason
 // DISPATCH_UNKNOWN_UNRESOLVED; until then it is dispatch_unknown while reconciliation asks the provider. Neither state
-// is a non-delivery. Every sentence for them says that delivery could not be confirmed, that it may have reached the
-// person, and to check before sending again. Wording only: the states, retries and reconciliation are unchanged.
+// is a non-delivery. The sentences this file holds say that delivery could not be confirmed, that it may have reached
+// the person, and to check before sending again: the thread's line and the notice after Send (a first answer, and a
+// re-tap that carries the message's status reason). Wording only: the states, retries and reconciliation are unchanged.
+// NOT reworded yet (docs/DATA_MODEL.md E753; queued for the next batch): the seller update card, an approval or feed
+// card re-tap (its replay carries no status reason), and the AI care views. No case here covers those.
 import { describe, expect, it } from 'vitest';
 import { messageStatus } from './sentences.js';
 import { sendOutcomeText, sentResult } from '../surfaces/feed/lib/AgentSheets.js';
