@@ -293,7 +293,8 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
 /**
  * POST /messages/:id/send: the human re-taps a waiting message of their own (E27: the client replied
  * since it was scheduled). Nothing is ever "confirmed past" the gate: the send-time check runs again and
- * an opt-out blocks it.
+ * an opt-out blocks it. A held CMA share is re-checked for client readiness in dispatch TX1 (R-CMA-7): when its CMA
+ * is no longer ready the email is canceled and this answers CMA_NOT_SHAREABLE with the blockers.
  */
 export async function sendExisting(actor: UserActor, messageId: string, deps: CommsDeps): Promise<ComposeResult> {
   await asUser(deps, actor, async (tx) => {
@@ -306,6 +307,8 @@ export async function sendExisting(actor: UserActor, messageId: string, deps: Co
     await audit(tx, actor, { action: 'message.held_send', entity: { type: 'message', id: m.id }, changes: redactSnapshot({ status: m.status, statusReason: m.statusReason }, { entity: 'message' }), reason: m.statusReason ?? 'RETAP' });
   });
   const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, actor, retap: true });
+  // R-CMA-7 (E612, VERIFY 9): dispatch canceled a held CMA share whose CMA is no longer client-ready; say why (codes only)
+  if (r.kind === 'noop' && r.refused) throw new AppError(r.refused.code, { blockers: r.refused.blockers });
   return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
 }
 

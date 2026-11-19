@@ -3,6 +3,8 @@
 // provider send (lint realty/no-provider-outbound + architecture.test.ts).
 //
 //   TX1  app.lock_contact → message FOR UPDATE (scheduled|queued, else no-op) → DB clock
+//        a human re-tap of a held CMA share (R-CMA-7; E612): module 71's readiness re-check first; a CMA that is no
+//        longer client-ready cancels the email ('CMA_' + the blocker) and nothing is sent
 //        re-read: pause, the client's replies since a human scheduled it (E27), the sender's authority
 //        for this contact NOW (E15), the assistant approval / playbook approval + live enrollment +
 //        the agent playbook still belonging to the contact owner, core.authorizeAutonomousAction,
@@ -166,6 +168,18 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       await notifyUser(tx, c.deps.ids, { userId: m.initiatedByUserId, kind: SYSTEM_NOTICE, priority: 'high', title: 'They replied since you scheduled a message', body: 'Check the reply, then tap Send if it still fits.', subjectType: 'message', subjectId: m.id, dedupeKey: `retap:${m.id}:${conv.inboundSeq}` }, now);
     }
     return { kind: 'done', result: { kind: 'needs_retap', messageId, reason: 'CLIENT_REPLIED_SINCE_SCHEDULED' } };
+  }
+  // R-CMA-7, R-CMA-9 (E612; ARCHITECTURE §21.48 VERIFY 9): the re-tap of a held message that is a CMA share asks module
+  // 71 whether the CMA is still client-ready, here under the contact's lock and the message's row lock, before the
+  // send-time gate below (which still decides a ready one). A failing CMA cancels the email with the compliance
+  // sweep's reason, and nothing is sent. Loaded here, not at the top: module 71 imports this file (cma/deps.ts).
+  if (human && c.opts.retap) {
+    const { heldCmaShareRefusalInTx } = await import('../cma/retap.js');
+    const refusal = await heldCmaShareRefusalInTx(tx, now, m.id);
+    if (refusal !== null) {
+      await msgs.markCanceled(tx, m.id, refusal.reason, null);
+      return { kind: 'done', result: { kind: 'noop', messageId, status: 'canceled', refused: { code: 'CMA_NOT_SHAREABLE', blockers: refusal.blockers } } };
+    }
   }
   if (human && c.opts.retap && conv) await msgs.repin(tx, m.id, conv.inboundSeq);
 
