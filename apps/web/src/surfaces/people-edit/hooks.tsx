@@ -108,7 +108,8 @@ function OwnToast({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastSpec | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const show = useCallback((t: ToastSpec) => {
-    announce(t.undo ? `${t.text}. Undo is available.` : t.action ? `${t.text} ${t.action.label} is available.` : t.text);
+    const offers = [t.undo ? 'Undo' : null, t.action ? t.action.label : null].filter(Boolean);
+    announce(offers.length === 0 ? t.text : `${t.text.replace(/\.$/, '')}. ${offers.join(' and ')} ${offers.length === 1 ? 'is' : 'are'} available.`);
     setToast(t);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setToast(null), 8000);

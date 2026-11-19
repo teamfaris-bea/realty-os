@@ -4,7 +4,7 @@
 // there. The real API, the tap sizes and the 320 px layout are covered by e2e/journeys/j10-stage-flow.spec.ts.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeFetch, IDS, agentApp, allow, decision, fullContact, iso, reachability } from '../feed/lib/testing.js';
 import { detailsFixture, guideFixture, stageFixture } from '../people-edit/testing.js';
 
@@ -289,5 +289,51 @@ describe('M3 (E777): Text never leaves the person\'s page, from any of its three
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await u.click(screen.getByRole('button', { name: 'Text' }));
     expect(await screen.findAllByRole('dialog', { name: 'Text Jane Doe' })).toHaveLength(1);
+  });
+});
+
+describe('M5 (E778): after a confirmed change on a phone the result is in view without hunting', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+  const VOICEMAIL_OUTCOME = { status: 200, body: { callId: IDS.call, outcome: 'left_voicemail', recordedAs: 'call', suggestedStage: VOICEMAIL } };
+  const before = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it('on a phone "What happens next" sits above Notes and Details', async () => {
+    agentApp(page(), `/contacts/${C}`);
+    const panel = await screen.findByRole('region', { name: 'What happens next' }, { timeout: 10_000 });
+    expect(before(panel, screen.getByRole('region', { name: 'Notes' }))).toBe(true);
+    expect(before(panel, screen.getByRole('region', { name: 'Details' }))).toBe(true);
+    // and under the stage pill
+    expect(before(screen.getByRole('button', { name: 'Stage: New lead. Change stage' }), panel)).toBe(true);
+  });
+
+  it('on desktop the panel keeps its place after Notes and Details', async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(min-width: 768px)', media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false }));
+    agentApp(page(), `/contacts/${C}`);
+    const panel = await screen.findByRole('region', { name: 'What happens next' }, { timeout: 10_000 });
+    expect(before(screen.getByRole('region', { name: 'Notes' }), panel)).toBe(true);
+    expect(before(screen.getByRole('region', { name: 'Details' }), panel)).toBe(true);
+  });
+
+  it('the toast of a confirmed stage change carries "See what happens next" beside Undo; tapping it scrolls the panel into view', async () => {
+    const scrolled: Element[] = [];
+    (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    const fake = page().on(`POST /calls/${IDS.call}/outcome`, VOICEMAIL_OUTCOME);
+    agentApp(fake, `/contacts/${C}`);
+    const u = userEvent.setup();
+    await u.click(await within(await bar()).findByRole('button', { name: 'Call Jane Doe' }));
+    await u.click(await within(await screen.findByRole('dialog', { name: 'Call Jane Doe' })).findByRole('button', { name: 'Left voicemail' }));
+    const confirm = await within(await step()).findByRole('button', { name: 'Change to Trying to reach' });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await u.click(confirm);
+    const toast = screen.getByTestId('people-toast');
+    expect(await within(toast).findByText('Stage: Trying to reach')).toBeInTheDocument();
+    expect(within(toast).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+    await u.click(within(toast).getByRole('button', { name: 'See what happens next' }));
+    expect(scrolled).toEqual([screen.getByRole('region', { name: 'What happens next' })]);
   });
 });

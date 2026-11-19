@@ -186,10 +186,22 @@ function AiFollowUp({ contactId }: { contactId: string }) {
   );
 }
 
+/** The panel's id on the page: the stage toast's "See what happens next" scrolls to it (M5). */
+export const NEXT_PANEL_ID = 'next';
+
+/** Brings the panel into view, when the page has one. False: there is no panel here (the feed, the tasks page). */
+export function showNextPanel(): boolean {
+  const el = typeof document === 'undefined' ? null : document.getElementById(NEXT_PANEL_ID);
+  if (!el) return false;
+  el.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  return true;
+}
+export const hasNextPanel = (): boolean => typeof document !== 'undefined' && document.getElementById(NEXT_PANEL_ID) !== null;
+
 export function NextPanel({ contact, onAddTask, onAddAppointment }: { contact: ContactFullView; onAddTask: () => void; onAddAppointment: () => void }) {
   const hid = useId();
   return (
-    <section aria-labelledby={hid} id="next" className="flex scroll-mt-20 flex-col gap-2">
+    <section aria-labelledby={hid} id={NEXT_PANEL_ID} className="flex scroll-mt-20 flex-col gap-2">
       <h2 id={hid} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
         What happens next
       </h2>

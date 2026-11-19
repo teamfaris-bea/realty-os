@@ -23,6 +23,8 @@
 //  11. Text never leaves the person's page (M3): the stage pill's "Reach them first: Text", the header's Text and, on
 //      the phone, the bar's Text all open the same sheet; a text sent with the fake provider suggests "Trying to
 //      reach" for a new lead, and the agent confirms: Text → Send → confirm = 3 taps (typing is not a tap);
+//  after a confirmed change the toast's "See what happens next" brings the panel into the viewport from the end of
+//  the page, and on the phone the panel sits above Notes (M5);
 //  at 390 × 664 (the phone project's viewport) the suggested choice, the one effect line and the follow-up chips are
 //  inside the sheet's visible body when the step opens, with the primary button on screen (M4).
 // The existing checks stay on: axe on the page and on the sheet, 44 px targets and no sideways scroll on the phone.
@@ -293,6 +295,23 @@ test('J10.2-4: voicemail → "Trying to reach" (nothing starts) in 3 taps; a con
   expect(await decisions(dana.id)).toEqual([expect.objectContaining({ outcome: 'started', reason: null, playbook_id: playbookId, to_stage: 'connected' })]);
   const started = await enrollments(dana.id);
   expect(started).toEqual([expect.objectContaining({ state: 'active', enrolled_by: 'stage_change', playbook_id: playbookId })]);
+
+  // M5: what the change did is one tap away from wherever the page is scrolled: from the END of the page, the toast's
+  // "See what happens next" brings the panel into view (on the phone it sits above Notes, directly under the stage)
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(panel(page).getByRole('heading', { name: 'What happens next' })).not.toBeInViewport();
+  const see = peopleToast(page).getByRole('button', { name: 'See what happens next' });
+  const seeBox = (await see.boundingBox())!;
+  expect(Math.min(seeBox.width, seeBox.height), 'the toast link is a 44 px target').toBeGreaterThanOrEqual(44);
+  await tap(page, see);
+  await expect(panel(page).getByRole('heading', { name: 'What happens next' })).toBeInViewport({ ratio: 1, timeout: 10_000 });
+  await expect(playbookRow(page).getByTestId('plan-state')).toBeInViewport({ ratio: 1, timeout: 15_000 });
+  await expect(playbookRow(page).getByTestId('plan-state')).toHaveText('Running');
+  if (isPhone(page)) {
+    // above Notes on the phone
+    const top = async (l: Locator) => (await l.evaluate((el) => el.getBoundingClientRect().top + window.scrollY));
+    expect(await top(panel(page))).toBeLessThan(await top(page.getByRole('region', { name: 'Notes' })));
+  }
 
   // (4) the panel: the plan, running, its next step, where it came from; then Pause, Resume, Stop
   const row = playbookRow(page);

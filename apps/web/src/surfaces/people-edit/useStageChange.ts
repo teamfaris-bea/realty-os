@@ -1,13 +1,18 @@
 // One way to change a person's stage, for the stage pill and the stage step (R-STG-5). The change's toast offers
 // Undo; the Undo names the stage event it undoes (`undoOf`), so the server moves the stage back and never starts a
 // plan for it. What the toast says after each request comes from that request's own answer:
-//   "Stage: Active client. Started Buyer plan"                               the change, and what its entry started
+//   "Stage: Active client. Started Buyer plan"   [Undo] [See what happens next]   the change, and what its entry started;
+//                                                 the second button scrolls to the page's panel (b19 fix pass M5)
 //   "Stage back to Trying to reach. Buyer plan is still running; undo does not stop it."   + Stop when canStop
 //   "Stopped Buyer plan."                                                    only after the stop route answered
 // A refusal says nothing was undone, or that the plan was not stopped, with the server's reason.
 import { useCallback } from 'react';
 import { type ActionResult, usePersonAction, useToast } from './hooks.js';
+import { hasNextPanel, showNextPanel } from './NextPanel.js';
 import { type StageResponse, UNDO_REFUSED, automationText, joinWords, undoneText } from './stageFlow.js';
+
+/** The stage toast's way to the page's "What happens next" panel. */
+export const SEE_NEXT = 'See what happens next';
 
 export function useStageChange(contactId: string, labelOf: (key: string) => string) {
   const act = usePersonAction<StageResponse>(contactId);
@@ -51,6 +56,8 @@ export function useStageChange(contactId: string, labelOf: (key: string) => stri
         text: joinWords([o.lead, `Stage: ${r.data.stage.label}`, plan, o.also]),
         // without the event's id an undo could not be told from a new change (which may start a plan): not offered
         ...(eventId ? { undo: () => void undo(prev, eventId) } : {}),
+        // M5 (E778): what the change did stays on the page's panel; one tap brings it into view (on a page that has it)
+        ...(hasNextPanel() ? { action: { label: SEE_NEXT, run: () => void showNextPanel() } } : {}),
       });
       return r;
     },

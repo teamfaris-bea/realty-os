@@ -4,7 +4,8 @@
 //   and a Log button. Text (the bar's, and the pill's "Reach them first: Text") opens the page's one text sheet;
 // - buyer or seller and texting permission as their own chips beside the stage (R-STG-1);
 // - Notes, Details and "What happens next" (R-STG-4: the next task with Add follow-up / Add appointment, the
-//   automated playbook's status, and AI follow-up).
+//   automated playbook's status, and AI follow-up). On a phone the panel comes first, directly under the stage, so
+//   what a stage change did is in view without hunting (b19 fix pass M5); on desktop it keeps its place after Details.
 import { type ReactNode, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -53,6 +54,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
   if (d.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (d.isError) return <Notice tone="error">{d.error.message}</Notice>;
   const details = d.data.details;
+  const panel = <NextPanel contact={contact} onAddTask={() => setSheet('task')} onAddAppointment={() => setSheet('appointment')} />;
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -64,6 +66,9 @@ function Inner({ contact }: { contact: ContactFullView }) {
           </Button>
         ) : null}
       </div>
+
+      {/* M5: on a phone what a stage change did is the first thing under the stage, above Notes and Details */}
+      {desktop ? null : panel}
 
       <Section title="Notes">
         {desktop ? (
@@ -78,7 +83,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
         <DetailsSection contact={contact} details={details} />
       </Section>
 
-      <NextPanel contact={contact} onAddTask={() => setSheet('task')} onAddAppointment={() => setSheet('appointment')} />
+      {desktop ? panel : null}
 
       {/* the page's end clears the phone bar: a spacer at the end of <main>, not mid-page */}
       {!desktop && typeof document !== 'undefined' && document.querySelector('main') ? createPortal(<div aria-hidden="true" data-sticky-spacer className="h-16" />, document.querySelector('main')!) : null}
