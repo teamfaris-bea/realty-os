@@ -5,6 +5,29 @@ import type { TelephonyMode } from '../admin/lib/telephony.js';
 
 export type PathState = 'on' | 'off' | 'not_available';
 
+/** A member named on a source (apps/api/src/leads/sourcesSchemas.ts CoverageMemberView). */
+export interface CoverageMember {
+  userId: string;
+  name: string | null;
+  status: 'invited' | 'active' | 'suspended' | 'deactivating' | 'removed';
+}
+
+/**
+ * b19 step 2 (R-TEAMQ-10, R-TEAMQ-11): a source's coverage as the API sends it (CoverageView). `covered` is true
+ * only while the switch (`setting`) is on and both people are active members; `sentence` and each warning's
+ * sentence are the server's words.
+ */
+export interface SourceCoverage {
+  owner: CoverageMember | null;
+  backup: CoverageMember | null;
+  highIntent: boolean;
+  covered: boolean;
+  setting: boolean;
+  sentence: string;
+  warnings: { code: string; sentence: string }[];
+  changedAt: string | null;
+}
+
 export interface SourceOverview {
   id: string;
   name: string;
@@ -23,6 +46,8 @@ export interface SourceOverview {
   /** b18 item f / B18S-5: "No automated contact for leads from this source" (an Owner setting; the field keeps its b18 name) and the API's sentence for it */
   noAiCare?: boolean;
   noAiCareSentence?: string;
+  /** b19 step 2: owner, backup, high intent, covered and its warnings (absent from a server that predates it) */
+  coverage?: SourceCoverage;
   paths: {
     email: { state: PathState; address: string | null; lastEmailAt: string | null };
     webhook: { hasToken: boolean; ownSecret: boolean; secretCreatedAt: string | null };

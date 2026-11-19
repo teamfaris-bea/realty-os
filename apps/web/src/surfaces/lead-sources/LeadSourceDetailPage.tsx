@@ -1,11 +1,13 @@
 // One lead source (Owner/Admin): each path as a card that opens (its state in words on the card), with its steps,
-// values to copy, state and actions; "Where would a new lead go?"; rename, consent text, turn off / on. One column on
+// values to copy, state and actions; who covers it (Coverage.tsx); "Where would a new lead go?"; rename, consent
+// text, turn off / on. One column on
 // a phone; on desktop the paths sit on the left and the preview and settings on the right. ?setup=<path> (where
 // "Add a source" sends you) puts that path first and opens it.
 import { useEffect, useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Notice } from '../../design/index.js';
 import { usePageTitle } from '../../shell/index.js';
+import { Coverage, CoverageLine } from './Coverage.js';
 import { useOverview } from './hooks.js';
 import { Manage } from './Manage.js';
 import { sentenceFor } from './messages.js';
@@ -100,6 +102,8 @@ export default function LeadSourceDetailPage() {
         <p className="text-[15px] text-ink-muted">{kindWords(s.kind)}</p>
         <p className="text-[16px] text-ink">{statusSentence(s, Date.now())}</p>
         {skippedSentence(s) ? <p className="text-[15px] text-ink">{skippedSentence(s)}</p> : null}
+        {/* R-TEAMQ-10: the covered state first, before the paths (a phone shows one column) */}
+        {s.coverage ? <CoverageLine coverage={s.coverage} /> : null}
         {waiting ? (
           <p className="text-[15px]">
             <Link to={PAGES.needsReview} className="inline-flex min-h-tap items-center text-accent underline">
@@ -121,6 +125,7 @@ export default function LeadSourceDetailPage() {
           })}
         </div>
         <div className="flex min-w-0 flex-col gap-4">
+          <Coverage source={s} />
           <Preview sourceId={s.id} />
           <Manage source={s} />
         </div>
