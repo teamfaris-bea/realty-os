@@ -169,7 +169,7 @@ test('J11.1 Today: a person with a promise due shows why they are due, what was 
   await expect(row(page, dana).getByTestId('card-stage')).toHaveText('New lead');
   // one pass, here: Call, Log and Text sit on the row
   await expect(row(page, dana).getByRole('button', { name: 'Call', exact: true })).toBeEnabled({ timeout: 15_000 });
-  await expect(row(page, dana).getByRole('button', { name: `Log a call or conversation with ${dana.name}` })).toBeVisible();
+  await expect(row(page, dana).getByRole('button', { name: `Log for ${dana.name}` })).toBeVisible();
   // shown once: the promise's own card is not also under "Next up"
   await expect(page.getByRole('article', { name: dana.name })).toHaveCount(1);
   // the group says what it is, in a line
@@ -182,7 +182,7 @@ test('J11.1 Today: a person with a promise due shows why they are due, what was 
 test('J11.2 a call made outside the app, from the row: Log → "Left voicemail" → the one button = 3 taps; the row updates in place', async ({ page }, info) => {
   await openToday(page);
   const n = { taps: 0 };
-  await tap(page, row(page, dana).getByRole('button', { name: `Log a call or conversation with ${dana.name}` }), n); // 1
+  await tap(page, row(page, dana).getByRole('button', { name: `Log for ${dana.name}` }), n); // 1
   const sheet = page.getByRole('dialog', { name: `Log for ${dana.name}` });
   // an outside call is the sheet's first choice: a call, "I called from my phone", just now
   await expect(sheet.getByRole('button', { name: 'Call', exact: true, pressed: true })).toBeVisible({ timeout: 15_000 });

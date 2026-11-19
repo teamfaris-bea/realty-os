@@ -80,17 +80,21 @@ describe('R-TODAY-8: plain words while a thing loads, when it fails, and when th
 
   it('the Log sheet says what it is in its first line, where it opens: something outside the app, shown as logged by you, not counted as reaching them', async () => {
     const { u } = open('full');
-    await u.click(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
+    await u.click(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     expect(sheet).toHaveAccessibleDescription('Something that happened outside Realty OS. It shows as logged by you and doesn’t count as reaching Dana.');
     // and what each thing does is on it, not in a tour: the three kinds, who called whom, the outcomes, when
     for (const group of ['What happened', 'Direction', 'Outcome', 'When, quickly']) expect(within(sheet).getByRole('group', { name: group })).toBeInTheDocument();
   });
 
-  it('the Log button says in full what it does to a screen reader, and shows a short word', async () => {
+  it('the Log button is named like the sheet it opens, shows a short word, and says in full what it is for; no other button of the card is found by its name', async () => {
     open('full');
-    const b = within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' });
+    const card = await theCard();
+    const b = within(card).getByRole('button', { name: 'Log for Dana Reyes' });
     expect(b).toHaveTextContent(/^Log$/);
+    expect(b).toHaveAttribute('title', 'Log a call or conversation');
+    // "Call", "Text" and "Email" each still name exactly one button of the card (a substring match, as a browser test makes)
+    for (const word of ['call', 'text', 'email']) expect(within(card).getAllByRole('button').filter((x) => (x.getAttribute('aria-label') ?? x.textContent ?? '').toLowerCase().includes(word)).length).toBeLessThanOrEqual(1);
   });
 
   it('"Follow up today" says what it is under its heading, in one line, and the group is described by it', async () => {

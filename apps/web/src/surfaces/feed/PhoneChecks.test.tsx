@@ -45,11 +45,11 @@ describe('R-TODAY-10: the new controls on a phone', () => {
   it('every control of a "Follow up today" row is a 44 px target: Call, Log, Text, Email, the name, Why this', async () => {
     open();
     const r = within(await screen.findByRole('region', { name: 'Follow up today' })).getByRole('article', { name: 'Dana Reyes' });
-    for (const name of ['Call', 'Log a call or conversation with Dana Reyes', 'Text', 'Email', 'Why this']) tap44(within(r).getByRole('button', { name }));
+    for (const name of ['Call', 'Log for Dana Reyes', 'Text', 'Email', 'Why this']) tap44(within(r).getByRole('button', { name }));
     tap44(within(r).getByRole('link', { name: 'Dana Reyes' }));
     // Log sits directly after the primary action, so both are in the first row under a thumb
     const buttons = within(r).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
-    expect(buttons.slice(0, 2)).toEqual(['Call', 'Log a call or conversation with Dana Reyes']);
+    expect(buttons.slice(0, 2)).toEqual(['Call', 'Log for Dana Reyes']);
   });
 
   it('E856: a 24-character stage label is shown whole on the row, in its reason and in the Log sheet’s stage step: nothing truncates', async () => {
@@ -60,7 +60,7 @@ describe('R-TODAY-10: the new controls on a phone', () => {
     for (let el: Element | null = stage; el && el !== r; el = el.parentElement) expect(el.className).not.toMatch(NO_CUT);
     const reason = within(r).getByText(`${LONG}: no conversation for 9 days`);
     for (let el: Element | null = reason; el && el !== r; el = el.parentElement) expect(el.className).not.toMatch(NO_CUT);
-    await u.click(within(r).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
+    await u.click(within(r).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await u.click(within(sheet).getByRole('button', { name: 'No answer' }));
     const keep = await within(sheet).findByRole('radio', { name: `Keep ${LONG}` });
@@ -72,7 +72,7 @@ describe('R-TODAY-10: the new controls on a phone', () => {
   it('the Log sheet’s quick times and its one button are 44 px targets, and the button is in the sheet’s pinned footer (above the keyboard and the safe area)', async () => {
     const u = open();
     const r = within(await screen.findByRole('region', { name: 'Follow up today' })).getByRole('article', { name: 'Dana Reyes' });
-    await u.click(within(r).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
+    await u.click(within(r).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     for (const b of within(within(sheet).getByRole('group', { name: 'When, quickly' })).getAllByRole('button')) tap44(b);
     const save = within(sheet).getByTestId('log-save');

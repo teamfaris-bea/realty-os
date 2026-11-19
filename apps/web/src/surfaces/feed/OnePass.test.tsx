@@ -106,7 +106,7 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
 
   it('a call made outside the app: Log → "Left voicemail" → the one button = 3 taps; it is saved as the agent’s own report (a note), never as a call the system placed', async () => {
     const { fake, tasks, notes, n, tap } = open();
-    await tap(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' })); // 1
+    await tap(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' })); // 1
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 2
     expect(await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
@@ -129,7 +129,7 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
 
   it('choosing another follow-up day is one more tap: 4, and the task is the day chosen', async () => {
     const { tasks, n, tap } = open();
-    await tap(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' })); // 1
+    await tap(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' })); // 1
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' })); // 2
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });
@@ -147,7 +147,7 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
 
   it('the preselected follow-up is only a preselection: "None" removes it, and then no task is made', async () => {
     const { tasks, tap } = open();
-    await tap(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
+    await tap(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' }));
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });
@@ -177,7 +177,7 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
       nextPromise: { taskId: OLD_TASK, text: 'Follow up with Dana', kind: 'follow_up', dueAt: new Date(Date.now() - 3_600_000).toISOString(), dueAllDay: false, overdue: true },
     });
     const { fake, tap } = open(followUpCard);
-    await tap(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
+    await tap(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' }));
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });
@@ -193,7 +193,7 @@ describe('R-TODAY-7: one pass from a follow-up card on Today', () => {
 
   it('E853: … and a promise the card is about is left open', async () => {
     const { fake, tap } = open();
-    await tap(within(await theCard()).getByRole('button', { name: 'Log a call or conversation with Dana Reyes' }));
+    await tap(within(await theCard()).getByRole('button', { name: 'Log for Dana Reyes' }));
     const sheet = await screen.findByRole('dialog', { name: 'Log for Dana Reyes' });
     await tap(within(sheet).getByRole('button', { name: 'Left voicemail' }));
     await within(sheet).findByRole('radio', { name: 'Trying to reach Suggested' });

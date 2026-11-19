@@ -312,7 +312,8 @@ export function LogButton({ contact, onePass }: { contact: { id: string; name: s
   const sheets = useOnePass();
   if (!sheets) return null;
   return (
-    <Button variant="secondary" icon="checklist" aria-label={`Log a call or conversation with ${contact.name}`} onClick={() => sheets.log(contact, onePass)}>
+    // named like the sheet it opens ("Log for Dana Reyes"): a name with "call" in it would be found by "Call"
+    <Button variant="secondary" icon="checklist" aria-label={`Log for ${contact.name}`} title="Log a call or conversation" onClick={() => sheets.log(contact, onePass)}>
       Log
     </Button>
   );
