@@ -15,7 +15,7 @@ import { IDS, fullContact, iso, reachability, stopReason } from '../feed/lib/tes
 import type { TaskView } from '../feed/lib/types.js';
 import { NextPanel, PersonChips } from './NextPanel.js';
 import { ToastProvider } from './hooks.js';
-import { type PlaybookStatus, originLine, statusPollMs } from './stageFlow.js';
+import { type PlaybookStatus, originLine, playbookStatusKey, statusPollMs } from './stageFlow.js';
 import { guideFixture } from './testing.js';
 
 const C = IDS.jane;
@@ -156,6 +156,36 @@ describe('R-STG-4 the "What happens next" panel', () => {
     expect(await within(r).findByRole('alert')).toHaveTextContent('This plan has already ended, so there is nothing to pause or resume.');
     expect(within(r).getByText('Running')).toBeInTheDocument();
     expect(within(r).queryByText('Paused')).toBeNull();
+  });
+
+  it('L9 (E785): when the status cannot be read again, the row does not keep saying "Running" with its buttons beside the error: it says it could not check, shows nothing that may be out of date, and offers to try again', async () => {
+    const { fake, u, qc } = mount({ status: { plan: plan(), lastStageChange: change() } });
+    const r = row('Automated playbook');
+    expect(await within(r).findByText('Running')).toBeInTheDocument();
+    expect(within(r).getByRole('button', { name: 'Stop Buyer follow-up' })).toBeInTheDocument();
+    // the next read fails (the plan may have been stopped by a teammate meanwhile: nobody can say)
+    fake.on(`GET /contacts/${C}/playbook-status`, err(500, 'INTERNAL_ERROR'));
+    await qc.invalidateQueries({ queryKey: playbookStatusKey(C) });
+    expect(await within(r).findByRole('alert')).toHaveTextContent('We couldn’t check this plan just now, so nothing is shown that may be out of date.');
+    expect(within(r).queryByText('Running')).toBeNull();
+    expect(within(r).queryByText('Buyer follow-up')).toBeNull();
+    expect(within(r).queryByText(/^Next:/)).toBeNull();
+    expect(within(r).queryByText(/^Started when/)).toBeNull();
+    expect(within(r).queryByText('None running')).toBeNull();
+    expect(within(r).queryByRole('button', { name: /^(Pause|Resume|Stop) / })).toBeNull();
+    // one way forward: ask again; the row then says what the server says now
+    fake.on(`GET /contacts/${C}/playbook-status`, { status: 200, body: { plan: plan({ state: 'stopped', next: null, blocked: { code: 'manual', sentence: 'Stopped by someone on the team.' }, canPause: false, canStop: false }), lastStageChange: change() } });
+    await u.click(within(r).getByRole('button', { name: 'Try again' }));
+    expect(await within(r).findByText('Stopped')).toBeInTheDocument();
+    expect(within(r).queryByRole('alert')).toBeNull();
+  });
+
+  it('L9 (E785): a first read that fails says the same and claims nothing, not even "None running"', async () => {
+    mount({ extra: (f) => f.on(`GET /contacts/${C}/playbook-status`, err(500, 'INTERNAL_ERROR')) });
+    const r = row('Automated playbook');
+    expect(await within(r).findByRole('alert')).toHaveTextContent('We couldn’t check this plan just now');
+    expect(within(r).queryByText('None running')).toBeNull();
+    expect(within(r).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('no control is shown to a viewer the server would refuse (every can* flag false)', async () => {

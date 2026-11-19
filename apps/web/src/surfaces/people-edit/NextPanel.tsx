@@ -8,7 +8,8 @@
 //                         stage change's stored decision; "Checking…" while that is still being decided, asked again
 //                         every 15 s only then). Pause, Stop and Resume appear only when the server's can* flag says
 //                         the route would act for this viewer; each calls the existing route, and a refusal shows the
-//                         server's reason. Nothing is said to have happened until the status says so.
+//                         server's reason. Nothing is said to have happened until the status says so. When the
+//                         status cannot be read (again), the row says so and shows nothing of an earlier read (E785).
 //   AI follow-up          one line from the AI care panel's own data, linking to the AI care section when it is there
 //
 // PersonChips: buyer or seller, and whether the person can be texted, are their own chips beside the stage. A stage
@@ -140,14 +141,24 @@ function Playbook({ contactId }: { contactId: string }) {
   const q = usePlaybookStatus(contactId);
   const { labelOf } = useStageGuide();
   const me = useSession().session?.user.id ?? null;
-  const s = q.data;
+  // E785: a read that failed is not shown beside what an earlier read said. The plan may have been paused or stopped
+  // since; "Running" and its buttons would then be a claim nobody can back. The row says it could not check, shows
+  // nothing that may be out of date, and offers to ask again.
+  const s = q.isError ? undefined : q.data;
   const plan = s?.plan ?? null;
   const origin = s ? originLine(s, labelOf, me) : null;
   const next = plan ? nextStepText(plan) : null;
   return (
     <Row title="Automated playbook">
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
-      {q.isError ? <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
+      {q.isError ? (
+        <>
+          <Notice tone="error">We couldn’t check this plan just now, so nothing is shown that may be out of date. {messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>
+          <Button variant="secondary" className="self-start" pending={q.isFetching} onClick={() => void q.refetch()}>
+            Try again
+          </Button>
+        </>
+      ) : null}
       {s && !plan && origin !== CHECKING ? <p className="text-[16px] font-medium text-ink">{NONE_RUNNING}</p> : null}
       {plan ? (
         <>
