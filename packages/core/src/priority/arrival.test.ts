@@ -26,7 +26,7 @@ describe('R-TEAMQ-19 arrivalInstant: the later of the time the source claims and
     });
   }
 
-  it('R-TEAMQ-19 E871 E872: the backup alert is due three staffed minutes after THAT instant, and a wait is measured from it, whatever the source claims', () => {
+  it('R-TEAMQ-19 E870 E871 E872: an inquiry carries two times and ONE arrival: the backup alert is due three staffed minutes after THAT instant, and a wait is measured from it, whatever the source claims', () => {
     for (const row of table) {
       expect(backupAlertDueAt(row.claimed, reached, CAL)).toBe(at('2026-11-10T10:03:00-05:00'));
       const arrival = arrivalInstant(row.claimed, reached);
