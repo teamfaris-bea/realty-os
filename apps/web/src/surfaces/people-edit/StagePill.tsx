@@ -9,6 +9,19 @@ import { useReachability } from '../../reasons/index.js';
 import { type Details, STAGE_KEYS, stageLabelOf } from './api.js';
 import { usePersonAction, useToast } from './hooks.js';
 
+// Usage guidance for the fixed keys, independent of team display labels. These are not
+// evidence checks: stage changes still use the existing API and permission rules.
+const STAGE_DESCRIPTIONS: Record<(typeof STAGE_KEYS)[number], string> = {
+  new: 'Start here for a new lead.',
+  attempting: 'Use while trying to start a conversation.',
+  connected: 'Use after a two-way conversation, not just a sent message or logged activity.',
+  nurture: 'Use for a longer-term opportunity.',
+  active: 'Use while actively working toward a purchase or sale.',
+  under_contract: 'Use while a purchase or sale is under contract.',
+  closed: 'Use for a completed purchase or sale.',
+  lost: 'Use for an opportunity no longer being pursued.',
+};
+
 // Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
 export type StageAutomation = { started: string } | { skipped: string; plan: string } | null | undefined;
 const SKIP_WORDS: Record<string, string> = {
@@ -78,6 +91,7 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
       </button>
       {open ? (
         <Dialog title={`Stage for ${name}`} onClose={() => setOpen(false)} footer={<Button variant="secondary" block onClick={() => setOpen(false)}>Cancel</Button>}>
+          <p className="mb-3 text-[15px] text-ink-muted">A stage does not verify human contact, appointment outcomes or consent.</p>
           {locked.size > 0 ? (
             <div id={lockedId} className="mb-3 flex flex-col gap-2 rounded-xl bg-warn-soft px-3 py-2 text-[15px] text-ink">
               <p>
@@ -99,12 +113,16 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
                     type="button"
                     disabled={isLocked || act.pending}
                     aria-current={s === current ? 'true' : undefined}
-                    aria-describedby={isLocked ? lockedId : undefined}
+                    aria-labelledby={`${lockedId}-${s}-label ${lockedId}-${s}-status`}
+                    aria-describedby={`${lockedId}-${s}-description${isLocked ? ` ${lockedId}` : ''}`}
                     onClick={() => void move(s)}
-                    className={`flex min-h-tap w-full items-center justify-between rounded-xl px-3 text-left text-[17px] ${s === current ? 'bg-accent-soft font-semibold text-ink' : 'text-ink'} disabled:text-ink-muted`}
+                    className={`flex min-h-tap w-full items-center justify-between gap-3 rounded-xl px-3 py-3 text-left text-[17px] ${s === current ? 'bg-accent-soft font-semibold text-ink' : 'text-ink'} disabled:text-ink-muted`}
                   >
-                    <span>{stageLabelOf(s, labels)}</span>
-                    <span className="text-[14px] text-ink-muted">{s === current ? 'Current' : isLocked ? 'Locked' : ''}</span>
+                    <span className="min-w-0 flex-1 break-words">
+                      <span id={`${lockedId}-${s}-label`} className="block">{stageLabelOf(s, labels)}</span>
+                      <span id={`${lockedId}-${s}-description`} className="mt-1 block text-[14px] font-normal text-ink-muted">{STAGE_DESCRIPTIONS[s]}</span>
+                    </span>
+                    <span id={`${lockedId}-${s}-status`} className="shrink-0 text-[14px] text-ink-muted">{s === current ? 'Current' : isLocked ? 'Locked' : ''}</span>
                   </button>
                 </li>
               );
