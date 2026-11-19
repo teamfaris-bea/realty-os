@@ -2,39 +2,53 @@
 // with the team's labels. Stages an agent cannot pick yet (R-PAR-14: a routed lead nobody has reached) are
 // shown locked BEFORE the tap, with why and what to do instead ("Reach them first: Call · Text · Close", with Reply
 // in chat first while the lead's website chat is open: owner decision D8 made a chat reply first contact, R-OWN-14),
-// never failing after it. Each stage shows what it means and what it does not (R-STG-1; StageChoices.tsx).
+// never failing after it. Each stage shows what it means and what it does not (R-STG-1; StageChoices.tsx), and what
+// picking it will do to the person's automated plan, before the tap (R-STG-3; StagePreview.tsx).
 import { useId, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useReachability } from '../../reasons/index.js';
-import { type Details, guideOf, labelIn } from './api.js';
+import { type Details, type StageGuideRow, guideOf, labelIn } from './api.js';
 import { StageRow } from './StageChoices.js';
+import { KeepsRunning, PREVIEW_LOADING } from './StagePreview.js';
+import { AI_UNCHANGED, NEVER_STOPS, type StageAutomation, TASKS_UNCHANGED, automationText, effectLine, useStagePreview } from './stageFlow.js';
 import { usePersonAction, useToast } from './hooks.js';
 
-// Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
-export type StageAutomation = { started: string } | { skipped: string; plan: string } | null | undefined;
-const SKIP_WORDS: Record<string, string> = {
-  already_in_a_plan: "they're already in a plan",
-  plan_not_approved: "it isn't approved yet",
-  cannot_be_reached: "they can't be messaged",
-  not_visible: 'you can no longer see this person',
-  stage_changed_again: 'the stage changed again',
-  person_removed: 'this person was removed',
-  not_a_person_change: 'only a stage change made by a person starts it',
-  // R-PAR-8: a bulk stage change of a list built on a protected tag never starts a plan
-  protected_audience: 'they were picked by a protected tag, and a plan never starts for such a list',
-  // R-ISA-2 (b12 review B12X-4): the person is in the assistant's ISA care, which never runs beside a plan
-  ai_isa_active: "they're in the assistant's ISA care, and no plan starts while it lasts",
-  // b18 review B18S-5 (owner boundary 2026-11-14): a plan is automated contact
-  source_no_automated_contact: 'their lead source is marked "No automated contact for leads from this source"',
-  // R-LSRC-9 (owner decision 2026-11-14): an imported person whose source is not reviewed yet
-  source_unclassified: 'they came in from an import and their imported source has not been reviewed yet (an Owner reviews it under Lead sources)',
-};
+// Parity module 67 (flagged edit): what the stage entry started, or why it did not (stageFlow.ts has the words).
+export { type StageAutomation, automationText } from './stageFlow.js';
 
-/** The sentence after "Stage: Active." on the toast; '' when no plan is set for that stage. */
-export function automationText(a: StageAutomation): string {
-  if (!a) return '';
-  if ('started' in a) return `Started ${a.started}`;
-  return `${a.plan} didn't start: ${SKIP_WORDS[a.skipped] ?? 'it could not start'}`;
+/**
+ * One stage in the pill's picker. Tapping it changes the stage at once (PARITY_PLAN §5: pill → stage = 2 taps), so
+ * what the change will do is on the row BEFORE the tap (R-STG-3): the row asks the server's preview for its stage
+ * and cannot be picked until the answer is in. The person's own stage and a locked stage are not asked about.
+ */
+function PickerRow({ contactId, stage, current, locked, lockedBy, busy, onPick }: { contactId: string; stage: StageGuideRow; current: boolean; locked: boolean; lockedBy: string; busy: boolean; onPick: () => void }) {
+  const q = useStagePreview(contactId, current || locked ? null : stage.key);
+  const asked = !current && !locked;
+  const effect = !asked ? undefined : q.data ? effectLine(q.data) : q.isError ? PICK_PREVIEW_FAILED : PREVIEW_LOADING;
+  return <StageRow mode="pick" stage={stage} current={current} locked={locked} lockedBy={lockedBy} effect={effect} disabled={busy || (asked && q.isPending)} onPick={onPick} />;
+}
+
+const PICK_PREVIEW_FAILED = "We couldn't check what this would start. The change is still checked when you pick it.";
+
+/** Above the stages, once: the plan the person is in keeps running whatever stage is picked (Stop when allowed). */
+function RunningPlan({ contactId, anyStage }: { contactId: string; anyStage: string | null }) {
+  // every stage's preview reports the same running plan: read it from one the rows already ask for
+  const k = useStagePreview(contactId, anyStage).data?.keepsRunning ?? null;
+  const [stopped, setStopped] = useState<string | null>(null);
+  return (
+    <div className="mb-3 flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
+      {k ? <KeepsRunning contactId={contactId} k={k} onStopped={setStopped} /> : null}
+      {stopped ? (
+        <p role="status" className="font-medium">
+          Stopped {stopped}.
+        </p>
+      ) : null}
+      <p>{NEVER_STOPS}</p>
+      <p className="text-ink-muted">
+        <span>{AI_UNCHANGED}</span> · <span>{TASKS_UNCHANGED}</span>
+      </p>
+    </div>
+  );
 }
 
 export function StagePill({ contactId, name, details, onCall, onText, onReplyChat }: { contactId: string; name: string; details: Details; onCall: () => void; onText: () => void; onReplyChat: () => void }) {
@@ -92,10 +106,11 @@ export function StagePill({ contactId, name, details, onCall, onText, onReplyCha
               </div>
             </div>
           ) : null}
+          <RunningPlan contactId={contactId} anyStage={guide.find((g) => g.key !== current && !locked.has(g.key))?.key ?? null} />
           <ul className="flex flex-col gap-1" aria-label="Stages">
             {guide.map((g) => (
               <li key={g.key}>
-                <StageRow mode="pick" stage={g} current={g.key === current} locked={locked.has(g.key)} lockedBy={lockedId} disabled={act.pending} onPick={() => void move(g.key)} />
+                <PickerRow contactId={contactId} stage={g} current={g.key === current} locked={locked.has(g.key)} lockedBy={lockedId} busy={act.pending} onPick={() => void move(g.key)} />
               </li>
             ))}
           </ul>

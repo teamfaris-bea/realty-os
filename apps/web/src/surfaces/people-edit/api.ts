@@ -103,7 +103,10 @@ export const notesKey = (id: string) => ['people', 'notes', id] as const;
 export const pointsKey = (id: string) => ['people', 'points', id] as const;
 
 /** Everything a page refreshes after an edit of this person. */
-export const personKeys = (id: string) => [detailsKey(id), notesKey(id), pointsKey(id), ['contact', id], ['timeline', id], ['contact-timeline', id], ['reachability', id], ['tasks', 'contact', id]];
+/** R-STG-3, R-STG-4: what a stage change would do, and the person's plan status, are asked again after any edit */
+export const stagePreviewKey = (id: string) => ['people', 'stage-preview', id] as const;
+export const playbookStatusKey = (id: string) => ['people', 'playbook-status', id] as const;
+export const personKeys = (id: string) => [detailsKey(id), notesKey(id), pointsKey(id), ['contact', id], ['timeline', id], ['contact-timeline', id], ['reachability', id], ['tasks', 'contact', id], stagePreviewKey(id), playbookStatusKey(id)];
 
 export function useDetails(contactId: string) {
   const api = useApi();
@@ -131,6 +134,11 @@ export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   FIELD_NOT_EDITABLE: 'That field can’t be changed here.',
   // R-PAR-14: owner decision D8 made a reply in the website chat first contact too (R-OWN-14)
   STAGE_NEEDS_CONTACT: 'Reach them first (a call, text, email or reply in their website chat), or close the lead.',
+  // R-STG-4: the pause, resume and stop routes' refusals (assistant/enrollments.ts), in the panel's words
+  ENROLLMENT_NOT_LIVE: 'This plan has already ended, so there is nothing to pause or resume.',
+  ENROLLMENT_NOT_RESUMABLE: 'This plan can’t be resumed: it was paused for a reason a person can’t clear here (an opt-out, a wrong number, or its approval being withdrawn).',
+  PLAYBOOK_OWNER_MISMATCH: 'This plan belonged to the previous owner, so it can’t resume for the new one.',
+  PLAYBOOK_NOT_APPROVED: 'This plan has no approved version now, so it can’t resume until one is approved.',
   POINT_EXISTS: 'That number or email is already on this person.',
   POINT_UNCHANGED: 'That is the same number or email.',
   POINT_REMOVED: 'That number or email was already removed.',
