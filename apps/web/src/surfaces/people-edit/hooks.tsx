@@ -75,6 +75,8 @@ export interface ToastSpec {
   action?: { label: string; name?: string; run: () => void };
 }
 const ToastCtx = createContext<(t: ToastSpec) => void>(() => undefined);
+/** True inside a ToastProvider: one nested inside another shares its toast instead of drawing a second one. */
+const InToastCtx = createContext(false);
 
 export function useToast(): (t: ToastSpec) => void {
   return useContext(ToastCtx);
@@ -85,6 +87,11 @@ export function useToast(): (t: ToastSpec) => void {
  * carries Undo, so the button is reachable; it stays 8 s (WCAG 2.2.1: long enough to act).
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
+  // a page that already has the toast (the agent sheets' provider wraps the person page's sections) keeps ONE toast
+  return useContext(InToastCtx) ? <>{children}</> : <OwnToast>{children}</OwnToast>;
+}
+
+function OwnToast({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastSpec | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const show = useCallback((t: ToastSpec) => {
@@ -96,7 +103,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   return (
     <ToastCtx.Provider value={show}>
-      {children}
+      <InToastCtx.Provider value={true}>{children}</InToastCtx.Provider>
       <div data-testid="people-toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+76px)] z-50 flex justify-center px-4 md:bottom-6">
         {toast ? (
           <div className="pointer-events-auto flex max-w-md items-center gap-3 rounded-xl bg-ink px-4 py-2 text-[15px] font-medium text-surface shadow-lg">

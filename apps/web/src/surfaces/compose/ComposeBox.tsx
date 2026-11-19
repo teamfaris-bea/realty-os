@@ -114,7 +114,8 @@ export interface ComposeBoxProps {
   ready?: boolean;
   /** a web chat is live in the thread: the summary is asked again every 15 s, so a chat that ends is said at once */
   liveChat?: boolean;
-  onSent?: () => void;
+  /** after a send or schedule went out: the response, and the channel it went on (the contact's Text sheet reads both) */
+  onSent?: (r: ComposeResponse, channel: ComposeChannel) => void;
   /**
    * Parity module 64: a template picker rendered beside Send (e.g. templates' TemplatePicker). It only puts
    * text in the box (`insert`); Send and the send-time check are unchanged.
@@ -325,7 +326,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       setOutcome(null);
       setLater(null);
       sheets.announce(sendOutcomeText(r, contact.name).title);
-      onSent?.();
+      onSent?.(r, channel);
       aiCareSent(contact.id);
     }
   };

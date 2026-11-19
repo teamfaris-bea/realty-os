@@ -10,11 +10,21 @@
 // the check blocks (the client asked not to be called, a suppressed or wrong number, ...) shows the
 // server's sentence and nothing else: there is no "call anyway" (owner decision, core-compliance/2.0.0;
 // an opt-out is never overridden).
+//
+// The stage step (R-STG-2; people-edit/StageStep.tsx). On the person's page (`stageStep`), after the outcome tap has
+// saved the outcome exactly as before, the SAME sheet goes on to the stage step: what was saved, the stage the
+// server suggests for it (to confirm; the outcome route never changes a stage), what the choice will do, a follow-up,
+// and one button named for its effect. Call → outcome → confirm is 3 taps. Elsewhere (the feed, the thread, tasks)
+// the call sheet closes after the outcome as it always did. An outcome that was saved as a task for a new owner (the
+// lead moved during the call) has no stage step: the caller no longer works that person.
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
+import { ToastProvider } from '../../people-edit/hooks.js';
+import { StageStep } from '../../people-edit/StageStep.js';
+import type { SuggestedStage } from '../../people-edit/stageFlow.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
 import { AGENT_ERROR_MESSAGES } from './messages.js';
 import { useMutate } from './hooks.js';
@@ -39,7 +49,18 @@ type Open =
   | { kind: 'appointment'; appointmentId: string; label?: string | undefined }
   | null;
 
-export function AgentSheetsProvider({ children }: { children: ReactNode }) {
+/** What the stage step says was saved, per call outcome. */
+export const OUTCOME_SAVED: Record<CallOutcome, string> = {
+  connected: 'Conversation logged',
+  left_voicemail: 'Voicemail logged',
+  no_answer: 'No answer logged',
+  callback_requested: 'Call-back request logged',
+  wrong_number: 'Wrong number logged',
+  bad_number: 'Number not working: logged',
+  do_not_call_request: 'Recorded: asked not to be called',
+};
+
+export function AgentSheetsProvider({ children, stageStep = false }: { children: ReactNode; /** the person's page: a call's outcome goes on to the stage step in the same sheet */ stageStep?: boolean }) {
   const [open, setOpen] = useState<Open>(null);
   const [toast, setToast] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,15 +81,18 @@ export function AgentSheetsProvider({ children }: { children: ReactNode }) {
   );
   const close = () => setOpen(null);
   return (
+    // the stage step's toast (Undo) lives with the page, so it outlasts the sheet; the person page's own sections share it
+    <ToastProvider>
     <Ctx.Provider value={value}>
       {children}
       {/* seen here, heard through announce(): aria-hidden so a screen reader does not meet it twice */}
       <div aria-hidden="true" data-testid="toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+12px)] z-50 flex justify-center px-4 md:bottom-6">
         {toast ? <p className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{toast}</p> : null}
       </div>
-      {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} /> : null}
+      {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} stageStep={stageStep} /> : null}
       {open?.kind === 'appointment' ? <AppointmentSheet appointmentId={open.appointmentId} label={open.label} onClose={close} announce={announce} /> : null}
     </Ctx.Provider>
+    </ToastProvider>
   );
 }
 
@@ -99,9 +123,10 @@ const CALL_FAILED: Record<string, string> = {
   CONTACT_MERGED: AGENT_ERROR_MESSAGES.CONTACT_MERGED as string,
 };
 
-function CallSheet({ contact, onClose, announce }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void }) {
+function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void; stageStep: boolean }) {
   const api = useApi();
   const [state, setState] = useState<CallState>({ step: 'dialing' });
+  const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null } | null>(null);
   const started = useRef(false);
   const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY]] });
   const who = firstName(contact.name);
@@ -136,9 +161,13 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
     if (state.step !== 'live') return;
     const r = await outcome.run(`/calls/${state.callId}/outcome`, { outcome: o });
     if (!r.ok) return;
-    onClose();
     announce(r.data.recordedAs === 'task_for_current_owner' ? `${who} was reassigned during the call, so your outcome was saved as a task for the new owner.` : 'Call outcome saved.');
+    // the person's page goes on to the stage step in this same sheet; anywhere else the sheet closes as before
+    if (stageStep && r.data.recordedAs === 'call') setLogged({ saved: OUTCOME_SAVED[o], suggested: r.data.suggestedStage ?? null });
+    else onClose();
   };
+
+  if (logged) return <StageStep contactId={contact.id} contactName={contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
 
   return (
     <Dialog title={`Call ${contact.name}`} onClose={onClose} footer={<CloseButton onClose={onClose} />}>

@@ -139,8 +139,6 @@ export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   // R-STG-4: the pause, resume and stop routes' refusals (assistant/enrollments.ts), in the panel's words
   ENROLLMENT_NOT_LIVE: 'This plan has already ended, so there is nothing to pause or resume.',
   ENROLLMENT_NOT_RESUMABLE: 'This plan can’t be resumed: it was paused for a reason a person can’t clear here (an opt-out, a wrong number, or its approval being withdrawn).',
-  PLAYBOOK_OWNER_MISMATCH: 'This plan belonged to the previous owner, so it can’t resume for the new one.',
-  PLAYBOOK_NOT_APPROVED: 'This plan has no approved version now, so it can’t resume until one is approved.',
   POINT_EXISTS: 'That number or email is already on this person.',
   POINT_UNCHANGED: 'That is the same number or email.',
   POINT_REMOVED: 'That number or email was already removed.',

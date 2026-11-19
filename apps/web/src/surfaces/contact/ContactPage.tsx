@@ -39,7 +39,8 @@ import { renderMentions } from '@realty/core/parity/people';
 
 export default function ContactPage() {
   return (
-    <AgentSheetsProvider>
+    // R-STG-2: on the person's page a call's outcome goes on to the stage step, in the same sheet
+    <AgentSheetsProvider stageStep>
       <Contact />
     </AgentSheetsProvider>
   );

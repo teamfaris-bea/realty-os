@@ -161,6 +161,13 @@ test('log an outside call: Log → outcome → Save = 3; "Logged by" and not ver
   await tap(page, sheet.getByRole('button', { name: 'Save' }), log);
   await expect(peopleToast(page).getByText('Call logged')).toBeVisible();
   expect(log.taps).toBe(3);
+  // b19 (R-STG-2): after the save the same sheet shows the stage step: what was logged and the stage it suggests,
+  // to confirm. The suggestion changes nothing by itself; Close leaves Jane's stage as it was.
+  const step = page.getByRole('dialog', { name: 'Stage for Jane Doe' });
+  await expect(step.getByRole('status')).toHaveText('Call logged (no answer)');
+  await expect(step.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
+  await step.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('button', { name: 'Stage: New lead. Change stage' })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Notes' }).getByText(/Outbound call · No answer · Logged by .+ · not verified/).first()).toBeVisible();
 
   // with a "remind me": an ordinary task appears in the person's tasks
@@ -170,6 +177,7 @@ test('log an outside call: Log → outcome → Save = 3; "Logged by" and not ver
   await again.getByLabel('Remind me').selectOption('2');
   await again.getByRole('button', { name: 'Save' }).click();
   await expect(peopleToast(page).getByText('Call logged, reminder in 2 days')).toBeVisible();
+  await page.getByRole('dialog', { name: 'Stage for Jane Doe' }).getByRole('button', { name: 'Close' }).click();
   await expect(page.getByRole('link', { name: 'Follow up after the call' }).first()).toBeVisible({ timeout: 15_000 });
 
   // E193: "she said stop" only asks; nothing is blocked until the agent records it

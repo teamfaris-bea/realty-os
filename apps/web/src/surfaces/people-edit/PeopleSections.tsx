@@ -20,6 +20,7 @@ import { NextPanel, PersonChips } from './NextPanel.js';
 import { PhoneBar, usePhoneBarRef } from './PhoneBar.js';
 import { AppointmentDialog, TaskDialog } from './PlanSection.js';
 import { StagePill } from './StagePill.js';
+import { TextSheet } from './TextSheet.js';
 import { ToastProvider, useIsDesktop } from './hooks.js';
 
 function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
@@ -44,7 +45,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
   const desktop = useIsDesktop();
   const navigate = useNavigate();
   const { call } = useAgentSheets();
-  const [sheet, setSheet] = useState<'note' | 'log' | 'task' | 'appointment' | null>(null);
+  const [sheet, setSheet] = useState<'note' | 'log' | 'task' | 'appointment' | 'text' | null>(null);
   // b13 review F3-ui: the AI care bar (aiCare/Person.tsx) stacks above the phone bar by its height (PERSON_BAR_VAR)
   const barRef = usePhoneBarRef();
   if (d.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
@@ -84,7 +85,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
           contact={contact}
           barRef={barRef}
           onCall={() => call({ id: contact.id, name: contact.displayName })}
-          onText={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)}
+          onText={() => setSheet('text')}
           onLog={() => setSheet('log')}
           onNext={() => setSheet('task')}
           onNote={() => setSheet('note')}
@@ -95,6 +96,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
           <NoteComposer contactId={contact.id} contactName={contact.displayName} canShare={details.canManageCollaborators} autoFocus onSaved={() => setSheet(null)} />
         </Dialog>
       ) : null}
+      {sheet === 'text' ? <TextSheet contact={contact} onClose={() => setSheet(null)} /> : null}
       {sheet === 'task' ? <TaskDialog contactId={contact.id} name={contact.displayName} onClose={() => setSheet(null)} /> : null}
       {sheet === 'appointment' ? <AppointmentDialog contactId={contact.id} name={contact.displayName} onClose={() => setSheet(null)} /> : null}
       {sheet === 'log' ? <LogSheet contactId={contact.id} contactName={contact.displayName} onClose={() => setSheet(null)} /> : null}

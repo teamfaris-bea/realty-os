@@ -22,13 +22,14 @@ function sources(dir: string, out: string[] = []): string[] {
 }
 
 describe('R-STG-1: one source of stage labels', () => {
-  it('no web file outside surfaces/imports writes a default stage label as a literal (old words or new)', () => {
+  it('no web file outside surfaces/imports writes a default stage label as a literal in its code (old words or new; a comment may name one)', () => {
     // the lead-stage words that are not also deal-stage words: the old defaults and core's new ones
     const words = ['Attempting', 'Nurture', ...Object.values(DEFAULT_STAGE_LABELS).filter((l) => !['Connected', 'Under contract'].includes(l))];
     const re = new RegExp(`['"\`](${words.map((w) => w.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|')})['"\`]`);
     const offenders = sources(SRC)
       .filter((f) => !relative(SRC, f).startsWith(join('surfaces', 'imports')))
-      .filter((f) => re.test(readFileSync(f, 'utf8')))
+      // code only: a comment that explains a screen may quote a label
+      .filter((f) => re.test(readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '')))
       .map((f) => relative(SRC, f));
     expect(offenders).toEqual([]);
   });

@@ -2,11 +2,16 @@
 // It is a note, never a call or message record and never a touch (R-PAR-30, R-PAR-32): the sheet says so.
 // "Remind me in N days" makes an ordinary task. If the note reads like "they asked not to be contacted",
 // the sheet asks, and offers the real person-level do-not-contact: a note alone never blocks anything (E193).
+// After a save the same sheet shows the stage step (R-STG-2; people-edit/StageStep.tsx): what was logged, the stage
+// the server suggests for it (to confirm, never applied by itself), and what the choice will do. The log's id is
+// made once per sheet, so a second tap or a retry of Save answers the same note (R-STG-6).
 import { ACTIVITY_MAX_AHEAD_MS, CALL_OUTCOMES, suggestsDoNotContact } from '@realty/core/parity/people';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { firstNameOf } from '../people-edit/api.js';
 import { Chip, selectClass, textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
+import { StageStep } from '../people-edit/StageStep.js';
+import type { SuggestedStage } from '../people-edit/stageFlow.js';
 
 const KINDS = [
   { key: 'call', label: 'Call' },
@@ -29,7 +34,10 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
   const [body, setBody] = useState('');
   const [remind, setRemind] = useState(0);
   const [askDnc, setAskDnc] = useState(false);
-  const act = usePersonAction<{ suggestDoNotContact: boolean; taskId: string | null }>(contactId);
+  const act = usePersonAction<{ suggestDoNotContact: boolean; taskId: string | null; suggestedStage?: SuggestedStage | null; replayed?: boolean }>(contactId);
+  // R-STG-6: one id for whatever this sheet logs; the server answers the same note for it again
+  const noteId = useRef<string>(globalThis.crypto.randomUUID());
+  const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null } | null>(null);
   const dnc = usePersonAction<{ alreadySet: boolean }>(contactId);
   const toast = useToast();
   const first = firstNameOf(contactName);
@@ -45,15 +53,18 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
       ...(kind === 'call' && outcome ? { outcome } : {}),
       ...(body.trim() ? { body: body.trim() } : {}),
       ...(remind > 0 ? { remindInDays: remind } : {}),
-      noteId: globalThis.crypto.randomUUID(),
+      noteId: noteId.current,
     });
     if (!r.ok) return;
     if (r.data.suggestDoNotContact) {
       setAskDnc(true);
       return;
     }
-    toast({ text: `${KINDS.find((k) => k.key === kind)!.label} logged${r.data.taskId ? `, reminder in ${remind} day${remind === 1 ? '' : 's'}` : ''}` });
-    onClose();
+    const saved = `${KINDS.find((k) => k.key === kind)!.label} logged${r.data.taskId ? `, reminder in ${remind} day${remind === 1 ? '' : 's'}` : ''}`;
+    toast({ text: saved });
+    // a repeat of this sheet's save (a second tap, a retry after a lost answer) is the note the first one stored
+    const what = kind === 'call' && outcome ? `${saved} (${OUTCOME_LABEL[outcome].toLowerCase()})` : saved;
+    setLogged({ saved: r.data.replayed ? `${what}. Your first tap had already saved it, as first written.` : what, suggested: r.data.suggestedStage ?? null });
   };
 
   const recordDnc = async () => {
@@ -62,6 +73,8 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
     toast({ text: `Recorded: do not contact ${first}` });
     onClose();
   };
+
+  if (logged) return <StageStep contactId={contactId} contactName={contactName} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
 
   if (askDnc) {
     return (

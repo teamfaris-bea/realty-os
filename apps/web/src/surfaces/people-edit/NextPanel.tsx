@@ -14,7 +14,7 @@
 // PersonChips: buyer or seller, and whether the person can be texted, are their own chips beside the stage. A stage
 // says how far the relationship has come and never implies either (R-STG-1).
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useId } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Notice } from '../../design/index.js';
 import { channelState, useReachability } from '../../reasons/index.js';
@@ -90,31 +90,46 @@ function NextTask({ contactId, onAddTask, onAddAppointment }: { contactId: strin
 
 type Plan = NonNullable<PlaybookStatus['plan']>;
 
+/**
+ * The resume route's refusals that read differently here than on the playbook's own page (the app-wide sentences for
+ * these two codes are about approving a playbook).
+ */
+const RESUME_REFUSED: Record<string, string> = {
+  PLAYBOOK_OWNER_MISMATCH: 'This plan belonged to the previous owner, so it can’t resume for the new one.',
+  PLAYBOOK_NOT_APPROVED: 'This plan has no approved version now, so it can’t resume until one is approved.',
+};
+
 /** Pause, Resume and Stop, each only when the server says its route would act for this viewer. */
 function PlanControls({ contactId, plan }: { contactId: string; plan: Plan }) {
   const act = usePersonAction(contactId);
-  const go = (what: 'pause' | 'resume' | 'stop') => void act.run('POST', `/enrollments/${plan.enrollmentId}/${what}`);
-  if (!plan.canPause && !plan.canResume && !plan.canStop && !act.error) return null;
+  const [refused, setRefused] = useState<string | null>(null);
+  const go = async (what: 'pause' | 'resume' | 'stop') => {
+    setRefused(null);
+    const r = await act.run('POST', `/enrollments/${plan.enrollmentId}/${what}`);
+    // the server's reason, in words; nothing is said to have happened
+    if (!r.ok) setRefused(RESUME_REFUSED[r.code] ?? r.message);
+  };
+  if (!plan.canPause && !plan.canResume && !plan.canStop && !refused) return null;
   return (
     <>
       <div className="flex flex-wrap gap-2">
         {plan.canPause ? (
-          <Button variant="secondary" disabled={act.pending} aria-label={`Pause ${plan.name}`} onClick={() => go('pause')}>
+          <Button variant="secondary" disabled={act.pending} aria-label={`Pause ${plan.name}`} onClick={() => void go('pause')}>
             Pause
           </Button>
         ) : null}
         {plan.canResume ? (
-          <Button variant="secondary" disabled={act.pending} aria-label={`Resume ${plan.name}`} onClick={() => go('resume')}>
+          <Button variant="secondary" disabled={act.pending} aria-label={`Resume ${plan.name}`} onClick={() => void go('resume')}>
             Resume
           </Button>
         ) : null}
         {plan.canStop ? (
-          <Button variant="secondary" disabled={act.pending} aria-label={`Stop ${plan.name}`} onClick={() => go('stop')}>
+          <Button variant="secondary" disabled={act.pending} aria-label={`Stop ${plan.name}`} onClick={() => void go('stop')}>
             Stop
           </Button>
         ) : null}
       </div>
-      {act.error ? <Notice tone="error">{act.error}</Notice> : null}
+      {refused ? <Notice tone="error">{refused}</Notice> : null}
     </>
   );
 }
