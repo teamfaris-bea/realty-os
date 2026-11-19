@@ -111,9 +111,9 @@ for (const size of SIZES) {
 // the screen when the toast shows is under it until the page is scrolled or the toast goes: nothing reserves that
 // place before the scroll. Seen 2026-11-19: the person's page at 390 × 844 right after a stage change from the pill
 // has "Add follow-up" under the stage toast; at 1440 × 900 the note box. (On Today after one Accept, nothing was
-// under it at either phone size.) Every such control can be brought clear by scrolling, and focus brings it clear
-// (asserted above). Making this pass needs a toast that does not float over the page (an in-page line, or a bar the
-// page makes room for), which is a product decision.
+// under it at 390 × 844 or at 1440 × 900; 390 × 664 was not looked at this way.) Every such control can be brought
+// clear by scrolling, and focus brings it clear (asserted above). Making this pass needs a toast that does not float
+// over the page (an in-page line, or a bar the page makes room for), which is a product decision.
 // Repro: run this test without fixme.
 test.fixme('GAP: as the page stands when a toast shows, before anything is scrolled, no control of the page is under it', async ({ page }, info) => {
   const phone = info.project.name === 'phone';
