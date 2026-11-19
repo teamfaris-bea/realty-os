@@ -201,6 +201,24 @@ describe('R-AUDIT-4 redacted diffs', () => {
     for (const n of ['label', 'labels', 'import_source', 'imported_fields', 'normalized']) expect([n, classifyField(n)]).toEqual([n, 'pii']);
   });
 
+  it('R-AUDIT-4: the batch 19 columns (0105) are classified on purpose: the cause code of a plan that could not start is plain by name, the undone stage event\'s id is plain as an id; a free-text cause or reason is still PII', async () => {
+    // named in PLAIN_EXACT with its reason (audit.ts): a closed set of four codes, never the default
+    expect(classifyField('unreachable_cause')).toBe('plain');
+    expect(classifyField('unreachableCause')).toBe('plain');
+    // an id, by the structural rule
+    expect(classifyField('undo_of_event_id')).toBe('plain');
+    expect(classifyField('undoOfEventId')).toBe('plain');
+    // the database allows only the four codes (so the plain class can never carry free text), and only with the one reason
+    const check = await h.su.query<{ def: string }>("SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'stage_automation_decisions_unreachable_cause_check'");
+    expect(check.rows).toHaveLength(1);
+    expect([...check.rows[0]!.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).sort()).toEqual(['cannot_be_reached', 'do_not_contact', 'no_address', 'opted_out', 'wrong_number']);
+    // exactly one column carries each name, so the by-name rule classifies nothing else with them
+    const owners = await h.su.query<{ t: string; c: string; u: string }>("SELECT table_name AS t, column_name AS c, udt_name AS u FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('unreachable_cause', 'undo_of_event_id') ORDER BY 1, 2");
+    expect(owners.rows).toEqual([{ t: 'contact_stage_events', c: 'undo_of_event_id', u: 'uuid' }, { t: 'stage_automation_decisions', c: 'unreachable_cause', u: 'text' }]);
+    // the rule is the exact name, not a pattern: another "cause" or "reason" column still fails closed
+    for (const n of ['cause', 'lost_cause', 'unreachable_cause_note', 'reason']) expect([n, classifyField(n)]).toEqual([n, 'pii']);
+  });
+
   it('R-AUDIT-4: generated field classification — every column in the schema gets a definite class, unknown names fail closed to PII (snapshot)', async () => {
     const cols = await h.su.query<{ table_name: string; column_name: string; udt_name: string }>(
       "SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
