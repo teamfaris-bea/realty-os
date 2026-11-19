@@ -147,20 +147,33 @@ export async function stopAutomatedContactForPeople(tx: Tx, scope: PeopleScope, 
 }
 
 /**
- * R-LSRC-10 M7 (E756; migration 0104): the saved-search alert sender holds the searches of a person the source check
- * refused (`saved_searches.alerts_held_until`, an hour ahead) so it does not ask about them on every run. When the
- * Owner's change may have RELEASED people (a label or a no-label group mapped, moved or un-mapped; the setting turned
- * off for a source), the holds of that scope's people are cleared here, in the Owner's transaction, so the homes still
- * waiting for them are alerted on the sender's next run and not up to an hour later. Clearing is always safe: a hold is
- * only a "do not ask again before" time, and the sender asks the source check again before anything is queued (a
- * person who is still refused is simply held again). Bounded work: the scope's people, joined to the held searches
- * through saved_searches_held_contact; no lock beyond the held rows it clears. Returns how many searches were released.
+ * R-LSRC-10 M7 (E756, E758; migration 0104): the saved-search alert sender holds the searches of a person the source
+ * check refused (`saved_searches.alerts_held_until`, an hour ahead) so it does not ask about them on every run. When
+ * the Owner's change may have RELEASED people (a label or a no-label group mapped, moved or un-mapped; the setting
+ * turned off for a source), the holds of that scope's people are cleared here, in the Owner's transaction, so the homes
+ * still waiting for them are alerted on the sender's next run and not up to an hour later. Clearing is always safe: a
+ * hold is only a "do not ask again before" time, and the sender asks the source check again before anything is queued
+ * (a person who is still refused is simply held again).
+ *
+ * It never waits (E758). The Owner's request holds its lead_sources rows by now, and an inbound text or call on a
+ * tracking number of one of those sources waits for them (comms/inbound.ts sourceStillOn, FOR SHARE), so this must not
+ * wait on anyone else in turn. The alert sender re-holds searches in a transaction that stays open for its whole run;
+ * the held rows are therefore picked FOR UPDATE SKIP LOCKED, and a search the sender (or anyone) has locked right now
+ * is left as it is. What a skipped search costs: it stays held until its time runs out, so a released person's alert
+ * is at most an hour late; it never lets a message go. Nobody is deadlocked either: this side never waits.
+ *
+ * Bounded work: the scope's people, joined to the held searches through saved_searches_held_contact; no lock beyond
+ * the held rows it clears. Returns how many searches were released.
  */
 export async function releaseAlertHolds(tx: Tx, scope: PeopleScope): Promise<number> {
   if ('contactIds' in scope && scope.contactIds.length === 0) return 0;
   const r = await sql`
-    WITH ${scopePeopleCtes(scope)}
-    UPDATE saved_searches s SET alerts_held_until = NULL
-     WHERE s.tenant_id = app.tenant_id() AND s.alerts_held_until IS NOT NULL AND s.contact_id IN (SELECT id FROM person)`.execute(tx);
+    WITH ${scopePeopleCtes(scope)},
+         held AS MATERIALIZED (
+           SELECT s.id FROM saved_searches s
+            WHERE s.tenant_id = app.tenant_id() AND s.alerts_held_until IS NOT NULL AND s.contact_id IN (SELECT id FROM person)
+            ORDER BY s.id FOR UPDATE OF s SKIP LOCKED)
+    UPDATE saved_searches s SET alerts_held_until = NULL FROM held
+     WHERE s.tenant_id = app.tenant_id() AND s.id = held.id`.execute(tx);
   return Number(r.numAffectedRows ?? 0n);
 }

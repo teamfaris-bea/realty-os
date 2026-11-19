@@ -453,7 +453,8 @@ const ALERT_HOLDS_PER_RUN = 10_000;
  * hold for an hour (`alerts_held_until`), which the due query skips on a plain column. Every page is asked before any
  * person is locked, so no alerted person's lock is held while others are asked. A held search costs later runs
  * nothing; the Owner's mapping or setting change clears the holds of the people it may have released
- * (leads/sourceStop.ts releaseAlertHolds), and a hold that runs out is asked again once. Refused people never count
+ * (leads/sourceStop.ts releaseAlertHolds; it skips a search this run has locked at that moment, never waits for this
+ * transaction: E758), and a hold that runs out is asked again once. Refused people never count
  * against `limit`, so they neither fill the batch nor starve it. A hold only ever withholds: the source check is asked
  * again under the person's lock before anything is queued (below), and dispatch TX1 and the database guard still refuse.
  */

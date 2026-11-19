@@ -154,8 +154,12 @@ export type ImportSourceKey = { label: string } | { unlabeledImportId: string };
  * Every change is recorded twice, in this transaction (R-LSRC-10 M3): on the label's review record (who, when, which
  * source: import_source_labels, 0102) and as an audit row with the label, the old and the new source, and what was
  * asked to stop (the audit row's own actor and time say who and when). The sources are locked FOR NO KEY UPDATE, in id
- * order: a lead insert's foreign-key check on lead_sources never waits on this transaction (the file's rule, line 12),
- * and it takes no other lock. Bounded work: the label's own people and records only, never the team's (M4).
+ * order: a lead insert's foreign-key check on lead_sources never waits on this transaction (the file's rule, line 12).
+ * Beyond those it locks only rows it writes: the review record, the drafts it withdraws, and the held saved searches
+ * it clears, which it takes only when they are free at once (releaseAlertHolds, FOR UPDATE SKIP LOCKED): it never waits
+ * on the alert sender's open run, so neither does an inbound text or call on a tracking number of one of these sources,
+ * which waits for THIS transaction (comms/inbound.ts sourceStillOn, FOR SHARE; E758). Bounded work: the label's own
+ * people and records only, never the team's (M4).
  */
 export async function setImportSource(tx: Tx, actor: UserActor, key: ImportSourceKey, leadSourceId: string | null, now: Instant, o: { confirmedSuggestion?: boolean } = {}): Promise<{ label: ImportLabelRow } & Stopped> {
   const byLabel = 'label' in key;
