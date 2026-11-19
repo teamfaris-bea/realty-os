@@ -80,6 +80,9 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     leadAdminApp(f, `/imports/${BID}`, 'owner', { reauthenticatedAt: NOW() });
     const s = await step();
     expect(await s.findByText(/^Follow Up Boss gives each person's source as a label, shown here exactly as it was imported\./)).toBeInTheDocument();
+    // the step says what choosing a lead source does: it sets automated contact, never lead counts or reports
+    expect(s.getByText("Follow Up Boss gives each person's source as a label, shown here exactly as it was imported. Until an Owner chooses a lead source for a label, the people imported with it are in review. Once one is chosen, automated contact for them follows that source's setting; lead counts and reports do not change. A match is only ever suggested, never applied for you.")).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Review sources' }).textContent).not.toMatch(/counts as one of your lead sources|count as leads/);
     for (const r of ROWS) expect(await s.findByText(r.sentence)).toBeInTheDocument();
     // the label is shown exactly as imported (its leading space is kept), and each row says its state in words
     expect(row(s, 'Source label " open houses"').getByText('" open houses"', { normalizer: (t) => t })).toBeInTheDocument();
@@ -132,7 +135,7 @@ describe('R-LSRC-10 W1: Review sources is a step of every import', () => {
     await u.selectOptions(pick, OPEN.id);
     // only a choice so far: nothing was sent, and the row says what applying it will do
     expect(writes(f)).toHaveLength(0);
-    expect(r.getByText(/^The people imported with this will count as leads of Open houses\./)).toBeInTheDocument();
+    expect(r.getByText(/^Automated contact for the people imported with this will follow the setting of Open houses\. Lead counts and reports do not change\./)).toBeInTheDocument();
     await u.selectOptions(pick, MARKED.id);
     expect(writes(f)).toHaveLength(0);
     expect(r.getByText('Northgate Referrals has "No automated contact for leads from this source" on: nothing automatic will go to the people imported with this, and plans running for them stop.')).toBeInTheDocument();

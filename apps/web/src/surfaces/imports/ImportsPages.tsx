@@ -26,7 +26,7 @@ import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '..
 import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
 import { ParityMapping } from './ParityMapping.js';
 import { ImportLabelList, type ImportLabelView, REVIEW_PATH } from '../lead-sources/ImportLabels.js';
-import { IN_REVIEW_MEANS, afterImportLine, beforeImportLine } from '../lead-sources/reviewWords.js';
+import { IN_REVIEW_MEANS, WHAT_CHOOSING_DOES, afterImportLine, beforeImportLine } from '../lead-sources/reviewWords.js';
 import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, sourceReviewIsAStep, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
@@ -217,7 +217,7 @@ export function ReviewSourcesStep({ batch }: { batch: ImportBatch }) {
   const q = useParity(batch);
   const rows = q.data?.sourceLabels ?? [];
   return (
-    <Section title="Review sources" description={`${sourceOf(batch.source)} gives each person's source as a label, shown here exactly as it was imported. A label counts as one of your lead sources only after an Owner chooses that source. A match is only ever suggested, never applied for you.`}>
+    <Section title="Review sources" description={`${sourceOf(batch.source)} gives each person's source as a label, shown here exactly as it was imported. ${WHAT_CHOOSING_DOES}`}>
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading the sources of this import</p> : null}
       {q.isError ? <QueryError error={q.error} retry={() => void q.refetch()} /> : null}
       {q.data && rows.length === 0 ? <p className="text-[15px] text-ink">This import has no people, so there is no source to review.</p> : null}

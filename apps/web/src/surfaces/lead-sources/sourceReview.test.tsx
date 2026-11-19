@@ -71,6 +71,9 @@ describe('R-LSRC-10 W2: the source review on the Lead sources page', () => {
     expect(row(s, 'Source label "Northgate referral desk"').getByText(`First imported ${formatStamp('2026-11-05T14:30:00.000Z')} from a Follow Up Boss export file. Mapping last changed by Olive Owner, ${formatStamp('2026-11-06T09:00:00.000Z')}.`)).toBeInTheDocument();
     expect(row(s, 'People imported with no source label').getByText('In review')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Review sources' }).textContent).not.toMatch(/SOURCE_|in_review|fub_export|csv\b/);
+    // the section says what choosing a lead source does: it sets automated contact, never lead counts or reports
+    expect(s.getByText("People brought in from Follow Up Boss or a file carry their source as a label, shown here exactly as it was imported. Until an Owner chooses a lead source for a label, the people imported with it are in review. Once one is chosen, automated contact for them follows that source's setting; lead counts and reports do not change. A match is only ever suggested, never applied for you.")).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Review sources' }).textContent).not.toMatch(/counts as one of your lead sources|count as leads/);
   });
 
   it('R-LSRC-10 E749: a mapping is applied by its button, never by the dropdown; it can be changed; removing it asks first, says what it stops, and can be backed out of', async () => {
@@ -283,7 +286,9 @@ describe("R-LSRC-10: the review's own words", () => {
   });
 
   it('a choice says what applying it will do, and neither sentence promises that anything restarts', () => {
-    expect(choiceWords({ name: 'Open houses' })).toBe('The people imported with this will count as leads of Open houses. If none of their other imported sources is still in review or marked, automated contact is allowed for them again. A plan that already stopped stays stopped.');
+    // what a mapping does, and only that: attribution is never set from a label, so the source's lead counts and reports do not change
+    expect(choiceWords({ name: 'Open houses' })).toBe('Automated contact for the people imported with this will follow the setting of Open houses. Lead counts and reports do not change. If none of their other imported sources is still in review or marked, automated contact is allowed for them again. A plan that already stopped stays stopped.');
+    expect(choiceWords({ name: 'Open houses' })).not.toMatch(/count as leads/);
     expect(choiceWords({ name: 'Northgate Referrals', noAiCare: true })).toMatch(/nothing automatic will go to the people imported with this, and plans running for them stop\.$/);
     expect(REMOVE_WARNING).toMatch(/go back in review: nothing automatic goes to them.*None of that starts again on its own/);
   });

@@ -58,6 +58,12 @@ export const NO_LABEL_TITLE = 'No source label';
 /** The field label of the no-label row's choice (it has no label to quote). */
 export const NO_LABEL_FIELD = 'Lead source for the people imported with no source label';
 export const OWNER_MAPS_LABELS = 'Only the Owner maps an imported source label to a lead source.';
+/**
+ * What choosing a lead source for a label does, in the intro of the review (an import's step and the Lead sources
+ * section): it decides automated contact for the people imported with it. It never changes whose lead they count as.
+ */
+export const WHAT_CHOOSING_DOES =
+  "Until an Owner chooses a lead source for a label, the people imported with it are in review. Once one is chosen, automated contact for them follows that source's setting; lead counts and reports do not change. A match is only ever suggested, never applied for you.";
 export const NO_AUTOMATED_CONTACT_SETTING = 'No automated contact for leads from this source';
 
 /** The row's heading: the label in quotes, exactly as imported, or the no-label group's name. */
@@ -148,10 +154,14 @@ export function afterImportLine(rows: readonly ImportLabelView[]): string {
   return `Still in review after this import: ${what} (${plural(c.committed, 'person', 'people')} imported).`;
 }
 
-/** What applying the chosen source will do, said before the Owner applies it. */
+/**
+ * What applying the chosen source will do, said before the Owner applies it: a mapping decides automated contact for
+ * the people imported with the label and nothing else. Attribution is never set from a label (the people's own lead
+ * source is not changed), so the source's lead counts and reports stay as they are, and the words say so.
+ */
 export function choiceWords(source: { name: string; noAiCare?: boolean | undefined }): string {
   if (source.noAiCare) return `${source.name} has "${NO_AUTOMATED_CONTACT_SETTING}" on: nothing automatic will go to the people imported with this, and plans running for them stop.`;
-  return `The people imported with this will count as leads of ${source.name}. If none of their other imported sources is still in review or marked, automated contact is allowed for them again. A plan that already stopped stays stopped.`;
+  return `Automated contact for the people imported with this will follow the setting of ${source.name}. Lead counts and reports do not change. If none of their other imported sources is still in review or marked, automated contact is allowed for them again. A plan that already stopped stays stopped.`;
 }
 
 /** What removing a mapping does, said before the Owner confirms it. */

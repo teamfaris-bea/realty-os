@@ -26,7 +26,7 @@ import { type ActionResult, useAction, useAnnounce } from '../admin/lib/hooks.js
 import { Pill, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { SOURCE_KEYS, useOverview } from './hooks.js';
 import { sentenceFor } from './messages.js';
-import { IN_REVIEW_MEANS, type ImportLabelView, OWNER_MAPS_LABELS, REMOVE_WARNING, choiceWords, fieldLabel, mappingKey, notCoveredWords, provenanceWords, rowGroupName, rowKey, rowTitle, stateWords, stoppedWords } from './reviewWords.js';
+import { IN_REVIEW_MEANS, type ImportLabelView, OWNER_MAPS_LABELS, REMOVE_WARNING, WHAT_CHOOSING_DOES, choiceWords, fieldLabel, mappingKey, notCoveredWords, provenanceWords, rowGroupName, rowKey, rowTitle, stateWords, stoppedWords } from './reviewWords.js';
 import type { SourceOverview } from './types.js';
 import { madeSafeWords } from './words.js';
 
@@ -242,7 +242,7 @@ export function ReviewSourcesSection() {
       <Card className="flex flex-col gap-3">
         <h2 className="text-[18px] font-semibold text-ink">Review sources</h2>
         <p className="text-[15px] text-ink-muted">
-          People brought in from Follow Up Boss or a file carry their source as a label, shown here exactly as it was imported. A label counts as one of your lead sources only after an Owner chooses that source. A match is only ever suggested, never applied for you.
+          People brought in from Follow Up Boss or a file carry their source as a label, shown here exactly as it was imported. {WHAT_CHOOSING_DOES}
         </p>
         {q.isPending ? <p className="text-[15px] text-ink-muted">Loading the source review</p> : null}
         {q.isError ? (
