@@ -51,24 +51,38 @@ export async function lockModelBudget(tx: Tx): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended('realty.isa.model-budget:' || app.tenant_id()::text, 0))`.execute(tx);
 }
 
+/** The team-local day a call is counted in: [start, reset), from the team's time zone and the transaction's now(). */
+export async function modelBudgetDay(tx: Tx): Promise<{ start: Date; reset: Date }> {
+  return (await sql<{ start: Date; reset: Date }>`
+    SELECT ((now() AT TIME ZONE default_timezone)::date::timestamp AT TIME ZONE default_timezone) AS start,
+           (((now() AT TIME ZONE default_timezone)::date + 1)::timestamp AT TIME ZONE default_timezone) AS reset
+      FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]!;
+}
+
+/**
+ * The count of the day's reserved calls: the team's, and those of the person `contactId` belongs to. It runs under the
+ * team model-budget lock, so it must stay short at any ledger size: the day's bounds are parameters (modelBudgetDay,
+ * read first in the same transaction), so ai_runs is read through ai_runs_purpose_created_idx (tenant_id, purpose,
+ * created_at; migration 0106) for the day's `ai_isa_turn` rows only, never the tenant's whole ledger
+ * (spend.index.test.ts holds the plan to that).
+ */
+export function modelBudgetUsageSql(contactId: string, day: { start: Date; reset: Date }) {
+  return sql<{ person: number; team: number }>`
+    SELECT count(r.id)::int AS team,
+           count(r.id) FILTER (WHERE ass.contact_id = ANY(app.contact_person_ids(app.tenant_id(), ${contactId}::uuid)))::int AS person
+      FROM ai_runs r
+      LEFT JOIN ai_isa_assignments ass ON ass.tenant_id = r.tenant_id AND ass.id::text = r.input_refs->>'assignmentId'
+     WHERE r.tenant_id = app.tenant_id() AND r.purpose = 'ai_isa_turn'
+       AND r.created_at >= ${day.start} AND r.created_at < ${day.reset}`;
+}
+
 /**
  * Caller holds the team model-budget lock. Counts today's reservations (team-local day) and, inside both budgets,
  * inserts one. Reads tenant_settings, ai_runs and ai_isa_assignments and writes one new ai_runs row; no other row.
  */
 async function countAndReserve(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, turnId: string): Promise<{ runId: string } | Refused> {
-  const usage = (await sql<{ person: number; team: number; reset: Date }>`
-    WITH bounds AS (
-      SELECT ((now() AT TIME ZONE default_timezone)::date::timestamp AT TIME ZONE default_timezone) AS start,
-             (((now() AT TIME ZONE default_timezone)::date + 1)::timestamp AT TIME ZONE default_timezone) AS reset
-        FROM tenant_settings WHERE tenant_id = app.tenant_id()
-    )
-    SELECT count(r.id)::int AS team,
-           count(r.id) FILTER (WHERE ass.contact_id = ANY(app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid)))::int AS person,
-           b.reset
-      FROM bounds b LEFT JOIN ai_runs r ON r.tenant_id = app.tenant_id() AND r.purpose = 'ai_isa_turn'
-        AND r.created_at >= b.start AND r.created_at < b.reset
-      LEFT JOIN ai_isa_assignments ass ON ass.tenant_id = r.tenant_id AND ass.id::text = r.input_refs->>'assignmentId'
-     GROUP BY b.reset`.execute(tx)).rows[0]!;
+  const day = await modelBudgetDay(tx);
+  const usage = { ...(await modelBudgetUsageSql(a.contactId, day).execute(tx)).rows[0]!, reset: day.reset };
   const code = usage.person >= ISA_TURN_LIMITS.modelCallsPerPersonPerDay ? 'ISA_MODEL_PERSON_DAILY_LIMIT'
     : usage.team >= ISA_TURN_LIMITS.modelCallsPerTenantPerDay ? 'ISA_MODEL_TENANT_DAILY_LIMIT' : null;
   if (code !== null) return { code, reset: usage.reset };
