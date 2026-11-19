@@ -146,14 +146,25 @@ describe('secreview role sweep: the b19 stage-flow routes on an agent-owned pers
       want[`${who} preview`] = String(edit);
       got[`${who} status`] = String((await call(U[who], 'GET', `/contacts/${f.contactId}/playbook-status`)).status);
       want[`${who} status`] = String(view);
-      // an undo of the agent's change: a role that may not edit gets 404 and the stage stays; one that may, undoes it
+      // an undo of the AGENT's change by someone else: a role that may not edit gets 404 and the stage stays; one that
+      // may edit is still refused, 409 STAGE_UNDO_INVALID, because an undo takes back only one's own change (b19 fix
+      // pass L1, E779; before it the Team Lead's request was accepted as an undo). Nothing changes either way.
       const undo = await call(U[who], 'POST', `/contacts/${f.contactId}/stage`, { stage: 'new', undoOf: moved.body.eventId });
       got[`${who} undo`] = String(undo.status);
-      want[`${who} undo`] = String(edit);
-      if (undo.status === 200) await call(U.agent, 'POST', `/contacts/${f.contactId}/stage`, { stage: 'connected' }).then((r) => { moved.body.eventId = (r.body as { eventId: string }).eventId; });
+      want[`${who} undo`] = edit === 200 ? '409' : '404';
+      if (undo.status === 409) expect(undo.code, who).toBe('STAGE_UNDO_INVALID');
     }
     expect(got).toEqual(want);
-    expect(want).toMatchObject({ 'team_lead preview': '200', 'team_lead status': '200', 'team_lead undo': '200', 'agent2 preview': '404', 'agent2 status': '404', 'agent2 undo': '404', 'isa status': '404', 'tc preview': '404', 'tc undo': '404' });
+    expect(want).toMatchObject({ 'team_lead preview': '200', 'team_lead status': '200', 'team_lead undo': '409', 'agent2 preview': '404', 'agent2 status': '404', 'agent2 undo': '404', 'isa status': '404', 'tc preview': '404', 'tc undo': '404' });
+    // nobody's refused undo moved the stage
+    expect((await h.su.query<{ stage: string }>('SELECT stage FROM contacts WHERE id = $1', [f.contactId])).rows[0]!.stage).toBe('connected');
+    // the Team Lead may edit: their OWN change is theirs to undo
+    const own = await call<{ eventId: string }>(U.team_lead, 'POST', `/contacts/${f.contactId}/stage`, { stage: 'nurture' });
+    expect(own.status).toBe(200);
+    expect((await call(U.team_lead, 'POST', `/contacts/${f.contactId}/stage`, { stage: 'connected', undoOf: own.body.eventId })).status).toBe(200);
+    // and the agent's own change is the agent's to undo
+    const mine = await call<{ eventId: string }>(U.agent, 'POST', `/contacts/${f.contactId}/stage`, { stage: 'nurture' });
+    expect((await call(U.agent, 'POST', `/contacts/${f.contactId}/stage`, { stage: 'connected', undoOf: mine.body.eventId })).status).toBe(200);
   }, 300_000);
 });
 
