@@ -160,7 +160,7 @@ try {
         Object.defineProperty(window, 'visualViewport', { configurable: true, value: stub });
         const band = document.createElement('div');
         band.textContent = 'Simulated keyboard area (not a real keyboard: the visual viewport is made this much shorter)';
-        band.setAttribute('style', `position:fixed;left:0;right:0;bottom:0;height:${kb}px;z-index:2147483647;background:#cfd3da;color:#1f2937;font:600 14px/1.3 system-ui;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 24px;pointer-events:none;border-top:2px solid #6b7280`);
+        band.setAttribute('style', `position:fixed;left:0;right:0;bottom:0;height:${kb}px;z-index:9999;background:#cfd3da;color:#1f2937;font:600 14px/1.3 system-ui;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 24px;pointer-events:none;border-top:2px solid #6b7280`);
         document.body.appendChild(band);
       }, KEYBOARD_PX);
       await press(page.getByTestId('person-phone-bar').getByRole('button', { name: `Text ${ivy.name}` }));

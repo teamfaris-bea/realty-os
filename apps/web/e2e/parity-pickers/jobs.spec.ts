@@ -247,7 +247,7 @@ test('the stage-to-plan setting for an agent: their own plan is theirs to set (i
   await expect(page.getByText(/It covers only people you own\./)).toBeVisible();
   await page.getByLabel('Start this plan when a person enters stage').selectOption('nurture');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByText('Saved. This playbook now starts when a person enters “Nurture”.')).toBeVisible();
+  await expect(page.getByText('Saved. This playbook now starts when a person enters “Long-term follow-up”.')).toBeVisible();
   await page.reload();
   await expect(page.getByLabel('Start this plan when a person enters stage')).toHaveValue('nurture');
   await page.goto(`${stack.webUrl}/settings/playbooks/${world.ids.contractPlan}`);
