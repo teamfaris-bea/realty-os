@@ -25,6 +25,7 @@ import { systemActor } from '../worker/systemActor.js';
 import {
   buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
+import { ACTIVITY_ANSWERING, ACTIVITY_WAITING_BUDGET } from './sentences.js';
 import { reopenHeldTurn, reserveForTurn, supersedeHeldTurns } from './spend.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
@@ -192,6 +193,11 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, me: string 
       const held = found !== undefined && (found.job === null || me === null || found.job === me) ? found : undefined;
       if (held) {
         await reopenHeldTurn(tx, held.id);
+        // E795: the reply's activity card said it waits for tomorrow's budget; the assistant is answering again
+        if (a.machine.inboundUnanswered) {
+          await sql`UPDATE priority_feed_items SET reasons = ${JSON.stringify([ACTIVITY_ANSWERING])}::jsonb, updated_at = now() WHERE tenant_id = app.tenant_id()
+            AND dedupe_key = ${`ai_isa_activity:${a.id}`} AND state IN ('open','snoozed') AND reasons->0->>'code' = ${ACTIVITY_WAITING_BUDGET.code}`.execute(tx);
+        }
         await sql`UPDATE ai_isa_turns SET attempt = attempt + 1 WHERE tenant_id = app.tenant_id() AND id = ${held.id}`.execute(tx);
         return { ...await prepare(tx, ctx, a, held.id, held.attempt + 1, conv.seq, event, now, { repair: held.repair, initiated: !a.machine.inboundUnanswered }), repair: held.repair };
       }
@@ -292,7 +298,7 @@ export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload, 
   let note: string | undefined;
   for (let call = pre.repair ? 1 : 0; call < 2; call += 1) {
     // R-ISA-20: every provider call is reserved first, with no turn lock held; at a daily limit the turn is held here
-    const reservation = await reserveForTurn(deps, tenantId, pre.a, { id: pre.turnId, pinnedSeq: pre.pinnedSeq, repair: call > 0, owner: me });
+    const reservation = await reserveForTurn(deps, tenantId, pre.a, { id: pre.turnId, pinnedSeq: pre.pinnedSeq, repair: call > 0, owner: me, inboundUnanswered: pre.a.machine.inboundUnanswered });
     if ('kind' in reservation) return reservation;
     const { runId } = reservation;
     const started = Date.now();

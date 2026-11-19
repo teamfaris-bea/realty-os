@@ -6,7 +6,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { inboundSms } from '../comms/testing.js';
-import { aiMessages, assignmentOf, type IsaLead, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
+import { BUDGET_HOLD_ACTIVITY, BUDGET_HOLD_OUTREACH, BUDGET_HOLD_REPLY } from './sentences.js';
+import { aiMessages, assignmentOf, feedItems, handbacksOf, type IsaLead, isaLead, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
 import { budgetResumeSpreadMs, BUDGET_RESUME_SPREAD_MS } from './spend.js';
 import { runTurn } from './turn.js';
 
@@ -145,4 +146,104 @@ it('E794 R-ISA-20: the resume of a held turn is spread over the first minutes af
   expect(jobs).toHaveLength(1);
   expect(jobs[0]!.run_at.getTime()).toBe(reset.getTime() + budgetResumeSpreadMs(c.assignmentId));
   expect((await h.su.query<{ nb: Date }>(`SELECT not_before AS nb FROM ai_isa_turns WHERE assignment_id = $1 AND status = 'deferred'`, [c.assignmentId])).rows[0]!.nb.getTime()).toBe(reset.getTime());
+});
+
+// ---- F4: a hold is visible to a human at once, and nothing about it goes to the person -------------------------------
+
+const outbound = async (c: Care) => (await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM messages WHERE contact_id = $1 AND direction = 'outbound'`, [c.lead.id])).rows[0]!.n;
+const notices = async (c: Care, kind: string) => (await h.su.query<{ title: string; body: string | null; priority: string; user_id: string }>(
+  `SELECT title, body, priority, user_id FROM notifications WHERE tenant_id = $1 AND subject_id = $2 AND kind = $3 ORDER BY created_at`, [c.w.tenantId, c.lead.id, kind])).rows;
+const activity = async (c: Care) => (await h.su.query<{ code: string; text: string }>(
+  `SELECT reasons->0->>'code' AS code, reasons->0->>'text' AS text FROM priority_feed_items WHERE dedupe_key = $1 AND state = 'open'`, [`ai_isa_activity:${c.assignmentId}`])).rows;
+
+it('E795 R-ISA-29 R-ISA-20: a reply held at a budget is visible at once: the pinned unanswered card, the handback and the notification are written with the hold, the activity card does not say the assistant is answering, and nothing goes to the person', async () => {
+  const c = await care();
+  await recordedToday(c, 12);
+  const callsBefore = c.w.ai.calls.length;
+  const outBefore = await outbound(c);
+  expect((await inboundSms(h, c.lead.phone, c.w.mainNumber, 'We want to buy a home near Gum Tree Road this spring.')).statusCode).toBe(200);
+  // while the text waits for its turn the card says the assistant is answering
+  expect(await activity(c)).toEqual([{ code: 'AI_ISA_REPLY_RECEIVED', text: 'They replied; the AI assistant is answering' }]);
+  // one round: the turn runs and is held; the text is three minutes old (the helper), not ten
+  await runIsa(h, c.w.tenantId, 1);
+  expect(await inboundTurns(c)).toEqual([{ status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT' }]);
+  const m = (await h.su.query<{ id: string; age: number }>(`SELECT id, extract(epoch FROM now() - created_at)::int AS age FROM messages WHERE contact_id = $1 AND direction = 'inbound'`, [c.lead.id])).rows[0]!;
+  expect(m.age).toBeLessThan(600);
+  // the existing backstop, now: pinned card, handback, notification (each once)
+  expect((await feedItems(h, c.lead.id)).filter((f) => f.item_type === 'unanswered_inbound')).toEqual([{ item_type: 'unanswered_inbound', band: 'pinned', state: 'open', dedupe_key: `inbound:${c.lead.id}` }]);
+  expect(await handbacksOf(h, c.lead.id)).toEqual([expect.objectContaining({ status: 'proposed', dedupe_key: `handback:ai_isa:${c.assignmentId}:${m.id}` })]);
+  expect((await h.su.query<{ explanation: string }>(`SELECT explanation FROM assistant_actions WHERE contact_id = $1 AND kind = 'handback'`, [c.lead.id])).rows).toEqual([{ explanation: `They replied. ${BUDGET_HOLD_REPLY}` }]);
+  const told = await notices(c, 'inbound_message');
+  expect(told.filter((n) => n.priority === 'high')).toHaveLength(1);
+  expect(told.filter((n) => n.priority === 'high')[0]!.user_id).toBe(c.w.agents[0]!.userId);
+  // the activity card is true while the turn is held
+  expect(await activity(c)).toEqual([{ code: 'AI_ISA_REPLY_WAITING_BUDGET', text: BUDGET_HOLD_ACTIVITY }]);
+  expect(BUDGET_HOLD_ACTIVITY).not.toMatch(/is answering/);
+  // the job that is re-run while still held writes nothing twice
+  await runIsa(h, c.w.tenantId, 2);
+  expect(await handbacksOf(h, c.lead.id)).toHaveLength(1);
+  expect((await notices(c, 'inbound_message')).filter((n) => n.priority === 'high')).toHaveLength(1);
+  // nothing went to the person, and the model was not called
+  expect(await outbound(c)).toBe(outBefore);
+  expect(c.w.ai.calls.length).toBe(callsBefore);
+  // a second text while held: the card still does not say the assistant is answering
+  expect((await inboundSms(h, c.lead.phone, c.w.mainNumber, 'Are you there?')).statusCode).toBe(200);
+  expect(await activity(c)).toEqual([{ code: 'AI_ISA_REPLY_WAITING_BUDGET', text: BUDGET_HOLD_ACTIVITY }]);
+  await runIsa(h, c.w.tenantId, 1);
+  expect(await outbound(c)).toBe(outBefore);
+  // the next day the assistant answers, and the card says so again while it does
+  await rollover(c);
+  await runIsa(h, c.w.tenantId, 1);
+  expect(c.w.ai.calls.length).toBe(callsBefore + 1);
+  expect(await outbound(c)).toBe(outBefore + 1);
+  expect(await activity(c)).toEqual([{ code: 'AI_ISA_REPLY_RECEIVED', text: 'They replied; the AI assistant is answering' }]);
+  const sent = (await h.su.query<{ body: string }>(`SELECT body FROM messages WHERE contact_id = $1 AND direction = 'outbound' ORDER BY created_at DESC LIMIT 1`, [c.lead.id])).rows[0]!.body;
+  expect(sent).not.toMatch(/budget|limit|tomorrow/i);
+});
+
+it('E795 R-ISA-20: a start turn held at a budget tells the lead\'s owner at once, by the pause notification, that AI care waits for tomorrow\'s budget and that they can reach out; nothing goes to the person', async () => {
+  const w = await isaWorld(h);
+  const lead = await isaLead(h, w.agents[0]!);
+  expect((await startCare(w.agents[0]!, lead.id)).status).toBe(200);
+  const a = (await assignmentOf(h, lead.id))!;
+  const c: Care = { w, lead, assignmentId: a.id, epoch: a.epoch };
+  await h.su.query(`DELETE FROM ai_runs WHERE tenant_id = $1`, [w.tenantId]);
+  await recordedToday(c, 12);
+  await runIsa(h, w.tenantId, 1);
+  expect((await h.su.query(`SELECT trigger_kind, status, decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1`, [a.id])).rows)
+    .toEqual([{ trigger_kind: 'start', status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT' }]);
+  const label = (await h.su.query<{ f: string; l: string }>(`SELECT first_name AS f, last_name AS l FROM contacts WHERE id = $1`, [lead.id])).rows[0]!;
+  expect(await notices(c, 'ai_isa_paused')).toEqual([{ title: `AI care is waiting: ${label.f} ${label.l.slice(0, 1).toUpperCase()}.`, body: BUDGET_HOLD_OUTREACH, priority: 'normal', user_id: w.agents[0]!.userId }]);
+  expect(BUDGET_HOLD_OUTREACH).toBe("AI care is waiting: today's AI budget is used up. It resumes tomorrow. You can reach out yourself now.");
+  // held again on every re-run of the day: still one notification
+  await runIsa(h, w.tenantId, 2);
+  expect(await notices(c, 'ai_isa_paused')).toHaveLength(1);
+  // no unanswered-inbound card (nobody wrote), nothing to the person, no model call
+  expect((await feedItems(h, lead.id)).filter((f) => f.item_type === 'unanswered_inbound')).toEqual([]);
+  expect(await outbound(c)).toBe(0);
+  expect(w.ai.calls.length).toBe(0);
+});
+
+it('E795 R-ISA-20: a follow-up held at a budget tells the owner the same way, once for the day', async () => {
+  const w = await isaWorld(h);
+  const lead = await isaLead(h, w.agents[0]!);
+  expect((await startCare(w.agents[0]!, lead.id)).status).toBe(200);
+  // one round: the start turn runs; its follow-up timer is scheduled for later and has not run
+  await runIsa(h, w.tenantId, 1);
+  const a = (await assignmentOf(h, lead.id))!;
+  const c: Care = { w, lead, assignmentId: a.id, epoch: a.epoch };
+  expect((await h.su.query(`SELECT trigger_key FROM ai_isa_turns WHERE assignment_id = $1`, [a.id])).rows).toEqual([{ trigger_key: 'start:1:start' }]);
+  await recordedToday(c, 12);
+  const outBefore = await outbound(c);
+  const callsBefore = w.ai.calls.length;
+  expect(await notices(c, 'ai_isa_paused')).toEqual([]);
+  const followUp = () => runTurn(depsFromPlatform(h.app.platform), w.tenantId, { assignmentId: a.id, trigger: 'timer', timer: 'follow_up', epoch: a.epoch });
+  expect((await followUp()).kind).toBe('retry');
+  expect((await h.su.query(`SELECT status, decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_kind = 'timer'`, [a.id])).rows)
+    .toEqual([{ status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT' }]);
+  expect((await notices(c, 'ai_isa_paused')).map((n) => n.body)).toEqual([BUDGET_HOLD_OUTREACH]);
+  expect((await followUp()).kind).toBe('retry');
+  expect(await notices(c, 'ai_isa_paused')).toHaveLength(1);
+  expect(await outbound(c)).toBe(outBefore);
+  expect(w.ai.calls.length).toBe(callsBefore);
 });

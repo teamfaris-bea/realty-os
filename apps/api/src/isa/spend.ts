@@ -14,9 +14,11 @@ import type { Instant } from '@realty/core/foundation';
 import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { systemActor } from '../worker/systemActor.js';
+import { backstopInTx } from './backstop.js';
 import { AI_ISA_PROMPT_VERSION, ISA_TURN_LIMITS } from './coreSeam.js';
-import type { IsaDeps } from './effects.js';
+import { activityCardInTx, budgetHoldNoticeInTx, type IsaDeps } from './effects.js';
 import type { AssignmentRow } from './repo.js';
+import { BUDGET_HOLD_REPLY } from './sentences.js';
 
 export type ModelBudgetCode = 'ISA_MODEL_PERSON_DAILY_LIMIT' | 'ISA_MODEL_TENANT_DAILY_LIMIT';
 export type Reservation = { runId: string } | { kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string };
@@ -31,6 +33,8 @@ export interface TurnCall {
   repair: boolean;
   /** who resumes the turn if it is held: the worker job that runs it (its id); null for a run outside a job (tests) */
   owner: string | null;
+  /** the person's reply waits for this call (the machine's inboundUnanswered); false for a start or a follow-up */
+  inboundUnanswered: boolean;
 }
 
 /**
@@ -82,7 +86,7 @@ async function countAndReserve(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: Assignment
  * inbound has overtaken since TX-A pinned its sequence is not held: it is `stale` (E493, as TX-B does it) and a new
  * turn reads both messages, so a person never has two held turns (E794).
  */
-async function holdTurn(tx: Tx, a: AssignmentRow, t: TurnCall, refused: Refused): Promise<{ kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string }> {
+async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t: TurnCall, refused: Refused, now: Instant): Promise<{ kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string }> {
   const open = sql`(status = 'deciding' OR (status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')))`;
   const conv = await sql<{ seq: string | null }>`SELECT inbound_seq AS seq FROM conversations WHERE tenant_id = app.tenant_id() AND contact_id = ${a.contactId}`.execute(tx);
   const seq = Number(conv.rows[0]?.seq ?? 0);
@@ -98,6 +102,16 @@ async function holdTurn(tx: Tx, a: AssignmentRow, t: TurnCall, refused: Refused)
     WHERE tenant_id = app.tenant_id() AND id = ${t.id} AND ${open}
     RETURNING id`.execute(tx);
   if (held.rows.length === 0) return { kind: 'done', code: 'DISCARDED' };
+  // E795: the hold is visible to a human in this same transaction, and nothing about it goes to the person. A reply
+  // that now waits until tomorrow gets the existing unanswered-inbound backstop at once (pinned card, handback,
+  // notification; not after 10 minutes) and an activity card that says it waits. A start or a follow-up (nobody wrote)
+  // gets the owner's notification. Every write has its dedupe key: a job re-run while still held writes nothing twice.
+  if (t.inboundUnanswered) {
+    await backstopInTx(tx, deps, a, null, now, { immediate: true, explanation: `They replied. ${BUDGET_HOLD_REPLY}` });
+    await activityCardInTx(tx, deps, a, true);
+  } else {
+    await budgetHoldNoticeInTx(tx, deps, a, refused.reset, now);
+  }
   return { kind: 'retry', retryAt: (refused.reset.getTime() + budgetResumeSpreadMs(a.id)) as Instant };
 }
 
@@ -124,7 +138,7 @@ export async function reopenHeldTurn(tx: Tx, turnId: string): Promise<void> {
 /** The count, the reservation or the hold, and the reopening in ONE transaction whose caller holds the team lock. */
 export async function reserveModelCall(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, turnId: string, repair: boolean): Promise<Reservation> {
   const r = await countAndReserve(tx, deps, a, turnId);
-  if ('code' in r) return holdTurn(tx, a, { id: turnId, pinnedSeq: Number.MAX_SAFE_INTEGER, repair, owner: null }, r);
+  if ('code' in r) return holdTurn(tx, deps, a, { id: turnId, pinnedSeq: Number.MAX_SAFE_INTEGER, repair, owner: null, inboundUnanswered: a.machine.inboundUnanswered }, r, Date.now() as Instant);
   await reopenHeldTurn(tx, turnId);
   return r;
 }
@@ -141,5 +155,5 @@ export async function reserveForTurn(deps: Pick<IsaDeps, 'ids' | 'db'>, tenantId
     return countAndReserve(tx, deps, a, t.id);
   }, { db: deps.db, retries: 2 });
   if ('runId' in r) return r;
-  return withTenantTx(actor, (tx) => holdTurn(tx, a, t, r), { db: deps.db, retries: 2 });
+  return withTenantTx(actor, (tx, now) => holdTurn(tx, deps, a, t, r, now), { db: deps.db, retries: 2 });
 }

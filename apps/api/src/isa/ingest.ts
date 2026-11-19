@@ -13,10 +13,9 @@ import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { systemActor } from '../worker/systemActor.js';
-import { upsertFeedItem } from '../comms/repos/notify.js';
 import type { IsaPauseReason } from './coreSeam.js';
 import { systemPauseInTx } from './controls.js';
-import { chainEnvOf, control, type IsaDeps } from './effects.js';
+import { activityCardInTx, chainEnvOf, control, type IsaDeps } from './effects.js';
 import { type AssignmentRow, evaluateChain, liveAssignmentOf } from './repo.js';
 import { type DkimVerdict, domainOf, isUnder, normalizeDomain } from '../leadEmail/trust.js';
 
@@ -83,10 +82,11 @@ export async function ingestForAiIsaInTx(tx: Tx, deps: IsaDeps, actor: SystemAct
     else await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
     return { kind: 'none' };
   }
-  await upsertFeedItem(tx, deps.ids, {
-    userId: a.ownerUserId, itemType: 'ai_isa_activity', band: 'scored', contactId: a.contactId, subjectType: 'ai_isa_assignment', subjectId: a.id, assistantActionId: null,
-    score: 30, reasons: [{ code: 'AI_ISA_REPLY_RECEIVED', text: 'They replied; the AI assistant is answering' }], dedupeKey: `ai_isa_activity:${a.id}`,
-  });
+  // E795: while a turn of this care is held at a daily model-call budget (until not_before, the next team-local day), a
+  // further reply will wait too: the card says so, never that the assistant is answering
+  const waiting = await sql<{ held: boolean }>`SELECT EXISTS (SELECT 1 FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND epoch = ${a.epoch}
+    AND status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT') AND not_before > ${new Date(now)}) AS held`.execute(tx);
+  await activityCardInTx(tx, deps, a, waiting.rows[0]!.held);
   await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'inbound', epoch: a.epoch },
     dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:${i.inboundSeq}`, runAt: (now + TURN_DEBOUNCE_MS) as Instant });
   if (i.messageId !== null) {
