@@ -3,7 +3,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { STAGES, type Stage } from './stage.js';
-import { APPOINTMENT_RESULTS, CALL_SIGNAL_OUTCOMES, type StageSignal, suggestStageFromOutcome } from './stageSuggestion.js';
+import { APPOINTMENT_RESULTS, CALL_SIGNAL_OUTCOMES, type StageSignal, activitySignal, suggestStageFromOutcome } from './stageSuggestion.js';
 
 const call = (outcome: (typeof CALL_SIGNAL_OUTCOMES)[number]): StageSignal => ({ kind: 'call', outcome });
 const sent = (channel: 'text' | 'email'): StageSignal => ({ kind: 'message', channel, direction: 'outbound' });
@@ -100,6 +100,30 @@ describe('core/parity-people: the stage an outcome suggests (R-STG-2)', () => {
     // a try is not a conversation, and a signed agreement is not "months away"
     expect(suggestStageFromOutcome({ current: 'new', signal: call('left_voicemail') })).toMatchObject({ stage: 'attempting', alsoOffer: [] });
     expect(suggestStageFromOutcome({ current: 'connected', signal: appt('agreement_signed') })).toMatchObject({ stage: 'active', alsoOffer: [] });
+  });
+
+  it('L11 E789 a call logged with a BLANK outcome suggests nothing from any stage, however the blank is written; "other" (a real outcome the agent chose) is a try, as the table says', () => {
+    for (const current of STAGES) {
+      for (const blank of [null, undefined, '', '   ', 'OTHER', 'none']) {
+        expect(suggestStageFromOutcome({ current, signal: { kind: 'call', outcome: blank } as never }), `${current} / ${String(blank)}`).toBeNull();
+      }
+      // the log sheet's own reading of what was logged: a call with no outcome is no signal at all
+      expect(activitySignal({ kind: 'call', direction: 'outbound', outcome: null })).toBeNull();
+      expect(activitySignal({ kind: 'call', direction: 'inbound', outcome: null })).toBeNull();
+    }
+    expect(suggestStageFromOutcome({ current: 'new', signal: { kind: 'call', outcome: 'other' } })).toMatchObject({ stage: 'attempting', why: 'You tried to call. There has been no two-way conversation yet.' });
+    expect(suggestStageFromOutcome({ current: 'attempting', signal: { kind: 'call', outcome: 'other' } })).toBeNull();
+  });
+
+  it('L11 E789 a text or email THEY sent is worded as what it is: they wrote; it is never called an answer or a reply, because the log does not say we wrote first', () => {
+    for (const channel of ['text', 'email'] as const) {
+      const s = suggestStageFromOutcome({ current: 'new', signal: { kind: 'message', channel, direction: 'inbound' } })!;
+      expect(s.stage).toBe('connected');
+      expect(s.why).toBe(`They sent ${channel === 'email' ? 'an email' : 'a text'}, so you have heard from them directly.`);
+      expect(s.why).not.toMatch(/answer|repl|two-way/i);
+    }
+    // what WE sent is still a try with no reply yet
+    expect(suggestStageFromOutcome({ current: 'new', signal: { kind: 'message', channel: 'text', direction: 'outbound' } })!.why).toBe('You sent a text and they have not replied yet.');
   });
 
   it('R-STG-2 a wrong number, a bad number and a do-not-call request suggest nothing from any stage', () => {

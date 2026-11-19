@@ -8,6 +8,7 @@
 //   -------------------------------------------------  -------------  -------------------------------------
 //   voicemail left, no answer, "other" call,           attempting     new
 //     a text or email sent with no reply
+//     ("other" is an outcome the agent chose; a call logged with NO outcome is no signal and suggests nothing, E789)
 //   a connected call, a callback request,              connected      new, attempting
 //     the person's own reply (text or email)
 //   wrong number, bad number, do-not-call request      nothing        (any)
@@ -108,7 +109,9 @@ function whyOf(signal: StageSignal): string {
   }
   if (signal.kind === 'message') {
     const what = signal.channel === 'email' ? 'an email' : 'a text';
-    return signal.direction === 'inbound' ? `They answered with ${what}. That is a two-way conversation.` : `You sent ${what} and they have not replied yet.`;
+    // E789: a message THEY sent is worded as that. Nothing in the signal says we wrote first, so it is never called an
+    // answer or a reply (an inbound text logged from someone we never wrote to used to read "They answered with a text").
+    return signal.direction === 'inbound' ? `They sent ${what}, so you have heard from them directly.` : `You sent ${what} and they have not replied yet.`;
   }
   return 'They signed an agreement, so you are working together now.';
 }
