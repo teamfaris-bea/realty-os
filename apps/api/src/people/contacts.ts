@@ -4,6 +4,7 @@
 //                                        relationships, removed points, row version     contact.view_detail
 //   PATCH /contacts/:id                  names, type, intent, timezone, stage, pond summary (row_version)  contact.edit
 //   POST  /contacts/:id/stage            one stage change (the Undo toast posts the previous stage)  contact.edit
+//   GET   /contacts/:id/stage/preview    what that change would start, not start or leave running (R-STG-3)  contact.edit
 //   GET   /stage-labels                  the eight stages with the tenant's labels and what each means (R-STG-1)  session (members)
 //   PUT   /stage-labels                  Owner/Admin                                      settings.stage_labels
 //   POST  /contacts/:id/do-not-contact   person-level do-not-contact (R-CHAN-3 path): revokes every channel on
@@ -31,6 +32,7 @@ import { addressView, collaboratorView, relationshipView, removedPointView } fro
 import * as S from './schemas.js';
 import { stageChangeAutomation } from '../stageAutomation/index.js';
 import { ownLatestStageEvent } from '../stageAutomation/repos.js';
+import { previewStageEntry } from '../stageAutomation/preview.js';
 import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 
 export function stageFactsOf(r: repo.EditRow): StageFacts {
@@ -54,9 +56,13 @@ function editView(r: repo.EditRow) {
   return { id: r.id, rowVersion: r.row_version, displayName: r.display_name, firstName: r.first_name, lastName: r.last_name, contactType: r.contact_type, intent: r.intent, timezone: r.timezone, stage: r.stage, pondSummary: r.pond_summary };
 }
 
+/** R-PAR-14: may this actor move this person to `to` now? The one check of the stage route, PATCH and the stage preview. */
+function stageAllowed(r: repo.EditRow, actor: UserActor, to: Stage): boolean {
+  return stageChangeAllowed(stageFactsOf(r), { kind: 'user', role: actor.role }, to).ok;
+}
+
 function changeStageCheck(r: repo.EditRow, actor: UserActor, to: Stage): void {
-  const d = stageChangeAllowed(stageFactsOf(r), { kind: 'user', role: actor.role }, to);
-  if (!d.ok) throw new AppError('STAGE_NEEDS_CONTACT', { locked: lockedStages(stageFactsOf(r), { kind: 'user', role: actor.role }), offer: ['call', 'text', 'close'] });
+  if (!stageAllowed(r, actor, to)) throw new AppError('STAGE_NEEDS_CONTACT', { locked: lockedStages(stageFactsOf(r), { kind: 'user', role: actor.role }), offer: ['call', 'text', 'close'] });
 }
 
 async function staleOrMissing(tx: Tx, id: string): Promise<never> {
@@ -184,6 +190,25 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
       const { eventId, ...res } = out;
       const automation = eventId ? await stageChangeAutomation(platformOf(req).db, actorOf(req).tenantId, eventId, req.log, actorOf(req)) : null;
       return { ...res, automation };
+    },
+  );
+
+  // R-STG-3: what the change would start, not start or leave running, before it is saved. The same permission and
+  // visibility as the stage route (contact.edit on a live person whose detail the caller sees) and the same stage
+  // rule; the plan part is decided by the function the change is decided by (stageAutomation/preview.ts). Read-only.
+  r.get(
+    '/contacts/:id/stage/preview',
+    { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, querystring: S.StagePreviewQuery, response: { 200: S.StagePreviewResponse } } },
+    async (req) => {
+      const to = req.query.to;
+      const head = await peopleTx(req, async (tx, _now, actor) => {
+        const row = await repo.editRow(tx, req.params.id);
+        if (!row) throw new AppError('NOT_FOUND');
+        return { allowed: stageAllowed(row, actor, to), sameStage: stageFactsOf(row).stage === to };
+      });
+      // a change the rule refuses, or to the stage the person is already in, enters nothing: no plan is promised
+      const entry = await previewStageEntry(platformOf(req).db, actorOf(req), req.params.id, head.allowed && !head.sameStage ? to : null);
+      return { allowed: head.allowed, lockedReason: head.allowed ? null : ('STAGE_NEEDS_CONTACT' as const), sameStage: head.sameStage, ...entry, stops: [], aiCare: 'unchanged' as const, tasks: 'unchanged' as const };
     },
   );
 

@@ -42,7 +42,8 @@ export async function enqueueStep(tx: Tx, enrollmentId: string, dueAt: Instant):
   await enqueueTyped(tx, PLAYBOOK_STEP, p, { dedupeKey: PLAYBOOK_STEP.dedupeKey(p), runAt: dueAt });
 }
 
-async function stopFacts(tx: Tx, contactId: string, enrolledAt: Instant, canceled: boolean): Promise<Set<StopCondition>> {
+/** The stop conditions that hold for the person now (read by the runner under the contact lock, and by the read-only status). */
+export async function stopFacts(tx: Tx, contactId: string, enrolledAt: Instant, canceled: boolean): Promise<Set<StopCondition>> {
   const r = await sql<{ booked: boolean; opened: boolean; closed: boolean }>`
     SELECT EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId} AND a.status IN ('scheduled','held')
                     AND a.created_at > ${new Date(enrolledAt).toISOString()}::timestamptz) AS booked,
@@ -58,7 +59,7 @@ async function stopFacts(tx: Tx, contactId: string, enrolledAt: Instant, cancele
   return out;
 }
 
-function parseSteps(raw: readonly unknown[]): PlaybookStep[] | null {
+export function parseSteps(raw: readonly unknown[]): PlaybookStep[] | null {
   const out: PlaybookStep[] = [];
   for (const s of raw) {
     const r = PlaybookStepSchema.safeParse(s);

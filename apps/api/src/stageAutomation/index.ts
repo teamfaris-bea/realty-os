@@ -1,11 +1,11 @@
 // Public interface of api/stage-automation (parity module 67) for the stage-change path of api/people.
 import type { UserActor } from '@realty/core/foundation';
 import { type Database, withTenantTx } from '@realty/db';
-import { sql } from 'kysely';
 import { z } from 'zod';
 import { systemActor } from '../worker/systemActor.js';
 import { decisionOf } from './repos.js';
 import { type AutomationOutcome, SKIP_REASONS } from './decide.js';
+import { HIDDEN_PLAN, visiblePlaybookIds } from './planNames.js';
 import { reconcileStageEvent } from './reconcile.js';
 
 export { type AutomationOutcome, SKIP_REASONS, type SkipReason } from './decide.js';
@@ -29,13 +29,10 @@ export async function stageChangeAutomation(db: Database, tenantId: string, stag
   }
 }
 
-/** A plan's name only if the viewer's own RLS shows that playbook (an agent's private plan is hidden from a collaborator; security review). */
-const HIDDEN_PLAN = "the owner's plan";
+/** A plan's name only if the viewer's own RLS shows that playbook (planNames.ts: an agent's private plan is hidden from a collaborator; security review). */
 async function asSeenBy(db: Database, viewer: UserActor, stageEventId: string, out: NonNullable<AutomationOutcome>): Promise<AutomationOutcome> {
   const d = await withTenantTx(systemActor(viewer.tenantId, 'worker'), (tx) => decisionOf(tx, stageEventId), { db });
-  const visible = d?.playbookId
-    ? await withTenantTx(viewer, async (tx) => (await sql<{ ok: number }>`SELECT 1 AS ok FROM playbooks WHERE tenant_id = app.tenant_id() AND id = ${d.playbookId}`.execute(tx)).rows.length > 0, { db })
-    : false;
+  const visible = d?.playbookId ? await withTenantTx(viewer, async (tx) => (await visiblePlaybookIds(tx, [d.playbookId!])).has(d.playbookId!), { db }) : false;
   if (visible) return out;
   return 'started' in out ? { started: HIDDEN_PLAN } : { skipped: out.skipped, plan: HIDDEN_PLAN };
 }

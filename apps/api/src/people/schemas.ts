@@ -2,7 +2,7 @@
 // other key is a 422). Response schemas are snapshot-tested: no confidence* fields, no tenant id fields.
 import { ACTIVITY_DIRECTIONS, ACTIVITY_KINDS, CALL_OUTCOMES, POINT_LABELS, STAGES } from '@realty/core/parity/people';
 import { z } from 'zod';
-import { AutomationOutcomeSchema } from '../stageAutomation/index.js';
+import { AutomationOutcomeSchema, SKIP_REASONS } from '../stageAutomation/index.js';
 
 const Id = z.uuid();
 const Iso = z.string();
@@ -117,6 +117,22 @@ export const StageGuideRow = z.object({ key: z.string(), label: z.string(), defi
 export const StageInfo = z.object({ stage: z.string(), label: z.string(), definition: z.string(), notThis: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
 // parity module 67 (flagged edit): what the stage entry started, or why not (null: no plan for this stage)
 export const StageResponse = z.object({ stage: StageInfo, previousStage: z.string(), rowVersion: z.number().int(), automation: AutomationOutcomeSchema });
+/** R-STG-3: GET /contacts/:id/stage/preview?to=<stage> */
+export const StagePreviewQuery = z.strictObject({ to: z.enum(STAGES) });
+export const StagePreviewResponse = z.object({
+  /** the stage rule lets this caller make the change now (R-PAR-14) */
+  allowed: z.boolean(),
+  lockedReason: z.literal('STAGE_NEEDS_CONTACT').nullable(),
+  /** the person is already in this stage: saving changes nothing */
+  sameStage: z.boolean(),
+  starts: z.object({ plan: z.string(), firstStep: z.object({ channel: z.string(), dueAt: Iso }).nullable() }).nullable(),
+  wontStart: z.object({ plan: z.string(), reason: z.enum(SKIP_REASONS), sentence: z.string() }).nullable(),
+  keepsRunning: z.object({ enrollmentId: Id, plan: z.string(), state: z.enum(['active', 'paused']), canStop: z.boolean() }).nullable(),
+  /** a stage change never stops a plan: always empty */
+  stops: z.array(z.never()),
+  aiCare: z.literal('unchanged'),
+  tasks: z.literal('unchanged'),
+});
 export const StageLabelsResponse = z.object({ labels: z.record(z.string(), z.string()), stages: z.array(StageGuideRow) });
 
 export const RelationshipView = z.object({ id: Id, kind: z.string(), label: z.string().nullable(), direction: z.enum(['outgoing', 'incoming']), other: z.object({ id: Id, displayName: z.string() }), createdAt: Iso });
@@ -176,6 +192,7 @@ export const PEOPLE_RESPONSE_SCHEMAS = {
   CollaboratorsResponse,
   StageResponse,
   StageLabelsResponse,
+  StagePreviewResponse,
   RelationshipsResponse,
   RelationshipResponse,
   DetailsResponse,
