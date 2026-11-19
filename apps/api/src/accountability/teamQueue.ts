@@ -160,7 +160,7 @@ export async function teamQueue(tx: Tx, now: Instant): Promise<TeamQueueView> {
       holder,
       humanAttemptAt: null, // the read keeps only inquiries with no human attempt at or after the arrival
       automatedReplyAt: q.automated_at === null ? null : ms(q.automated_at),
-      backupAlert: q.backup_alert_at === null || q.backup_alert_outcome === null ? null : { at: ms(q.backup_alert_at), outcome: q.backup_alert_outcome, name: q.backup_alert_name, recipient: q.backup_alert_recipient },
+      backupAlert: q.backup_alert_at === null || q.backup_alert_outcome === null ? null : { at: ms(q.backup_alert_at), outcome: q.backup_alert_outcome, name: q.backup_alert_name, recipient: q.backup_alert_recipient, reason: q.backup_alert_reason, count: q.backup_alert_count ?? 1 },
     });
   }
   const taskFacts: QueueTaskFacts[] = tasks.map((t) => ({

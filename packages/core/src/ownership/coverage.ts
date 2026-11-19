@@ -9,10 +9,10 @@
 //     rule facts the router matches on (R-OWN-10: enabled rules by position, the first match wins).
 // What the minute-three backup alert and the auto-release do with this is decided where they run (decide.ts, and
 // apps/api leads/backupAlert.ts); this file only describes the source.
-import type { LeadSourceId, PondId, UserId } from '../foundation/index.js';
+import type { LeadSourceId, PondId, RuleId, UserId } from '../foundation/index.js';
 import type { MembershipStatus, RuleFacts } from './types.js';
 
-export const COVERAGE_WARNING_CODES = ['NO_OWNER', 'NO_BACKUP', 'OWNER_UNAVAILABLE', 'BACKUP_UNAVAILABLE', 'SAME_PERSON', 'NO_ROUTING_RULE', 'SHARED_FALLBACK_POND'] as const;
+export const COVERAGE_WARNING_CODES = ['NO_OWNER', 'NO_BACKUP', 'OWNER_UNAVAILABLE', 'BACKUP_UNAVAILABLE', 'SAME_PERSON', 'BACKUP_IN_ROTATION', 'NO_ROUTING_RULE', 'SHARED_FALLBACK_POND'] as const;
 export type CoverageWarningCode = (typeof COVERAGE_WARNING_CODES)[number];
 
 export interface CoverageWarning {
@@ -31,6 +31,8 @@ export interface CoverageMember {
 export interface SourceRouting {
   /** an enabled routing rule names this source in its match */
   named: boolean;
+  /** the id of the rule its leads follow (null: none) */
+  ruleId: RuleId | null;
   /** the rule its leads follow: the first that names it, else the first that names no source; null: none (the default pond) */
   ruleName: string | null;
   /** where its leads go when nobody takes them: the rule's pond or fallback pond, else the default pond */
@@ -48,6 +50,11 @@ export interface SourceCoverageFacts {
   fallbackPondName: string;
   /** the names of the OTHER lead sources whose leads fall back to the same pond */
   sharedWith: readonly string[];
+  /**
+   * R-TEAMQ-21: the members who receive this source's leads: the rotation of the rule its leads follow (its members,
+   * or its one direct member). Absent or empty: nobody is offered them (a pond rule, or no rule).
+   */
+  rotation?: readonly UserId[];
 }
 
 export interface SourceCoverage {
@@ -107,7 +114,7 @@ export function sourceRouting(rules: readonly RuleFacts[], sourceId: LeadSourceI
   }
   const rule = naming ?? ordered.find((r) => r.match.sources === undefined || r.match.sources.length === 0) ?? null;
   const pondId = rule === null ? defaultPondId : rule.strategy === 'pond' ? (rule.targetPondId ?? defaultPondId) : (rule.fallbackPondId ?? defaultPondId);
-  return { named: naming !== null, ruleName: rule === null ? null : (rule.name ?? 'an unnamed rule'), pondId };
+  return { named: naming !== null, ruleId: rule === null ? null : rule.id, ruleName: rule === null ? null : (rule.name ?? 'an unnamed rule'), pondId };
 }
 
 const nameOf = (m: CoverageMember): string => (m.name !== null && m.name.trim() !== '' ? m.name.trim() : 'a member with no name');
@@ -147,6 +154,10 @@ export function sourceCoverage(f: SourceCoverageFacts): SourceCoverage {
   }
   if (owner !== null && backup !== null && owner.userId === backup.userId) {
     warnings.push({ code: 'SAME_PERSON', sentence: `The owner and the backup are the same person, ${nameOf(owner)}: nobody else is alerted when they do not respond.` });
+  }
+  if (backup !== null && (f.rotation ?? []).includes(backup.userId)) {
+    // R-TEAMQ-21: a lead with the backup is never alerted to the backup themself
+    warnings.push({ code: 'BACKUP_IN_ROTATION', sentence: 'The backup also receives these leads. When a lead is with them, their team lead is alerted instead.' });
   }
   if (!f.routing.named) {
     const where = f.routing.ruleName === null ? `its leads go straight to the pond "${f.fallbackPondName}"` : `its leads follow the rule "${f.routing.ruleName}", which is not specific to it`;

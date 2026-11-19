@@ -127,7 +127,10 @@ export interface WaitingInquiryRow extends HolderColumns {
   backup_alert_at: Date | null;
   backup_alert_outcome: 'alerted' | 'no_recipient' | null;
   backup_alert_name: string | null;
-  backup_alert_recipient: 'backup' | 'team_lead' | null;
+  backup_alert_recipient: 'backup' | 'team_lead' | 'admins' | null;
+  /** R-TEAMQ-21: why it was not the named backup, and how many members were alerted */
+  backup_alert_reason: 'backup_unavailable' | 'backup_is_holder' | null;
+  backup_alert_count: number | null;
 }
 
 /**
@@ -140,7 +143,8 @@ export async function waitingInquiries(tx: Tx, since: Instant, now: Instant, cap
     SELECT i.id, i.contact_id, i.arrived_at, s.name AS source_name, ${HOLDER_COLUMNS},
            (SELECT min(m.dispatched_at) FROM messages m
              WHERE m.tenant_id = s.tenant_id AND m.contact_id = i.contact_id AND ${AUTOMATED_MESSAGE} AND m.dispatched_at >= i.arrived_at) AS automated_at,
-           ba.decided_at AS backup_alert_at, ba.outcome AS backup_alert_outcome, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient
+           ba.decided_at AS backup_alert_at, ba.outcome AS backup_alert_outcome, bau.display_name AS backup_alert_name, ba.recipient AS backup_alert_recipient,
+           ba.fallback_reason AS backup_alert_reason, ba.alerted_count AS backup_alert_count
       FROM lead_sources s
       CROSS JOIN LATERAL (
         SELECT i.id, i.contact_id, ${ARRIVAL} AS arrived_at FROM lead_inquiries i

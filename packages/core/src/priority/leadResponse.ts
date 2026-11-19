@@ -13,6 +13,7 @@
 // RESPONSE_MEDIAN_MIN_SAMPLE attempted inquiries and the 90th percentile RESPONSE_P90_MIN_SAMPLE; the sample
 // size always travels with them. Pure: facts in, numbers out; no client name, number or address.
 import type { BusinessCalendar, ContactId, Instant, LeadInquiryId, LeadSourceId, UserId } from '../foundation/index.js';
+import type { AlertRecipient } from './backupAlert.js';
 import { measureFromArrival } from './teamQueue.js';
 
 /** "Within 5 minutes" and "within 15 minutes", in staffed seconds from arrival (the boundary included). */
@@ -46,7 +47,7 @@ export interface ResponseInquiryFacts {
    * b19 R-TEAMQ-18: this inquiry's minute-three backup alert, when one was raised: when, to whom, and whether to the
    * source's backup or to the team lead alerted in their place. Absent or null: nobody was alerted.
    */
-  backupAlert?: { at: Instant; byUserId: UserId; recipient: 'backup' | 'team_lead' } | null;
+  backupAlert?: { at: Instant; byUserId: UserId; recipient: AlertRecipient } | null;
 }
 
 export interface MeasuredInquiry extends Omit<ResponseInquiryFacts, 'firstAttempt' | 'backupAlert'> {

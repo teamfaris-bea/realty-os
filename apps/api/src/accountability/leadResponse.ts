@@ -58,7 +58,7 @@ export interface ResponseInquiryView {
   /** when an automated reply went out after the arrival (null: none). Never an attempt. */
   automatedReplyAt: string | null;
   /** R-TEAMQ-18: this inquiry's minute-three backup alert: when, to whom, and whether to the backup or to the team lead in their place (null: nobody was alerted) */
-  backupAlert: { at: string; to: { userId: string; name: string | null }; recipient: 'backup' | 'team_lead' } | null;
+  backupAlert: { at: string; to: { userId: string; name: string | null }; recipient: 'backup' | 'team_lead' | 'admins' } | null;
   within5: boolean;
   within15: boolean;
 }

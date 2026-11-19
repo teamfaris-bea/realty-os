@@ -37,7 +37,7 @@ const member = (userId: string | null, name: string | null, status: CoverageMemb
  * "Shared fallback pond" compares the sources that are on (a source that is off receives nothing).
  */
 export async function coverageBySource(tx: Tx): Promise<Map<string, CoverageViewT>> {
-  const [rows, rules, facts, ponds] = [await repo.coverageRows(tx), await loadRules(tx), await loadTenantFacts(tx), await repo.pondNames(tx)];
+  const [rows, rules, facts, ponds, rotations] = [await repo.coverageRows(tx), await loadRules(tx), await loadTenantFacts(tx), await repo.pondNames(tx), await repo.ruleRotations(tx)];
   const routing = new Map<string, SourceRouting>(rows.map((s) => [s.id, sourceRouting(rules, s.id as LeadSourceId, facts.settings.defaultPondId as PondId)]));
   const out = new Map<string, CoverageViewT>();
   for (const s of rows) {
@@ -52,6 +52,8 @@ export async function coverageBySource(tx: Tx): Promise<Map<string, CoverageView
       routing: r,
       fallbackPondName: ponds.get(r.pondId) ?? 'the default pond',
       sharedWith: rows.filter((o) => o.id !== s.id && o.active && (routing.get(o.id) as SourceRouting).pondId === r.pondId).map((o) => o.name),
+      // R-TEAMQ-21: who is offered this source's leads (the backup among them is said on the card)
+      rotation: (r.ruleId === null ? [] : (rotations.get(r.ruleId) ?? [])) as UserId[],
     });
     out.set(s.id, { owner, backup, highIntent: s.high_intent, covered: c.covered, setting: c.setting, sentence: c.sentence, warnings: c.warnings, changedAt: s.coverage_changed_at ? s.coverage_changed_at.toISOString() : null });
   }

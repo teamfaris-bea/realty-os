@@ -1469,6 +1469,8 @@ export interface LeadBackupAlertsTable {
   holder_pond_id: string | null;
   grant_expires_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  fallback_reason: string | null;
+  alerted_count: Generated<number>;
 }
 
 /** public.lead_email_inbox_keys (table) */

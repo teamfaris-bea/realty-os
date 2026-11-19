@@ -241,7 +241,7 @@ export interface ResponseInquiry {
   waiting: { wallSeconds: number; staffedSeconds: number } | null;
   automatedReplyAt: string | null;
   /** b19 step 2 (R-TEAMQ-18): the inquiry's minute-three backup alert: when, to whom, and whether to the backup or to the team lead in their place */
-  backupAlert?: { at: string; to: { userId: string; name: string | null }; recipient: 'backup' | 'team_lead' } | null;
+  backupAlert?: { at: string; to: { userId: string; name: string | null }; recipient: 'backup' | 'team_lead' | 'admins' } | null;
   within5: boolean;
   within15: boolean;
 }
@@ -321,6 +321,7 @@ function backupAlertSentence(i: ResponseInquiry): string {
   if (!b) return '';
   const after = formatAge(Math.max(0, Math.round((Date.parse(b.at) - Date.parse(i.arrivedAt)) / 1000)));
   const who = b.to.name ?? 'a former member';
+  if (b.recipient === 'admins') return ` There was no backup or team lead to alert, so the team's Owners and Admins were alerted (${who} among them) ${after} after it arrived.`;
   return b.recipient === 'team_lead' ? ` The source's backup was unavailable, so the team lead, ${who}, was alerted ${after} after it arrived.` : ` The backup, ${who}, was alerted ${after} after it arrived.`;
 }
 

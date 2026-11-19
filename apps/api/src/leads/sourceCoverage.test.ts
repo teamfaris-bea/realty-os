@@ -122,8 +122,10 @@ describe('R-TEAMQ-10 the coverage of a lead source: read and change', () => {
     const r = await put({ ownerUserId: a.userId, backupUserId: a.userId, highIntent: false, covered: true }, id);
     expect(r.status).toBe(200);
     expect(r.body.coverage.covered).toBe(true);
-    expect(codesOf(r.body.coverage)).toEqual(['SAME_PERSON', 'NO_ROUTING_RULE', 'SHARED_FALLBACK_POND']);
+    // R-TEAMQ-21 E881 (review fix M2): this agent is in the rule's rotation, so as the backup they also receive these leads: said too
+    expect(codesOf(r.body.coverage)).toEqual(['SAME_PERSON', 'BACKUP_IN_ROTATION', 'NO_ROUTING_RULE', 'SHARED_FALLBACK_POND']);
     const byCode = new Map(r.body.coverage.warnings.map((x) => [x.code, x.sentence]));
+    expect(byCode.get('BACKUP_IN_ROTATION')).toBe('The backup also receives these leads. When a lead is with them, their team lead is alerted instead.');
     // the world's rule ("Everyone") names no source, so this source falls to it; every source shares the default pond
     expect(byCode.get('NO_ROUTING_RULE')).toBe('No routing rule names this source: its leads follow the rule "Everyone", which is not specific to it.');
     expect(byCode.get('SHARED_FALLBACK_POND')).toMatch(/^Its fallback pond, ".+", is also the fallback pond of /);

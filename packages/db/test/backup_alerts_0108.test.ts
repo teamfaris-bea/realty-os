@@ -23,13 +23,18 @@ let inquiryId: string;
 type Actor = Parameters<typeof withTenantTx>[0];
 const as = <T>(actor: Actor, fn: Parameters<typeof withTenantTx<T>>[1]) => withTenantTx(actor, fn, { db: h.app });
 const inquiryOf = async (contactId: string) => (await suRows<{ id: string }>(h.su, 'SELECT id FROM lead_inquiries WHERE contact_id = $1', [contactId]))[0]!.id;
-const alertRow = (actor: Actor, world: World, inquiry: string, o: { outcome?: string; alerted?: string | null; recipient?: string | null } = {}) =>
+/** One row; by default the job's own shape for an alerted backup (0109: one member alerted, no fallback reason). */
+const alertRow = (actor: Actor, world: World, inquiry: string, o: { outcome?: string; alerted?: string | null; recipient?: string | null; reason?: string | null; count?: number } = {}) =>
   as(actor, async (tx) => {
     const id = uuid();
+    const outcome = o.outcome ?? 'alerted';
+    const alerted = o.alerted === undefined ? world.agents[1]!.id : o.alerted;
+    const recipient = o.recipient === undefined ? 'backup' : o.recipient;
+    const reason = o.reason === undefined ? (recipient === 'team_lead' || recipient === 'admins' ? 'backup_unavailable' : null) : o.reason;
     await sql`
-      INSERT INTO lead_backup_alerts (tenant_id, id, inquiry_id, lead_source_id, arrived_at, due_at, decided_at, outcome, alerted_user_id, recipient, holder)
-      VALUES (${world.tenantId}, ${id}, ${inquiry}, ${world.leadSourceId}, now() - interval '4 minutes', now() - interval '1 minute', now(), ${o.outcome ?? 'alerted'},
-              ${o.alerted === undefined ? world.agents[1]!.id : o.alerted}, ${o.recipient === undefined ? 'backup' : o.recipient}, 'on_offer')`.execute(tx);
+      INSERT INTO lead_backup_alerts (tenant_id, id, inquiry_id, lead_source_id, arrived_at, due_at, decided_at, outcome, alerted_user_id, recipient, fallback_reason, alerted_count, holder)
+      VALUES (${world.tenantId}, ${id}, ${inquiry}, ${world.leadSourceId}, now() - interval '4 minutes', now() - interval '1 minute', now(), ${outcome},
+              ${alerted}, ${recipient}, ${reason}, ${o.count ?? (outcome === 'alerted' ? 1 : 0)}, 'on_offer')`.execute(tx);
     return id;
   });
 const visibleTo = (actor: Actor, tenantId: string = w.tenantId) =>
@@ -60,6 +65,16 @@ describe('R-TEAMQ-17 (0108): the record of a backup alert', () => {
     await expect(alertRow(w.system('timer'), w, q, { outcome: 'alerted', alerted: null, recipient: null })).rejects.toThrow(/check constraint/);
     await expect(alertRow(w.system('timer'), w, q, { outcome: 'human_attempt' })).rejects.toThrow(/check constraint/);
     await expect(alertRow(w.system('timer'), w, q, { outcome: 'made_up', alerted: null, recipient: null })).rejects.toThrow(/check constraint/);
+    // R-TEAMQ-21 (0109): how many were alerted goes with the outcome; several only for the Owners and Admins; a reason exactly when it was not the backup
+    await expect(alertRow(w.system('timer'), w, q, { count: 0 })).rejects.toThrow(/lead_backup_alerts_count_matches/);
+    await expect(alertRow(w.system('timer'), w, q, { outcome: 'human_attempt', alerted: null, recipient: null, count: 1 })).rejects.toThrow(/lead_backup_alerts_count_matches/);
+    await expect(alertRow(w.system('timer'), w, q, { count: 2 })).rejects.toThrow(/lead_backup_alerts_one_unless_admins/);
+    await expect(alertRow(w.system('timer'), w, q, { recipient: 'team_lead', reason: null })).rejects.toThrow(/lead_backup_alerts_reason_matches/);
+    await expect(alertRow(w.system('timer'), w, q, { reason: 'backup_is_holder' })).rejects.toThrow(/lead_backup_alerts_reason_matches/);
+    await expect(alertRow(w.system('timer'), w, q, { recipient: 'team_lead', reason: 'made_up' })).rejects.toThrow(/check constraint/);
+    await expect(alertRow(w.system('timer'), w, q, { recipient: 'someone' })).rejects.toThrow(/check constraint/);
+    const forAdmins = await inquiryOf((await intakeLead(h.app, w, BUY)).contactId);
+    await alertRow(w.system('timer'), w, forAdmins, { alerted: w.owner.id, recipient: 'admins', reason: 'backup_is_holder', count: 2 });
     await alertRow(w.system('timer'), w, q, { outcome: 'human_attempt', alerted: null, recipient: null });
   });
 

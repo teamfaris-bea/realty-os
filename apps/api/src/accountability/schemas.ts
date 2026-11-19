@@ -205,7 +205,7 @@ export const ResponseInquirySchema = z.object({
   waiting: Waited.nullable(),
   automatedReplyAt: z.string().nullable(),
   /** R-TEAMQ-18: the inquiry's minute-three backup alert (null: nobody was alerted) */
-  backupAlert: z.object({ at: z.string(), to: Person, recipient: z.enum(['backup', 'team_lead']) }).nullable(),
+  backupAlert: z.object({ at: z.string(), to: Person, recipient: z.enum(['backup', 'team_lead', 'admins']) }).nullable(),
   within5: z.boolean(),
   within15: z.boolean(),
 });

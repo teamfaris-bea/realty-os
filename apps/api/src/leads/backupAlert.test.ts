@@ -36,6 +36,8 @@ interface AlertRow {
   outcome: string;
   alerted_user_id: string | null;
   recipient: string | null;
+  fallback_reason: string | null;
+  alerted_count: number;
   holder: string | null;
   holder_user_id: string | null;
   holder_pond_id: string | null;
@@ -345,7 +347,7 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
     expect(cov.body.coverage.warnings.map((x) => x.code)).toContain('BACKUP_UNAVAILABLE');
   });
 
-  it('R-TEAMQ-15 E849: the backup is suspended and whoever has the lead has no Team Lead (a pond): nobody can be alerted, and the row says so', async () => {
+  it('R-TEAMQ-15 R-TEAMQ-21 E849 E880: the backup is suspended and whoever has the lead has no Team Lead (a pond): the team\'s Owners and Admins are alerted, never nobody (review fix M2: this case used to end as "no recipient")', async () => {
     const world = await leadsWorld(h, { agents: 1, rule: false });
     await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
     const b = await h.invite(world.owner, 'agent');
@@ -358,7 +360,100 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
     expect((await call(world.owner, 'PATCH', `/members/${b.userId}`, { status: 'suspended', version: members.body.members.find((m) => m.userId === b.userId)!.version })).status).toBe(200);
     await minutesPass(lead, 4, world.tenantId);
     await run();
-    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.holder, r.holder_pond_id])).toEqual([['no_recipient', null, 'pond', world.defaultPondId]]);
+    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.fallback_reason, r.alerted_count, r.holder, r.holder_pond_id, r.grant_expires_at])).toEqual([
+      ['alerted', world.owner.userId, 'admins', 'backup_unavailable', 1, 'pond', world.defaultPondId, null],
+    ]);
+    const notes = await alertNotes(lead.inquiryId);
+    expect(notes.map((n) => [n.user_id, n.kind, n.priority])).toEqual([[world.owner.userId, 'first_touch_due', 'critical']]);
+    expect(notes[0]!.title).toMatch(/In the pond .+\. The source's backup is unavailable\.$/);
+    expect(notes[0]!.body).toBe('Nobody has called, texted or emailed. You are alerted as an Owner or Admin, because the backup named on its source cannot be reached and whoever has this lead has no team lead.');
+    expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [lead.contactId])).rows).toEqual([]);
+  });
+});
+
+describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)', () => {
+  const setBackup = async (world: CommsWorld, sourceId: string, userId: string | null) => {
+    await freshReauth(h, world.owner);
+    const r = await call<{ coverage: { warnings: { code: string; sentence: string }[] } }>(world.owner, 'PUT', `/lead-sources/${sourceId}/coverage`, { ownerUserId: world.agents[0]!.userId, backupUserId: userId, highIntent: false, covered: true });
+    if (r.status !== 200) throw new Error(`coverage: ${r.status} ${JSON.stringify(r.body)}`);
+    return r.body.coverage;
+  };
+
+  it('R-TEAMQ-21 E879 E881: a lead ON OFFER to, then OWNED by, the source\'s backup: only their Team Lead is alerted ("… who is also the backup for this source"), recorded as team_lead; the holder gets no alert and nobody gets new access; the source says the backup is in its rotation', async () => {
+    const src = await source('Rotation test');
+    // on offer to the backup
+    const offered = await arrive(src);
+    const before = await holding(offered.contactId);
+    expect(before.state).toBe('offered');
+    const cov = await setBackup(w, src.id, before.offeredTo);
+    expect(cov.warnings).toContainEqual({ code: 'BACKUP_IN_ROTATION', sentence: 'The backup also receives these leads. When a lead is with them, their team lead is alerted instead.' });
+    await minutesPass(offered);
+    await run();
+    expect((await alertRows(offered.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.fallback_reason, r.alerted_count, r.holder, r.holder_user_id, r.grant_expires_at])).toEqual([
+      ['alerted', w.teamLead!.userId, 'team_lead', 'backup_is_holder', 1, 'on_offer', before.offeredTo, null],
+    ]);
+    const notes = await alertNotes(offered.inquiryId);
+    expect(notes.map((n) => [n.user_id, n.priority])).toEqual([[w.teamLead!.userId, 'critical']]);
+    expect(notes[0]!.title).toMatch(/^New lead waiting 4 min: Dana R\. from Rotation test\. With .+ \(on offer\), who is also the backup for this source\.$/);
+    expect(notes[0]!.body).toBe('Nobody has called, texted or emailed. You are alerted as their team lead, because the backup named on this source is the person who has the lead.');
+    expect(notes[0]!.title.length).toBeLessThanOrEqual(120);
+    expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [offered.contactId])).rows).toEqual([]);
+    expect(await holding(offered.contactId)).toEqual(before);
+    expect(await toClient(offered.contactId)).toEqual([]);
+
+    // owned by the backup
+    const owned = await arrive(src);
+    const owner = await accept(owned);
+    await setBackup(w, src.id, owner.userId);
+    await minutesPass(owned);
+    await run();
+    expect((await alertRows(owned.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.fallback_reason, r.holder, r.holder_user_id])).toEqual([['alerted', w.teamLead!.userId, 'team_lead', 'backup_is_holder', 'owner', owner.userId]]);
+    const ownedNotes = await alertNotes(owned.inquiryId);
+    expect(ownedNotes.map((n) => n.user_id)).toEqual([w.teamLead!.userId]);
+    expect(ownedNotes[0]!.title).toMatch(/\. With [^()]+, who is also the backup for this source\.$/);
+    // the queue says who was told and why, as the Owner and as the Team Lead read it
+    const q = await call<{ groups: { key: string; rows: { contact: { id: string }; backupAlert: { alerted: boolean; line: string } | null }[] }[] }>(w.owner, 'GET', '/team/queue');
+    const row = q.body.groups.find((g) => g.key === 'new_lead')!.rows.find((r) => r.contact.id === owned.contactId)!;
+    expect(row.backupAlert!.line).toMatch(/^The backup has this lead: their team lead, \S+ \S\., was alerted at \d{1,2}:\d\d [AP]M\.$/);
+  });
+
+  it('R-TEAMQ-21 E880: the backup holds the lead and has NO team lead: the Owner and the Admin are both alerted, recorded as admins with their number; the holder is not', async () => {
+    const world = (await assistantWorld(h, { agents: 1, others: ['admin'] })) as CommsWorld & { others: TestClient[] };
+    await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
+    const admin = world.others[0]!;
+    const agent = world.agents[0]!;
+    const src = await source('Solo agent form (alert test)', { world, backupUser: agent });
+    const lead = await arrive(src);
+    expect((await holding(lead.contactId)).offeredTo).toBe(agent.userId);
+    await minutesPass(lead, 4, world.tenantId);
+    await run();
+    const both = [world.owner.userId, admin.userId].sort();
+    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.fallback_reason, r.alerted_count, r.holder_user_id, r.grant_expires_at])).toEqual([['alerted', both[0], 'admins', 'backup_is_holder', 2, agent.userId, null]]);
+    const notes = await alertNotes(lead.inquiryId);
+    expect(notes.map((n) => n.user_id).sort()).toEqual(both);
+    for (const n of notes) {
+      expect(n.title).toMatch(/\(on offer\), who is also the backup for this source\.$/);
+      expect(n.body).toBe('Nobody has called, texted or emailed. You are alerted as an Owner or Admin, because the backup named on this source is the person who has the lead, and they have no team lead.');
+    }
+    expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [lead.contactId])).rows).toEqual([]);
+  });
+
+  it('R-TEAMQ-21: "nobody" is recorded only when the team has nobody else: a one-person team whose Owner holds the lead and is its own backup', async () => {
+    const world = await leadsWorld(h, { agents: 0, rule: false });
+    await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
+    await freshReauth(h, world.owner);
+    const cover = await call(world.owner, 'PUT', `/lead-sources/${world.sourceId}/coverage`, { ownerUserId: world.owner.userId, backupUserId: world.owner.userId, highIntent: false, covered: true });
+    expect(cover.status).toBe(200);
+    const lead = await arrive({ id: world.sourceId, token: world.token, name: 'Portal' });
+    const st = await contactState(h, lead.contactId);
+    expect(st.ownership_state).toBe('in_pond');
+    // the Owner takes the pond lead themself
+    const take = await command(world.owner, lead.contactId, 'reassign', { toUserId: world.owner.userId });
+    expect(take.status).toBe(200);
+    expect((await holding(lead.contactId)).owner).toBe(world.owner.userId);
+    await minutesPass(lead, 4, world.tenantId);
+    await run();
+    expect((await alertRows(lead.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.alerted_count, r.holder_user_id])).toEqual([['no_recipient', null, null, 0, world.owner.userId]]);
     expect(await alertNotes(lead.inquiryId)).toEqual([]);
   });
 });

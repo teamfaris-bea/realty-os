@@ -43,6 +43,23 @@ export async function pondNames(tx: Tx): Promise<Map<string, string>> {
   return new Map(r.rows.map((p) => [p.id, p.name]));
 }
 
+/**
+ * R-TEAMQ-21: who receives the leads of each enabled routing rule: its rotation members, or its one direct member.
+ * By rule id (routing_rule_members' primary key; the tenant's rules are few).
+ */
+export async function ruleRotations(tx: Tx): Promise<Map<string, string[]>> {
+  const r = await sql<{ rule_id: string; user_id: string }>`
+    SELECT m.rule_id, m.user_id FROM routing_rule_members m
+      JOIN routing_rules r ON r.tenant_id = m.tenant_id AND r.id = m.rule_id
+     WHERE m.tenant_id = app.tenant_id() AND r.enabled AND r.strategy IN ('round_robin', 'weighted')
+    UNION
+    SELECT r.id, r.direct_user_id FROM routing_rules r
+     WHERE r.tenant_id = app.tenant_id() AND r.enabled AND r.strategy = 'direct' AND r.direct_user_id IS NOT NULL`.execute(tx);
+  const out = new Map<string, string[]>();
+  for (const x of r.rows) out.set(x.rule_id, [...(out.get(x.rule_id) ?? []), x.user_id]);
+  return out;
+}
+
 export interface StoredCoverage {
   owner_user_id: string | null;
   backup_user_id: string | null;

@@ -44,7 +44,7 @@ export interface InquiryResponseRow extends HolderColumns {
   backup_alert_at: Date | null;
   backup_alert_user: string | null;
   backup_alert_name: string | null;
-  backup_alert_recipient: 'backup' | 'team_lead' | null;
+  backup_alert_recipient: 'backup' | 'team_lead' | 'admins' | null;
   automated_at: Date | null;
 }
 

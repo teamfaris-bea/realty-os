@@ -4,6 +4,7 @@
 // accountability/repos/teamQueue.ts, whose human-attempt predicates are used word for word);
 // lead_backup_alerts_inquiry_once; contact_collaborators' primary key; team_members_user_idx.
 import type { MembershipStatus } from '@realty/core/ownership';
+import type { AlertFallbackReason, AlertRecipient } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { ARRIVAL, HUMAN_CALL, HUMAN_MESSAGE } from '../../accountability/repos/teamQueue.js';
@@ -105,6 +106,13 @@ export async function teamLeadsOf(tx: Tx, userId: string): Promise<{ user_id: st
   return r.rows;
 }
 
+/** The team's active Owners and Admins, in id order (R-TEAMQ-21: who hears it when there is no team lead to tell). */
+export async function ownersAndAdmins(tx: Tx): Promise<string[]> {
+  const r = await sql<{ user_id: string }>`
+    SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id() AND role IN ('owner', 'admin') AND status = 'active' ORDER BY user_id`.execute(tx);
+  return r.rows.map((x) => x.user_id);
+}
+
 export interface AlertInsert {
   id: string;
   inquiryId: string;
@@ -113,8 +121,13 @@ export interface AlertInsert {
   dueAt: Date;
   decidedAt: Date;
   outcome: 'alerted' | 'human_attempt' | 'answered_call' | 'source_not_covered' | 'no_recipient' | 'lead_closed';
+  /** the alerted member; the first of them (id order) when the Owners and Admins were alerted */
   alertedUserId: string | null;
-  recipient: 'backup' | 'team_lead' | null;
+  recipient: AlertRecipient | null;
+  /** R-TEAMQ-21: why it was not the named backup (null when it was, or when nobody was alerted) */
+  fallbackReason: AlertFallbackReason | null;
+  /** R-TEAMQ-21: how many members were alerted */
+  alertedCount: number;
   holder: 'owner' | 'on_offer' | 'pond' | 'unassigned' | null;
   holderUserId: string | null;
   holderPondId: string | null;
@@ -125,9 +138,10 @@ export interface AlertInsert {
 export async function insertAlert(tx: Tx, a: AlertInsert): Promise<boolean> {
   const iso = (d: Date | null) => (d === null ? null : d.toISOString());
   const r = await sql`
-    INSERT INTO lead_backup_alerts (tenant_id, id, inquiry_id, lead_source_id, arrived_at, due_at, decided_at, outcome, alerted_user_id, recipient, holder, holder_user_id, holder_pond_id, grant_expires_at)
+    INSERT INTO lead_backup_alerts (tenant_id, id, inquiry_id, lead_source_id, arrived_at, due_at, decided_at, outcome, alerted_user_id, recipient, fallback_reason, alerted_count,
+                                    holder, holder_user_id, holder_pond_id, grant_expires_at)
     VALUES (app.tenant_id(), ${a.id}::uuid, ${a.inquiryId}::uuid, ${a.leadSourceId}::uuid, ${iso(a.arrivedAt)}::timestamptz, ${iso(a.dueAt)}::timestamptz, ${iso(a.decidedAt)}::timestamptz,
-            ${a.outcome}, ${a.alertedUserId}::uuid, ${a.recipient}, ${a.holder}, ${a.holderUserId}::uuid, ${a.holderPondId}::uuid, ${iso(a.grantExpiresAt)}::timestamptz)
+            ${a.outcome}, ${a.alertedUserId}::uuid, ${a.recipient}, ${a.fallbackReason}, ${a.alertedCount}, ${a.holder}, ${a.holderUserId}::uuid, ${a.holderPondId}::uuid, ${iso(a.grantExpiresAt)}::timestamptz)
     ON CONFLICT ON CONSTRAINT lead_backup_alerts_inquiry_once DO NOTHING
     RETURNING id`.execute(tx);
   return r.rows.length > 0;

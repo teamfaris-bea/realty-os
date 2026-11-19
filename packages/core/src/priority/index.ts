@@ -92,8 +92,11 @@ export {
   ALERT_TITLE_MAX,
   ALERT_BODY_MAX,
   type AlertHolder,
+  type AlertRecipient,
+  type AlertFallbackReason,
   type BackupAlertFacts,
   backupAlertDueAt,
+  backupAlertRecipients,
   backupAlertText,
   shortMemberName,
 } from './backupAlert.js';

@@ -13,10 +13,15 @@
 //   human_attempt        a person has called, texted, emailed or replied in chat since the arrival: exactly the team
 //                        work queue's predicate (step 1). An automated reply never counts.
 //   answered_call        a person answered the lead's own call since the arrival
-//   alerted              otherwise: the source's named backup is alerted or, when that person is not an active
-//                        member, the team lead of whoever has the lead (owner decision 2), by the existing critical
-//                        notification path (in-app, push, and a text to the member's verified alert phone)
-//   no_recipient         the backup is unavailable and whoever has the lead has no team lead
+//   alerted              otherwise someone OTHER than the person holding the lead is alerted (core
+//                        backupAlertRecipients; owner decision 2; R-TEAMQ-21, review fix M2), by the existing
+//                        critical notification path (in-app, push, and a text to the member's verified alert phone):
+//                          the source's named backup, when an active member and not the person holding the lead;
+//                          else the team lead of whoever has the lead (recorded as team_lead, with why: the backup is
+//                          unavailable, or the backup IS the holder);
+//                          else the team's Owners and Admins (recorded as admins, with their number): a lead in a
+//                          pond or unassigned, or a holder on no team, has no team lead to tell
+//   no_recipient         the team has nobody but the person holding the lead
 //
 // WHAT IT NEVER DOES: it never changes the owner, the offer or the pond (no ownership command is issued here), never
 // sends, drafts or queues anything for the client (it does not import the send path at all), never decides twice for
@@ -28,11 +33,11 @@
 // existing collaborator mechanism: that one person, that one lead, nothing once it has expired, audited. It works on
 // a lead still on offer, in a pond or unassigned too (a collaborator row does not need an owner); there, a call or a
 // text by the backup is made and stored under the backup's own id, and no first touch is written to the ownership
-// ledger, because a first touch belongs to an ownership period and nobody owns the lead yet. A team lead alerted as
-// the fallback gets no grant: they already reach the leads of their team.
+// ledger, because a first touch belongs to an ownership period and nobody owns the lead yet. A team lead, an Owner or
+// an Admin alerted in the backup's place gets no grant: they already reach the leads they are told about.
 import type { IdGenerator, Instant, SystemActor } from '@realty/core/foundation';
 import { businessMsBetween, instantFromDate } from '@realty/core/foundation';
-import { type AlertHolder, BACKUP_GRANT_MS, backupAlertDueAt, backupAlertText } from '@realty/core/priority';
+import { type AlertHolder, BACKUP_GRANT_MS, backupAlertDueAt, backupAlertRecipients, backupAlertText } from '@realty/core/priority';
 import { type Tx, defaultIds, enqueueJob, loadTenantFacts } from '@realty/db';
 import { audit, redactSnapshot } from '../audit.js';
 import { contactLabel, notifyUser } from '../comms/repos/notify.js';
@@ -98,6 +103,8 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     outcome,
     alertedUserId: null,
     recipient: null,
+    fallbackReason: null,
+    alertedCount: 0,
     holder,
     holderUserId,
     holderPondId: holder === 'pond' ? person!.pond_id : null,
@@ -112,19 +119,22 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
   if (await repo.humanAttemptSince(tx, person.id, q.arrived_at)) return record('human_attempt');
   if (await repo.answeredCallSince(tx, person.id, q.arrived_at)) return record('answered_call');
 
-  // owner decision 2: the named backup; absent or suspended, the team lead of whoever has the lead
-  let to: { userId: string; kind: 'backup' | 'team_lead' } | null = null;
-  if (q.backup_status === 'active') to = { userId: q.backup_user_id, kind: 'backup' };
-  else if (holderUserId !== null) {
-    const lead = (await repo.teamLeadsOf(tx, holderUserId))[0];
-    if (lead) to = { userId: lead.user_id, kind: 'team_lead' };
-  }
+  // owner decision 2 and R-TEAMQ-21: the named backup; when absent, suspended or the person HOLDING the lead, the
+  // team lead of whoever has it; with no team lead to tell, the team's Owners and Admins. Never the holder themself.
+  const to = backupAlertRecipients({
+    backupUserId: q.backup_user_id,
+    backupActive: q.backup_status === 'active',
+    holderUserId,
+    holderTeamLeads: holderUserId === null ? [] : (await repo.teamLeadsOf(tx, holderUserId)).map((l) => l.user_id),
+    admins: await repo.ownersAndAdmins(tx),
+  });
   if (to === null) return record('no_recipient');
+  const first = to.userIds[0] as string;
 
   // the row first: it is the claim on this inquiry (a concurrent run stops here and alerts nobody)
-  const grantUntil = to.kind === 'backup' && to.userId !== holderUserId ? new Date(now + BACKUP_GRANT_MS) : null;
-  const granted = grantUntil === null ? null : await repo.grantBackupAccess(tx, person.id, to.userId, grantUntil);
-  if (!(await repo.insertAlert(tx, row('alerted', { alertedUserId: to.userId, recipient: to.kind, grantExpiresAt: granted })))) {
+  const grantUntil = to.recipient === 'backup' ? new Date(now + BACKUP_GRANT_MS) : null;
+  const granted = grantUntil === null ? null : await repo.grantBackupAccess(tx, person.id, first, grantUntil);
+  if (!(await repo.insertAlert(tx, row('alerted', { alertedUserId: first, recipient: to.recipient, fallbackReason: to.why, alertedCount: to.userIds.length, grantExpiresAt: granted })))) {
     // the insert above waited for the other run and lost; that run's transaction made the same grant
     return { outcome: 'already_decided' };
   }
@@ -132,7 +142,7 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     await audit(tx, actor, {
       action: 'collaborator.added',
       entity: { type: 'contact', id: person.id },
-      changes: redactSnapshot({ collaborator_user_id: to.userId, role: 'backup', expires_at: granted.toISOString() }, { entity: 'contact_collaborator' }),
+      changes: redactSnapshot({ collaborator_user_id: first, role: 'backup', expires_at: granted.toISOString() }, { entity: 'contact_collaborator' }),
       reason: 'BACKUP_ALERT',
     });
   }
@@ -144,11 +154,14 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     waitedSeconds: Math.max(0, Math.floor((now - arrivedAt) / 1000)),
     staffedSeconds: Math.floor(businessMsBetween(arrivedAt, now, calendar) / 1000),
     holder: alertHolder,
-    recipient: to.kind,
+    recipient: to.recipient,
+    ...(to.why === null ? {} : { why: to.why }),
   });
   // a member's notification, never a message to the client: in-app, push, and (critical) a text to their alert phone
-  await notifyUser(tx, ids, { userId: to.userId, kind: 'first_touch_due', priority: 'critical', title: text.title, body: text.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
-  return { outcome: 'alerted', alertedUserId: to.userId };
+  for (const userId of to.userIds) {
+    await notifyUser(tx, ids, { userId, kind: 'first_touch_due', priority: 'critical', title: text.title, body: text.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
+  }
+  return { outcome: 'alerted', alertedUserId: first };
 }
 
 /** The `leads.backup_alert` job. An early wake goes back to sleep until the inquiry's stored due time. */

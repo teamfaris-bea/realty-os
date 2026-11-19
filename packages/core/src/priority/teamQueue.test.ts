@@ -263,7 +263,11 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
   it('R-TEAMQ-18 E857: the fallback and "nobody could be alerted" are said in words; an alert on another day says how long ago', () => {
     const line = (o: NonNullable<QueueInquiryFacts['backupAlert']>, arrivedAt = t(-min(12))) => group(inputs({ inquiries: [inq({ arrivedAt, backupAlert: o })] }), 'new_lead').rows[0]!.backupAlert;
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead' })).toEqual({ at: t(-min(9)), alerted: true, line: 'The source\'s backup is unavailable: the team lead, Taylor L., was alerted at 9:51 AM.' });
-    expect(line({ at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null })).toEqual({ at: t(-min(9)), alerted: false, line: 'Nobody could be alerted at 9:51 AM: the source\'s backup is unavailable and whoever has this lead has no team lead.' });
+    // R-TEAMQ-21 (review fix M2): "nobody" now only when there is nobody but the person holding the lead; a lead with no team lead on its side tells the Owners and Admins
+    expect(line({ at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null })).toEqual({ at: t(-min(9)), alerted: false, line: 'Nobody else could be alerted at 9:51 AM: the team has no team lead, Owner or Admin other than the person who has this lead.' });
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead', reason: 'backup_is_holder' })!.line).toBe('The backup has this lead: their team lead, Taylor L., was alerted at 9:51 AM.');
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Olive Owens', recipient: 'admins', reason: 'backup_unavailable', count: 3 })).toEqual({ at: t(-min(9)), alerted: true, line: 'The source\'s backup is unavailable and there is no team lead to alert: 3 Owners and Admins were alerted at 9:51 AM.' });
+    expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Olive Owens', recipient: 'admins', reason: 'backup_is_holder', count: 1 })!.line).toBe('The backup has this lead and there is no team lead to alert: Olive O., an Owner or Admin, was alerted at 9:51 AM.');
     expect(line({ at: t(-hours(26)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' }, t(-hours(27)))!.line).toBe('Backup alerted 26 h ago: Sam T.');
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: null, recipient: 'backup' })!.line).toBe('Backup alerted at 9:51 AM: a member.');
   });

@@ -34,7 +34,7 @@ import {
   nextOpening,
 } from '../foundation/index.js';
 import { answersClient, awaitsOutcome, taskDeadline } from './feed.js';
-import { shortMemberName } from './backupAlert.js';
+import { type AlertFallbackReason, type AlertRecipient, shortMemberName } from './backupAlert.js';
 import { clip, formatDuration } from './format.js';
 import type { ApptFacts, InboundFacts, TaskFacts } from './types.js';
 
@@ -175,7 +175,17 @@ export interface QueueInquiryFacts {
    * (lead_backup_alerts): when, the alerted member's name, and whether they are the source's backup or the team lead
    * alerted in their place. Absent or null: no alert (not a covered source, not due yet, or not needed).
    */
-  backupAlert?: { at: Instant; outcome: 'alerted' | 'no_recipient'; name: string | null; recipient: 'backup' | 'team_lead' | null } | null;
+  backupAlert?: {
+    at: Instant;
+    outcome: 'alerted' | 'no_recipient';
+    /** the alerted member's name (the first of them when the Owners and Admins were alerted) */
+    name: string | null;
+    recipient: AlertRecipient | null;
+    /** R-TEAMQ-21: why it was not the backup who was alerted (null or absent: the backup was, or the backup is unavailable) */
+    reason?: AlertFallbackReason | null;
+    /** R-TEAMQ-21: how many members were alerted (the Owners and Admins can be several); absent: one */
+    count?: number;
+  } | null;
 }
 
 /** A client message or missed call that may be waiting (the feed's InboundFacts without an owner). */
@@ -267,13 +277,19 @@ function automatedSentence(now: Instant, at: Instant | null, cal: BusinessCalend
   return localDateOf(at, cal.zone) === localDateOf(now, cal.zone) ? `An automatic reply went out at ${clockTime(at, cal)}.` : `An automatic reply went out ${ago(now, at)}.`;
 }
 
-/** R-TEAMQ-18: the backup alert of a waiting lead, as its own line. */
+/** R-TEAMQ-18, R-TEAMQ-21: the backup alert of a waiting lead, as its own line: who was told, and why them. */
 function backupAlertLine(now: Instant, a: NonNullable<QueueInquiryFacts['backupAlert']>, cal: BusinessCalendar): string {
   const sameDay = localDateOf(a.at, cal.zone) === localDateOf(now, cal.zone);
   const when = sameDay ? `at ${clockTime(a.at, cal)}` : ago(now, a.at);
-  if (a.outcome === 'no_recipient') return `Nobody could be alerted ${when}: the source's backup is unavailable and whoever has this lead has no team lead.`;
-  const who = stop(shortMemberName(a.name));
-  return a.recipient === 'team_lead' ? `The source's backup is unavailable: the team lead, ${shortMemberName(a.name)}, was alerted ${when}.` : `Backup alerted ${when}: ${who}`;
+  if (a.outcome === 'no_recipient') return `Nobody else could be alerted ${when}: the team has no team lead, Owner or Admin other than the person who has this lead.`;
+  const who = shortMemberName(a.name);
+  const why = a.reason === 'backup_is_holder' ? 'The backup has this lead' : "The source's backup is unavailable";
+  if (a.recipient === 'team_lead') return a.reason === 'backup_is_holder' ? `${why}: their team lead, ${who}, was alerted ${when}.` : `${why}: the team lead, ${who}, was alerted ${when}.`;
+  if (a.recipient === 'admins') {
+    const n = a.count ?? 1;
+    return n > 1 ? `${why} and there is no team lead to alert: ${n} Owners and Admins were alerted ${when}.` : `${why} and there is no team lead to alert: ${who}, an Owner or Admin, was alerted ${when}.`;
+  }
+  return `Backup alerted ${when}: ${stop(who)}`;
 }
 
 const TASK_WORD: Record<QueueTaskFacts['kind'], string> = { promise: 'Promise', follow_up: 'Follow-up', callback: 'Callback', todo: 'To-do', document: 'Document task' };
