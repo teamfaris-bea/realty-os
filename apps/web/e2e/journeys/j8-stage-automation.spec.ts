@@ -104,7 +104,7 @@ test('J8: a person who texted STOP: the stage changes, the toast says why the pl
   await signIn(page, stack, agent);
   await toActive(page, bo);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText('Stage: Active client. Buyer plan did not start: they opted out, are marked do not contact, or have no phone or email this plan could use')).toBeVisible({ timeout: 15_000 });
+  await expect(toast.getByText('Stage: Active client. Buyer plan did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Stage: Active client. Change stage' })).toBeVisible();
   await shot(page, info, 'j8', '2-plan-skipped-optout');
 

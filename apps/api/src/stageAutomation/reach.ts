@@ -14,7 +14,7 @@ import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { buildGateInput } from '../comms/gateInput.js';
 import * as g from '../comms/repos/gate.js';
-import { type ChannelReach, reachableOn } from './decide.js';
+import { type ChannelReach, type UnreachableCause, reachableOn, unreachableCause } from './decide.js';
 import * as R from './repos.js';
 
 /** R-PAR-12: opt-out rows of the person's REMOVED phones (a confirmed wrong number excepted), for texts. */
@@ -50,6 +50,16 @@ function pointFor(points: readonly g.PointRow[], channel: 'sms' | 'email'): g.Po
  * email step is reachable (decide.ts reachableOn: it sends nothing).
  */
 export async function reachableForVersion(tx: Tx, contactId: string, versionId: string, now: Instant): Promise<boolean> {
+  return (await reachOfVersion(tx, contactId, versionId, now)).reachable;
+}
+
+/**
+ * The same reading, with WHY when the answer is no (E787; decide.ts unreachableCause over the very channels
+ * reachableOn decided on, so the two cannot disagree): the person opted out, is marked do not contact, has a number
+ * reported as wrong, or has no address on a channel the plan messages on. A stage entry keeps the cause with its
+ * decision; nothing else reads it.
+ */
+export async function reachOfVersion(tx: Tx, contactId: string, versionId: string, now: Instant): Promise<{ reachable: boolean; cause: UnreachableCause | null }> {
   const steps = messagingSteps(await R.versionSteps(tx, versionId));
   const seen = new Set<string>();
   const points = await g.contactPoints(tx, contactId);
@@ -77,5 +87,5 @@ export async function reachableForVersion(tx: Tx, contactId: string, versionId: 
     const d = canContact({ ...gate, consent: [...gate.consent, ...extra] });
     reach.push({ hasAddress: true, reasons: d.reasons });
   }
-  return reachableOn(reach);
+  return { reachable: reachableOn(reach), cause: unreachableCause(reach) };
 }

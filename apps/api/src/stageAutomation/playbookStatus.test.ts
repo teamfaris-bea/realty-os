@@ -327,7 +327,7 @@ describe('L10 (E786): paused and stopped, said truthfully to whoever is looking'
 // b19 fix pass L5: one vocabulary for one decision. The stage route answers the SAME sentence the status then shows
 // for that change (stageAutomation/sentences.ts decisionSentence), so the toast never words a decision its own way.
 describe('L5 (E784): the stage change answers the sentence the panel then shows', () => {
-  const sentenceOf = (r: { body: unknown }) => (r.body as { automationSentence: string | null }).automationSentence;
+  const sentenceOf = (r: { body: { automationSentence?: string | null } }) => r.body.automationSentence;
 
   it('L5 E784 started, did not start (with the reason), and nothing to say: the answer\'s sentence is the status\'s own; a repeat answers it again', async () => {
     const c = await newContact(agent);

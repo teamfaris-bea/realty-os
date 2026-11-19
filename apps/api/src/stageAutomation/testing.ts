@@ -15,6 +15,8 @@ export interface StageResponse {
   previousStage: string;
   rowVersion: number;
   automation: { started: string } | { skipped: string; plan: string } | null;
+  /** E784: `automation` in the server's words (absent on an answer from before the field) */
+  automationSentence?: string | null;
 }
 
 export const nurtureStep = (key = 'check_in') => smsStep({ key, category: 'nurture_step', intent: 'check_in', purpose: 'marketing', template: 'Hi {{first_name}}, checking in on your home search.', slots: ['first_name'] });

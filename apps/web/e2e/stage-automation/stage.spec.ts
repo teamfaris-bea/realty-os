@@ -102,6 +102,6 @@ test('R-PAR-16 D1 a person who opted out: the toast says why the plan did not st
   await openContact(page, bo.id, bo.name);
   await page.getByRole('button', { name: 'Stage: New lead. Change stage' }).click();
   await page.getByRole('dialog').getByRole('button', { name: /^Active/ }).click();
-  await expect(page.getByTestId('people-toast').getByText('Stage: Active client. Buyer plan did not start: they opted out, are marked do not contact, or have no phone or email this plan could use')).toBeVisible();
+  await expect(page.getByTestId('people-toast').getByText('Stage: Active client. Buyer plan did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out')).toBeVisible();
   await shot(page, 'stage-skipped');
 });

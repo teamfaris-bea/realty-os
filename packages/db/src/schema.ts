@@ -2620,6 +2620,7 @@ export interface StageAutomationDecisionsTable {
   playbook_id: string | null;
   enrollment_id: string | null;
   decided_at: Generated<Timestamp>;
+  unreachable_cause: string | null;
 }
 
 /** public.stored_objects (table) */

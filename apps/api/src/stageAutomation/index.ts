@@ -8,6 +8,7 @@ import { decisionOf, pendingStageEvents } from './repos.js';
 import { type AutomationOutcome, SKIP_REASONS, outcomeOf } from './decide.js';
 import { HIDDEN_PLAN, visiblePlaybookIds } from './planNames.js';
 import { reconcileStageEvent } from './reconcile.js';
+import { decisionSentence } from './sentences.js';
 
 export { type AutomationOutcome, SKIP_REASONS, type SkipReason } from './decide.js';
 
@@ -61,4 +62,22 @@ async function asSeenBy(db: Database, viewer: UserActor, stageEventId: string, o
   const visible = d?.playbookId ? await withTenantTx(viewer, async (tx) => (await visiblePlaybookIds(tx, [d.playbookId!])).has(d.playbookId!), { db }) : false;
   if (visible) return out;
   return 'started' in out ? { started: HIDDEN_PLAN } : { skipped: out.skipped, plan: HIDDEN_PLAN };
+}
+
+/**
+ * E784, E787: `automation` in words, for the stage route's answer: decisionSentence of the STORED decision (so a
+ * "cannot be reached" says its cause, exactly as the status will), with the plan named as `automation` names it for
+ * this viewer. Null when there is nothing to say. A failure here never fails the stage change: the words fall back to
+ * the sentence the outcome alone gives.
+ */
+export async function automationSentenceOf(db: Database, tenantId: string, stageEventId: string, automation: AutomationOutcome): Promise<string | null> {
+  if (automation === null) return null;
+  const plan = 'started' in automation ? automation.started : automation.plan;
+  const fromOutcome = decisionSentence('started' in automation ? { outcome: 'started', reason: null } : { outcome: 'skipped', reason: automation.skipped }, plan);
+  try {
+    const d = await withTenantTx(systemActor(tenantId, 'assistant'), (tx) => decisionOf(tx, stageEventId), { db });
+    return d === null ? fromOutcome : decisionSentence(d, plan);
+  } catch {
+    return fromOutcome;
+  }
 }

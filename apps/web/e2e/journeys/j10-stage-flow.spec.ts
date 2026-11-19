@@ -361,7 +361,7 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   const s = step(page, omar);
   await expect(s.getByRole('radio', { name: 'Connected Suggested' })).toBeChecked();
   const preview = s.getByTestId('stage-preview');
-  const why = `${PLAN} will not start: they opted out, are marked do not contact, or have no phone or email this plan could use.`;
+  const why = `${PLAN} will not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.`;
   await expect(preview.getByText(why)).toBeVisible({ timeout: 15_000 });
   await expect(s.getByText(/Will start/)).toHaveCount(0);
   await expect(s.getByTestId('stage-step-effect')).toHaveText(why);
@@ -378,7 +378,7 @@ test('J10.5: a person who texted STOP: the preview and the panel give the reason
   await expect(peopleToast(page).getByText(`Stage: Connected. ${why.replace('will not start', 'did not start').replace(/\.$/, '')}`)).toBeVisible({ timeout: 15_000 });
   const row = playbookRow(page);
   await expect(row.getByText('None running')).toBeVisible({ timeout: 15_000 });
-  await expect(row.getByText(`${PLAN} did not start: they opted out, are marked do not contact, or have no phone or email this plan could use.`)).toBeVisible();
+  await expect(row.getByText(`${PLAN} did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.`)).toBeVisible();
   await expect(row.getByRole('button')).toHaveCount(0);
   await shot(page, info, 'j10', '5b-panel-blocked');
   expect(await stageOf(omar.id)).toBe('connected');

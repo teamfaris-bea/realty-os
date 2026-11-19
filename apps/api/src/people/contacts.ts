@@ -34,10 +34,9 @@ import { actorOf, detailFacts, liveDetailFacts, idOf, peopleTx, platformOf } fro
 import * as repo from './repos/people.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
-import { stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
+import { automationSentenceOf, stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
 import { latestStageEvent, ownLatestStageEvent, stageEvent } from '../stageAutomation/repos.js';
 import { previewStageEntry, runningPlan } from '../stageAutomation/preview.js';
-import { decisionSentence } from '../stageAutomation/sentences.js';
 import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 
 /**
@@ -253,7 +252,8 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
       const stillRunning = undoOf === undefined ? null : await runningPlan(db, viewer, req.params.id);
       // E784: the same decision in words, by the function the status words it with: one vocabulary for the toast, the
       // preview and the panel. The plan's name in `automation` is already the one this viewer may see.
-      const automationSentence = automation === null ? null : decisionSentence('started' in automation ? { outcome: 'started', reason: null } : { outcome: 'skipped', reason: automation.skipped }, 'started' in automation ? automation.started : automation.plan);
+      // (E787: read from the stored decision, so "cannot be reached" says which cause it was.)
+      const automationSentence = res.eventId === null ? null : await automationSentenceOf(db, viewer.tenantId, res.eventId, automation);
       return { ...res, automation, automationSentence, stillRunning };
     },
   );

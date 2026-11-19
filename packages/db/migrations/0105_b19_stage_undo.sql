@@ -34,10 +34,19 @@
 --     (409 STAGE_UNDO_INVALID, nothing changes) and, after it, checks that the event it wrote carries the mark, so a
 --     request the API took for an undo is never stored as an ordinary change.
 --   * stage_automation_decisions.reason gains 'undo' (the closed set of apps/api stageAutomation/decide.ts SKIP_REASONS).
+--   * stage_automation_decisions.unreachable_cause (text, NULL; b19 fix pass L6, E787). The skip reason
+--     'cannot_be_reached' covers several real causes (the person opted out, is marked do not contact, has a number
+--     reported as wrong, or has no phone or email the plan could use), and the contact page could only say all of
+--     them at once, so a person who texted STOP was never told that was the reason. The cause is read with the
+--     decision's own facts (apps/api stageAutomation/reach.ts) and kept here, in the row the decision already writes,
+--     so the request path, the worker and every later read word it the same way. It is a detail of one existing
+--     reason, not a new reason code: the closed set below is unchanged but for 'undo'. A check allows it only with
+--     reason 'cannot_be_reached' and only one of four values. It discloses nothing new: the row is read under the
+--     table's existing policy (with the contact's detail), where the opt-out and the do-not-contact flag already show.
 --   No new table, policy, grant or definer.
 --
 --   EXISTING DATA. Every existing stage event has no mark (NULL): nothing already decided changes, and no decision
---   row is rewritten.
+--   row is rewritten. Every existing decision has no cause (NULL): it keeps the sentence that names all the causes.
 
 ALTER TABLE contact_stage_events ADD COLUMN undo_of_event_id uuid;
 COMMENT ON COLUMN contact_stage_events.undo_of_event_id IS
@@ -85,8 +94,16 @@ ALTER TABLE stage_automation_decisions ADD CONSTRAINT stage_automation_decisions
                     'plan_not_approved','already_in_a_plan','cannot_be_reached','protected_audience','ai_isa_active',
                     'source_no_automated_contact','source_unclassified','undo'));
 
+-- L6 (E787): why a person could not be reached, kept with the decision (a detail of the one reason, never a new one)
+ALTER TABLE stage_automation_decisions ADD COLUMN unreachable_cause text;
+ALTER TABLE stage_automation_decisions ADD CONSTRAINT stage_automation_decisions_unreachable_cause_check
+  CHECK (unreachable_cause IS NULL
+         OR (reason = 'cannot_be_reached' AND unreachable_cause IN ('opted_out','do_not_contact','wrong_number','no_address')));
+COMMENT ON COLUMN stage_automation_decisions.unreachable_cause IS
+  'b19 0105: for reason cannot_be_reached, which cause it was (opted_out, do_not_contact, wrong_number, no_address), read with the decision''s own facts; NULL for every other reason and for decisions made before this column. Worded by apps/api stageAutomation/sentences.ts.';
+
 -- Self-check: the replaced definer keeps its reviewed owner, SECURITY DEFINER and pinned search_path, and is still the
--- function of the history trigger; the history table still forces row-level security.
+-- function of the history trigger; the history table and the decisions table still force row-level security.
 DO $$
 DECLARE p record;
 BEGIN
@@ -101,5 +118,9 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.contact_stage_events'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
     RAISE EXCEPTION '0105: contact_stage_events must force row-level security';
+  END IF;
+  -- the decisions table keeps its forced row-level security with the added column
+  IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.stage_automation_decisions'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
+    RAISE EXCEPTION '0105: stage_automation_decisions must force row-level security';
   END IF;
 END $$;

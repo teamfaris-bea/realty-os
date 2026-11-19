@@ -1,7 +1,8 @@
 // The plan part of GET /contacts/:id/stage/preview (R-STG-3): what entering a stage would start, not start or leave
 // running, for the person asking, BEFORE they save the change. Read-only, and it cannot disagree with the change:
 //
-//   - the decision is reconcile.ts decideEntry, the one function the reconcile decides a real stage event with
+//   - the decision is reconcile.ts decideEntry (here with its cause, decideEntryWithCause: E787), the one function
+//     the reconcile decides a real stage event with
 //     (readEntryFacts, then the pure decideStageEntry). The preview only describes an entry that has not happened: a
 //     person would make it (never an import or a bulk action), now, so the playbooks are the ones naming the stage
 //     now and the person is read as already in that stage. Everything else (who sees the person, the live
@@ -22,7 +23,7 @@ import * as P from '../assistant/repos/playbooks.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { SkipReason, StageDecision } from './decide.js';
 import { HIDDEN_PLAN, visiblePlaybookIds } from './planNames.js';
-import { changerView, decideEntry } from './reconcile.js';
+import { changerView, decideEntryWithCause } from './reconcile.js';
 import { skipSentence } from './sentences.js';
 
 export interface EntryPreview {
@@ -49,16 +50,17 @@ export async function previewStageEntry(db: Database, viewer: UserActor, contact
     systemActor(viewer.tenantId, 'assistant'),
     async (tx, now) => {
       await sql`SET LOCAL transaction_read_only = on`.execute(tx);
-      const d: StageDecision =
-        to === null || view === null ? { kind: 'none' } : await decideEntry(tx, { contactId, toStage: to, actorKind: 'user', bulk: false, undo: false, playbooksOf: { stage: to }, assumeEntered: true }, view, now);
+      // E787: with the cause of a "cannot be reached", read with these same facts
+      const { d, cause }: { d: StageDecision; cause: string | null } =
+        to === null || view === null ? { d: { kind: 'none' }, cause: null } : await decideEntryWithCause(tx, { contactId, toStage: to, actorKind: 'user', bulk: false, undo: false, playbooksOf: { stage: to }, assumeEntered: true }, view, now);
       const firstStep = d.kind === 'start' ? await firstStepOfVersion(tx, contactId, d.versionId, now) : null;
       const live = await P.liveEnrollmentOf(tx, contactId);
       const livePlan = live ? await P.playbookById(tx, live.playbookId) : null;
-      return { d, firstStep, live, livePlan };
+      return { d, cause, firstStep, live, livePlan };
     },
     { db },
   );
-  const { d, firstStep, live, livePlan } = read;
+  const { d, cause, firstStep, live, livePlan } = read;
   const ids = [...(d.kind === 'none' ? [] : [d.playbook.id]), ...(live ? [live.playbookId] : [])];
   const mine = await withTenantTx(
     viewer,
@@ -73,7 +75,7 @@ export async function previewStageEntry(db: Database, viewer: UserActor, contact
   const alreadyIn = d.kind === 'skip' && d.reason === 'already_in_a_plan' && live ? { enrollmentId: live.id, plan: nameOf(livePlan) } : null;
   return {
     starts: d.kind === 'start' ? { plan: nameOf(d.playbook), firstStep: firstStep ? { channel: firstStep.channel, dueAt: new Date(firstStep.dueAt).toISOString() } : null } : null,
-    wontStart: d.kind === 'skip' ? { plan: nameOf(d.playbook), reason: d.reason, sentence: skipSentence(d.reason, nameOf(d.playbook), 'will', alreadyIn?.plan), alreadyIn } : null,
+    wontStart: d.kind === 'skip' ? { plan: nameOf(d.playbook), reason: d.reason, sentence: skipSentence(d.reason, nameOf(d.playbook), 'will', alreadyIn?.plan, cause), alreadyIn } : null,
     keepsRunning: live && (live.state === 'active' || live.state === 'paused') ? { enrollmentId: live.id, plan: nameOf(livePlan), state: live.state, canStop: mine.canStop } : null,
   };
 }

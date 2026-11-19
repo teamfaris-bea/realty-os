@@ -48,22 +48,25 @@ export interface DecisionRow {
   playbookId: string | null;
   playbookName: string | null;
   enrollmentId: string | null;
+  /** E787: for reason cannot_be_reached, which cause it was (migration 0105); null otherwise and for older rows */
+  unreachableCause: string | null;
 }
 
 export async function decisionOf(tx: Tx, stageEventId: string): Promise<DecisionRow | null> {
-  const r = await sql<{ outcome: DecisionRow['outcome']; reason: string | null; playbook_id: string | null; name: string | null; enrollment_id: string | null }>`
-    SELECT d.outcome, d.reason, d.playbook_id, p.name, d.enrollment_id
+  const r = await sql<{ outcome: DecisionRow['outcome']; reason: string | null; playbook_id: string | null; name: string | null; enrollment_id: string | null; unreachable_cause: string | null }>`
+    SELECT d.outcome, d.reason, d.playbook_id, p.name, d.enrollment_id, d.unreachable_cause
       FROM stage_automation_decisions d
       LEFT JOIN playbooks p ON p.tenant_id = d.tenant_id AND p.id = d.playbook_id
      WHERE d.tenant_id = app.tenant_id() AND d.stage_event_id = ${stageEventId}`.execute(tx);
   const x = r.rows[0];
-  return x ? { outcome: x.outcome, reason: x.reason, playbookId: x.playbook_id, playbookName: x.name, enrollmentId: x.enrollment_id } : null;
+  return x ? { outcome: x.outcome, reason: x.reason, playbookId: x.playbook_id, playbookName: x.name, enrollmentId: x.enrollment_id, unreachableCause: x.unreachable_cause } : null;
 }
 
-export async function insertDecision(tx: Tx, d: { stageEventId: string; contactId: string; toStage: string; outcome: 'started' | 'skipped'; reason: string | null; playbookId: string; enrollmentId: string | null }): Promise<boolean> {
+export async function insertDecision(tx: Tx, d: { stageEventId: string; contactId: string; toStage: string; outcome: 'started' | 'skipped'; reason: string | null; playbookId: string; enrollmentId: string | null; /** E787: only with reason cannot_be_reached */ unreachableCause?: string | null }): Promise<boolean> {
+  const cause = d.reason === 'cannot_be_reached' ? (d.unreachableCause ?? null) : null;
   const r = await sql`
-    INSERT INTO stage_automation_decisions (tenant_id, stage_event_id, contact_id, to_stage, outcome, reason, playbook_id, enrollment_id)
-    VALUES (app.tenant_id(), ${d.stageEventId}, ${d.contactId}, ${d.toStage}, ${d.outcome}, ${d.reason}, ${d.playbookId}, ${d.enrollmentId})
+    INSERT INTO stage_automation_decisions (tenant_id, stage_event_id, contact_id, to_stage, outcome, reason, playbook_id, enrollment_id, unreachable_cause)
+    VALUES (app.tenant_id(), ${d.stageEventId}, ${d.contactId}, ${d.toStage}, ${d.outcome}, ${d.reason}, ${d.playbookId}, ${d.enrollmentId}, ${cause})
     ON CONFLICT (tenant_id, stage_event_id) DO NOTHING`.execute(tx);
   return Number(r.numAffectedRows ?? 0n) === 1;
 }

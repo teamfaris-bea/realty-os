@@ -4,7 +4,7 @@
 //
 // `tense`: 'will' before the change (the preview: "will not start"), 'did' after it (the status: "did not start").
 import { SOURCE_NO_AUTOMATED_CONTACT, SOURCE_UNCLASSIFIED, sourceRefusalSentence } from '../leads/automatedContact.js';
-import { type SkipReason, isSkipReason } from './decide.js';
+import { type SkipReason, type UnreachableCause, isSkipReason, isUnreachableCause } from './decide.js';
 
 export type Tense = 'will' | 'did';
 
@@ -23,11 +23,25 @@ const WHY: Record<Exclude<SkipReason, 'source_no_automated_contact' | 'source_un
 };
 
 /**
+ * E787: `cannot_be_reached` in its real causes, so a person who texted STOP is told that is the reason. The cause is
+ * the one kept with the decision (or read with the preview's facts). Without one (a decision made before the cause
+ * was kept) the sentence names all of them, as it always did.
+ */
+const UNREACHABLE: Record<UnreachableCause, string> = {
+  opted_out: 'they texted STOP or otherwise opted out, and a plan never messages over an opt-out.',
+  do_not_contact: 'they are marked do not contact.',
+  wrong_number: 'their number was reported as a wrong number.',
+  no_address: 'they have no phone or email this plan could use.',
+};
+
+/**
  * `runningPlan` (the preview only, E763): the plan the person is in now, as the viewer may see its name. With it, an
  * `already_in_a_plan` sentence names that plan and says how to get the new one instead.
+ * `cause` (E787): for `cannot_be_reached`, which cause it was; ignored for every other reason.
  */
-export function skipSentence(reason: SkipReason, plan: string, tense: Tense, runningPlan?: string): string {
+export function skipSentence(reason: SkipReason, plan: string, tense: Tense, runningPlan?: string, cause?: string | null): string {
   const head = `${cap(plan)} ${tense === 'will' ? 'will not start' : 'did not start'}`;
+  if (reason === 'cannot_be_reached' && isUnreachableCause(cause)) return `${head}: ${UNREACHABLE[cause]}`;
   if (reason === 'already_in_a_plan' && runningPlan !== undefined) {
     return `${head}: they are already in ${runningPlan}, and a person is in one plan at a time. Stop ${runningPlan} first if you want ${plan}.`;
   }
@@ -46,9 +60,9 @@ export function startedSentence(plan: string): string {
 }
 
 /** What a decision row says after the change, in the past tense. An unknown reason says only that it did not start. */
-export function decisionSentence(d: { outcome: 'started' | 'skipped'; reason: string | null }, plan: string): string {
+export function decisionSentence(d: { outcome: 'started' | 'skipped'; reason: string | null; unreachableCause?: string | null }, plan: string): string {
   if (d.outcome === 'started') return startedSentence(plan);
-  return d.reason !== null && isSkipReason(d.reason) ? skipSentence(d.reason, plan, 'did') : `${cap(plan)} did not start.`;
+  return d.reason !== null && isSkipReason(d.reason) ? skipSentence(d.reason, plan, 'did', undefined, d.unreachableCause) : `${cap(plan)} did not start.`;
 }
 
 // ---- why a plan is not moving (playbook_enrollments.pause_reason / stop_reason) ---------------------------------

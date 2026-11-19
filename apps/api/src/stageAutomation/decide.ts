@@ -66,6 +66,11 @@ export interface StageEntryFacts {
   liveEnrollment: boolean;
   /** at least one channel the chosen playbook uses is not opted out (core canContact) */
   reachable: boolean;
+  /**
+   * E787: when not reachable, which cause it was (unreachableCause, read from the same channels). Information only:
+   * decideStageEntry never reads it. It rides with the facts so the decision row and the sentences can say it.
+   */
+  unreachableCause?: UnreachableCause | null;
   /** R-ISA-2: the person (any record of them) has a live AI ISA assignment */
   aiIsaActive?: boolean;
   /**
@@ -143,4 +148,27 @@ export interface ChannelReach {
 export function reachableOn(channels: readonly ChannelReach[]): boolean {
   if (channels.length === 0) return true;
   return channels.some((c) => c.hasAddress && !c.reasons.some((r) => OPT_OUT_REASONS.has(r)));
+}
+
+/** Why a person cannot be reached by a plan (E787): the detail kept with a `cannot_be_reached` decision. */
+export const UNREACHABLE_CAUSES = ['opted_out', 'do_not_contact', 'wrong_number', 'no_address'] as const;
+export type UnreachableCause = (typeof UNREACHABLE_CAUSES)[number];
+export const isUnreachableCause = (v: unknown): v is UnreachableCause => (UNREACHABLE_CAUSES as readonly unknown[]).includes(v);
+
+/**
+ * The cause, read from the same channels reachableOn reads (so it is null exactly when the person is reachable):
+ *   do_not_contact   the person is marked do not contact (it covers every channel, so it is said first);
+ *   opted_out        a channel the plan uses has an address and an opt-out on it (a text STOP, an unsubscribe, a
+ *                    suppression): the plan could have used it but for the opt-out;
+ *   wrong_number     the only addresses it could use were reported as wrong numbers;
+ *   no_address       the person has no phone or email on any channel the plan messages on.
+ * Pure. It never changes whether a plan starts: decideStageEntry reads only `reachable`.
+ */
+export function unreachableCause(channels: readonly ChannelReach[]): UnreachableCause | null {
+  if (reachableOn(channels)) return null;
+  const reasons = new Set(channels.filter((c) => c.hasAddress).flatMap((c) => [...c.reasons]));
+  if (reasons.has('PERSON_DO_NOT_CONTACT')) return 'do_not_contact';
+  if (reasons.has('CONSENT_REVOKED') || reasons.has('SUPPRESSED')) return 'opted_out';
+  if (reasons.has('WRONG_NUMBER')) return 'wrong_number';
+  return 'no_address';
 }

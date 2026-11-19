@@ -16,8 +16,9 @@ import { call, freshReauth, inboundSms, randomPhone } from '../comms/testing.js'
 import { type IsaWorld, isaLead, isaWorld, startCare } from '../isa/testing.js';
 import { command, contactState, importedPerson, intake } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
-import { SKIP_REASONS } from './decide.js';
+import { SKIP_REASONS, reachableOn, unreachableCause } from './decide.js';
 import { changerView, decideEntry, stageChangerOf } from './reconcile.js';
+import { skipSentence } from './sentences.js';
 import { changeStage, decisionsOf, enrollmentsOf, newContact, playbook, rawStageChange, reconcileAsJob, setStage } from './testing.js';
 
 let h: ApiHarness;
@@ -192,6 +193,93 @@ describe('preview equals outcome, for every reason a plan does not start (R-STG-
     const c = await newContact(agent);
     expect((await call(agent, 'POST', `/contacts/${c}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
     await expectSameSkip(agent, c, 'active', 'cannot_be_reached', 'Buyer plan');
+  });
+
+  // b19 fix pass L6: "cannot be reached" is one decision reason with three real causes, and the person is told which.
+  // The cause is read with the decision's own facts (reach.ts reachOfVersion: the channels the plan messages on and
+  // the gate's reasons on each), kept with the decision row (unreachable_cause, migration 0105), and worded by one
+  // function for the preview (will), the stage route's answer and the status (did). No new decision reason code.
+  it('L6 E787 a person who texted STOP is told THAT is the reason, before the change (the preview), in the change\'s answer and afterwards on the status; the decision row keeps the cause', async () => {
+    const phone = randomPhone();
+    const c = await newContact(agent, { phones: [phone] });
+    expect((await inboundSms(h, phone, w.mainNumber, 'STOP')).statusCode).toBeLessThan(300);
+    const p = await preview(agent, c, 'active');
+    expect(p.body.wontStart).toMatchObject({ reason: 'cannot_be_reached', sentence: 'Buyer plan will not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.' });
+    const r = await changeStage(agent, c, 'active');
+    expect(r.body.automation).toEqual({ skipped: 'cannot_be_reached', plan: 'Buyer plan' });
+    const did = 'Buyer plan did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.';
+    expect(r.body.automationSentence).toBe(did);
+    const st = await call<{ lastStageChange: { decision: { reason: string; sentence: string } } }>(agent, 'GET', `/contacts/${c}/playbook-status`);
+    expect(st.body.lastStageChange.decision).toMatchObject({ reason: 'cannot_be_reached', sentence: did });
+    expect((await h.su.query('SELECT reason, unreachable_cause FROM stage_automation_decisions WHERE contact_id = $1', [c])).rows).toEqual([{ reason: 'cannot_be_reached', unreachable_cause: 'opted_out' }]);
+    // a retry of the same stage answers the stored decision in the same words
+    expect((await changeStage(agent, c, 'active')).body.automationSentence).toBe(did);
+    expect(did).not.toMatch(/do not contact|no phone/);
+  });
+
+  it('L6 E787 a person marked do-not-contact is told that, and a person with no phone this plan could text is told that: each in the preview, the answer, the status and the decision row', async () => {
+    const dnc = await newContact(agent);
+    expect((await call(agent, 'POST', `/contacts/${dnc}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    const emailOnly = await newContact(agent, { phones: [], emails: [`only-${randomUUID().slice(0, 8)}@example.test`] });
+    for (const [c, cause, why] of [
+      [dnc, 'do_not_contact', 'they are marked do not contact.'],
+      [emailOnly, 'no_address', 'they have no phone or email this plan could use.'],
+    ] as const) {
+      const p = await preview(agent, c, 'active');
+      expect(p.body.wontStart, cause).toMatchObject({ reason: 'cannot_be_reached', sentence: `Buyer plan will not start: ${why}` });
+      const r = await changeStage(agent, c, 'active');
+      expect(r.body.automationSentence, cause).toBe(`Buyer plan did not start: ${why}`);
+      const st = await call<{ lastStageChange: { decision: { sentence: string } } }>(agent, 'GET', `/contacts/${c}/playbook-status`);
+      expect(st.body.lastStageChange.decision.sentence, cause).toBe(`Buyer plan did not start: ${why}`);
+      expect((await h.su.query('SELECT unreachable_cause FROM stage_automation_decisions WHERE contact_id = $1', [c])).rows, cause).toEqual([{ unreachable_cause: cause }]);
+      expect(await enrollmentsOf(h, c), cause).toHaveLength(0);
+    }
+  });
+
+  it('L6 E787 the worker decides the same cause when the request path could not (the cause is on the decision row, not in the request)', async () => {
+    const phone = randomPhone();
+    const c = await newContact(agent, { phones: [phone] });
+    expect((await inboundSms(h, phone, w.mainNumber, 'STOP')).statusCode).toBeLessThan(300);
+    const ev = await rawStageChange(h, agent, c, 'active');
+    await reconcileAsJob(h, w.tenantId, ev);
+    expect((await h.su.query('SELECT reason, unreachable_cause FROM stage_automation_decisions WHERE stage_event_id = $1', [ev])).rows).toEqual([{ reason: 'cannot_be_reached', unreachable_cause: 'opted_out' }]);
+    const st = await call<{ lastStageChange: { decision: { sentence: string } } }>(agent, 'GET', `/contacts/${c}/playbook-status`);
+    expect(st.body.lastStageChange.decision.sentence).toBe('Buyer plan did not start: they texted STOP or otherwise opted out, and a plan never messages over an opt-out.');
+  });
+
+  it('L6 E787 the cause is the pure reading of the channels the plan messages on; a decision stored without one keeps the three-way sentence, and the database refuses a cause on any other reason', async () => {
+    const stop = { hasAddress: true, reasons: ['CONSENT_REVOKED'] };
+    const suppressed = { hasAddress: true, reasons: ['SUPPRESSED'] };
+    const dnc = { hasAddress: true, reasons: ['PERSON_DO_NOT_CONTACT', 'CONSENT_REVOKED'] };
+    const wrong = { hasAddress: true, reasons: ['WRONG_NUMBER'] };
+    const none = { hasAddress: false, reasons: [] };
+    const fine = { hasAddress: true, reasons: ['QUIET_HOURS'] };
+    expect(unreachableCause([stop])).toBe('opted_out');
+    expect(unreachableCause([suppressed, none])).toBe('opted_out');
+    expect(unreachableCause([dnc, none])).toBe('do_not_contact');
+    expect(unreachableCause([stop, dnc])).toBe('do_not_contact');
+    expect(unreachableCause([wrong])).toBe('wrong_number');
+    expect(unreachableCause([wrong, stop])).toBe('opted_out');
+    expect(unreachableCause([none, none])).toBe('no_address');
+    // reachable on some channel, or a plan that messages nobody: no cause
+    expect(unreachableCause([stop, fine])).toBeNull();
+    expect(unreachableCause([])).toBeNull();
+    for (const ch of [[stop], [dnc, none], [wrong], [none], [stop, fine], []]) expect(unreachableCause(ch) === null, JSON.stringify(ch)).toBe(reachableOn(ch));
+    // words
+    expect(skipSentence('cannot_be_reached', 'P', 'did', undefined, 'wrong_number')).toBe('P did not start: their number was reported as a wrong number.');
+    expect(skipSentence('cannot_be_reached', 'P', 'did')).toBe('P did not start: they opted out, are marked do not contact, or have no phone or email this plan could use.');
+    expect(skipSentence('cannot_be_reached', 'P', 'did', undefined, null)).toBe(skipSentence('cannot_be_reached', 'P', 'did'));
+    // a cause never rewords another reason
+    expect(skipSentence('plan_not_approved', 'P', 'did', undefined, 'opted_out')).toBe(skipSentence('plan_not_approved', 'P', 'did'));
+    // the database: a cause only with cannot_be_reached, and only one of the four
+    const c = await newContact(agent);
+    const ev = await rawStageChange(h, agent, c, 'connected');
+    const insert = (reason: string, cause: string | null) => h.su.query(`INSERT INTO stage_automation_decisions (tenant_id, stage_event_id, contact_id, to_stage, outcome, reason, playbook_id, unreachable_cause) VALUES ($1, $2, $3, 'connected', 'skipped', $4, $5, $6)`, [w.tenantId, ev, c, reason, pb.buyer.id, cause]);
+    await expect(insert('plan_not_approved', 'opted_out')).rejects.toThrow(/unreachable_cause/);
+    await expect(insert('cannot_be_reached', 'because')).rejects.toThrow(/unreachable_cause/);
+    await insert('cannot_be_reached', null);
+    const st = await call<{ lastStageChange: { decision: { sentence: string } } }>(agent, 'GET', `/contacts/${c}/playbook-status`);
+    expect(st.body.lastStageChange.decision.sentence).toBe('Buyer plan did not start: they opted out, are marked do not contact, or have no phone or email this plan could use.');
   });
 
   it('R-STG-3 R-LSRC-8 a person from a source marked "No automated contact": source_no_automated_contact in the preview and in the decision', async () => {
