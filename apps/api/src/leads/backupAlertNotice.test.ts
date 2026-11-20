@@ -82,6 +82,8 @@ describe('minute-three backup alert: detailed in-app title, generic push and ale
     expect(alertSmsText('  A new lead is waiting for a call  ')).toBe('A new lead is waiting for a call. Open the app for details. Reply STOP to stop alert texts.');
     expect(ALERT_SMS_TAIL).toBe('Open the app for details. Reply STOP to stop alert texts.');
     // the same tail as comms/dispatch.ts's alert text (the next seam), so the two cannot drift apart unnoticed
-    expect(read('../comms/dispatch.ts')).toContain(`\${d.title} ${ALERT_SMS_TAIL}`);
+    // (slice 2d: dispatch now builds it with the leaf builder, whose tail is this one and whose first-touch text is smsText)
+    expect(read('../comms/dispatch.ts')).toContain('agentAlertSmsBody(d.kind, d.title)');
+    expect(read('../workspace/lockScreenWords.ts')).toContain(`'${ALERT_SMS_TAIL}'`);
   });
 });

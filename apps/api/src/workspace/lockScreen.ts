@@ -10,29 +10,14 @@
 //     when the tenant's notification_detail is 'none'). A label that is not shaped like that is dropped, never
 //     masked into the title.
 // No I/O, no clock, no randomness. Every other kind is returned exactly as `lockScreenPayload` builds it.
+import { LEAD_ALERT_KINDS, LEAD_ALERT_TITLE, type LeadAlertKind, isLeadAlertKind, leadAlertTitle } from './lockScreenWords.js';
 import { lockScreenPayload } from './notifications.js';
+
+// the words live in the leaf module (no imports), so notifications.ts and comms/dispatch.ts can use them too
+export { LEAD_ALERT_KINDS, LEAD_ALERT_TITLE, type LeadAlertKind };
 
 export type LockScreenPayload = ReturnType<typeof lockScreenPayload>;
 export type LockScreenInput = Parameters<typeof lockScreenPayload>[0];
-
-/** The notification kinds that announce a lead: new lead offer, first touch due (incl. the backup alert), pond arrival. */
-export const LEAD_ALERT_KINDS = ['lead_offer', 'first_touch_due', 'pond_new'] as const;
-export type LeadAlertKind = (typeof LEAD_ALERT_KINDS)[number];
-
-/** Fixed lock-screen titles for the lead kinds (no name, source or detail). */
-export const LEAD_ALERT_TITLE: Readonly<Record<LeadAlertKind, string>> = Object.freeze({
-  lead_offer: 'New lead',
-  first_touch_due: 'A new lead is waiting for a call',
-  pond_new: 'New lead in the pond',
-});
-
-// A first name (letters, combining marks, apostrophe, hyphen; at most 30) and an optional last initial "X.".
-// Anything else (a full last name, digits, '@', a url, control or bidi characters, markup) is not a minimized label.
-const MINIMIZED_LABEL = /^\p{L}[\p{L}\p{M}'’-]{0,29}(?: \p{L}\.)?$/u;
-
-function isLeadAlertKind(kind: string): kind is LeadAlertKind {
-  return (LEAD_ALERT_KINDS as readonly string[]).includes(kind);
-}
 
 /**
  * The lock-screen payload for a notification. `person` is `contactLabel(...)`'s output for the subject (may be
@@ -41,8 +26,5 @@ function isLeadAlertKind(kind: string): kind is LeadAlertKind {
 export function leadAlertLockScreen(n: LockScreenInput & { person?: string | null }, opts: { showName?: boolean } = {}): LockScreenPayload {
   const { person, ...rest } = n;
   if (!isLeadAlertKind(rest.kind)) return lockScreenPayload(rest);
-  const generic = LEAD_ALERT_TITLE[rest.kind];
-  const label = opts.showName === true && typeof person === 'string' ? person.trim() : '';
-  const title = label !== '' && MINIMIZED_LABEL.test(label) ? `${generic}: ${label}` : generic;
-  return lockScreenPayload({ ...rest, title });
+  return lockScreenPayload({ ...rest, title: leadAlertTitle(rest.kind, rest.title, { person: person ?? null, showName: opts.showName === true }) });
 }

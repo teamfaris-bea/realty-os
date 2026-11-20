@@ -8,19 +8,12 @@
 //   smsText     the member's alert text with the generic title: "A new lead is waiting for a call. Open the app ...".
 //   body        core's body unchanged (it names nobody).
 //
-// NOT WIRED YET (the next seams): the push delivery (workspace/notifications.ts, the deliverPush call) and the alert
-// text (comms/dispatch.ts dispatchAgentAlertSms) both still read the STORED title, so until those two read pushTitle /
-// smsText (or call leadAlertLockScreen / alertSmsText) the detailed title still reaches the push and the text.
-import { LEAD_ALERT_TITLE } from '../workspace/lockScreen.js';
+// WIRED (slice 2d): the push delivery (workspace/notifications.ts) sends leadAlertTitle(kind, stored title) and the alert
+// text (comms/dispatch.ts) agentAlertSmsBody(kind, stored title), from the leaf workspace/lockScreenWords.ts; for this
+// alert's kind those are exactly pushTitle and smsText. The in-app list shows the stored title, inAppTitle.
+import { ALERT_SMS_TAIL, LEAD_ALERT_TITLE, alertSmsText } from '../workspace/lockScreenWords.js';
 
-/** What comms/dispatch.ts appends to every agent alert text. */
-export const ALERT_SMS_TAIL = 'Open the app for details. Reply STOP to stop alert texts.';
-
-/** An agent alert text: the title as a sentence (a period added when it has no closing punctuation), then the tail. */
-export function alertSmsText(title: string): string {
-  const t = title.trim();
-  return `${/[.!?]$/.test(t) ? t : `${t}.`} ${ALERT_SMS_TAIL}`;
-}
+export { ALERT_SMS_TAIL, alertSmsText };
 
 export interface BackupAlertNotice {
   inAppTitle: string;

@@ -236,6 +236,8 @@ describe('delivery', () => {
     const sms = h.providers.telephony.sms.slice(before);
     expect(sms.map((m) => m.to)).toEqual([phone]);
     expect(sms[0]!.body).not.toMatch(/\+?1?\d{10}|@/);
+    // R-PUSH-12 (slice 2d): a lead offer's alert text is the generic sentence, never the stored (in-app) title
+    expect(sms[0]!.body).toBe('New lead. Open the app for details. Reply STOP to stop alert texts.');
     const row = await delivery(deliveryId!);
     expect(row.status).toBe('sent');
     expect(row.gate_decision_id).toBeNull(); // allowed: only a blocked delivery writes a gate decision (0013)

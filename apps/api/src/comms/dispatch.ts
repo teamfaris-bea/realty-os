@@ -59,6 +59,7 @@ import { asSystem, senderActor } from './runtime.js';
 import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
+import { agentAlertSmsBody } from '../workspace/lockScreenWords.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
 import { AUTOMATED_DRAFT_TRIGGER_KINDS, type SourceRefusal, noAutomatedContact, sourceGuardViolation } from '../leads/automatedContact.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimPortalLinkSend, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
@@ -699,8 +700,8 @@ export type AlertResult = { kind: 'sent'; providerRef: string } | { kind: 'suppr
 export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps, tenantId: string): Promise<AlertResult> {
   type Plan = { kind: 'send'; to: string; from: string; body: string; userId: string; hmac: string } | { kind: 'done'; result: AlertResult };
   const plan: Plan = await asSystem(deps, tenantId, 'worker', async (tx, now) => {
-    const r = await sql<{ id: string; status: string; channel: string; user_id: string; title: string; alert_phone_e164: string | null; verified: boolean }>`
-      SELECT d.id, d.status, d.channel, n.user_id, n.title, m.alert_phone_e164, m.alert_phone_verified_at IS NOT NULL AS verified
+    const r = await sql<{ id: string; status: string; channel: string; user_id: string; kind: string; title: string; alert_phone_e164: string | null; verified: boolean }>`
+      SELECT d.id, d.status, d.channel, n.user_id, n.kind, n.title, m.alert_phone_e164, m.alert_phone_verified_at IS NOT NULL AS verified
         FROM notification_deliveries d JOIN notifications n ON n.tenant_id = d.tenant_id AND n.id = d.notification_id
         JOIN memberships m ON m.tenant_id = n.tenant_id AND m.user_id = n.user_id
        WHERE d.tenant_id = app.tenant_id() AND d.id = ${deliveryId} FOR UPDATE OF d`.execute(tx);
@@ -713,7 +714,8 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
     const env = deps.envelope.inTx(tx, tenantId as TenantId);
     const hmac = Buffer.from(await env.hmacAddress(tenantId as TenantId, d.alert_phone_e164)).toString('hex');
     const nums = await g.candidateNumbers(tx, null);
-    const body = `${d.title} Open the app for details. Reply STOP to stop alert texts.`;
+    // R-PUSH-12: a lead alert's text is its generic sentence (the stored, in-app title may name the lead); others unchanged
+    const body = agentAlertSmsBody(d.kind, d.title);
     const intent: OutboundIntent = {
       contactId: null,
       recipient: { kind: 'user', addressHmac: hmac, channel: 'sms', pointId: null, userId: d.user_id },
