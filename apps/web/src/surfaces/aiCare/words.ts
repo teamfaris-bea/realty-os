@@ -573,6 +573,7 @@ export const ISA_ERROR_MESSAGES: Record<string, string> = {
   AI_ISA_POLICY_MISSING: 'Your team has no AI assistant policy yet. Create it first.',
   AI_ISA_POLICY_INVALID: 'Not saved. Some values are outside what the assistant is allowed.',
   AI_ISA_POLICY_ATTESTATION_MISMATCH: 'The policy changed since this page was loaded, so nothing was approved or revoked. Read it again, then confirm.',
+  AI_ISA_POLICY_HASH_STALE: 'This draft’s saved content does not match its fingerprint, so nothing was approved. Save the draft again, then approve it.',
   AI_ISA_POLICY_USE_ITS_ROUTES: 'The AI assistant policy is changed under Settings, AI assistant (ISA).',
   PLAYBOOK_HASH_MISMATCH: 'The policy changed since this page was loaded, so nothing was approved or revoked. Read it again, then confirm.',
   PLAYBOOK_VERSION_NOT_DRAFT: 'That version is no longer a draft. Read the policy again.',

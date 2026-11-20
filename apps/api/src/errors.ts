@@ -415,6 +415,7 @@ export const ERROR_STATUS = {
   AI_ISA_POLICY_MISSING: 409, // R-ISA-33: the team has no AI policy yet (create it first)
   AI_ISA_POLICY_INVALID: 422, // R-ISA-33: the validator refuses the policy content (details.issues: field and sentence, one per field)
   AI_ISA_POLICY_ATTESTATION_MISMATCH: 409, // R-ISA-34: the text accepted is not the text the server served for this version and effect (read the policy again)
+  AI_ISA_POLICY_HASH_STALE: 409, // R-ISA-40: the draft's stored content is not the content of its stored hash; nothing is approved (save the draft again)
   AI_ISA_POLICY_USE_ITS_ROUTES: 404, // R-ISA-33, R-ISA-36: the generic playbook routes never write, list or return an ai_isa policy
   AI_ISA_HANDOFF_USE_ACK: 409, // an AI handoff card is never decided by the generic approve or reject: it is acknowledged on POST /ai-isa/handoffs/:id/ack and its deadline met by a human touch (details.handoffId)
   SUBJECT_UNCONFIRMED: 409, // seller facts need an agent-confirmed subject (ISA-3)

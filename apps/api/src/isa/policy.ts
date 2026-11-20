@@ -2,7 +2,8 @@
 //
 // - Storage is the playbook tables as they are (no migration): one `playbooks` row of kind ai_isa, team scope; each
 //   `playbook_versions.steps` holds one AiIsaContent; a decision is one append-only `playbook_approvals` row with the
-//   approver, their role, the content hash and the exact text they accepted. The DB guards stay the backstop
+//   approver, their role, the content hash and the exact text they accepted; the hash is recomputed from the stored
+//   content at approval (R-ISA-40), never taken on trust. The DB guards stay the backstop
 //   (playbook_versions_guard: born a draft, frozen after, approved only with a matching approval row;
 //   playbook_approvals_guard: the approver is the caller, Owner or Admin on a team playbook).
 // - This file is the only writer of an ai_isa policy. The generic playbook routes refuse the kind (assistant/playbooks.ts).
@@ -104,6 +105,21 @@ async function issuesOf(tx: Tx, content: unknown): Promise<PolicyIssueWords[]> {
 }
 
 /**
+ * R-ISA-40 (E1013): whether a version's stored hash is the hash of its stored content. The approval row and the text
+ * the Owner accepts both name the hash, so a hash that is not the content's would bind the approval to other content.
+ * A draft is not frozen by the database (playbook_versions_guard freezes a version once it leaves draft), so the hash
+ * is recomputed here, from the stored content, under the policy lock; it is never taken on trust.
+ */
+function hashIsOfContent(v: Pick<VersionRow, 'steps' | 'sha'>): boolean {
+  try {
+    return policySha(v.steps as AiIsaContent) === v.sha;
+  } catch {
+    return false;
+  }
+}
+const HASH_STALE: PolicyIssueWords = { code: 'HASH_STALE', field: null, sentence: 'This draft’s saved content does not match its fingerprint, so it cannot be approved. Save the draft again, then approve it.' };
+
+/**
  * What approving `next` does: against the version approved now (`approved`, null when none is), and whether any
  * decision was ever recorded (an approval that was then revoked). An approved version whose stored content no longer
  * parses cannot be shown to be narrowed by anything: wider.
@@ -172,7 +188,7 @@ export async function policyViewInTx(tx: Tx, actor: UserActor) {
   const revokedRow = approvedRow ? null : ([...versions].reverse().find((v) => v.status === 'revoked') ?? null);
   const approved = approvedRow ? parseAiIsaContent(approvedRow.steps) : null;
   const draftContent = draftRow ? ((draftRow.steps ?? null) as AiIsaContent | null) : null;
-  const issues = draftRow ? await issuesOf(tx, draftRow.steps) : [];
+  const issues = draftRow ? [...(hashIsOfContent(draftRow) ? [] : [HASH_STALE]), ...(await issuesOf(tx, draftRow.steps))] : [];
   const valid = draftRow !== null && issues.length === 0;
   const effect = valid ? effectOf(approvedRow ? { content: approved } : null, decisions.length > 0, draftContent!) : null;
   const diff = valid && approved !== null ? policyDiff(approved, draftContent!) : null;
@@ -290,6 +306,8 @@ export async function approvePolicy(actor: UserActor, deps: IsaDeps, input: Poli
     }
     if (v.status !== 'draft') throw new AppError('PLAYBOOK_VERSION_NOT_DRAFT', { status: v.status });
     if (v.sha !== input.contentSha256) throw new AppError('PLAYBOOK_HASH_MISMATCH');
+    // R-ISA-40 (E1013): the hash this approval names is recomputed from the stored content, under the lock
+    if (!hashIsOfContent(v)) throw new AppError('AI_ISA_POLICY_HASH_STALE');
     const issues = await issuesOf(tx, v.steps);
     if (issues.length > 0) throw new AppError('AI_ISA_POLICY_INVALID', { issues: issues.slice(0, 40) });
     const next = parseAiIsaContent(v.steps)!;
