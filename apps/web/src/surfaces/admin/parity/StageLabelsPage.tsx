@@ -36,6 +36,7 @@ function StageLabels() {
       {q.isError ? <Notice tone="error">{messageFor(q.error, LISTS_ERROR_MESSAGES)}</Notice> : null}
       {q.isSuccess ? (
         <form
+          aria-label="Stage labels"
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
             e.preventDefault();
@@ -48,7 +49,10 @@ function StageLabels() {
           }}
         >
           {/* R-STG-1: each field is named by the stage's own (default) label and says what the stage means: a new name
-              changes how it reads, never what it is */}
+              changes how it reads, never what it is. The name is core's default, not the team's label and not what is
+              being typed, so it stays the same while the field is edited and after a rename is saved; the definition
+              is the field's description (TextField hint), and the form is named, so a screen reader moving through it
+              hears "Stage labels, form", then "New lead", then what the stage means. */}
           {DEFAULT_GUIDE.map((s) => (
             <TextField key={s.key} label={s.label} hint={s.definition} value={current[s.key] ?? ''} placeholder={s.label} maxLength={24} onChange={(e) => setLabels({ ...current, [s.key]: e.target.value })} />
           ))}

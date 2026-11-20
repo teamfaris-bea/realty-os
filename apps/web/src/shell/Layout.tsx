@@ -240,7 +240,8 @@ export function AppLayout() {
           </div>
         ) : null}
         <TeamLinkPrompt />
-        <main id="main" tabIndex={-1} className="flex-1 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+16px)] outline-none md:pb-0">
+        {/* while a toast shows, the page ends that much later (--toast-stack-h), so its last control scrolls clear of the toast */}
+        <main id="main" tabIndex={-1} className="flex-1 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--toast-stack-h,0px)+16px)] outline-none md:pb-[var(--toast-stack-h,0px)]">
           <Suspense fallback={<PageLoading />}>
             <Outlet />
           </Suspense>
