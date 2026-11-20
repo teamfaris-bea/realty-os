@@ -306,6 +306,15 @@ describe('b7 ui/F2: trigger playbooks are read-only here (R-AST-4)', () => {
     expect(document.body.textContent).not.toMatch(/ai_isa|stops the moment a client replies/);
   });
 
+  it('b19 review F1 (R-ISA-36): the server refuses the generic read of the AI policy; the page then says where it lives, never "not available"', async () => {
+    const fake = new FakeFetch().on('GET /playbooks/pbI', { status: 404, body: { error: { code: 'AI_ISA_POLICY_USE_ITS_ROUTES', message: 'x', requestId: 'r1' } } });
+    leadAdminApp(fake, '/settings/playbooks/pbI', 'agent');
+    expect(await screen.findByText(ISA_POLICY_ELSEWHERE)).toBeInTheDocument();
+    expect(screen.getByTestId('ai-policy-notice')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/ai_isa|AI_ISA|isn't available|undefined/);
+    expect(screen.queryByRole('button', { name: /Approve|Revoke|Stop|Save/ })).toBeNull();
+  });
+
   it('b7 ui/F2: the list puts trigger playbooks under their own read-only heading with a label, never the raw kind', async () => {
     const fake = new FakeFetch().on('GET /playbooks', { status: 200, body: { playbooks: [playbook(), triggerPlaybook()] } });
     leadAdminApp(fake, '/settings/playbooks', 'agent');

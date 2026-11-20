@@ -68,7 +68,8 @@ async function view(tx: Tx, p: P.PlaybookRow): Promise<PlaybookView> {
 export async function listPlaybooks(actor: UserActor, deps: AssistantDeps): Promise<PlaybookView[]> {
   return asUser(deps, actor, async (tx) => {
     const out: PlaybookView[] = [];
-    for (const p of await P.listPlaybooks(tx)) out.push(await view(tx, p));
+    // R-ISA-36 (E1009): the team AI policy is never listed here; it is read at its own routes (isa/policy.ts)
+    for (const p of await P.listPlaybooks(tx)) if (!isThePolicy(p)) out.push(await view(tx, p));
     return out;
   });
 }
@@ -77,6 +78,7 @@ export async function playbookView(actor: UserActor, playbookId: string, deps: A
   return asUser(deps, actor, async (tx) => {
     const p = await P.playbookById(tx, playbookId);
     if (!p) throw new AppError('NOT_FOUND');
+    notThePolicy(p);
     return view(tx, p);
   });
 }
@@ -111,12 +113,17 @@ function parseContent(kind: string, raw: unknown): PlaybookStep[] | PlaybookCont
 }
 
 /**
- * R-ISA-33: the team AI policy (kind ai_isa) has one door, isa/policy.ts (Owner-only approval, the served attestation,
- * narrows_previous written with the status). These generic routes never write it: an Admin approving it here, or a
- * revoke that skipped the policy's own audit, would be a second door.
+ * R-ISA-33, R-ISA-36: the team AI policy (kind ai_isa) has one door, isa/policy.ts (Owner-only approval, the served
+ * attestation, narrows_previous written with the status). These generic routes never write it (an Admin approving it
+ * here, or a revoke that skipped the policy's own audit, would be a second door) and never read it: any member passes
+ * row-level security for a team playbook, so a generic read would hand every version, the unapproved draft included,
+ * to an Agent, an ISA or a TC whom GET /admin/ai-isa/policy refuses (E1009). A function declaration: the reads above use it.
  */
+function isThePolicy(p: Pick<P.PlaybookRow, 'kind'>): boolean {
+  return p.kind === 'ai_isa';
+}
 function notThePolicy(p: P.PlaybookRow): void {
-  if (p.kind === 'ai_isa') throw new AppError('AI_ISA_POLICY_USE_ITS_ROUTES');
+  if (isThePolicy(p)) throw new AppError('AI_ISA_POLICY_USE_ITS_ROUTES');
 }
 
 function parseTone(raw: unknown): Tone {
