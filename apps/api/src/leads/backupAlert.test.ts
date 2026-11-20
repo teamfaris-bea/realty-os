@@ -18,6 +18,7 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { type CommsWorld, ownedContact, randomEmail, sendText, telephonyWebhook } from '../comms/testing.js';
 import { marketingReady } from '../bulk/testing.js';
 import { systemActor } from '../worker/systemActor.js';
+import { LEAD_ALERT_TITLE } from '../workspace/lockScreen.js';
 import { BACKUP_ALERT_JOB, BACKUP_ALERT_SWEEP_JOB, decideBackupAlert, sweepLostBackupAlerts } from './backupAlert.js';
 import { leadsHandlers } from './handlers.js';
 import { call, command, contactState, freshReauth, importedUnassigned, jobs, ledger, leadsWorker, leadsWorld, postIntake, randomPhone, registerPush, suFixture } from './testing.js';
@@ -180,7 +181,8 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     const notes = await alertNotes(lead.inquiryId);
     expect(notes).toHaveLength(1);
     expect(notes[0]).toMatchObject({ user_id: backup.userId, kind: 'first_touch_due', priority: 'critical', subject_id: lead.contactId });
-    expect(notes[0]!.title).toMatch(/^New lead waiting 4 min: Dana R\. from Website form \(alert test\)\. With .+ \(on offer\)\. You are the backup\.$/);
+    // R-PUSH-10: the stored title (what the push and the alert text carry) is generic: no contact, source or holder
+    expect(notes[0]!.title).toBe(LEAD_ALERT_TITLE.first_touch_due);
     expect(notes[0]!.title.length).toBeLessThanOrEqual(120);
     expect(notes[0]!.body).toBe('Nobody has called, texted or emailed. You can open this lead and call or text for the next 24 hours.');
     // the existing critical path: in-app, the backup's push subscription, and a text to their verified alert phone
@@ -340,7 +342,7 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
     expect(rows.map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.holder_user_id, r.grant_expires_at])).toEqual([['alerted', world.teamLead!.userId, 'team_lead', holder, null]]);
     const notes = await alertNotes(lead.inquiryId);
     expect(notes.map((n) => [n.user_id, n.priority])).toEqual([[world.teamLead!.userId, 'critical']]);
-    expect(notes[0]!.title).toMatch(/The source's backup is unavailable\.$/);
+    expect(notes[0]!.title).toBe(LEAD_ALERT_TITLE.first_touch_due);
     // no collaborator row for anyone: the Team Lead already reaches their team's leads
     expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [lead.contactId])).rows).toEqual([]);
     // and the source reads as flagged and not covered (R-TEAMQ-11)
@@ -367,7 +369,7 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
     ]);
     const notes = await alertNotes(lead.inquiryId);
     expect(notes.map((n) => [n.user_id, n.kind, n.priority])).toEqual([[world.owner.userId, 'first_touch_due', 'critical']]);
-    expect(notes[0]!.title).toMatch(/In the pond .+\. The source's backup is unavailable\.$/);
+    expect(notes[0]!.title).toBe(LEAD_ALERT_TITLE.first_touch_due);
     expect(notes[0]!.body).toBe('Nobody has called, texted or emailed. You are alerted as an Owner or Admin, because the backup named on its source cannot be reached and whoever has this lead has no team lead.');
     expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [lead.contactId])).rows).toEqual([]);
   });
@@ -492,7 +494,7 @@ describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)',
     ]);
     const notes = await alertNotes(offered.inquiryId);
     expect(notes.map((n) => [n.user_id, n.priority])).toEqual([[w.teamLead!.userId, 'critical']]);
-    expect(notes[0]!.title).toMatch(/^New lead waiting 4 min: Dana R\. from Rotation test\. With .+ \(on offer\), who is also the backup for this source\.$/);
+    expect(notes[0]!.title).toBe(LEAD_ALERT_TITLE.first_touch_due);
     expect(notes[0]!.body).toBe('Nobody has called, texted or emailed. You are alerted as their team lead, because the backup named on this source is the person who has the lead.');
     expect(notes[0]!.title.length).toBeLessThanOrEqual(120);
     expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [offered.contactId])).rows).toEqual([]);
@@ -508,7 +510,7 @@ describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)',
     expect((await alertRows(owned.inquiryId)).map((r) => [r.outcome, r.alerted_user_id, r.recipient, r.fallback_reason, r.holder, r.holder_user_id])).toEqual([['alerted', w.teamLead!.userId, 'team_lead', 'backup_is_holder', 'owner', owner.userId]]);
     const ownedNotes = await alertNotes(owned.inquiryId);
     expect(ownedNotes.map((n) => n.user_id)).toEqual([w.teamLead!.userId]);
-    expect(ownedNotes[0]!.title).toMatch(/\. With [^()]+, who is also the backup for this source\.$/);
+    expect(ownedNotes[0]!.title).toBe(LEAD_ALERT_TITLE.first_touch_due);
     // the queue says who was told and why, as the Owner and as the Team Lead read it
     const q = await call<{ groups: { key: string; rows: { contact: { id: string }; backupAlert: { alerted: boolean; line: string } | null }[] }[] }>(w.owner, 'GET', '/team/queue');
     const row = q.body.groups.find((g) => g.key === 'new_lead')!.rows.find((r) => r.contact.id === owned.contactId)!;
@@ -530,7 +532,7 @@ describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)',
     const notes = await alertNotes(lead.inquiryId);
     expect(notes.map((n) => n.user_id).sort()).toEqual(both);
     for (const n of notes) {
-      expect(n.title).toMatch(/\(on offer\), who is also the backup for this source\.$/);
+      expect(n.title).toBe(LEAD_ALERT_TITLE.first_touch_due);
       expect(n.body).toBe('Nobody has called, texted or emailed. You are alerted as an Owner or Admin, because the backup named on this source is the person who has the lead, and they have no team lead.');
     }
     expect((await h.su.query('SELECT 1 FROM contact_collaborators WHERE contact_id = $1', [lead.contactId])).rows).toEqual([]);
