@@ -71,7 +71,8 @@ test('J5: a lead whose agent only logged an outside call and sent a bulk email m
   await tap(page, sheet.getByRole('group', { name: 'Outcome' }).getByRole('button', { name: 'Talked' }), taps);
   await sheet.getByLabel('Note (optional)').fill('Called from my cell, she is touring Saturday');
   await shot(page, info, 'j5', '1-log-call');
-  await tap(page, sheet.getByRole('button', { name: 'Save', exact: true }), taps);
+  // b19 fix pass M6: the outcome shows the stage step in the same sheet, and ONE button saves the log and the stage
+  await tap(page, sheet.getByRole('button', { name: /^Save and (change to|keep) / }), taps);
   await expect(page.getByTestId('people-toast').getByText(/^Call logged/)).toBeVisible({ timeout: 15_000 });
   expect(taps.taps, 'PARITY_PLAN §5: log an outside call = 3').toBe(3);
   await pollSql(stack, "SELECT 1 FROM notes WHERE contact_id = $1 AND source = 'logged_activity'", [id], (r) => r.length === 1);

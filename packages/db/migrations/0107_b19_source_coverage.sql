@@ -1,5 +1,5 @@
 -- Batch 19, team-queue lane step 2 (handoff visibility; owner decisions 2026-11-19, 1 to 4): source coverage.
--- DATA_MODEL R-TEAMQ-10, R-TEAMQ-11. Security notes: docs/ARCHITECTURE.md §21.73.
+-- DATA_MODEL R-TEAMQ-10, R-TEAMQ-11. Security notes: docs/ARCHITECTURE.md §21.77.
 --
 --   Each lead source can carry a named owner, a named backup, a "high intent" mark and a "covered" switch.
 --   * lead_sources.owner_user_id, backup_user_id: members of the SAME team (composite foreign keys to memberships;

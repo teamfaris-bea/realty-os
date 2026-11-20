@@ -10,10 +10,13 @@ import { useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, announce, useStickyBottom } from '../../design/index.js';
 import { type ApiError, messageFor, newCommandId, useApi } from '../../shell/index.js';
-import { DUPLICATES_KEY, DUPLICATES_MESSAGES, type DupPair, type DupSide, type DuplicatesResponse, STAGE_LABEL, movesSentence, optOutSentence, sidesOf } from './lib.js';
+import { useStageGuide } from '../people/stageGuide.js';
+import { DUPLICATES_KEY, DUPLICATES_MESSAGES, type DupPair, type DupSide, type DuplicatesResponse, movesSentence, optOutSentence, sidesOf } from './lib.js';
 
 function SideSummary({ side, role }: { side: DupSide; role: 'keep' | 'merge' }) {
   const hid = useId();
+  // R-STG-1: the stage reads as the team's label
+  const { labelOf } = useStageGuide();
   return (
     <Card as="article" aria-labelledby={hid} className="flex flex-col gap-1.5">
       <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">{role === 'keep' ? 'Keep' : 'Merge into the kept record'}</p>
@@ -23,7 +26,7 @@ function SideSummary({ side, role }: { side: DupSide; role: 'keep' | 'merge' }) 
         </Link>
       </h2>
       <p className="text-[15px] text-ink-muted">
-        {[STAGE_LABEL[side.stage] ?? side.stage, side.owner ? `Owner: ${side.owner.displayName ?? 'a teammate'}` : 'No owner', side.source ? `From ${side.source}` : null, `Added ${new Date(side.createdAt).toLocaleDateString()}`]
+        {[labelOf(side.stage), side.owner ? `Owner: ${side.owner.displayName ?? 'a teammate'}` : 'No owner', side.source ? `From ${side.source}` : null, `Added ${new Date(side.createdAt).toLocaleDateString()}`]
           .filter(Boolean)
           .join(' · ')}
       </p>

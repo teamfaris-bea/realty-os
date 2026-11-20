@@ -150,6 +150,12 @@ const PLAIN_EXACT = new Set([
   // address or a phone number typed into a label is still masked in the audit row (maskPii, toJson).
   'import_label', // import_source_labels (0102) and the audit key importLabel
   'import_labels', // lead_sources (0099): the labels the Owner mapped to this source
+  // ---- batch 19, classified on purpose (R-AUDIT-4): not left to the fail-closed default ----
+  // stage_automation_decisions (0105): NULL or one of four cause codes the database's CHECK allows ('opted_out',
+  // 'do_not_contact', 'wrong_number', 'no_address'): WHICH cause stopped a plan, never the number, the address or
+  // anything the person wrote. The same kind of fact as consent_level and status above. (0105's other column,
+  // contact_stage_events.undo_of_event_id, is the id of a stage event: plain by the structural rule `_id$` below.)
+  'unreachable_cause',
   // ---- batch 19 team-queue lane, classified on purpose (R-AUDIT-4): two on/off settings of a lead source (0107) ----
   'high_intent', // lead_sources: the team's "high intent" mark; its audit row shows from and to
   'covered', // lead_sources: the coverage switch; its audit row shows from and to

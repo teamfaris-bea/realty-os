@@ -831,6 +831,7 @@ export interface ContactStageEventsTable {
   actor_user_id: string | null;
   occurred_at: Generated<Timestamp>;
   bulk_action_id: string | null;
+  undo_of_event_id: string | null;
 }
 
 /** public.contact_tags (table) */
@@ -2645,6 +2646,7 @@ export interface StageAutomationDecisionsTable {
   playbook_id: string | null;
   enrollment_id: string | null;
   decided_at: Generated<Timestamp>;
+  unreachable_cause: string | null;
 }
 
 /** public.stored_objects (table) */

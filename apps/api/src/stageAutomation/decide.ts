@@ -5,6 +5,7 @@
 //   - a person changed the stage (an import, migration, merge copy or the system never auto-enrolls);
 //   - not as a bulk action whose audience is built from a protected tag (R-PAR-8: a protected tag never defines the
 //     audience of a bulk enrollment, and a bulk stage change into a plan's stage would be one; batch 5 review F1);
+//   - the change is not the undo of the person's last stage change (R-STG-5: an undo never starts a plan);
 //   - the person still exists, is not merged, and is still in that stage (an Undo or a later change wins);
 //   - the person who changed the stage still sees the person's detail by their own RLS;
 //   - the chosen playbook has an APPROVED version (a draft, superseded or revoked version never runs);
@@ -34,6 +35,7 @@ export const SKIP_REASONS = [
   'ai_isa_active', // R-ISA-2 (D12 proposed; b12 review B12X-4): the person is under live AI care, so no plan starts
   'source_no_automated_contact', // b18 review B18S-5: a lead source marked "No automated contact for leads from this source" sent them
   'source_unclassified', // R-LSRC-9 (0101): an import brought them in and the Owner has not reviewed that source yet
+  'undo', // R-STG-5 (0105): the change is the undo of the person's last stage change, and an undo never starts a plan
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 
@@ -64,8 +66,19 @@ export interface StageEntryFacts {
   liveEnrollment: boolean;
   /** at least one channel the chosen playbook uses is not opted out (core canContact) */
   reachable: boolean;
+  /**
+   * E787: when not reachable, which cause it was (unreachableCause, read from the same channels). Information only:
+   * decideStageEntry never reads it. It rides with the facts so the decision row and the sentences can say it.
+   */
+  unreachableCause?: UnreachableCause | null;
   /** R-ISA-2: the person (any record of them) has a live AI ISA assignment */
   aiIsaActive?: boolean;
+  /**
+   * R-STG-5: the stage event is marked as the undo of the person's most recent stage change
+   * (contact_stage_events.undo_of_event_id, written only by the history definer for a true reversal). An undo puts
+   * the stage back; it never starts the plan of the stage it goes back to.
+   */
+  undo?: boolean;
   /**
    * b18 review B18S-5 and R-LSRC-9 (A8): why nothing automatic goes to the person, or null when automated contact is
    * allowed (leads/automatedContact.ts noAutomatedContact). REQUIRED: a stage entry starts a plan, which is automated
@@ -91,6 +104,8 @@ export function decideStageEntry(f: StageEntryFacts): StageDecision {
   if (playbook === null) return { kind: 'none' };
   const skip = (reason: SkipReason): StageDecision => ({ kind: 'skip', reason, playbook });
   if (f.actorKind !== 'user') return skip('not_a_person_change');
+  // R-STG-5: before every other condition, so no later rule can turn an undo into a start
+  if (f.undo === true) return skip('undo');
   if (f.protectedAudience) return skip('protected_audience');
   if (!f.contact.exists || f.contact.deleted || f.contact.merged) return skip('person_removed');
   if (f.contact.stage !== f.toStage) return skip('stage_changed_again');
@@ -133,4 +148,27 @@ export interface ChannelReach {
 export function reachableOn(channels: readonly ChannelReach[]): boolean {
   if (channels.length === 0) return true;
   return channels.some((c) => c.hasAddress && !c.reasons.some((r) => OPT_OUT_REASONS.has(r)));
+}
+
+/** Why a person cannot be reached by a plan (E787): the detail kept with a `cannot_be_reached` decision. */
+export const UNREACHABLE_CAUSES = ['opted_out', 'do_not_contact', 'wrong_number', 'no_address'] as const;
+export type UnreachableCause = (typeof UNREACHABLE_CAUSES)[number];
+export const isUnreachableCause = (v: unknown): v is UnreachableCause => (UNREACHABLE_CAUSES as readonly unknown[]).includes(v);
+
+/**
+ * The cause, read from the same channels reachableOn reads (so it is null exactly when the person is reachable):
+ *   do_not_contact   the person is marked do not contact (it covers every channel, so it is said first);
+ *   opted_out        a channel the plan uses has an address and an opt-out on it (a text STOP, an unsubscribe, a
+ *                    suppression): the plan could have used it but for the opt-out;
+ *   wrong_number     the only addresses it could use were reported as wrong numbers;
+ *   no_address       the person has no phone or email on any channel the plan messages on.
+ * Pure. It never changes whether a plan starts: decideStageEntry reads only `reachable`.
+ */
+export function unreachableCause(channels: readonly ChannelReach[]): UnreachableCause | null {
+  if (reachableOn(channels)) return null;
+  const reasons = new Set(channels.filter((c) => c.hasAddress).flatMap((c) => [...c.reasons]));
+  if (reasons.has('PERSON_DO_NOT_CONTACT')) return 'do_not_contact';
+  if (reasons.has('CONSENT_REVOKED') || reasons.has('SUPPRESSED')) return 'opted_out';
+  if (reasons.has('WRONG_NUMBER')) return 'wrong_number';
+  return 'no_address';
 }

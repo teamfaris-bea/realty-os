@@ -15,7 +15,7 @@
 // the post-closing path, and the step runner stops one that is live anyway. Nothing enrolls (or resumes) a person a
 // source marked "No automated contact for leads from this source" sent either (b18 review B18S-5): the direct route
 // refuses SOURCE_NO_AUTOMATED_CONTACT, the post-closing path skips them, and the step runner stops a live plan.
-import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, planNextStep, type StopCondition } from '@realty/core/assistant';
+import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, type StopCondition } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { plusMs } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
@@ -33,11 +33,8 @@ import { contactCore } from './repos/context.js';
 import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
 import { type Anchor, CHECK_BACK_MS, anchorBelongsTo, anchorFacts, buildStep } from './steps.js';
+import { RAN, walkSteps } from './stepWalk.js';
 import type { AssistantDeps, StepOutcome } from './types.js';
-
-const RAN = new Set<P.StepRunRow['status']>(['sent', 'skipped_ineligible', 'converted_to_draft', 'failed', 'canceled_paused']);
-const MESSAGE_DONE = new Set(['sent', 'delivered', 'failed', 'undelivered', 'bounced', 'blocked', 'canceled']);
-const IN_FLIGHT = new Set(['queued', 'scheduled', 'dispatching', 'dispatch_unknown']);
 
 /** Enqueues the playbook.step job for an enrollment at `dueAt` (the sweeper re-issues lost ones). */
 export async function enqueueStep(tx: Tx, enrollmentId: string, dueAt: Instant): Promise<void> {
@@ -45,7 +42,8 @@ export async function enqueueStep(tx: Tx, enrollmentId: string, dueAt: Instant):
   await enqueueTyped(tx, PLAYBOOK_STEP, p, { dedupeKey: PLAYBOOK_STEP.dedupeKey(p), runAt: dueAt });
 }
 
-async function stopFacts(tx: Tx, contactId: string, enrolledAt: Instant, canceled: boolean): Promise<Set<StopCondition>> {
+/** The stop conditions that hold for the person now (read by the runner under the contact lock, and by the read-only status). */
+export async function stopFacts(tx: Tx, contactId: string, enrolledAt: Instant, canceled: boolean): Promise<Set<StopCondition>> {
   const r = await sql<{ booked: boolean; opened: boolean; closed: boolean }>`
     SELECT EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId} AND a.status IN ('scheduled','held')
                     AND a.created_at > ${new Date(enrolledAt).toISOString()}::timestamptz) AS booked,
@@ -61,7 +59,7 @@ async function stopFacts(tx: Tx, contactId: string, enrolledAt: Instant, cancele
   return out;
 }
 
-function parseSteps(raw: readonly unknown[]): PlaybookStep[] | null {
+export function parseSteps(raw: readonly unknown[]): PlaybookStep[] | null {
   const out: PlaybookStep[] = [];
   for (const s of raw) {
     const r = PlaybookStepSchema.safeParse(s);
@@ -161,65 +159,46 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
   }
   const anchor = await anchorFacts(tx, { anchorKind: e.anchorKind, anchorId: e.anchorId, enrolledBy: e.enrolledBy, contactId: e.contactId });
   const runs = await P.stepRunsOf(tx, e.id);
-  let current = e.currentStep;
-  let previousStepAt: Instant | null = null;
-  for (const r of runs) if (RAN.has(r.status) && (previousStepAt === null || r.updatedAt > previousStepAt)) previousStepAt = r.updatedAt;
   const facts = await stopFacts(tx, e.contactId, e.createdAt, anchor.canceled);
-
-  for (let guard = 0; guard <= steps.length + 1; guard++) {
-    const step = steps[current];
-    const run = step ? runs.find((r) => r.stepKey === step.stepKey) : undefined;
-    let existingRunId: string | null = null;
-    if (step && run) {
-      const messageLeft = run.messageId !== null && run.messageStatus !== null && MESSAGE_DONE.has(run.messageStatus);
-      if (RAN.has(run.status) || messageLeft) {
-        current += 1;
-        previousStepAt = run.updatedAt > (previousStepAt ?? 0) ? run.updatedAt : previousStepAt;
-        continue;
-      }
-      if (run.messageId !== null && IN_FLIGHT.has(run.messageStatus ?? '')) {
-        const until = plusMs(run.messageScheduledFor !== null && run.messageScheduledFor > now ? run.messageScheduledFor : now, CHECK_BACK_MS);
-        await P.scheduleEnrollment(tx, e.id, until, current);
-        return { kind: 'waiting', until, reason: 'MESSAGE_IN_FLIGHT' };
-      }
-      existingRunId = run.id; // rebuilt after a version migration
-    }
-    const plan = planNextStep({ state: 'active', steps, currentStep: current, now, anchors: { enrolledAt: e.createdAt, previousStepAt, eventAt: anchor.eventAt }, facts, capabilities: await stepCapabilities(tx) });
-    switch (plan.action) {
-      case 'none':
-        return { kind: 'noop', reason: plan.reason };
-      case 'complete':
-        await P.endEnrollment(tx, e.id, 'completed', null, now);
-        return { kind: 'completed' };
-      case 'stop':
-        await P.endEnrollment(tx, e.id, 'stopped', `stop_if:${plan.condition}`, now);
-        return { kind: 'stopped', reason: `stop_if:${plan.condition}` };
-      case 'wait':
-        await P.scheduleEnrollment(tx, e.id, plan.until, current);
-        await enqueueStep(tx, e.id, plan.until);
-        return { kind: 'waiting', until: plan.until, reason: 'STEP_NOT_DUE' };
-      case 'skip': {
-        if (existingRunId) await P.updateStepRun(tx, existingRunId, { status: 'skipped_ineligible' });
-        else await P.insertStepRun(tx, { id: deps.ids.next<'PlaybookStepRunId'>(), enrollmentId: e.id, versionId: version.id, stepKey: plan.step.stepKey, status: 'skipped_ineligible', scheduledFor: now, actionId: null });
-        current += 1;
-        previousStepAt = now;
-        continue;
-      }
-      case 'run': {
-        const out = await buildStep(tx, deps, tenantId, { enrollment: e, playbook, version, step: plan.step, existingRunId, contact, anchor, now });
-        if (out.kind === 'queued') {
-          await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
-          return out;
-        }
-        // drafted or skipped: the step is done; the next one is planned on the following pass
-        await P.scheduleEnrollment(tx, e.id, now, current + 1);
-        await enqueueStep(tx, e.id, plusMs(now, 1_000));
+  // the planning is one pure walk (stepWalk.ts), shared with the read-only "what is next" of the playbook status
+  // (R-STG-4): which steps to skip on the way, and where the walk ends. Everything written is written here.
+  const walk = walkSteps({ steps, runs, currentStep: e.currentStep, now, enrolledAt: e.createdAt, eventAt: anchor.eventAt, facts, capabilities: await stepCapabilities(tx) });
+  for (const s of walk.skips) {
+    if (s.existingRunId) await P.updateStepRun(tx, s.existingRunId, { status: 'skipped_ineligible' });
+    else await P.insertStepRun(tx, { id: deps.ids.next<'PlaybookStepRunId'>(), enrollmentId: e.id, versionId: version.id, stepKey: s.step.stepKey, status: 'skipped_ineligible', scheduledFor: now, actionId: null });
+  }
+  const current = walk.current;
+  switch (walk.end.kind) {
+    case 'in_flight':
+      await P.scheduleEnrollment(tx, e.id, walk.end.until, current);
+      return { kind: 'waiting', until: walk.end.until, reason: 'MESSAGE_IN_FLIGHT' };
+    case 'none':
+      return { kind: 'noop', reason: walk.end.reason };
+    case 'complete':
+      await P.endEnrollment(tx, e.id, 'completed', null, now);
+      return { kind: 'completed' };
+    case 'stop':
+      await P.endEnrollment(tx, e.id, 'stopped', `stop_if:${walk.end.condition}`, now);
+      return { kind: 'stopped', reason: `stop_if:${walk.end.condition}` };
+    case 'wait':
+      await P.scheduleEnrollment(tx, e.id, walk.end.until, current);
+      await enqueueStep(tx, e.id, walk.end.until);
+      return { kind: 'waiting', until: walk.end.until, reason: 'STEP_NOT_DUE' };
+    case 'run': {
+      const out = await buildStep(tx, deps, tenantId, { enrollment: e, playbook, version, step: walk.end.step, existingRunId: walk.end.existingRunId, contact, anchor, now });
+      if (out.kind === 'queued') {
+        await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
         return out;
       }
+      // drafted or skipped: the step is done; the next one is planned on the following pass
+      await P.scheduleEnrollment(tx, e.id, now, current + 1);
+      await enqueueStep(tx, e.id, plusMs(now, 1_000));
+      return out;
     }
+    case 'loop_guard':
+      await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
+      return { kind: 'waiting', until: plusMs(now, CHECK_BACK_MS), reason: 'LOOP_GUARD' };
   }
-  await P.scheduleEnrollment(tx, e.id, plusMs(now, CHECK_BACK_MS), current);
-  return { kind: 'waiting', until: plusMs(now, CHECK_BACK_MS), reason: 'LOOP_GUARD' };
 }
 
 /** BUILD_PLAN interface: authorize → queue → (comms.dispatch) dispatchOutbound. */
@@ -323,28 +302,75 @@ async function lockedEnrollment(tx: Tx, id: string): Promise<P.EnrollmentRow> {
   return (await P.enrollmentById(tx, id, { lock: true }))!;
 }
 
+// What pause, stop and resume would do with an enrollment as it is now: decided once, here. The three commands below
+// act on these, and the contact's playbook status (stageAutomation/status.ts) reads canPause, canStop and canResume
+// from the same functions, in the caller's own transaction, so a button is offered exactly when its route would act
+// (R-STG-4). They read only.
+export type EnrollmentCheck = { kind: 'acts' } | { kind: 'no_change' } | { kind: 'refused'; error: AppError };
+
+/** Pause: an active plan pauses; a paused one is left as it is; an ended one is refused. */
+export function pauseCheck(e: Pick<P.EnrollmentRow, 'state'>): EnrollmentCheck {
+  if (e.state === 'paused') return { kind: 'no_change' };
+  if (e.state !== 'active') return { kind: 'refused', error: new AppError('ENROLLMENT_NOT_LIVE', { state: e.state }) };
+  return { kind: 'acts' };
+}
+
+/** Stop: a live plan (active or paused) stops; an ended one is left as it is. Never refused. */
+export function stopCheck(e: Pick<P.EnrollmentRow, 'state'>): EnrollmentCheck {
+  return e.state === 'stopped' || e.state === 'completed' ? { kind: 'no_change' } : { kind: 'acts' };
+}
+
+/**
+ * Resume: only a plan paused by a person, by an owner change or by the client's reply, whose playbook the caller sees,
+ * still speaks for the person's owner and still has an approved version, for a person automated contact may go to.
+ * Read in the caller's transaction (their RLS decides whether they see the playbook, as it does for the route).
+ */
+export async function resumeCheck(tx: Tx, e: P.EnrollmentRow): Promise<{ kind: 'acts'; reason: string } | { kind: 'no_change' } | { kind: 'refused'; error: AppError }> {
+  if (e.state === 'active') return { kind: 'no_change' };
+  if (e.state !== 'paused') return { kind: 'refused', error: new AppError('ENROLLMENT_NOT_LIVE', { state: e.state }) };
+  const reason = e.pauseReason ?? '';
+  if (!['manual', 'owner_change', 'client_reply'].includes(reason)) return { kind: 'refused', error: new AppError('ENROLLMENT_NOT_RESUMABLE', { pauseReason: reason }) };
+  const pb = await P.playbookById(tx, e.playbookId);
+  const c = await contactCore(tx, e.contactId);
+  if (!pb || !c) return { kind: 'refused', error: new AppError('NOT_FOUND') };
+  if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) return { kind: 'refused', error: new AppError('PLAYBOOK_OWNER_MISMATCH') };
+  if (!(await P.approvedVersionOf(tx, pb.id))) return { kind: 'refused', error: new AppError('PLAYBOOK_NOT_APPROVED') };
+  // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
+  const refused = await noAutomatedContact(tx, e.contactId);
+  if (refused !== null) return { kind: 'refused', error: sourceRefusalError(refused, pb.id) };
+  return { kind: 'acts', reason };
+}
+
+/** What the pause, resume and stop routes answer (E786): the plan as it is now, and whether THIS request changed it. */
+export interface EnrollmentChange {
+  enrollment: EnrollmentView;
+  changed: boolean;
+}
+
 /** POST /enrollments/:id/pause */
-export async function pauseEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
-  const v = await asUser(deps, actor, async (tx, now) => {
+export async function pauseEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentChange> {
+  const v = await asUser(deps, actor, async (tx, now): Promise<EnrollmentChange> => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (e.state === 'paused') return viewOf(e);
-    if (e.state !== 'active') throw new AppError('ENROLLMENT_NOT_LIVE', { state: e.state });
+    const check = pauseCheck(e);
+    if (check.kind === 'no_change') return { enrollment: viewOf(e), changed: false };
+    if (check.kind === 'refused') throw check.error;
     await P.pauseEnrollment(tx, e.id, 'manual', now);
     await audit(tx, actor, { action: 'enrollment.changed', entity: { type: 'playbook_enrollment', id: e.id }, reason: 'paused' });
-    return viewOf((await P.enrollmentById(tx, e.id))!);
+    return { enrollment: viewOf((await P.enrollmentById(tx, e.id))!), changed: true };
   });
   await cancelPendingSteps(deps, actor.tenantId, enrollmentId, 'ENROLLMENT_PAUSED');
   return v;
 }
 
 /** POST /enrollments/:id/stop */
-export async function stopEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
-  const v = await asUser(deps, actor, async (tx, now) => {
+export async function stopEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentChange> {
+  const v = await asUser(deps, actor, async (tx, now): Promise<EnrollmentChange> => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (e.state === 'stopped' || e.state === 'completed') return viewOf(e);
+    // an ended plan (stopped by someone else a moment ago, or finished) is left as it is, and the answer says so
+    if (stopCheck(e).kind === 'no_change') return { enrollment: viewOf(e), changed: false };
     await P.endEnrollment(tx, e.id, 'stopped', 'manual', now);
     await audit(tx, actor, { action: 'enrollment.changed', entity: { type: 'playbook_enrollment', id: e.id }, reason: 'stopped' });
-    return viewOf((await P.enrollmentById(tx, e.id))!);
+    return { enrollment: viewOf((await P.enrollmentById(tx, e.id))!), changed: true };
   });
   await cancelPendingSteps(deps, actor.tenantId, enrollmentId, 'ENROLLMENT_STOPPED');
   return v;
@@ -355,26 +381,18 @@ export async function stopEnrollment(actor: UserActor, enrollmentId: string, dep
  * conversation pause (the agent read the reply). Opt-out, wrong-number and revoked-approval pauses are
  * not resumable here: they have their own paths (the person's own action; a new approval).
  */
-export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentView> {
-  return asUser(deps, actor, async (tx, now) => {
+export async function resumeEnrollment(actor: UserActor, enrollmentId: string, deps: AssistantDeps): Promise<EnrollmentChange> {
+  return asUser(deps, actor, async (tx, now): Promise<EnrollmentChange> => {
     const e = await lockedEnrollment(tx, enrollmentId);
-    if (e.state === 'active') return viewOf(e);
-    if (e.state !== 'paused') throw new AppError('ENROLLMENT_NOT_LIVE', { state: e.state });
-    const reason = e.pauseReason ?? '';
-    if (!['manual', 'owner_change', 'client_reply'].includes(reason)) throw new AppError('ENROLLMENT_NOT_RESUMABLE', { pauseReason: reason });
-    const pb = await P.playbookById(tx, e.playbookId);
-    const c = await contactCore(tx, e.contactId);
-    if (!pb || !c) throw new AppError('NOT_FOUND');
-    if (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId) throw new AppError('PLAYBOOK_OWNER_MISMATCH');
-    if (!(await P.approvedVersionOf(tx, pb.id))) throw new AppError('PLAYBOOK_NOT_APPROVED');
-    // b18 review B18S-5: no plan resumes for a person a source marked "No automated contact" sent (0098 refuses it too)
-    const refused = await noAutomatedContact(tx, e.contactId);
-    if (refused !== null) throw sourceRefusalError(refused, pb.id);
+    const check = await resumeCheck(tx, e);
+    if (check.kind === 'no_change') return { enrollment: viewOf(e), changed: false };
+    if (check.kind === 'refused') throw check.error;
+    const reason = check.reason;
     if (reason === 'client_reply') await resumeAutomation(tx, e.contactId, actor.userId);
     await P.resumeEnrollment(tx, e.id, actor.userId, now);
     await enqueueStep(tx, e.id, now);
     await audit(tx, actor, { action: 'automation.resumed', entity: { type: 'playbook_enrollment', id: e.id }, reason: `resumed:${reason}` });
-    return viewOf((await P.enrollmentById(tx, e.id))!);
+    return { enrollment: viewOf((await P.enrollmentById(tx, e.id))!), changed: true };
   });
 }
 

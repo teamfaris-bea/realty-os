@@ -3,8 +3,12 @@
 //   GET   /contacts/:id/details          stage (+ locked stages), labels, addresses, collaborators,
 //                                        relationships, removed points, row version     contact.view_detail
 //   PATCH /contacts/:id                  names, type, intent, timezone, stage, pond summary (row_version)  contact.edit
-//   POST  /contacts/:id/stage            one stage change (the Undo toast posts the previous stage)  contact.edit
-//   GET   /stage-labels                  the eight stages with the tenant's labels        session (members)
+//   POST  /contacts/:id/stage            one stage change; `undoOf` marks the undo of the last one, which never
+//                                        starts a plan; the same stage again answers what is stored (R-STG-5).
+//                                        An undo is only an undo (E779): the caller's own change, not itself an
+//                                        undo, at most 15 minutes old; anything else is 409 STAGE_UNDO_INVALID  contact.edit
+//   GET   /contacts/:id/stage/preview    what that change would start, not start or leave running (R-STG-3)  contact.edit
+//   GET   /stage-labels                  the eight stages with the tenant's labels and what each means (R-STG-1)  session (members)
 //   PUT   /stage-labels                  Owner/Admin                                      settings.stage_labels
 //   POST  /contacts/:id/do-not-contact   person-level do-not-contact (R-CHAN-3 path): revokes every channel on
 //                                        every point and sets the person-level flag; tighten-only  contact.edit
@@ -15,10 +19,10 @@
 // change is checked by core first so the caller learns STAGE_NEEDS_CONTACT up front, and the DB guard
 // app.contacts_stage_guard refuses it anyway; the definer trigger writes the stage history (R-PAR-15).
 import { type UserActor, can } from '@realty/core/foundation';
-import { STAGES, type Stage, type StageFacts, isStage, lockedStages, stageChangeAllowed, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
-import { instantFromDate } from '@realty/core/foundation';
+import { STAGE_GUIDE, type Stage, lockedStages, stageChangeAllowed, stageGuide, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
 import type { Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { sql } from 'kysely';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
@@ -27,34 +31,40 @@ import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
 import { actorOf, detailFacts, liveDetailFacts, idOf, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
+import { stageFactsOf } from './stageFacts.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
-import { stageChangeAutomation } from '../stageAutomation/index.js';
-import { ownLatestStageEvent } from '../stageAutomation/repos.js';
+import { automationSentenceOf, stageChangeAutomation, stageRepeatAutomation } from '../stageAutomation/index.js';
+import { latestStageEvent, ownLatestStageEvent, stageEvent } from '../stageAutomation/repos.js';
+import { previewStageEntry, runningPlan } from '../stageAutomation/preview.js';
 import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 
-export function stageFactsOf(r: repo.EditRow): StageFacts {
-  return {
-    stage: (isStage(r.stage) ? r.stage : 'new') as Stage,
-    ownershipState: r.ownership_state,
-    firstTouchDueAt: r.first_touch_due_at ? instantFromDate(r.first_touch_due_at) : null,
-    firstTouchAt: r.first_touch_at ? instantFromDate(r.first_touch_at) : null,
-  };
-}
+/**
+ * How long a stage change can be undone (E779). The history definer applies the same window by the database clock
+ * (migration 0105: interval '15 minutes'); the two are one rule, and undo.test.ts holds both to it.
+ */
+export const UNDO_WINDOW_MS = 15 * 60_000;
+
 
 export function stageInfo(r: repo.EditRow, actor: UserActor, labels: Record<string, string>) {
   const f = stageFactsOf(r);
   const locked = lockedStages(f, { kind: 'user', role: actor.role });
-  return { stage: f.stage, label: stageLabel(f.stage, labels), locked, lockedReason: locked.length > 0 ? 'STAGE_NEEDS_CONTACT' : null };
+  // R-STG-1: what the stage means travels with it (the label is the tenant's or the default; the two lines are the guide's)
+  const guide = STAGE_GUIDE[f.stage];
+  return { stage: f.stage, label: stageLabel(f.stage, labels), definition: guide.definition, notThis: guide.notThis, locked, lockedReason: locked.length > 0 ? 'STAGE_NEEDS_CONTACT' : null };
 }
 
 function editView(r: repo.EditRow) {
   return { id: r.id, rowVersion: r.row_version, displayName: r.display_name, firstName: r.first_name, lastName: r.last_name, contactType: r.contact_type, intent: r.intent, timezone: r.timezone, stage: r.stage, pondSummary: r.pond_summary };
 }
 
+/** R-PAR-14: may this actor move this person to `to` now? The one check of the stage route, PATCH and the stage preview. */
+function stageAllowed(r: repo.EditRow, actor: UserActor, to: Stage): boolean {
+  return stageChangeAllowed(stageFactsOf(r), { kind: 'user', role: actor.role }, to).ok;
+}
+
 function changeStageCheck(r: repo.EditRow, actor: UserActor, to: Stage): void {
-  const d = stageChangeAllowed(stageFactsOf(r), { kind: 'user', role: actor.role }, to);
-  if (!d.ok) throw new AppError('STAGE_NEEDS_CONTACT', { locked: lockedStages(stageFactsOf(r), { kind: 'user', role: actor.role }), offer: ['call', 'text', 'close'] });
+  if (!stageAllowed(r, actor, to)) throw new AppError('STAGE_NEEDS_CONTACT', { locked: lockedStages(stageFactsOf(r), { kind: 'user', role: actor.role }), offer: ['call', 'text', 'close'] });
 }
 
 async function staleOrMissing(tx: Tx, id: string): Promise<never> {
@@ -95,6 +105,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
             doNotContact: row.do_not_contact_at !== null,
             stage: stageInfo(row, actor, labels),
             stageLabels: labels,
+            stageGuide: stageGuide(labels),
             addresses: (await repo.addresses(tx, id)).map(addressView),
             collaborators: (await repo.collaborators(tx, id)).map(collaboratorView),
             relationships: (await repo.relationships(tx, id)).map((x) => relationshipView(x, id)),
@@ -159,35 +170,109 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
     '/contacts/:id/stage',
     { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, body: S.StageBody, response: { 200: S.StageResponse } } },
     async (req) => {
-      const out = await peopleTx(req, async (tx, _now, actor) => {
+      const { stage, undoOf } = req.body;
+      const out = await peopleTx(req, async (tx, now, actor) => {
         const id = req.params.id;
         const before = await repo.editRow(tx, id);
         if (!before) throw new AppError('NOT_FOUND');
+        const latest = await latestStageEvent(tx, id);
+        const labels = await repo.stageLabels(tx);
+        // R-STG-5: the same stage again (a double tap, a refresh, a retry of this very request). Nothing is written:
+        // the answer names the event that put the person in this stage, and the decision stored for it.
+        const repeat = (row: repo.EditRow, ev: typeof latest) => {
+          // a repeated undo must be the undo it says it is, by the person who made it (E779); any other undoOf with
+          // the stage unchanged is refused
+          if (undoOf !== undefined && !(ev !== null && ev.undoOfEventId === undoOf && ev.actorKind === 'user' && ev.actorUserId === actor.userId)) throw new AppError('STAGE_UNDO_INVALID');
+          return { stage: stageInfo(row, actor, labels), previousStage: row.stage, rowVersion: row.row_version, eventId: ev !== null && ev.toStage === row.stage ? ev.id : null, changed: false };
+        };
+        if (stage === before.stage) return repeat(before, latest);
+        // R-STG-5: an undo names this person's MOST RECENT stage change and goes back to the stage that change came
+        // from. Anything else (another person's or team's event, an older one, an unknown one, another stage) is
+        // refused before anything is written. The history definer checks the same again (migration 0105).
+        // E779, an undo is only an undo: the event is the caller's OWN change (nobody "undoes" a teammate's), it is
+        // not itself an undo (an undo cannot be undone: that "redo" would enter a stage and skip its plan while the
+        // preview promised it), and it is at most UNDO_WINDOW_MS old. The same move without undoOf is an ordinary
+        // stage change, decided as one.
+        if (
+          undoOf !== undefined &&
+          !(
+            latest !== null &&
+            latest.id === undoOf &&
+            latest.toStage === before.stage &&
+            latest.fromStage === stage &&
+            latest.actorKind === 'user' &&
+            latest.actorUserId === actor.userId &&
+            latest.undoOfEventId === null &&
+            now - latest.occurredAt <= UNDO_WINDOW_MS
+          )
+        ) {
+          throw new AppError('STAGE_UNDO_INVALID');
+        }
         const rv = req.body.rowVersion ?? before.row_version;
         if (rv !== before.row_version) throw new AppError('STALE_CONTACT', { rowVersion: before.row_version });
-        changeStageCheck(before, actor, req.body.stage);
-        const labels = await repo.stageLabels(tx);
-        let eventId: string | null = null;
-        if (req.body.stage !== before.stage) {
-          const next = await repo.updateContact(tx, id, rv, { stage: req.body.stage });
-          if (next === null) return staleOrMissing(tx, id);
-          await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id }, changes: redactDiff({ stage: before.stage }, { stage: req.body.stage }, { entity: 'contacts' }) });
-          eventId = await ownLatestStageEvent(tx, id, before.stage, req.body.stage); // parity 67
+        changeStageCheck(before, actor, stage);
+        // the mark travels to the definer trigger in this transaction only, and is cleared right after the update
+        if (undoOf !== undefined) await sql`SELECT set_config('app.stage_undo_of', ${undoOf}, true)`.execute(tx);
+        const next = await repo.updateContact(tx, id, rv, { stage });
+        if (undoOf !== undefined) await sql`SELECT set_config('app.stage_undo_of', '', true)`.execute(tx);
+        if (next === null) {
+          // someone changed the person while this request waited. If they are now in the requested stage (the other
+          // of two identical taps), this request is a repeat of that change, not a stale edit.
+          const now = await repo.editRow(tx, id);
+          if (!now) throw new AppError('NOT_FOUND');
+          if (now.stage !== stage) throw new AppError('STALE_CONTACT', { rowVersion: now.row_version });
+          return repeat(now, await latestStageEvent(tx, id));
         }
+        await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id }, changes: redactDiff({ stage: before.stage }, { stage }, { entity: 'contacts' }), ...(undoOf !== undefined ? { reason: 'STAGE_UNDO' } : {}) });
+        const eventId = await ownLatestStageEvent(tx, id, before.stage, stage); // parity 67
+        // E779: what this request took for an undo must be stored as one. If the definer did not keep the mark (its own
+        // check of the same rules, by the database clock a moment later), nothing is changed: the whole transaction
+        // rolls back, so an "undo" is never recorded as an ordinary change that could start a plan.
+        if (undoOf !== undefined && (eventId === null || (await stageEvent(tx, eventId))?.undoOfEventId !== undoOf)) throw new AppError('STAGE_UNDO_INVALID');
         const after = (await repo.editRow(tx, id))!;
-        return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version, eventId };
+        return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version, eventId, changed: true };
       });
-      // parity module 67 (flagged edit): the stage entry's plan, decided after the change committed
-      const { eventId, ...res } = out;
-      const automation = eventId ? await stageChangeAutomation(platformOf(req).db, actorOf(req).tenantId, eventId, req.log, actorOf(req)) : null;
-      return { ...res, automation };
+      // parity module 67 (flagged edit): the stage entry's plan, decided after the change committed. A repeat only
+      // reads what is stored (or decides an event the worker's scan is about to decide anyway): R-STG-5.
+      const { changed, ...res } = out;
+      const db = platformOf(req).db;
+      const viewer = actorOf(req);
+      const automation = res.eventId === null ? null : changed ? await stageChangeAutomation(db, viewer.tenantId, res.eventId, req.log, viewer) : await stageRepeatAutomation(db, viewer.tenantId, res.eventId, req.log, viewer);
+      // R-STG-5: an undo never stops a plan either. The plan the person is still in is named with its state (running
+      // or paused, E782) and whether this caller may stop it themselves (the stop route's own answer), so the screen
+      // can say so and offer Stop.
+      const stillRunning = undoOf === undefined ? null : await runningPlan(db, viewer, req.params.id);
+      // E784: the same decision in words, by the function the status words it with: one vocabulary for the toast, the
+      // preview and the panel. The plan's name in `automation` is already the one this viewer may see.
+      // (E787: read from the stored decision, so "cannot be reached" says which cause it was.)
+      const automationSentence = res.eventId === null ? null : await automationSentenceOf(db, viewer.tenantId, res.eventId, automation);
+      return { ...res, automation, automationSentence, stillRunning };
+    },
+  );
+
+  // R-STG-3: what the change would start, not start or leave running, before it is saved. The same permission and
+  // visibility as the stage route (contact.edit on a live person whose detail the caller sees) and the same stage
+  // rule; the plan part is decided by the function the change is decided by (stageAutomation/preview.ts). Read-only.
+  r.get(
+    '/contacts/:id/stage/preview',
+    { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, querystring: S.StagePreviewQuery, response: { 200: S.StagePreviewResponse } } },
+    async (req) => {
+      const to = req.query.to;
+      const head = await peopleTx(req, async (tx, _now, actor) => {
+        const row = await repo.editRow(tx, req.params.id);
+        if (!row) throw new AppError('NOT_FOUND');
+        return { allowed: stageAllowed(row, actor, to), sameStage: stageFactsOf(row).stage === to };
+      });
+      // a change the rule refuses, or to the stage the person is already in, enters nothing: no plan is promised
+      const entry = await previewStageEntry(platformOf(req).db, actorOf(req), req.params.id, head.allowed && !head.sameStage ? to : null);
+      return { allowed: head.allowed, lockedReason: head.allowed ? null : ('STAGE_NEEDS_CONTACT' as const), sameStage: head.sameStage, ...entry, stops: [], aiCare: 'unchanged' as const, tasks: 'unchanged' as const };
     },
   );
 
   r.get('/stage-labels', { config: { auth: 'self' }, schema: { response: { 200: S.StageLabelsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => {
       const labels = await repo.stageLabels(tx);
-      return { labels, stages: STAGES.map((key) => ({ key, label: stageLabel(key, labels) })) };
+      return { labels, stages: stageGuide(labels) };
     }),
   );
 
@@ -202,7 +287,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
         if (!(await repo.setStageLabels(tx, v.labels as Record<string, string>))) throw new AppError('NOT_FOUND');
         await audit(tx, actor, { action: 'settings.changed', entity: { type: 'tenant_settings', id: null }, changes: redactDiff({ stage_labels: before }, { stage_labels: v.labels }, { entity: 'tenant_settings' }), reason: 'STAGE_LABELS' });
         const labels = v.labels as Record<string, string>;
-        return { labels, stages: STAGES.map((key) => ({ key, label: stageLabel(key, labels) })) };
+        return { labels, stages: stageGuide(labels) };
       });
     },
   );

@@ -10,11 +10,23 @@
 // the check blocks (the client asked not to be called, a suppressed or wrong number, ...) shows the
 // server's sentence and nothing else: there is no "call anyway" (owner decision, core-compliance/2.0.0;
 // an opt-out is never overridden).
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+//
+// The stage step (R-STG-2; people-edit/StageStep.tsx). On the person's page (`stageStep`), after the outcome tap has
+// saved the outcome exactly as before, the SAME sheet goes on to the stage step: what was saved, the stage the
+// server suggests for it (to confirm; the outcome route never changes a stage), what the choice will do, a follow-up,
+// and one button named for its effect. Call → outcome → confirm is 3 taps. Elsewhere (the feed, the thread, tasks)
+// the call sheet closes after the outcome as it always did. An outcome that was saved as a task for a new owner (the
+// lead moved during the call) has no stage step: the caller no longer works that person.
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
+import { detailsKey } from '../../people-edit/api.js';
+import { ToastProvider, useToastSlot, useToastStackSync } from '../../people-edit/hooks.js';
+import { StageStep } from '../../people-edit/StageStep.js';
+import type { SuggestedStage } from '../../people-edit/stageFlow.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
 import { AGENT_ERROR_MESSAGES } from './messages.js';
 import { useMutate } from './hooks.js';
@@ -39,7 +51,18 @@ type Open =
   | { kind: 'appointment'; appointmentId: string; label?: string | undefined }
   | null;
 
-export function AgentSheetsProvider({ children }: { children: ReactNode }) {
+/** What the stage step says was saved, per call outcome. */
+export const OUTCOME_SAVED: Record<CallOutcome, string> = {
+  connected: 'Conversation logged',
+  left_voicemail: 'Voicemail logged',
+  no_answer: 'No answer logged',
+  callback_requested: 'Call-back request logged',
+  wrong_number: 'Wrong number logged',
+  bad_number: 'Number not working: logged',
+  do_not_call_request: 'Recorded: asked not to be called',
+};
+
+export function AgentSheetsProvider({ children, stageStep = false }: { children: ReactNode; /** the person's page: a call's outcome goes on to the stage step in the same sheet */ stageStep?: boolean }) {
   const [open, setOpen] = useState<Open>(null);
   const [toast, setToast] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,16 +83,36 @@ export function AgentSheetsProvider({ children }: { children: ReactNode }) {
   );
   const close = () => setOpen(null);
   return (
+    // the stage step's toast (Undo) lives with the page, so it outlasts the sheet; the person page's own sections share it
+    <ToastProvider>
     <Ctx.Provider value={value}>
       {children}
-      {/* seen here, heard through announce(): aria-hidden so a screen reader does not meet it twice */}
-      <div aria-hidden="true" data-testid="toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+12px)] z-50 flex justify-center px-4 md:bottom-6">
-        {toast ? <p className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{toast}</p> : null}
-      </div>
-      {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} /> : null}
+      <AnnounceToast text={toast} />
+      {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} stageStep={stageStep} /> : null}
       {open?.kind === 'appointment' ? <AppointmentSheet appointmentId={open.appointmentId} label={open.label} onClose={close} announce={announce} /> : null}
     </Ctx.Provider>
+    </ToastProvider>
   );
+}
+
+/**
+ * The announce toast: seen here, heard through announce() (aria-hidden, so a screen reader does not meet it twice).
+ * It is drawn inside the page's one stack of toasts (people-edit/hooks.tsx; E788), so it sits above every bottom bar
+ * (it used to sit on the person page's working bar) and above or below the stage toast, never over it. The stack, not
+ * this aria-hidden box, is the fixed element: it is marked data-sticky while either toast shows (hooks.tsx).
+ */
+function AnnounceToast({ text }: { text: string | null }) {
+  const slot = useToastSlot();
+  // the stack is a bar of the page while this toast is in it: it is marked, and its room reserved, in the same commit
+  const sync = useToastStackSync();
+  useLayoutEffect(sync, [sync, slot, text]);
+  const el = (
+    <div aria-hidden="true" data-testid="toast" className="flex w-full justify-center">
+      {text ? <p className="pointer-events-auto mb-2 max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{text}</p> : null}
+    </div>
+  );
+  // before the stack is on the page (the first render) the toast is empty, and is kept in the tree where it is
+  return slot ? createPortal(el, slot) : el;
 }
 
 /** A visible way out of a sheet (Escape and the backdrop close it too): a phone has no Escape key. */
@@ -99,11 +142,13 @@ const CALL_FAILED: Record<string, string> = {
   CONTACT_MERGED: AGENT_ERROR_MESSAGES.CONTACT_MERGED as string,
 };
 
-function CallSheet({ contact, onClose, announce }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void }) {
+function CallSheet({ contact, onClose, announce, stageStep }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void; stageStep: boolean }) {
   const api = useApi();
   const [state, setState] = useState<CallState>({ step: 'dialing' });
+  const [logged, setLogged] = useState<{ saved: string; suggested: SuggestedStage | null } | null>(null);
   const started = useRef(false);
-  const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY]] });
+  // the person's details too: the dial was a first contact, which opens the stages a routed lead had locked (R-PAR-14)
+  const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY], [...detailsKey(contact.id)]] });
   const who = firstName(contact.name);
   // the exact reason a refused call rests on ("Asked not to be called (recorded by Avery Brooks on Oct 3)")
   const voice = useChannelState(contact.id, 'voice');
@@ -136,9 +181,19 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
     if (state.step !== 'live') return;
     const r = await outcome.run(`/calls/${state.callId}/outcome`, { outcome: o });
     if (!r.ok) return;
-    onClose();
+    // the person's page goes on to the stage step in this same sheet, whose first line says what was saved
+    // ("Voicemail logged"): no toast says it a second time over that line (b19 fix pass M4), it is only spoken.
+    // Anywhere else the sheet closes as before, and the toast is where it is said.
+    if (stageStep && r.data.recordedAs === 'call') {
+      speak(`${OUTCOME_SAVED[o]}.`);
+      setLogged({ saved: OUTCOME_SAVED[o], suggested: r.data.suggestedStage ?? null });
+      return;
+    }
     announce(r.data.recordedAs === 'task_for_current_owner' ? `${who} was reassigned during the call, so your outcome was saved as a task for the new owner.` : 'Call outcome saved.');
+    onClose();
   };
+
+  if (logged) return <StageStep contactId={contact.id} contactName={contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
 
   return (
     <Dialog title={`Call ${contact.name}`} onClose={onClose} footer={<CloseButton onClose={onClose} />}>
@@ -184,15 +239,29 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
 
 // ---- appointment outcome ----------------------------------------------------------------------
 
+// R-STG-2: when the server answers a stage for the logged result (only a signed agreement suggests one: "Active
+// client"), the same sheet goes on to the stage step, wherever the sheet was opened (the feed, tasks). Any other
+// result closes it with "Outcome saved." as before. The outcome is saved by its own tap either way.
 function AppointmentSheet({ appointmentId, label, onClose, announce }: { appointmentId: string; label?: string | undefined; onClose: () => void; announce: (t: string) => void }) {
-  const m = useMutate<{ result: AppointmentResult; note?: string }, { appointment: AppointmentView }>('POST', { invalidate: [['feed'], ['appointments'], ['tasks']] });
+  const m = useMutate<{ result: AppointmentResult; note?: string }, { appointment: AppointmentView; suggestedStage?: SuggestedStage | null }>('POST', { invalidate: [['feed'], ['appointments'], ['tasks']] });
   const [note, setNote] = useState('');
+  const [logged, setLogged] = useState<{ contact: { id: string; name: string }; saved: string; suggested: SuggestedStage } | null>(null);
   const pick = async (result: AppointmentResult) => {
     const r = await m.run(`/appointments/${appointmentId}/outcome`, note.trim() ? { result, note: note.trim() } : { result });
     if (!r.ok) return;
-    onClose();
+    const who = r.data.appointment.contact;
+    const suggested = r.data.suggestedStage ?? null;
+    if (who && suggested) {
+      // the stage step's first line says it; no toast over it
+      const saved = `Outcome saved: ${APPOINTMENT_RESULTS.find((o) => o.value === result)?.label ?? result}`;
+      speak(`${saved}.`);
+      setLogged({ contact: who, saved, suggested });
+      return;
+    }
     announce('Outcome saved.');
+    onClose();
   };
+  if (logged) return <StageStep contactId={logged.contact.id} contactName={logged.contact.name} saved={logged.saved} suggested={logged.suggested} onClose={onClose} />;
   return (
     <Dialog title={label ?? 'How did it go?'} onClose={onClose} footer={<CloseButton onClose={onClose} />}>
       <div className="flex flex-col gap-4">

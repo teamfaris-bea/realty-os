@@ -1,5 +1,5 @@
 -- Batch 19, team-queue lane step 2 (handoff visibility; owner decisions 2026-11-19, 1 and 2): the minute-three
--- backup alert. DATA_MODEL R-TEAMQ-14 to R-TEAMQ-17. Security notes: docs/ARCHITECTURE.md §21.73.
+-- backup alert. DATA_MODEL R-TEAMQ-14 to R-TEAMQ-17. Security notes: docs/ARCHITECTURE.md §21.77.
 --
 --   When a covered source's inbound inquiry has had no human attempt after three minutes of staffed time, the
 --   source's backup is alerted (apps/api leads/backupAlert.ts, the job `leads.backup_alert`). It alerts only: it

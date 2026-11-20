@@ -35,18 +35,31 @@ export {
   DEFAULT_STAGE_LABELS,
   OPEN_STAGES,
   STAGES,
+  STAGE_GUIDE,
   type Stage,
   type StageActor,
   type StageDecision,
   type StageFacts,
+  type StageGuideEntry,
   type StageLabels,
   isStage,
   lockedStages,
   stageChangeAllowed,
+  stageGuide,
   stageLabel,
   untouchedRouted,
   validateStageLabels,
 } from './stage.js';
+export {
+  APPOINTMENT_RESULTS,
+  type AppointmentResult,
+  CALL_SIGNAL_OUTCOMES,
+  type CallSignalOutcome,
+  type StageSignal,
+  type StageSuggestion,
+  activitySignal,
+  suggestStageFromOutcome,
+} from './stageSuggestion.js';
 export { MAX_MENTIONS, type MentionResult, type MentionToken, addedMentions, mentionDedupeKey, mentionTitle, mentionToken, mentionTokens, parseMentions, renderMentions } from './mentions.js';
 export {
   ACTIVITY_DIRECTIONS,

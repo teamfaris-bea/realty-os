@@ -79,10 +79,10 @@ test('R-PAR-16 Stage → Active starts the buyer plan, shown on the stage toast;
   const amy = await stack.fixture<{ id: string; name: string }>('/contact', { firstName: 'Amy', lastName: isPhone(page) ? 'Phone' : 'Desk' });
   await openContact(page, amy.id, amy.name);
   const stage = { taps: 0 };
-  await tap(page, page.getByRole('button', { name: 'Stage: New. Change stage' }), stage);
+  await tap(page, page.getByRole('button', { name: 'Stage: New lead. Change stage' }), stage);
   await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Active/ }), stage);
   const toast = page.getByTestId('people-toast');
-  await expect(toast.getByText('Stage: Active. Started Buyer plan')).toBeVisible();
+  await expect(toast.getByText('Stage: Active client. Buyer plan started')).toBeVisible();
   expect(stage.taps).toBe(2);
   // the Undo target on the toast is a real 44 px target
   const undo = toast.getByRole('button', { name: 'Undo' });
@@ -91,7 +91,7 @@ test('R-PAR-16 Stage → Active starts the buyer plan, shown on the stage toast;
   await shot(page, 'stage-started');
   // Undo moves the stage back and says honestly that the plan keeps running
   await undo.click();
-  await expect(toast.getByText('Stage back to New. Buyer plan is still running')).toBeVisible();
+  await expect(toast.getByText('Stage back to New lead. Buyer plan is still running; undo does not stop it.')).toBeVisible();
 });
 
 test('R-PAR-16 D1 a person who opted out: the toast says why the plan did not start', async ({ page }) => {
@@ -100,8 +100,8 @@ test('R-PAR-16 D1 a person who opted out: the toast says why the plan did not st
   await ensureBuyerPlan(page);
   const bo = await stack.fixture<{ id: string; name: string }>('/contact', { firstName: 'Bo', lastName: isPhone(page) ? 'Phone' : 'Desk', optOut: true });
   await openContact(page, bo.id, bo.name);
-  await page.getByRole('button', { name: 'Stage: New. Change stage' }).click();
+  await page.getByRole('button', { name: 'Stage: New lead. Change stage' }).click();
   await page.getByRole('dialog').getByRole('button', { name: /^Active/ }).click();
-  await expect(page.getByTestId('people-toast').getByText("Stage: Active. Buyer plan didn't start: they can't be messaged")).toBeVisible();
+  await expect(page.getByTestId('people-toast').getByText('Stage: Active client. Buyer plan did not start: they texted STOP or otherwise opted out')).toBeVisible();
   await shot(page, 'stage-skipped');
 });

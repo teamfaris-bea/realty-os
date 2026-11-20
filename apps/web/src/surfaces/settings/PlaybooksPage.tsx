@@ -13,8 +13,13 @@
 //   R-PAR-16; api/stage-automation GET/PUT /playbooks/:id/auto-enroll-stage): offered exactly to whom the
 //   server's can() allows (team playbooks: Owner/Admin; a personal playbook: its own agent), with the
 //   tenant's stage labels; others read the stage it starts on. Never for the instant reply to new leads.
+// - "For the whole team" (owner decision 2026-11-19): when an Owner or Admin starts a plan that is personal by default
+//   (a stage plan: Stay in touch, After closing), they may make it a team playbook instead. POST /playbooks takes
+//   `scope` and authorizes a team playbook for Owner/Admin only, so the choice is shown to them and to nobody else.
+//   Personal stays the default, and approval is unchanged: a team playbook runs only from a version an Owner or Admin
+//   approved.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useId, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, TextField } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useSession } from '../../shell/index.js';
@@ -23,13 +28,11 @@ import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from '../admin/lib/ui.js';
-import { LEAD_STAGE_LABEL } from '../people/api.js';
+import { useStageGuide } from '../people/stageGuide.js';
 import { AiPolicyNotice, isAiIsaPlaybook } from '../aiCare/Policy.js'; // module 76 (flagged edit)
 import { ALERTS_HEADING, type AutoEnrollSetting, type DelayUnit, ISA_POLICY_ELSEWHERE, KIND_LABEL, READ_ONLY_ALERTS, isElsewherePlaybook, isReadOnlyPlaybook, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
 
 const PLAYBOOKS_KEY = ['assistant', 'playbooks'] as const;
-/** The tenant's stage labels (module 57's GET /stage-labels): the same cache Admin → Stage labels refreshes on save. */
-const STAGE_LABELS_KEY = ['settings', 'stage-labels'] as const;
 
 export function PlaybooksPage() {
   const api = useApi();
@@ -37,9 +40,14 @@ export function PlaybooksPage() {
   const role = session?.tenant?.role;
   const navigate = useNavigate();
   const q = useQuery<{ playbooks: Playbook[] }, ApiError>({ queryKey: PLAYBOOKS_KEY, queryFn: ({ signal }) => api.get('/playbooks', { signal }) });
-  const create = useAction<{ templateKey: string }, { playbook: Playbook }>('POST', { invalidate: [[...PLAYBOOKS_KEY]] });
+  const create = useAction<{ templateKey: string; scope?: 'team' }, { playbook: Playbook }>('POST', { invalidate: [[...PLAYBOOKS_KEY]] });
+  const mayTeam = role === 'owner' || role === 'admin';
+  const [forTeam, setForTeam] = useState(false);
+  const whoId = useId();
   const allowed = TEMPLATES.filter((t) => t.scope === 'agent' || role === 'owner' || role === 'admin');
   const [pick, setPick] = useState(allowed[0]?.key ?? '');
+  // only a plan that is personal by default can be made the team's here; the others are the team's already
+  const teamChoice = mayTeam && allowed.find((t) => t.key === pick)?.scope === 'agent';
   const list = (q.data?.playbooks ?? []).filter((p) => !isElsewherePlaybook(p)); // b12 review ui-3
   const team = list.filter((p) => p.scope === 'team' && !isReadOnlyPlaybook(p));
   const mine = list.filter((p) => p.scope === 'agent' && !isReadOnlyPlaybook(p));
@@ -61,21 +69,50 @@ export function PlaybooksPage() {
             className="flex flex-col gap-2 sm:flex-row sm:items-end"
             onSubmit={async (e) => {
               e.preventDefault();
-              const r = await create.run('/playbooks', { templateKey: pick });
+              const r = await create.run('/playbooks', teamChoice && forTeam ? { templateKey: pick, scope: 'team' } : { templateKey: pick });
               if (r.ok) navigate(`/settings/playbooks/${r.data.playbook.id}`);
             }}
           >
-            <SelectField label="Start from" value={pick} onChange={(e) => setPick(e.target.value)} className="sm:flex-1">
+            <SelectField
+              label="Start from"
+              value={pick}
+              onChange={(e) => {
+                setPick(e.target.value);
+                setForTeam(false);
+              }}
+              className="sm:flex-1"
+            >
               {allowed.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.name} {t.scope === 'team' ? '(team)' : '(personal)'}
                 </option>
               ))}
             </SelectField>
+            {teamChoice ? (
+              <div role="radiogroup" aria-labelledby={whoId} className="flex flex-col gap-1 sm:flex-1">
+                <p id={whoId} className="text-[15px] font-medium text-ink">
+                  Who is it for
+                </p>
+                <div className="flex flex-wrap gap-x-4">
+                  {(
+                    [
+                      [false, 'Just me'],
+                      [true, 'For the whole team'],
+                    ] as const
+                  ).map(([team, label]) => (
+                    <label key={label} className="inline-flex min-h-tap cursor-pointer items-center gap-2 text-[16px] text-ink">
+                      <input type="radio" name={whoId} className="size-5 accent-[var(--accent)]" checked={forTeam === team} onChange={() => setForTeam(team)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <Button type="submit" variant="secondary" pending={create.pending} disabled={!pick}>
               Create draft
             </Button>
           </form>
+          {teamChoice && forTeam ? <p className="text-[14px] text-ink-muted">Everyone’s people can start it. It still runs only from a version an Owner or Admin approved.</p> : null}
           <ErrorLine message={create.error?.message} />
         </Section>
       ) : null}
@@ -164,11 +201,10 @@ function AutoEnrollStage({ playbook, onDone }: { playbook: Playbook; onDone(t: s
   const qc = useQueryClient();
   const key = [...PLAYBOOKS_KEY, playbook.id, 'auto-enroll-stage'];
   const q = useQuery<AutoEnrollSetting, ApiError>({ queryKey: key, queryFn: ({ signal }) => api.get(`/playbooks/${playbook.id}/auto-enroll-stage`, { signal }) });
-  const labels = useQuery<{ stages: { key: string; label: string }[] }, ApiError>({ queryKey: STAGE_LABELS_KEY, queryFn: ({ signal }) => api.get('/stage-labels', { signal }), staleTime: 60_000 });
+  // the tenant's stage labels (GET /stage-labels): the same cache Admin → Stage labels refreshes on save (R-STG-1)
+  const { stages, labelOf } = useStageGuide();
   const save = useAction<{ stage: string | null }, Pick<AutoEnrollSetting, 'playbook'>>('PUT', { invalidate: [key] });
   const [pick, setPick] = useState<string | null>(null);
-  const stages = labels.data?.stages ?? Object.entries(LEAD_STAGE_LABEL).map(([k, label]) => ({ key: k, label }));
-  const labelOf = (k: string) => stages.find((s) => s.key === k)?.label ?? LEAD_STAGE_LABEL[k] ?? k;
   if (!q.data) return q.isError && q.error.code !== 'NOT_FOUND' ? <ErrorLine message={messageFor(q.error, ADMIN_MESSAGES)} /> : null;
   const saved = q.data.playbook.autoEnrollStage;
   if (!q.data.canChange) {

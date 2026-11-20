@@ -19,6 +19,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { withTenantTx } from '@realty/db';
 import { contactFacts } from '../comms/repos/contacts.js';
+import { suggestedStageInTx } from '../people/stageSuggestion.js';
 import { syncReviewCards } from '../marketing/cards.js';
 import { systemActor } from '../worker/systemActor.js';
 import { authorize } from '../rbac.js';
@@ -59,7 +60,7 @@ import {
 import { listNotifications, listPreferences, markRead, putPreference } from './notifications.js';
 import * as S from './schemas.js';
 import { search } from './search.js';
-import { createTask, listTasks, taskById, updateTask } from './tasks.js';
+import { createTaskOnce, listTasks, taskById, updateTask } from './tasks.js';
 
 const idOf = (req: FastifyRequest) => (req.params as { id: string }).id;
 const facts = <T>(req: FastifyRequest, fn: (tx: Tx) => Promise<T>) => wsTx(req, (tx) => fn(tx));
@@ -83,10 +84,14 @@ async function register(app: FastifyInstance): Promise<void> {
   r.get('/tasks', { config: { auth: 'self' }, schema: { querystring: S.TasksQuery, response: { 200: S.TasksResponse } } }, async (req) => ({
     tasks: await wsTx(req, (tx, _now, actor) => listTasks(tx, actor, app.platform.envelope, req.query)),
   }));
-  r.post('/tasks', { config: { auth: 'self' }, schema: { body: S.CreateTaskBody, response: { 201: S.TaskResponse } } }, async (req, reply) => {
-    const task = await wsTx(req, async (tx, _now, actor) => taskById(tx, actor, app.platform.envelope, await createTask(tx, actor, app.platform.ids, req.body)));
-    reply.code(201);
-    return { task };
+  // R-STG-6: an optional client-generated `id` makes the create idempotent (201 the first time, 200 and replayed after)
+  r.post('/tasks', { config: { auth: 'self' }, schema: { body: S.CreateTaskBody, response: { 201: S.CreateTaskResponse, 200: S.CreateTaskResponse } } }, async (req, reply) => {
+    const out = await wsTx(req, async (tx, _now, actor) => {
+      const made = await createTaskOnce(tx, actor, app.platform.ids, req.body);
+      return { task: await taskById(tx, actor, app.platform.envelope, made.id), replayed: made.replayed };
+    });
+    reply.code(out.replayed ? 200 : 201);
+    return out;
   });
   r.get('/tasks/:id', { config: { auth: 'self' }, schema: { params: S.IdParams, response: { 200: S.TaskResponse } } }, async (req) => ({
     task: await wsTx(req, (tx, _now, actor) => taskById(tx, actor, app.platform.envelope, req.params.id)),
@@ -113,12 +118,18 @@ async function register(app: FastifyInstance): Promise<void> {
       return appointmentById(tx, req.params.id);
     }),
   }));
-  r.post('/appointments/:id/outcome', { config: { auth: 'self' }, schema: { params: S.IdParams, body: S.OutcomeBody, response: { 200: S.AppointmentResponse } } }, async (req) => ({
-    appointment: await wsTx(req, async (tx, now, actor) => {
+  // R-STG-2: the answer also carries the stage this result suggests, read after the outcome is written, as the caller
+  // (their RLS) and by the same function as the two other outcome routes (people/stageSuggestion.ts). It is only a
+  // suggestion to confirm: this route never changes a stage. Only a signed agreement suggests one ("active"), and
+  // only for a person in an earlier stage whom the caller may edit; an appointment with no person suggests nothing.
+  r.post('/appointments/:id/outcome', { config: { auth: 'self' }, schema: { params: S.IdParams, body: S.OutcomeBody, response: { 200: S.AppointmentOutcomeResponse } } }, async (req) =>
+    wsTx(req, async (tx, now, actor) => {
       await logOutcome(tx, actor, req.params.id, req.body, now);
-      return appointmentById(tx, req.params.id);
+      const appointment = await appointmentById(tx, req.params.id);
+      const suggestedStage = appointment.contact ? await suggestedStageInTx(tx, actor, appointment.contact.id, { kind: 'appointment', result: req.body.result }) : null;
+      return { appointment, suggestedStage };
     }),
-  }));
+  );
 
   // ---- deals ----
   const dealView = authorize('deal.view', (req) => facts(req, (tx) => dealFacts(tx, idOf(req))));

@@ -1,5 +1,5 @@
 -- Batch 19, team-queue lane, review fixes (handoff visibility; findings M1 to M5 and L1 to L7 of the independent
--- review of draft pull request 15). DATA_MODEL R-TEAMQ-19 onward. Security notes: docs/ARCHITECTURE.md §21.74.
+-- review of draft pull request 15). DATA_MODEL R-TEAMQ-19 onward. Security notes: docs/ARCHITECTURE.md §21.78.
 --
 --   1. (M1, R-TEAMQ-20) lead_ownership_events.type gains 'sla_restored'. The waiver of a covered source's
 --      auto-release (0107's `sla_waived`, which clears the stored release deadline) is re-evaluated, not one-shot:

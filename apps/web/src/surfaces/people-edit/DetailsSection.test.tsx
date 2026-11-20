@@ -15,24 +15,13 @@ import { FakeFetch, err, sessionFixture, tableWith } from '../../shell/testing/f
 import type { Details } from './api.js';
 import { DetailsSection } from './DetailsSection.js';
 import { ToastProvider } from './hooks.js';
+import { detailsFixture } from './testing.js';
 
 const C = '01900000-0000-7000-8000-0000000c0001';
 const A = '01900000-0000-7000-8000-0000000a0001';
 const B = '01900000-0000-7000-8000-0000000a0002';
 const addr = (id: string, line1: string) => ({ id, kind: 'home', line1, line2: null, city: 'Oakland', region: 'CA', postalCode: '94610', country: 'US' });
-const details = (): Details => ({
-  contactId: C,
-  rowVersion: 1,
-  doNotContact: false,
-  stage: { stage: 'new', label: 'New', locked: [], lockedReason: null },
-  stageLabels: {},
-  addresses: [addr(A, '1 Alpha St'), addr(B, '2 Beta St')],
-  collaborators: [],
-  relationships: [],
-  removedPoints: [],
-  canEdit: true,
-  canManageCollaborators: false,
-});
+const details = (): Details => detailsFixture(C, 'new', { addresses: [addr(A, '1 Alpha St'), addr(B, '2 Beta St')] });
 const del = (id: string) => `DELETE /contacts/${C}/addresses/${id}`;
 const restore = (id: string) => `POST /contacts/${C}/addresses/${id}/restore`;
 const token = (id: string) => `sealed-token-for-${id}`;

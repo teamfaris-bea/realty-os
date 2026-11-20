@@ -272,6 +272,8 @@ export interface CallOutcomeResponse {
   callId: string;
   outcome: string;
   recordedAs: 'call' | 'task_for_current_owner';
+  /** R-STG-2: the stage this outcome suggests, to confirm (the route never changes a stage); null: nothing */
+  suggestedStage?: { stage: string; why: string; locked: boolean; alsoOffer: { stage: string; locked: boolean }[] } | null;
 }
 
 // ---- assistant (GET /assistant/inbox, approve, claims, saved searches) --------------------------
