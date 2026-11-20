@@ -1,4 +1,4 @@
-// a8-policy (R-ISA-33, R-ISA-34; E910, E911, E913): the team starts with NO AI policy. The Owner creates it from the
+// a8-policy (R-ISA-33, R-ISA-34; E1000, E1001, E1003): the team starts with NO AI policy. The Owner creates it from the
 // defaults and approves it with the served text (the password); an agent opts in and starts AI care for one lead by
 // hand; the Owner edits the policy so the assistant may do more, reads the banner, and approves; AI care is paused and
 // the agent is asked to re-confirm, with what was added; after they do, care is on again. Nothing reaches a client at
@@ -30,7 +30,7 @@ const outbound = async () => Number((await stack.sql<{ n: string }>(`SELECT coun
 const care = async () => (await stack.sql<{ paused: boolean; reason: string | null; ended: boolean }>(`SELECT paused_at IS NOT NULL AS paused, pause_reason AS reason, ended_at IS NOT NULL AS ended FROM ai_isa_assignments
   WHERE contact_id = $1 ORDER BY started_at DESC LIMIT 1`, [lead.id]))[0]!;
 
-test('E910 E911: the Owner creates the policy from the defaults and approves it with the served text', async ({ page }) => {
+test('E1000 E1001: the Owner creates the policy from the defaults and approves it with the served text', async ({ page }) => {
   test.setTimeout(240_000);
   expect((await stack.sql(`SELECT 1 FROM playbooks WHERE tenant_id = $1 AND kind = 'ai_isa'`, [w.tenantId])).length).toBe(0);
   await signInAs(page, stack, w.owner);
@@ -63,7 +63,7 @@ test('E910 E911: the Owner creates the policy from the defaults and approves it 
   await expectNoCode(page);
 });
 
-test('E911: an agent reads the approved policy, opts in, and starts AI care for one lead by hand', async ({ page }) => {
+test('E1001: an agent reads the approved policy, opts in, and starts AI care for one lead by hand', async ({ page }) => {
   test.setTimeout(240_000);
   await signInAs(page, stack, w.agents[0]!);
   await page.goto(`${stack.webUrl}/settings/ai-assistant`);
@@ -83,7 +83,7 @@ test('E911: an agent reads the approved policy, opts in, and starts AI care for 
   expect(await care()).toMatchObject({ paused: false, ended: false });
 });
 
-test('E913: the Owner edits the policy so the assistant may do more, reads the banner, approves; AI care pauses and nothing is sent', async ({ page }) => {
+test('E1003: the Owner edits the policy so the assistant may do more, reads the banner, approves; AI care pauses and nothing is sent', async ({ page }) => {
   test.setTimeout(240_000);
   await signInAs(page, stack, w.owner);
   await page.goto(`${stack.webUrl}/settings/ai-assistant/team`);
@@ -116,7 +116,7 @@ test('E913: the Owner edits the policy so the assistant may do more, reads the b
   await expectNoCode(page);
 });
 
-test('E913: the agent is asked to re-confirm, with what was added; care shows paused until they do, then it is on again', async ({ page }) => {
+test('E1003: the agent is asked to re-confirm, with what was added; care shows paused until they do, then it is on again', async ({ page }) => {
   test.setTimeout(240_000);
   await signInAs(page, stack, w.agents[0]!);
   await page.goto(`${stack.webUrl}/contacts/${lead.id}`);

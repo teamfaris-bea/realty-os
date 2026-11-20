@@ -1,5 +1,5 @@
-// The team AI policy on "AI assistant (ISA)" (/settings/ai-assistant/team; Owner and Admin; R-ISA-33, R-ISA-34; E910 to
-// E916; docs/AI_ISA.md §3.2, §10.1). Everything this card says is an answer of GET /admin/ai-isa/policy:
+// The team AI policy on "AI assistant (ISA)" (/settings/ai-assistant/team; Owner and Admin; R-ISA-33, R-ISA-34; E1000 to
+// E1006; docs/AI_ISA.md §3.2, §10.1). Everything this card says is an answer of GET /admin/ai-isa/policy:
 // - the state sentence (no policy yet, draft only, approved, approved with a newer draft, revoked);
 // - each version in words by section (what the assistant may and may not do), written by core policySections;
 // - the draft's diff in words and what approving it does; a WIDER draft gets the banner before any tap;

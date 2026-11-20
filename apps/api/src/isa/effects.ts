@@ -50,7 +50,7 @@ export interface IsaContext {
 
 /** The facts one transition needs, read in `tx` (the policy content, the identity, the zones, the thread's team texts). */
 export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promise<IsaContext> {
-  // R-ISA-34 (E912): the content in effect, which is a narrower successor's from the moment it is approved
+  // R-ISA-34 (E1002): the content in effect, which is a narrower successor's from the moment it is approved
   const v = { rows: [await effectivePolicy(tx, a.playbookVersionId)] };
   const content = parseAiIsaContent(v.rows[0]?.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
   const id = await sql<{ first: string | null; team: string | null; brokerage: string; postal: string | null; tz: string; ctz: string | null; csrc: string | null }>`

@@ -171,7 +171,7 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
       hasMedia: r.media,
       consentMissing: consent.missing,
       zones,
-      // R-ISA-34 (E912): a message composed before a narrower version was approved is sent inside the narrower window too
+      // R-ISA-34 (E1002): a message composed before a narrower version was approved is sent inside the narrower window too
       windowStartSec: Math.max(sec(r.ws, ctx.content.window.startSec), ctx.content.window.startSec, 8 * 3600),
       windowEndSec: Math.min(sec(r.we, ctx.content.window.endSec), ctx.content.window.endSec, 20 * 3600),
       initiated,

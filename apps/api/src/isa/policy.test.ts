@@ -1,4 +1,4 @@
-// The team AI policy through its own routes (R-ISA-33, R-ISA-34; E910 to E916; docs/AI_ISA.md §3.2). Real Postgres via
+// The team AI policy through its own routes (R-ISA-33, R-ISA-34; E1000 to E1006; docs/AI_ISA.md §3.2). Real Postgres via
 // the API harness; fakes only (no real model, send, call or vendor). No playbook, version or approval row in this file
 // is written by the superuser pool: the superuser clears counsel's pack and reads back, nothing else.
 import { DEFAULT_AI_ISA_CONTENT, aiIsaPolicyApprovalText, aiIsaPolicyRevokeText } from '@realty/core/isa';
@@ -59,7 +59,7 @@ afterAll(async () => {
   await h?.close();
 });
 
-describe('R-ISA-33 create and draft (E910)', () => {
+describe('R-ISA-33 create and draft (E1000)', () => {
   it('with no policy the page says so, nothing can be approved, and nobody can opt in', async () => {
     const v = await view(w.owner);
     expect(v).toMatchObject({ state: 'none', approved: null, draft: null, revokeText: null, can: { create: true, saveDraft: false, approve: false, revoke: false } });
@@ -138,7 +138,7 @@ describe('R-ISA-33 create and draft (E910)', () => {
   });
 });
 
-describe('R-ISA-34 approve: link 4 passes on the real path (E911)', () => {
+describe('R-ISA-34 approve: link 4 passes on the real path (E1001)', () => {
   let lead: Awaited<ReturnType<typeof isaLead>>;
 
   it('the approval records who, their role, the content hash and the exact text; any other text or hash is refused', async () => {
@@ -178,7 +178,7 @@ describe('R-ISA-34 approve: link 4 passes on the real path (E911)', () => {
     expect((await assignmentOf(h, lead.id))!.paused_at).toBeNull();
   });
 
-  it('a narrower version takes effect at once: care continues, nobody re-confirms, and the narrower limits apply (E912)', async () => {
+  it('a narrower version takes effect at once: care continues, nobody re-confirms, and the narrower limits apply (E1002)', async () => {
     const saved = await saveDraft(w.owner, { ...D, caps: { ...(D.caps as object), ai24h: 2 } });
     expect(saved.body).toMatchObject({ state: 'approved_with_draft', draft: { versionNo: 2, effect: 'narrower', diff: { adds: [], removes: ['at most 2 AI messages per person in 24 hours (was 3)'], wider: false } } });
     expect(saved.body.draft!.effectSentence).toBe('This version lets the assistant do no more than the approved one. AI care continues under it at once.');
@@ -204,7 +204,7 @@ describe('R-ISA-34 approve: link 4 passes on the real path (E911)', () => {
     expect(await outbound(w.tenantId)).toBe(sent);
   });
 
-  it('a wider version says so before approval, pauses care when approved, and care continues only after the agent re-confirms (E913)', async () => {
+  it('a wider version says so before approval, pauses care when approved, and care continues only after the agent re-confirms (E1003)', async () => {
     const two = { ...D, caps: { ...(D.caps as object), ai24h: 2 } };
     const saved = await saveDraft(w.owner, { ...two, capabilities: ['converse', 'share_listings'] });
     const d = saved.body.draft!;
@@ -233,7 +233,7 @@ describe('R-ISA-34 approve: link 4 passes on the real path (E911)', () => {
     expect(await assignmentOf(h, lead.id)).toMatchObject({ paused_at: null, ended_at: null });
   });
 
-  it('a revoke by an Admin pauses care at once by the chain’s revoked path, sends nothing, and refuses a start (E914)', async () => {
+  it('a revoke by an Admin pauses care at once by the chain’s revoked path, sends nothing, and refuses a start (E1004)', async () => {
     const v = await view(admin);
     expect(v.can).toMatchObject({ revoke: true, approve: false });
     const body = { versionId: v.approved!.versionId, contentSha256: v.approved!.contentSha256, attestation: v.revokeText };
@@ -254,7 +254,7 @@ describe('R-ISA-34 approve: link 4 passes on the real path (E911)', () => {
     expect(me.body).toMatchObject({ policy: null, policyChange: { state: 'revoked' } });
   });
 
-  it('after a revoke, a new approval keeps care paused until the agent re-confirms, even when it allows less (E915)', async () => {
+  it('after a revoke, a new approval keeps care paused until the agent re-confirms, even when it allows less (E1005)', async () => {
     const saved = await saveDraft(w.owner, { ...D, channels: ['sms'] });
     expect(saved.body).toMatchObject({ state: 'revoked_with_draft', draft: { versionNo: 4, effect: 'after_revoke', diff: null } });
     const r = await approve(w.owner, saved.body.draft!);
@@ -267,7 +267,7 @@ describe('R-ISA-34 approve: link 4 passes on the real path (E911)', () => {
   });
 });
 
-describe('R-ISA-33 tenant isolation (E916)', () => {
+describe('R-ISA-33 tenant isolation (E1006)', () => {
   it('another team reads its own empty policy and cannot approve or revoke this team’s version', async () => {
     const other = await commsWorld(h, { agents: 1 });
     expect((await view(other.owner)).state).toBe('none');

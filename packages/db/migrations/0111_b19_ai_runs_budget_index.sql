@@ -1,5 +1,5 @@
 -- Batch 19, review F5: the AI assistant's daily model-call budgets are counted through an index
--- (docs/AI_ISA.md §3.7; DATA_MODEL E796).
+-- (docs/AI_ISA.md §3.7; DATA_MODEL E906).
 --
 --   Before every provider call an AI assistant turn reserves the call (apps/api isa/spend.ts): under the team's
 --   model-budget advisory lock it counts today's ai_runs rows of purpose 'ai_isa_turn' (the team-local day) and inserts
@@ -22,10 +22,10 @@ CREATE INDEX ai_runs_purpose_created_idx ON ai_runs (tenant_id, purpose, created
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.ai_runs'::regclass AND c.relrowsecurity) THEN
-    RAISE EXCEPTION '0106: ai_runs must keep row-level security';
+    RAISE EXCEPTION '0111: ai_runs must keep row-level security';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'ai_runs' AND indexname = 'ai_runs_purpose_created_idx'
                    AND indexdef LIKE '%(tenant_id, purpose, created_at)%') THEN
-    RAISE EXCEPTION '0106: ai_runs_purpose_created_idx (tenant_id, purpose, created_at) is missing';
+    RAISE EXCEPTION '0111: ai_runs_purpose_created_idx (tenant_id, purpose, created_at) is missing';
   END IF;
 END $$;

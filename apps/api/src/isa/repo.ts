@@ -230,7 +230,7 @@ export async function versionState(tx: Tx, versionId: string): Promise<'approved
 }
 
 /**
- * The policy content in effect for care bound to `versionId` (R-ISA-34, E912; docs/AI_ISA.md §3.2 "narrowing-only").
+ * The policy content in effect for care bound to `versionId` (R-ISA-34, E1002; docs/AI_ISA.md §3.2 "narrowing-only").
  * The bound version's own content, unless it was superseded by narrowing versions only: then the content of the version
  * approved now, which by construction allows no more than the bound one, so a narrower rule applies from its approval
  * and nobody re-confirms. The condition is link 4's `narrowed` (versionState) word for word. `sha` names the version

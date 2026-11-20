@@ -1,5 +1,5 @@
-// The team AI policy in words, its field list, its diff and the texts an approver accepts (R-ISA-33, R-ISA-34; E910 to
-// E913; docs/AI_ISA.md §3.2).
+// The team AI policy in words, its field list, its diff and the texts an approver accepts (R-ISA-33, R-ISA-34; E1000 to
+// E1003; docs/AI_ISA.md §3.2).
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { type AiIsaContent, DEFAULT_AI_ISA_CONTENT, narrowsPrevious, validateAiIsaContent } from './content.js';
@@ -106,7 +106,7 @@ describe('R-ISA-33 the policy in words, by section', () => {
   });
 });
 
-describe('R-ISA-34 the diff in words and whether it is wider (E911, E912)', () => {
+describe('R-ISA-34 the diff in words and whether it is wider (E1001, E1002)', () => {
   it('says each addition and each removal', () => {
     const d = policyDiff(D, withC({ capabilities: ['converse', 'book_appointments'], channels: ['sms'] }));
     expect(d.adds).toEqual(['may propose appointment times and book them on the agent’s calendar']);

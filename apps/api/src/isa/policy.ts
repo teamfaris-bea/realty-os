@@ -1,4 +1,4 @@
-// The team AI policy: create, save a draft, approve, revoke (R-ISA-33, R-ISA-34; E910 to E916; docs/AI_ISA.md §3.2).
+// The team AI policy: create, save a draft, approve, revoke (R-ISA-33, R-ISA-34; E1000 to E1006; docs/AI_ISA.md §3.2).
 //
 // - Storage is the playbook tables as they are (no migration): one `playbooks` row of kind ai_isa, team scope; each
 //   `playbook_versions.steps` holds one AiIsaContent; a decision is one append-only `playbook_approvals` row with the

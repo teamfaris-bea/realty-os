@@ -74,7 +74,7 @@ export async function modelBudgetDay(tx: Tx): Promise<{ start: Date; reset: Date
  * The count of the day's reserved calls: the team's, and those of the person `contactId` belongs to. It runs under the
  * team model-budget lock, so it must stay short at any ledger size: the day's bounds are parameters (modelBudgetDay,
  * read first in the same transaction), so ai_runs is read through ai_runs_purpose_created_idx (tenant_id, purpose,
- * created_at; migration 0106) for the day's `ai_isa_turn` rows only, never the tenant's whole ledger
+ * created_at; migration 0111) for the day's `ai_isa_turn` rows only, never the tenant's whole ledger
  * (spend.index.test.ts holds the plan to that).
  */
 export function modelBudgetUsageSql(contactId: string, day: { start: Date; reset: Date }) {

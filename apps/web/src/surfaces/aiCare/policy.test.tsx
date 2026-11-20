@@ -1,4 +1,4 @@
-// The team AI policy on the web (R-ISA-33, R-ISA-34; E910 to E916): the Owner's and Admin's team page (honest states,
+// The team AI policy on the web (R-ISA-33, R-ISA-34; E1000 to E1006): the Owner's and Admin's team page (honest states,
 // the form built from the validator's field list, the diff in words, the wider banner, the served texts) and the
 // agent's read-only view with what changed since they confirmed.
 import { DEFAULT_AI_ISA_CONTENT, type AiIsaContent } from '@realty/core/isa';
@@ -26,7 +26,7 @@ describe('the fixtures say only what the API can (webContract.json)', () => {
 });
 
 describe('AI assistant (ISA): the team policy (/settings/ai-assistant/team)', () => {
-  it('E910 no policy yet: the page says so and the Owner creates it from the defaults; nothing claims it is approved', async () => {
+  it('E1000 no policy yet: the page says so and the Owner creates it from the defaults; nothing claims it is approved', async () => {
     const fake = new FakeFetch().on('GET /admin/ai-isa/policy', { status: 200, body: none() }).on('POST /admin/ai-isa/policy', { status: 201, body: { created: true, policy: draftOnly() } });
     team(fake);
     expect(await screen.findByText('Your team has no AI assistant policy yet. Nothing is sent by the assistant, and no agent can opt in, until one is approved.')).toBeInTheDocument();
@@ -39,7 +39,7 @@ describe('AI assistant (ISA): the team policy (/settings/ai-assistant/team)', ()
     expect(document.body.textContent).not.toMatch(/not built yet/);
   });
 
-  it('E910 draft only: what it may and may not do, by section; the Owner approves with the served text in full, ticked, sent verbatim', async () => {
+  it('E1000 draft only: what it may and may not do, by section; the Owner approves with the served text in full, ticked, sent verbatim', async () => {
     const v = draftOnly();
     const approved = policyView({ approved: policyVersion(D) });
     const fake = new FakeFetch().on('GET /admin/ai-isa/policy', { status: 200, body: v })
@@ -74,7 +74,7 @@ describe('AI assistant (ISA): the team policy (/settings/ai-assistant/team)', ()
     expect(screen.getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
   });
 
-  it('E913 a WIDER draft: the diff in words, the banner before any tap, and an approve that says it pauses AI care', async () => {
+  it('E1003 a WIDER draft: the diff in words, the banner before any tap, and an approve that says it pauses AI care', async () => {
     const v = withDraft(BOOKING);
     const fake = new FakeFetch().on('GET /admin/ai-isa/policy', { status: 200, body: v })
       .on('POST /admin/ai-isa/policy/approve', { status: 200, body: { effect: 'wider', careContinues: false, pausedCare: 2, agentsToReconfirm: 1, sentence: 'Approved. AI care is paused for 2 people until their agent re-confirms. Nothing was sent to anyone.', replayed: false, policy: policyView() } });
@@ -94,7 +94,7 @@ describe('AI assistant (ISA): the team policy (/settings/ai-assistant/team)', ()
     await waitFor(() => expect(screen.getByTestId('policy-line').textContent).toBe('Approved. AI care is paused for 2 people until their agent re-confirms. Nothing was sent to anyone.'));
   });
 
-  it('E912 a NARROWER draft: what it removes, no banner, and a plain approve', async () => {
+  it('E1002 a NARROWER draft: what it removes, no banner, and a plain approve', async () => {
     team(new FakeFetch().on('GET /admin/ai-isa/policy', { status: 200, body: withDraft(FEWER) }));
     const draft = within(await screen.findByTestId('policy-draft'));
     expect(draft.getByText('Removes: no longer writes by email.')).toBeInTheDocument();
@@ -142,7 +142,7 @@ describe('AI assistant (ISA): the team policy (/settings/ai-assistant/team)', ()
     expect(screen.queryByRole('form', { name: 'Edit the team policy' })).toBeNull();
   });
 
-  it('E914 Revoke: the confirm says what stops, shows the served text, and sends it verbatim', async () => {
+  it('E1004 Revoke: the confirm says what stops, shows the served text, and sends it verbatim', async () => {
     const v = policyView();
     const revoked = policyView({ state: 'revoked', sentence: 'Version 1 was revoked. AI care is paused for every lead. Save and approve a new version to let agents re-confirm.', approved: null, revoked: policyVersion(D, { decidedByRole: 'Admin' }),
       can: { create: false, saveDraft: true, approve: false, revoke: false } });
@@ -194,7 +194,7 @@ describe('My AI assistant: the team policy, read-only (/settings/ai-assistant)',
     expect(screen.queryByTestId('my-policy-change')).toBeNull();
   });
 
-  it('E912 narrowed since they confirmed: what was removed, care continues, and no re-attest is demanded', async () => {
+  it('E1002 narrowed since they confirmed: what was removed, care continues, and no re-attest is demanded', async () => {
     const change = { state: 'narrowed' as const, fromVersionNo: 1, diff: { adds: [], removes: ['no longer writes by email'], rewords: [], wider: false },
       sentence: 'The team narrowed the AI rules since you confirmed them. AI care for your leads continues under the narrower rules. To start AI care for another lead, confirm the current version.' };
     const me = meView({ optIn: optIn({ versionId: POLICY_IDS.v1 }), needsReattest: false, policyChange: change, sentence: change.sentence, underCare: 2 });
@@ -207,7 +207,7 @@ describe('My AI assistant: the team policy, read-only (/settings/ai-assistant)',
     expect(screen.queryByRole('heading', { name: 'Re-attest' })).toBeNull();
   });
 
-  it('E913 widened since they confirmed: what was added, care is paused, and the re-attest card is there', async () => {
+  it('E1003 widened since they confirmed: what was added, care is paused, and the re-attest card is there', async () => {
     const change = { state: 'widened' as const, fromVersionNo: 1, diff: { adds: ['may propose appointment times and book them on the agent’s calendar'], removes: [], rewords: [], wider: true },
       sentence: 'The team changed the AI rules since you confirmed them, and the new version lets the assistant do more. AI care for your leads is paused until you confirm it.' };
     isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView({ optIn: optIn({ versionId: POLICY_IDS.v1 }), needsReattest: true, policyChange: change, sentence: change.sentence, underCare: 1 }) })
