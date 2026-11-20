@@ -521,6 +521,26 @@ describe('performance', () => {
 // ---- R-LEM-9 R-LEM-10 R-LEM-11 (SYNTHETIC fixtures) -------------------------------------------------------------
 
 const html = (h: string, senderDomain: string | null = 'unknown-sender.test', text: string | null = null): ParseInput => ({ subject: 'New lead', text, html: h, senderDomain });
+/** a clean declaration */
+const VERSION_TAG = '<meta name="lead_information_version" content="1.0">';
+const NAME_TAG = '<meta name="lead_name" content="Quinn Real">';
+const PHONE_TAG = '<meta name="lead_phone" content="555-555-0122">';
+/** what a vendor's template makes of a lead_email tag typed into a form field: text, never a tag */
+const ESCAPED_TAG = '&lt;meta name="lead_email" content="attacker@example.test"&gt;';
+/** what the scanner read: the declared flag, the values by name, the conflicting names */
+const readOf = (h: string) => {
+  const s = scanLeadMetadata(h);
+  return { declared: s.declared, values: Object.fromEntries(s.values.map((v) => [v.name, v.value])), conflicts: s.conflicts };
+};
+const emailsOf = (r: ParseResult) => (leadOf(r)?.emails ?? []).map((e) => e.value);
+/** the email is declared, reads exactly `values`, and is held on `conflicts`: never ok, no email at all */
+const expectHeld = (h: string, conflicts: string[], values: Record<string, string> = {}) => {
+  expect(readOf(h), h).toEqual({ declared: true, values, conflicts });
+  const r = parseLeadEmail(html(h));
+  expect(r, h).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT' });
+  expect(emailsOf(r), h).toEqual([]);
+  expectSpans(r);
+};
 
 describe('R-LEM-9 catalog portals without a vendor parser', () => {
   it('R-LEM-9 E332: a labelled email from each catalog portal parses as generic; unlabelled is held UNKNOWN_FORMAT; their own addresses are never a lead’s', () => {
@@ -620,9 +640,180 @@ describe('R-LEM-10 leadmetadata.org meta tags', () => {
     expectSpans(r);
   });
 
+  it('E331: an unclosed meta tag cannot take escaped text that follows it as its attributes', () => {
+    // The fuzz test below found this once (fast-check seed -37172102, path "118:3:6:10:9", shrunk). The unclosed
+    // "<meta " runs to the next '>', so the escaped text (what a vendor's template makes of markup a lead typed into
+    // a form field) supplied its name= and content=.
+    const doc = [VERSION_TAG, '<meta ', ESCAPED_TAG, VERSION_TAG].join('');
+    const r = parseLeadEmail({ subject: null, text: null, html: doc, senderDomain: 'x.test', forwardedOnly: false });
+    expect((leadOf(r)?.emails ?? []).map((e) => e.value)).toEqual([]);
+    expect(r.text).not.toContain('lead_email: ');
+    const scan = scanLeadMetadata(doc);
+    expect(scan.values.map((v) => v.name)).not.toContain('lead_email');
+    // the first version tag is clean, so the email is declared; the malformed tag claims lead_email, which is
+    // therefore a conflict: nothing is read from it and the email is held
+    expect(scan).toEqual({ declared: true, values: [], conflicts: ['lead_email'] });
+    expect(r).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT', partial: null });
+  });
+
+  // The attacker's cases. The text a lead types reaches the email entity-escaped (no raw '<' or '>'), possibly with
+  // its quotes left as they are. Each case states what is read and why.
+
+  it('E331: escaped text before, between and after real tags is text: the tags read as if it were not there', () => {
+    // no tag is open where the text sits, so it never reaches a tag's attribute region
+    const without = [VERSION_TAG, NAME_TAG, PHONE_TAG].join('');
+    const withText = [ESCAPED_TAG, VERSION_TAG, ESCAPED_TAG, NAME_TAG, ESCAPED_TAG, PHONE_TAG, ESCAPED_TAG].join('');
+    expect(readOf(withText)).toEqual({ declared: true, values: { lead_name: 'Quinn Real', lead_phone: '555-555-0122' }, conflicts: [] });
+    expect(scanLeadMetadata(withText)).toEqual(scanLeadMetadata(without));
+    const r = parseLeadEmail(html(withText));
+    expect(okLead(r).phones.map((p) => p.value)).toEqual(['555-555-0122']);
+    expect(emailsOf(r)).toEqual([]);
+    expectSpans(r);
+  });
+
+  it('E331: an unclosed meta tag before, between or after real tags: the escaped text it takes is never read, and the tags it swallows are not read either', () => {
+    // between: the open tag runs to the '>' of the phone tag. It claims lead_email, so lead_email is a conflict
+    // and the email is held; the name tag before it is clean and stays in the held partial; the phone is gone
+    expectHeld([VERSION_TAG, NAME_TAG, '<meta ', ESCAPED_TAG, PHONE_TAG].join(''), ['lead_email'], { lead_name: 'Quinn Real' });
+    // before: the open tag swallows the declaration itself. Only a clean tag declares, so nothing is read at all
+    const before = ['<meta ', ESCAPED_TAG, VERSION_TAG, NAME_TAG, PHONE_TAG].join('');
+    expect(readOf(before)).toEqual({ declared: false, values: {}, conflicts: [] });
+    expect(parseLeadEmail(html(before))).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+    // after, at the very end of the document: the tag never closes, so it is no tag; what came before is read
+    for (const tail of ['<meta ', '<meta ' + ESCAPED_TAG, '<meta name="lead_email" content="attacker@example.test"', '<meta name="lead_email" content="attacker@example.test', '<meta']) {
+      const doc = [VERSION_TAG, NAME_TAG, tail].join('');
+      expect(readOf(doc), tail).toEqual({ declared: true, values: { lead_name: 'Quinn Real' }, conflicts: [] });
+      expect(parseLeadEmail(html(doc)), tail).toMatchObject({ ok: false, reason: 'NO_CONTACT_POINT', partial: { name: { value: 'Quinn Real' }, emails: [] } });
+    }
+  });
+
+  it('E331: the escaped text is refused however it is written: single quotes, no quotes, content first, uppercase, a slash, newlines, tabs and form feeds', () => {
+    // in every form the open tag's first attribute name starts with '&' (not a plain name), so the tag is not clean
+    const forms = [
+      "&lt;meta name='lead_email' content='attacker@example.test'&gt;",
+      '&lt;meta name=lead_email content=attacker@example.test&gt;',
+      '&lt;meta content="attacker@example.test" name="lead_email"&gt;',
+      '&LT;META NAME="LEAD_EMAIL" CONTENT="attacker@example.test"&GT;',
+      '&lt;meta name="lead_email" content="attacker@example.test" /&gt;',
+      '&lt;meta name="lead_email" content="attacker@example.test"/&gt;',
+      '&lt;meta\nname="lead_email"\tcontent="attacker@example.test"\f&gt;',
+      '&lt;meta\r\n\tname="lead_email"\f\fcontent="attacker@example.test"\n&gt;',
+      '&#60;meta name="lead_email" content="attacker@example.test"&#62;',
+      '&#x3c;meta name="lead_email" content="attacker@example.test"&#x3E;',
+      '&lt;meta name="lead_email" content="attacker@example.test" x=">"&gt;',
+    ];
+    // '<meta' with the text glued to it is scanned as a meta tag too (the tag name ends at the '&'), so it is held as well
+    for (const open of ['<meta ', '<meta\t', '<meta\n', '<meta\f', '<META ', '<meta /', '<meta/', '<meta']) {
+      for (const f of forms) expectHeld([VERSION_TAG, NAME_TAG, open, f, PHONE_TAG].join(''), ['lead_email'], { lead_name: 'Quinn Real' });
+    }
+  });
+
+  it('E331: whitespace, a self-closing slash, uppercase and either attribute order are not the trigger: such clean tags are still read', () => {
+    const legit = [
+      '<meta\n\tname="lead_email"\f\r\ncontent="ws@example.test"\n>',
+      '<meta name="lead_email" content="ws@example.test" />',
+      '<meta name="lead_email" content="ws@example.test"/>',
+      '<META CONTENT="ws@example.test" NAME="LEAD_EMAIL">',
+      "<meta content='ws@example.test' name='lead_email' data-x='1' itemprop=x>",
+      '<meta name=lead_email content=ws@example.test>',
+    ];
+    for (const t of legit) {
+      expect(readOf(VERSION_TAG + t), t).toEqual({ declared: true, values: { lead_email: 'ws@example.test' }, conflicts: [] });
+      expect(emailsOf(parseLeadEmail(html(VERSION_TAG + t))), t).toEqual(['ws@example.test']);
+    }
+  });
+
+  it('E331: a quoted value may hold anything (a ">", a "<", escaped tags): it is that value and nothing else, and it never closes or opens a tag', () => {
+    // inside quotes the text is the value of the attribute the vendor put it in: a message stays a message
+    const doc = [VERSION_TAG, PHONE_TAG, `<meta name="lead_message" content='a > b < c ${ESCAPED_TAG}'>`].join('');
+    expect(readOf(doc)).toEqual({ declared: true, values: { lead_phone: '555-555-0122', lead_message: 'a > b < c <meta name="lead_email" content="attacker@example.test">' }, conflicts: [] });
+    const r = parseLeadEmail(html(doc));
+    expect(okLead(r).message?.value).toBe('a > b < c <meta name="lead_email" content="attacker@example.test">');
+    expect(emailsOf(r)).toEqual([]);
+    expectSpans(r);
+    // a quoted '>' does not close an open tag, so the text after it is still inside the tag: not clean
+    expectHeld([VERSION_TAG, '<meta data-x=">" ', ESCAPED_TAG, PHONE_TAG].join(''), ['lead_email']);
+    // a value left open ends at the next quote; the text after that quote is at tag level (lead_email" is no name)
+    expectHeld([VERSION_TAG, '<meta name="lead_phone" content="', ESCAPED_TAG, '">'].join(''), ['lead_phone']);
+    expectHeld([VERSION_TAG, '<meta name="lead_email" content="', ESCAPED_TAG, PHONE_TAG].join(''), ['lead_email']);
+  });
+
+  it('E331: a value that breaks out of its quotes cannot rename its tag or replace its value: name or content twice is not read', () => {
+    // what <meta content="{{message}}" name="lead_message"> becomes when the template leaves quotes unescaped and
+    // the lead types: attacker@example.test" name="lead_email" x="   — the first name would have won
+    expectHeld(`${VERSION_TAG}${NAME_TAG}<meta content="attacker@example.test" name="lead_email" x="" name="lead_message">`, ['lead_email'], { lead_name: 'Quinn Real' });
+    expectHeld(`${VERSION_TAG}<meta name="lead_name" name="lead_email" content="attacker@example.test">`, ['lead_name']);
+    // content twice: neither value is read (before, the first won)
+    expectHeld(`${VERSION_TAG}<meta name="lead_email" content="first@example.test" content="attacker@example.test">`, ['lead_email']);
+    expectHeld(`${VERSION_TAG}<meta name="lead_email" content="same@example.test" CONTENT="same@example.test">`, ['lead_email']);
+    // a clean tag of the same name does not rescue it: the name is in conflict, as with two different values (E596)
+    expectHeld(`${VERSION_TAG}<meta name="lead_email" content="real@example.test"><meta name="lead_email" content="real@example.test" content="x">`, ['lead_email']);
+    // any other attribute may repeat (first wins, as before): the tag is read
+    expect(readOf(`${VERSION_TAG}<meta class="a" class="b" name="lead_email" content="ok@example.test">`).values).toEqual({ lead_email: 'ok@example.test' });
+  });
+
+  it('E331: a "<", a quote or an entity for "<" or ">" in an unquoted value, in every spelling, is not read', () => {
+    const dirty = ['<b', 'a<b', 'Eve"x', "Eve'x", '&lt;b', '&LT;b', '&Lt;b', '&ltb', 'x&gt;', 'x&GT', '&#60;b', '&#060b', '&#0000060;', '&#62;', '&#x3c;b', '&#X3C;b', '&#x3Cg', '&#x003e;', '&#X3E'];
+    for (const v of dirty) expectHeld(`${VERSION_TAG}${PHONE_TAG}<meta name=lead_name content=${v}>`, ['lead_name'], { lead_phone: '555-555-0122' });
+    // an open unquoted value takes the escaped text: '&lt;meta' is its value, and name= then comes twice
+    expectHeld(`${VERSION_TAG}<meta name=lead_name content=${ESCAPED_TAG}${PHONE_TAG}`, ['lead_name']);
+    // other entities and other numbers are no angle bracket: an unquoted value with them is read as before
+    const fine: Array<[string, string]> = [['Tom&amp;Jerry', 'Tom&Jerry'], ['a&#600;b', 'aɘb'], ['a&#x3c0;b', 'aπb'], ['a&b', 'a&b'], ['a&#;b', 'a&#;b'], ['a=b', 'a=b']];
+    for (const [raw, value] of fine) expect(readOf(`${VERSION_TAG}<meta name=lead_name content=${raw}>`), raw).toEqual({ declared: true, values: { lead_name: value }, conflicts: [] });
+  });
+
+  it('E331: an attribute name that is not a plain name (a "<", "&", quote, NUL or other control character, a digit first, none at all) means the tag is not read', () => {
+    const bad = ['<p', '<meta', 'x<y', 'a&b', '&gt;', '"x"', "'x", 'x"', '9x', '-x', '\u0000', 'x\u0000y', '\u0001', '\u000B', '\u007F', '\u0085x', ' ', '‮x', '[x]', '@x', 'x.y', '="x"', 'a'.repeat(65)];
+    for (const a of bad) {
+      // the tag claims lead_email with a content, so it would have been read: now it is a conflict and held
+      expectHeld(`${VERSION_TAG}<meta name="lead_email" content="attacker@example.test" ${a}>`, ['lead_email']);
+      expectHeld(`${VERSION_TAG}<meta ${a} name="lead_email" content="attacker@example.test">`, ['lead_email']);
+    }
+    // an unclosed real tag before a real tag: '<meta' is the second tag's first "attribute"
+    expectHeld(`${VERSION_TAG}<meta <meta name="lead_email" content="real@example.test">`, ['lead_email']);
+    // a control character glued to name= or content= makes it another attribute: the tag then has no name (or no
+    // content), claims nothing, and is not read; nothing is held
+    for (const t of ['<meta\u0000name="lead_email" content="attacker@example.test">', '<meta \u0000name="lead_email" content="attacker@example.test">', '<meta name="lead_email"\u0000content="attacker@example.test">', '<meta name="lead_email" \u000Bcontent="attacker@example.test">']) {
+      expect(readOf(VERSION_TAG + NAME_TAG + t), JSON.stringify(t)).toEqual({ declared: true, values: { lead_name: 'Quinn Real' }, conflicts: [] });
+      expect(emailsOf(parseLeadEmail(html(VERSION_TAG + NAME_TAG + t)))).toEqual([]);
+    }
+    // plain names with '-', '_', ':' and digits are fine
+    expect(readOf(`${VERSION_TAG}<meta data-x1="1" xml:lang="en" a_b name="lead_email" content="ok@example.test">`).values).toEqual({ lead_email: 'ok@example.test' });
+  });
+
+  it('E331: a tag that is not clean never declares, and a declared email with one is held, not handed to the body labels', () => {
+    // the only declaration sits in a tag that is not clean: the email is not declared, the real tag it swallowed is
+    // not read, and the email is read like any email without tags
+    const undeclared = `<meta &lt;meta name="lead_information_version" content="1.0"&gt;<meta name="lead_email" content="ok@example.test">${NAME_TAG}`;
+    expect(readOf(undeclared)).toEqual({ declared: false, values: {}, conflicts: [] });
+    expect(parseLeadEmail(html(undeclared))).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+    // a declared email whose unclean tag claims the version: the version is in conflict
+    expectHeld(`${VERSION_TAG}${NAME_TAG}<meta &lt;meta name="lead_information_version" content="1.0"&gt;${PHONE_TAG}`, ['lead_information_version'], { lead_name: 'Quinn Real' });
+    // held means held: the labelled body is not read in its place (it would have made an ok generic lead)
+    const body = '<p>Name: Eve Body</p><p>Email: body@example.test</p><p>Phone: 555-555-0111</p>';
+    expect(okLead(parseLeadEmail(html(body))).format).toBe('generic');
+    const r = parseLeadEmail(html(`${VERSION_TAG}<meta ${ESCAPED_TAG}${PHONE_TAG}${body}`));
+    expect(r).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT', partial: null });
+    // a tag that is not clean but claims no name we read (or no lead_* name at all) changes nothing
+    for (const t of ['<meta name="viewport" content="width=device-width" content="x">', '<meta name="lead_unknown_field" content="a" content="b">', '<meta http-equiv=refresh content=0;url=<x>']) {
+      expect(readOf(VERSION_TAG + t + NAME_TAG + PHONE_TAG), t).toEqual({ declared: true, values: { lead_name: 'Quinn Real', lead_phone: '555-555-0122' }, conflicts: [] });
+    }
+  });
+
   it('E331: fuzz: never throws, spans hold, no attacker value is read from markup around real tags', () => {
     const piece = fc.oneof(
       fc.constantFrom('<meta name="lead_information_version" content="1.0">', '<meta name="lead_email" content="ok@example.test">', '<!--', '-->', '<script>', '</script>', '<title>', '</title>', '<textarea>', '</textarea>', '<style>', '</style>', '"', "'", '<', '>', '&lt;meta name="lead_email" content="attacker@example.test"&gt;', '<meta name="lead_phone" content="', '&#10;', '&amp;', '<meta ', 'content=', '='),
+      // tags left open in more ways, and the escaped text in more spellings (the case pinned above, in variants)
+      fc.constantFrom('<meta name="lead_email" content="', "<meta name='lead_email' content='", '<meta name=lead_name content=', '<meta\t', '<meta\n', '<META ', '<meta/', '<meta', 'name=', ' ', '\t', '\n', '\f', '/', '\u0000'),
+      fc.constantFrom(
+        '&#60;meta name="lead_email" content="attacker@example.test"&#62;',
+        '&#x3C;meta name="lead_email" content="attacker@example.test"&#x3e;',
+        "&lt;meta name='lead_email' content='attacker@example.test'&gt;",
+        '&lt;meta name=lead_email content=attacker@example.test&gt;',
+        '&lt;meta content="attacker@example.test" name="lead_email"&gt;',
+        '&LT;META NAME="lead_email" CONTENT="attacker@example.test"&GT;',
+        '&lt;meta\tname="lead_email"\ncontent="attacker@example.test"\f/&gt;',
+      ),
       fc.string({ unit: 'binary', maxLength: 12 }),
     );
     fc.assert(
@@ -634,8 +825,10 @@ describe('R-LEM-10 leadmetadata.org meta tags', () => {
         const l = leadOf(r);
         for (const e of l?.emails ?? []) expect(e.value).not.toContain('attacker');
         for (const [, f] of l ? fieldsOf(l) : []) expect(f.value).not.toMatch(FORBIDDEN);
+        // the scanner itself: the escaped address is never the value of a tag, whatever the email check would say
+        for (const v of scanLeadMetadata(input.html).values) expect(v.value).not.toBe('attacker@example.test');
       }),
-      { numRuns: 500 },
+      { numRuns: 10_000 },
     );
   });
 
