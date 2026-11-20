@@ -25,7 +25,7 @@
 // descriptor has it).
 import { createRequire } from 'node:module';
 import { type BrowserContext, type Locator, type Page, type TestInfo, devices, expect, test } from 'playwright/test';
-import { phoneProblems } from '../a11y/checks.js';
+import { phoneProblems, toastProblems } from '../a11y/checks.js';
 import { isPhone, shot, signIn, tap } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
 
@@ -538,4 +538,33 @@ test('J11.8 L16: the toast never covers the row of the person just logged: a row
       return toast === null || said === null ? true : said.y + said.height <= toast.y && said.y >= 0;
     }, { timeout: 5_000, message: 'the row’s lines end above the toast, and are still on screen' })
     .toBe(true);
+});
+
+test('J11.9 the one-pass toast on Today is in the page’s one stack of toasts: declared, on no bar, and every control of Today can be brought clear of it (E788)', async ({ page }) => {
+  // the stage flow's toast checks (a11y/checks.ts: toastProblems, phoneProblems), with THIS page's toast on screen:
+  // the four-result toast of a logged call with its "Undo stage change" button, which is taller than a stage toast
+  const wren = await stack.fixture<Person>('/j11/person', { as: 'a.agent0', first: 'Wren', last: 'Okafor' });
+  const t = await must(stack.api<{ task: { id: string } }>('a.agent0', 'POST', '/tasks', { title: 'Send the floor plan', contactId: wren.id, dueAt: new Date(Date.now() + 3_600_000).toISOString() }), 'task');
+  await stack.fixture('/j11/promise', { taskId: t.task.id, overdueMinutes: 1 });
+  await openToday(page);
+  await expect(row(page, wren)).toBeVisible({ timeout: 20_000 });
+  const toastStack = page.getByTestId('toast-stack');
+  await expect(toastStack).not.toHaveAttribute('data-sticky', /.*/);
+  await tap(page, row(page, wren).getByRole('button', { name: `Log for ${wren.name}` }));
+  const sheet = page.getByRole('dialog', { name: `Log for ${wren.name}` });
+  await tap(page, sheet.getByRole('button', { name: 'Left voicemail', exact: true }));
+  const save = sheet.getByTestId('log-save');
+  await expect(save).toBeEnabled({ timeout: 15_000 });
+  await tap(page, save);
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 20_000 });
+  // the toast is this page's own, and it is drawn inside the stack (not beside it)
+  await expect(toastStack.getByTestId('people-toast').getByRole('button', { name: 'Undo stage change', exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('people-toast')).toHaveCount(1);
+  await expect(toastStack).toHaveAttribute('data-sticky', /.*/);
+  expect(await toastProblems(page), 'Today: the one-pass toast').toEqual([]);
+  if (isPhone(page)) expect(await phoneProblems(page), 'Today: the phone layout check, with the one-pass toast on screen').toEqual([]);
+  // when it has gone the stack is no bar again, and nothing stays reserved
+  await expect(toastStack).not.toHaveAttribute('data-sticky', /.*/, { timeout: 15_000 });
+  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue('--toast-stack-h'))).toBe('');
+  if (isPhone(page)) expect(await phoneProblems(page), 'Today after the toast').toEqual([]);
 });
