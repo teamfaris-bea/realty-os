@@ -2,10 +2,9 @@
 // CompliancePage notice, the playbooks pointer and the bulk notice.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_AI_ISA_CONTENT } from '@realty/core/isa';
 import { describe, expect, it } from 'vitest';
 import { err } from '../../shell/testing/fakeApi.js';
-import { FakeFetch, IDS, ISA_IDS, adminView, isaApp, meView, optIn } from './testing.js';
+import { FakeFetch, IDS, ISA_IDS, adminView, isaApp, meView, optIn, policyView } from './testing.js';
 import { ON_ATTESTATION, capAttestation, holdLines } from './TeamAssistantPage.js';
 
 describe('My AI assistant (/settings/ai-assistant)', () => {
@@ -152,27 +151,18 @@ describe('AI assistant (ISA) (/settings/ai-assistant/team)', () => {
     expect(within(await screen.findByRole('dialog', { name: 'Turn off the AI assistant' })).getByText('This ends AI care for 4 people now. Each owner gets a handoff.')).toBeInTheDocument();
   });
 
-  it('Q5 V11: the team policy reads in words with VERIFY WITH COUNSEL, the changed fields, and "not built yet"', async () => {
-    const v1 = { id: '01900000-0000-7000-8000-0000000be000', versionNo: 1, status: 'superseded', contentSha256: 'b', steps: { ...DEFAULT_AI_ISA_CONTENT, cadence: '7d' }, tone: {}, issues: [], createdAt: '' };
-    const v2 = { id: ISA_IDS.version, versionNo: 2, status: 'approved', contentSha256: 'a', steps: DEFAULT_AI_ISA_CONTENT, tone: {}, issues: [], createdAt: '' };
+  it('the team page shows the overdue link and the team policy card from its own route (R-ISA-33: no longer read from /playbooks, no "not built yet")', async () => {
     const fake = new FakeFetch()
       .on('GET /admin/ai-isa', { status: 200, body: adminView({ overdueHandoffs: 2 }) })
       .on('GET /me/ai-isa', { status: 200, body: meView() })
-      .on('GET /playbooks', { status: 200, body: { playbooks: [{ id: 'p1', kind: 'ai_isa', scope: 'team', ownerUserId: null, name: 'AI assistant', templateKey: null, approvedVersionId: ISA_IDS.version, versions: [v2, v1] }] } });
+      .on('GET /admin/ai-isa/policy', { status: 200, body: policyView() });
     isaApp(fake, '/settings/ai-assistant/team', 'owner');
-    expect(await screen.findByText(/^Sends only between 9:00 AM and 8:00 PM/)).toBeInTheDocument();
-    expect(screen.getAllByText('VERIFY WITH COUNSEL').length).toBeGreaterThan(3);
-    expect(screen.getByText('Changed since version 1: follow-up pace.')).toBeInTheDocument();
-    expect(screen.getByText('Editing and approving the team policy is not built yet.')).toBeInTheDocument();
+    expect(await screen.findByText('Version 1 is approved and in use.')).toBeInTheDocument();
+    expect(screen.getByText('Write between 9:00 AM and 8:00 PM in the person’s own time.')).toBeInTheDocument();
+    expect(screen.getByText('Engineering defaults. VERIFY WITH COUNSEL.')).toBeInTheDocument();
+    expect(screen.queryByText('Editing and approving the team policy is not built yet.')).toBeNull();
     expect(screen.getByRole('link', { name: '2 handoffs are past their deadline' })).toHaveAttribute('href', '/ai-care?filter=overdue');
-    expect(document.body.textContent).not.toMatch(/pause/i);
-  });
-
-  it('Q5: an unparsable policy says it cannot be shown here', async () => {
-    const bad = { id: ISA_IDS.version, versionNo: 1, status: 'approved', contentSha256: 'a', steps: { nonsense: true }, tone: {}, issues: [], createdAt: '' };
-    const fake = new FakeFetch().on('GET /admin/ai-isa', { status: 200, body: adminView() }).on('GET /me/ai-isa', { status: 200, body: meView() }).on('GET /playbooks', { status: 200, body: { playbooks: [{ id: 'p1', kind: 'ai_isa', scope: 'team', ownerUserId: null, name: 'AI', templateKey: null, approvedVersionId: ISA_IDS.version, versions: [bad] }] } });
-    isaApp(fake, '/settings/ai-assistant/team', 'owner');
-    expect(await screen.findByText("This policy can't be shown here.")).toBeInTheDocument();
+    expect(fake.callsTo('GET /playbooks')).toHaveLength(0);
   });
 
   it('Q5 (with b12 review ui-3): the playbooks list never shows a kind ai_isa playbook; its detail shows only the "elsewhere" notice and the pointer', async () => {

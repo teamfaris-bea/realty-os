@@ -89,15 +89,15 @@ export async function approvePolicyAsOwner(h: ApiHarness, owner: TestClient, con
  * reads rows the application wrote. The superuser pool records counsel's review of the pack (never application code's
  * to write) and turns the team's AI features on.
  */
-export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[] } = {}): Promise<IsaWorld> {
+export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[]; /** false: the team has no policy yet (nobody is opted in; versionId is '') */ policy?: boolean } = {}): Promise<IsaWorld> {
   const w = await commsWorld(h, { agents: 2, teamLead: true });
-  const { versionId, versionSha } = await approvePolicyAsOwner(h, w.owner, o.capabilities ? { ...DEFAULT_AI_ISA_CONTENT, capabilities: o.capabilities } : null);
+  const { versionId, versionSha } = o.policy === false ? { versionId: '', versionSha: '' } : await approvePolicyAsOwner(h, w.owner, o.capabilities ? { ...DEFAULT_AI_ISA_CONTENT, capabilities: o.capabilities } : null);
   if (o.clear ?? true) await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:ai_isa'`);
   await h.su.query(`UPDATE tenant_settings SET ai_enabled = true WHERE tenant_id = $1`, [w.tenantId]);
   await freshReauth(h, w.owner);
   const on = await call(w.owner, 'PUT', '/admin/ai-isa', { enabled: true, dailyCap: 100, attestation: 'I turn on the AI assistant for my team and accept the engineering defaults.' });
   if (on.status !== 200) throw new Error(`switch: ${on.status} ${JSON.stringify(on.body)}`);
-  if (o.optIn ?? true) await optInAgent(h, w.agents[0]!, versionId);
+  if (o.policy !== false && (o.optIn ?? true)) await optInAgent(h, w.agents[0]!, versionId);
   const ai = new FakeIsaAi();
   (h.providers as { ai: AiProvider }).ai = ai;
   await forceRefusedToday(h);

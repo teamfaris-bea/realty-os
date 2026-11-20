@@ -10,11 +10,13 @@ import { type Schema, violations } from '../../test/contract.js';
 import { AGENT_SURFACES, IDS, fullContact, iso } from '../feed/lib/testing.js';
 import { surface as settingsSurface } from '../settings/index.js';
 import { surface as bulkSurface } from '../bulk/index.js';
-import type { AdminView, HandoffView, ListRow, MeView, PanelResponse, TurnRow } from './api.js';
+import { AI_ISA_POLICY_FIELDS, AI_ISA_POLICY_TEXT_VERSION, type AiIsaContent, DEFAULT_AI_ISA_CONTENT, aiIsaPolicyApprovalText, aiIsaPolicyRevokeText, policyDiff, policySections } from '@realty/core/isa';
+import type { AdminView, HandoffView, ListRow, MeView, PanelResponse, PolicyDraft, PolicyVersion, PolicyView, TurnRow } from './api.js';
 import { surface as aiCareSurface } from './index.js';
 import { resetUndoStore } from './undoStore.js';
 
 export { FakeFetch, IDS, fullContact, iso };
+export { DEFAULT_AI_ISA_CONTENT };
 
 export const ISA_IDS = {
   assignment: '01900000-0000-7000-8000-0000000a5501',
@@ -171,13 +173,47 @@ export const SHA = 'a'.repeat(64);
 export function meView(over: Partial<MeView> = {}): MeView {
   return {
     optIn: null,
-    policy: { versionId: ISA_IDS.version, versionSha: SHA, capabilities: ['converse', 'share_listings', 'book_appointments'], channels: ['sms', 'email'] },
+    policy: { versionId: ISA_IDS.version, versionSha: SHA, capabilities: ['converse', 'share_listings', 'book_appointments'], channels: ['sms', 'email'], versionNo: 1, sections: policySections(DEFAULT_AI_ISA_CONTENT) },
+    policyChange: null,
     attestationText: `I opt in to the team's AI assistant policy version ${SHA}. I'm responsible for leads I put in AI care.`,
     needsReattest: false,
     calendarLive: false,
     builtCapabilities: ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'],
     underCare: 0,
     sentence: 'You have not opted in. Nothing is sent for your leads.',
+    ...over,
+  };
+}
+
+// ---- the team AI policy (R-ISA-33, R-ISA-34): built with core's own words, as the server builds it ----
+export const POLICY_IDS = { v1: '01900000-0000-7000-8000-0000000c0001', v2: '01900000-0000-7000-8000-0000000c0002' } as const;
+const fieldsView = (): PolicyView['fields'] => AI_ISA_POLICY_FIELDS.map((f) => ({ ...f, path: [...f.path], ...(f.options ? { options: [...f.options] } : {}), ...(f.locked ? { locked: [...f.locked] } : {}) })) as PolicyView['fields'];
+export function policyVersion(content: AiIsaContent, over: Partial<PolicyVersion> = {}): PolicyVersion {
+  return { versionId: POLICY_IDS.v1, versionNo: 1, contentSha256: SHA, content: content as unknown as Record<string, unknown>, sections: policySections(content), decidedAt: iso(-86_400_000), decidedBy: 'Olive Owner', decidedByRole: 'Owner', ...over };
+}
+/** A draft against `approved` (null: nothing approved): the diff, the effect and the texts are core's. */
+export function policyDraft(content: AiIsaContent, approved: AiIsaContent | null, over: Partial<PolicyDraft> = {}): PolicyDraft {
+  const diff = approved ? policyDiff(approved, content) : null;
+  const effect = over.effect !== undefined ? over.effect : approved === null ? 'first' : diff!.wider ? 'wider' : 'narrower';
+  const versionNo = over.versionNo ?? (approved ? 2 : 1);
+  const sha = over.contentSha256 ?? 'b'.repeat(64);
+  return {
+    versionId: approved ? POLICY_IDS.v2 : POLICY_IDS.v1, versionNo, contentSha256: sha, content: content as unknown as Record<string, unknown>, sections: policySections(content), savedAt: iso(-3_600_000), savedBy: 'Olive Owner', issues: [],
+    effect,
+    effectSentence: effect === 'wider' ? `This version lets the assistant do more than the approved one: it ${diff!.adds.join('; ').replace(/^may /, 'may now ')}. Approving it pauses AI care for every lead until each agent re-confirms.`
+      : effect === 'narrower' ? 'This version lets the assistant do no more than the approved one. AI care continues under it at once.'
+      : effect === 'first' ? 'Nothing is approved yet, so approving this pauses nothing. Agents can opt in once it is approved.'
+      : effect === 'after_revoke' ? 'The last approved version was revoked. AI care stays paused for every lead until each agent re-confirms on this version.' : 'This draft cannot be approved until the marked values are fixed.',
+    diff, approvalText: effect === null ? null : aiIsaPolicyApprovalText({ versionNo, contentSha256: sha, effect }),
+    ...over,
+  };
+}
+export function policyView(over: Partial<PolicyView> = {}): PolicyView {
+  const approved = over.approved === undefined ? policyVersion(DEFAULT_AI_ISA_CONTENT) : over.approved;
+  return {
+    state: 'approved', sentence: 'Version 1 is approved and in use.', fields: fieldsView(), textVersion: AI_ISA_POLICY_TEXT_VERSION, underCare: 2, optedIn: 3, approved, revoked: null, draft: null,
+    revokeText: approved ? aiIsaPolicyRevokeText({ versionNo: approved.versionNo, contentSha256: approved.contentSha256 }) : null,
+    can: { create: false, saveDraft: true, approve: false, revoke: approved !== null }, approveOwnerOnly: false,
     ...over,
   };
 }
