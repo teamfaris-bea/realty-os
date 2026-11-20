@@ -175,10 +175,11 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     ...(failedAttempt === null ? {} : { failedAttempt }),
   });
   // a member's notification, never a message to the client: in-app, push, and (critical) a text to their alert phone.
-  // R-PUSH-10: the stored title is generic (it is what the push and the alert text carry): no contact, source, holder or pond.
+  // R-PUSH-10: the stored (in-app) title keeps R-TEAMQ-15's detail; the generic push title and alert text are
+  // notice.pushTitle / notice.smsText, for the push and text seams (not wired yet: they still read the stored title).
   const notice = backupAlertNotice(text);
   for (const userId of to.userIds) {
-    await notifyUser(tx, ids, { userId, kind: 'first_touch_due', priority: 'critical', title: notice.title, body: notice.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
+    await notifyUser(tx, ids, { userId, kind: 'first_touch_due', priority: 'critical', title: notice.inAppTitle, body: notice.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
   }
   return { outcome: 'alerted', alertedUserId: first };
 }
