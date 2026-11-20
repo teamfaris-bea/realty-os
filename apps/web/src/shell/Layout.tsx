@@ -6,6 +6,7 @@
 // assistive tech sees exactly one. A skip link jumps to <main>. After client-side navigation focus
 // moves to the page's h1 so screen-reader users hear where they are (WCAG 2.4.3).
 import { type ReactNode, Suspense, createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, Notice, Spinner } from '../design/index.js';
 import type { SessionInfo } from './authApi.js';
@@ -39,6 +40,14 @@ export function usePageTitle(title: string | null): void {
   }, [title, setTitle]);
 }
 
+// ---- the page header's place ------------------------------------------------------------------------
+// The page header (Back, the h1, the surfaces' header actions such as "Log a call or conversation", and "+") is shell
+// chrome: AppLayout draws an empty slot ABOVE <main> and every PageFrame portals its header into it, so <main> holds
+// the page's own content only ("Skip to content" skips the header; a page that says its only action is opening a
+// contact, Likely to move R-STAFF-7, has no shell button inside <main>). Context still flows through the portal.
+// Without AppLayout (a page rendered on its own) the header is drawn in place.
+const HeaderSlotContext = createContext<HTMLElement | null>(null);
+
 /** Wraps every registry page: header with the h1, document title, focus on navigation. */
 export function PageFrame({ title, detail, children }: { title: string; detail: boolean; children: ReactNode }) {
   const { session } = useSession();
@@ -62,10 +71,8 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
   const value = useMemo(() => ({ title: shown, setTitle: setOverride }), [shown]);
   // providers the surfaces register around the whole frame (SurfaceModule.pageProviders), outermost first
   const provided = (inner: ReactNode) => (table.pageProviders ?? []).reduceRight<ReactNode>((acc, Provider) => <Provider>{acc}</Provider>, inner);
-  return (
-    <TitleContext.Provider value={value}>
-      {provided(
-        <>
+  const slot = useContext(HeaderSlotContext);
+  const header = (
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur md:static md:border-0 md:bg-transparent md:backdrop-blur-none">
         <div className="mx-auto flex min-h-[52px] max-w-5xl items-center gap-2 px-2 md:mx-0 md:min-h-0 md:px-8 md:pb-2 md:pt-8">
           {detail ? (
@@ -92,6 +99,12 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
           ) : null}
         </div>
       </header>
+  );
+  return (
+    <TitleContext.Provider value={value}>
+      {provided(
+        <>
+      {slot ? createPortal(header, slot) : header}
       <div className="mx-auto w-full max-w-5xl px-4 pb-6 pt-4 md:mx-0 md:px-8">{children}</div>
         </>,
       )}
@@ -227,7 +240,9 @@ export function PageLoading() {
 export function AppLayout() {
   const nav = useNav();
   const online = useOnline();
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   return (
+    <HeaderSlotContext.Provider value={headerSlot}>
     <div className="min-h-dvh bg-canvas md:flex">
       <a href="#main" className="sr-only z-50 rounded-lg bg-surface px-4 py-3 text-accent focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
         Skip to content
@@ -240,6 +255,8 @@ export function AppLayout() {
           </div>
         ) : null}
         <TeamLinkPrompt />
+        {/* the page header's slot (PageFrame portals into it): shell chrome, above <main> */}
+        <div ref={setHeaderSlot} data-testid="page-header-slot" className="contents" />
         {/* while a toast shows, the page ends that much later (--toast-stack-h), so its last control scrolls clear of the toast */}
         <main id="main" tabIndex={-1} className="flex-1 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--toast-stack-h,0px)+16px)] outline-none md:pb-[var(--toast-stack-h,0px)]">
           <Suspense fallback={<PageLoading />}>
@@ -249,5 +266,6 @@ export function AppLayout() {
       </div>
       <TabBar nav={nav} />
     </div>
+    </HeaderSlotContext.Provider>
   );
 }

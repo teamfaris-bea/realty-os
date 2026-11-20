@@ -230,3 +230,49 @@ describe('M11 (R-TODAY-18): "Recent people" is the caller’s own recent activit
     expect(n.taps).toBe(4);
   });
 });
+
+// b19 Batch A landing fix (staff.spec.ts:548, R-STAFF-7: on Likely to move the only action in the page is opening the
+// contact): the entry is shell chrome. The page header that carries it (with the page's h1, Back and "+") is drawn by
+// the shell ABOVE <main>, so <main> holds the page's own content and nothing the shell adds to every page.
+describe('R-TODAY-9: the entry is shell chrome, outside <main>', () => {
+  it.each([
+    ['Today', '/', 'Home'],
+    ['Search', '/search', 'Search'],
+    ['Tasks', '/tasks', 'Tasks'],
+  ])('on %s the entry and "+" are in the header above <main>, not in it', async (_n, path, title) => {
+    open(path);
+    await screen.findByRole('heading', { level: 1, name: title });
+    const e = await entry();
+    const main = screen.getByRole('main');
+    expect(main).not.toContainElement(e);
+    expect(within(main).queryByRole('button', { name: 'Log a call or conversation' })).toBeNull();
+    expect(main).not.toContainElement(screen.getByRole('link', { name: 'Add person' }));
+    // the header comes before <main> in reading order, so "Skip to content" (#main) skips it
+    expect(e.closest('header')!.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('the skip link still lands on <main>, which holds the page itself', async () => {
+    open('/search');
+    await screen.findByRole('heading', { level: 1, name: 'Search' });
+    const skip = screen.getByRole('link', { name: 'Skip to content' });
+    expect(skip).toHaveAttribute('href', '#main');
+    const main = document.getElementById('main')!;
+    expect(main).toBe(screen.getByRole('main'));
+    expect(main.tabIndex).toBe(-1);
+    // what follows the header (the page's own content) is inside it
+    expect(main.textContent!.length).toBeGreaterThan(0);
+    main.focus();
+    expect(main).toHaveFocus();
+  });
+
+  it('focus returns to the entry when the Log sheet opened through it is dismissed', async () => {
+    const { u } = open('/search');
+    const e = await entry();
+    await u.click(e);
+    await u.click(await within(await picker()).findByRole('button', { name: 'Log for Pat Lindqvist' }));
+    await screen.findByRole('dialog', { name: 'Log for Pat Lindqvist' });
+    await u.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(e).toHaveFocus();
+  });
+});
