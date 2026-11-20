@@ -67,7 +67,7 @@ const ruleIds = allRuleIds.filter((id) => !retired.has(id));
 const edgeIds = allEdgeIds.filter((id) => !retired.has(id));
 const known = new Set([...p1.rules, ...p1.edges, ...p2.rules, ...p2.edges, ...p3.rules, ...p3.edges].map((e) => e.id));
 
-const ID_RE = /\b(R-[A-Z]+-\d+|E\d{1,3})\b/g;
+const ID_RE = /\b(R-[A-Z]+-\d+|E\d{1,4})\b/g;
 
 // ---------- collect test titles ----------
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.git', '.stryker-tmp', 'reports', 'playwright-report', 'test-results']);
