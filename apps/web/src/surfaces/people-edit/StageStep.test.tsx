@@ -228,7 +228,10 @@ describe('the stage step after an outcome', () => {
     expect(within(s).getByTestId('follow-up-line')).toHaveTextContent('No follow-up task.');
     await u.click(within(chips).getByRole('button', { name: 'Tomorrow' }));
     expect(within(s).getByTestId('follow-up-line')).toHaveTextContent(/^Will add a task for you: “Follow up with Dana”, due .+9:00 AM\.$/);
-    const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach + follow-up' });
+    // (b19 Today fix 1, R-TODAY-11: the button stays short and the task it adds is named under it, in the pinned footer)
+    const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach' });
+    expect(within(within(s).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\.$/);
+    expect(confirm).toHaveAccessibleDescription(/Adds: Follow up with Dana, tomorrow 9:00 AM\./);
     await waitFor(() => expect(confirm).toBeEnabled());
     await u.click(confirm);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -244,7 +247,7 @@ describe('the stage step after an outcome', () => {
     const s = await sheet();
     await stages();
     await u.click(within(s).getByRole('button', { name: '3 days' }));
-    const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach + follow-up' });
+    const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach' });
     await waitFor(() => expect(confirm).toBeEnabled());
     // two taps in the same frame: neither waits for the other
     confirm.click();
@@ -262,7 +265,7 @@ describe('the stage step after an outcome', () => {
     const s = await sheet();
     await stages();
     await u.click(within(s).getByRole('button', { name: '1 week' }));
-    const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach + follow-up' });
+    const confirm = within(s).getByRole('button', { name: 'Change to Trying to reach' });
     await waitFor(() => expect(confirm).toBeEnabled());
     await u.click(confirm);
     expect(await within(s).findByRole('alert')).toHaveTextContent("Can't reach the server. Check your connection, then try again.");
@@ -287,14 +290,16 @@ describe('the stage step after an outcome', () => {
     const confirm = within(s).getByTestId('stage-step-confirm');
     await waitFor(() => expect(confirm).toBeEnabled());
     await u.click(confirm);
-    expect(await within(s).findByRole('alert')).toHaveTextContent('Voicemail logged. We could not confirm the stage change:');
+    // (b19 Today fix 1, R-TODAY-11: one consistent sentence: what was saved, what could not be confirmed, the reason)
+    expect(await within(s).findByRole('alert')).toHaveTextContent(/^Saved: voicemail logged and the follow-up for .+ 9:00 AM\. Not confirmed: the stage change\. Can't reach the server\. Check your connection, then try again\.$/);
     expect(onClose).not.toHaveBeenCalled();
     await u.click(confirm);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     const toast = screen.getByTestId('people-toast');
     expect(toast.textContent).toMatch(/^Stage: Trying to reach\. Buyer plan started\. Follow-up saved for .+9:00 AM/);
     // Undo names the stored event and goes back to the stage the sheet knew the person was in
-    await u.click(within(toast).getByRole('button', { name: 'Undo' }));
+    // (b19 Today fix 7, L16: beside the follow-up it says what it undoes: the stage change, nothing else)
+    await u.click(within(toast).getByRole('button', { name: 'Undo stage change' }));
     await waitFor(() => expect(stagePosts(fake)).toHaveLength(3));
     expect(stagePosts(fake)[2]!.body).toEqual({ stage: 'new', undoOf: EV });
   });
@@ -310,17 +315,18 @@ describe('the stage step after an outcome', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     const toast = screen.getByTestId('people-toast');
     expect(await within(toast).findByText('Stage: Trying to reach')).toBeInTheDocument();
-    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(within(toast).queryByRole('button', { name: /^Undo/ })).toBeNull();
   });
 
-  it('"Pick a date" shows a date and time field; with Keep the button is "Keep New lead + follow-up" and only the task is made', async () => {
+  it('"Pick a date" shows a date and time field; with Keep the button is "Keep New lead", the footer names the task it adds, and only the task is made', async () => {
     const { fake, onClose, u } = mount({ props: { suggested: null, saved: 'Wrong number logged' } });
     const s = await sheet();
     expect(within(await stages()).getAllByRole('radio')).toHaveLength(1);
     await u.click(within(s).getByRole('button', { name: 'Pick a date' }));
     const field = within(s).getByLabelText('Follow up on');
     expect(field).toHaveAttribute('type', 'datetime-local');
-    await u.click(within(s).getByRole('button', { name: 'Keep New lead + follow-up' }));
+    expect(within(within(s).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with Dana, tomorrow 9:00 AM\.$/);
+    await u.click(within(s).getByRole('button', { name: 'Keep New lead' }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(fake.callsTo('POST /tasks')).toHaveLength(1);
     expect(stagePosts(fake)).toHaveLength(0);

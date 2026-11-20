@@ -199,6 +199,8 @@ export const NotesResponse = z.object({ notes: z.array(NoteView), nextCursor: z.
 export const MentionCandidatesResponse = z.object({ members: z.array(z.object({ userId: Id, displayName: z.string().nullable(), role: z.string(), canSee: z.boolean() })) });
 /** R-STG-2: the stage a logged outcome suggests, to confirm; `locked`: the stage route would refuse it now (STAGE_NEEDS_CONTACT). */
 export const SuggestedStage = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean(), alsoOffer: z.array(z.object({ stage: z.enum(STAGES), locked: z.boolean() })) });
+/** R-TODAY-18: the caller's own recent people, for the "Log a call or conversation" picker. */
+export const RecentPeopleResponse = z.object({ people: z.array(z.object({ id: Id, name: z.string() })) });
 export const ActivityResponse = z.object({ note: NoteView, taskId: Id.nullable(), suggestDoNotContact: z.boolean(), suggestedStage: SuggestedStage.nullable(), replayed: z.boolean() });
 export const DoNotContactResponse = z.object({ doNotContact: z.literal(true), alreadySet: z.boolean(), revokedPoints: z.number().int() });
 
@@ -220,5 +222,6 @@ export const PEOPLE_RESPONSE_SCHEMAS = {
   NotesResponse,
   MentionCandidatesResponse,
   ActivityResponse,
+  RecentPeopleResponse,
   DoNotContactResponse,
 } as const;

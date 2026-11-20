@@ -25,7 +25,13 @@ const FOLLOW_UPS = [
   { key: '1w', label: '1 week', days: 7 },
   { key: 'pick', label: 'Pick a date', days: 0 },
 ] as const;
-type FollowUpKey = (typeof FOLLOW_UPS)[number]['key'];
+export type FollowUpKey = (typeof FOLLOW_UPS)[number]['key'];
+
+/** The chip that is `days` from today (1, 3 or 7), or null: what a one-pass sheet preselects (R-TODAY-7). */
+export function followUpKeyForDays(days: number | null | undefined): FollowUpKey | null {
+  if (days === null || days === undefined) return null;
+  return FOLLOW_UPS.find((f) => f.key !== 'none' && f.key !== 'pick' && f.days === days)?.key ?? null;
+}
 
 /** 9:00 in the morning, local time, `days` from today. */
 export function morningIn(days: number, from: Date = new Date()): Date {
@@ -51,8 +57,10 @@ const sameInstant = (a: string | null, b: string) => a !== null && Date.parse(a)
 
 export type FollowUpSave = { ok: true; task: StoredFollowUp | null } | { ok: false; /** the server's reason, in words */ message: string; /** the answer was lost: the task may be stored */ uncertain: boolean };
 
-export function useFollowUp(contactId: string, firstName: string) {
-  const [key, setKey] = useState<FollowUpKey>('none');
+export function useFollowUp(contactId: string, firstName: string, o: { /** R-TODAY-7: the chip preselected until the agent picks one (a one-pass sheet's suggestion); null: None */ suggested?: FollowUpKey | null } = {}) {
+  // null: the agent has not picked, so the suggestion (when there is one) or None is selected
+  const [chosen, setKey] = useState<FollowUpKey | null>(null);
+  const key: FollowUpKey = chosen ?? o.suggested ?? 'none';
   const [picked, setPicked] = useState(() => localInput(morningIn(1)));
   // the task as the server last answered it (null: none saved, or the saved one was removed)
   const [stored, setStored] = useState<StoredFollowUp | null>(null);

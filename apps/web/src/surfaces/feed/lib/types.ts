@@ -34,13 +34,76 @@ export interface FeedCard {
   subjectId: string;
   assistantActionId: string | null;
   createdAt: string;
+  // warm follow-up (R-TODAY-1): set on a follow-up card about a person, null or absent on every other card
+  /** why the person is due: the card's own reason sentences */
+  why?: string[] | null;
+  stage?: { key: string; label: string } | null;
+  lastTouch?: LastTouchView | null;
+  lastAutomatic?: LastAutomaticView | null;
+  importedHistoryAt?: string | null;
+  nextPromise?: NextPromiseView | null;
+  /** the latest human CONTACT, only when `lastTouch` is something newer that is not contact (a manual note) */
+  lastConversation?: LastTouchView | null;
+  /** R-TODAY-14: what stands at the one instant the Due line and the Last line are worded from (the server's story) */
+  quiet?: QuietView | null;
 }
+
+export interface QuietView {
+  basis: 'contact' | 'undelivered' | 'failed_dial' | 'touch_only' | 'imported' | 'never';
+  at: string | null;
+  attempt: { kind: 'text' | 'email' | 'call'; at: string; what: 'undelivered' | 'failed_dial' } | null;
+}
+
+/** The most recent HUMAN contact with the person the viewer may see (never an automated message). */
+export interface LastTouchView {
+  kind: 'call' | 'text' | 'email' | 'chat' | 'note' | 'appointment';
+  at: string;
+  byName: string | null;
+  byMe: boolean;
+  direction: 'inbound' | 'outbound' | null;
+  outcome: string | null;
+  snippet: string | null;
+  /** the agent's own report of something that happened outside the app: always labelled "Logged by …" */
+  reported: boolean;
+}
+export interface LastAutomaticView {
+  kind: 'text' | 'email' | 'chat';
+  at: string;
+  bulk: boolean;
+}
+export interface NextPromiseView {
+  taskId: string;
+  text: string;
+  kind: string;
+  dueAt: string | null;
+  dueAllDay: boolean;
+  /** R-TODAY-19: for an all-day task, the zone its day is in (the task's, else the team's); null or absent otherwise */
+  dueZone?: string | null;
+  /** when it stops being on time (an all-day task: the end of its local day); absent on an older server's answer */
+  deadlineAt?: string | null;
+  overdue: boolean;
+}
+
+/** One person of the daily plan (R-TODAY-6), shaped like a card; `id` is the person's id. */
+export type FollowUpTodayCard = FeedCard & {
+  /** the person's tasks due today or earlier; the first is the one the row leads with (a due promise when there is one) */
+  taskIds: string[];
+  /** R-TODAY-15: the other due tasks the row names in its "Also due" line, and how many more it only counts */
+  alsoDue?: { taskId: string; title: string }[];
+  alsoDueMore?: number;
+};
 
 export interface FeedResponse {
   pinned: FeedCard[];
   scored: FeedCard[];
   total: number;
   generatedAt: string;
+  /** the daily plan; absent on an answer of a server that does not send it */
+  /**
+   * `checked` / `complete` (R-TODAY-13): how many people the bounded read looked at, and whether it read every
+   * candidate. Absent on an older server's answer: then `totalIsMinimum` alone says the read was not complete.
+   */
+  followUpToday?: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean; checked?: number; complete?: boolean };
 }
 
 // ---- contacts (GET /contacts/:id, /ponds/:id/cards, /contacts/:id/timeline) ----------------------

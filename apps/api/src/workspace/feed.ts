@@ -64,13 +64,23 @@
 // The response carries no score: the reasons explain the order (A2 honesty; no numbers that pretend
 // precision). Pinned cards are live deadlines and close only by acting on them (FEED_ITEM_PINNED).
 import {
+  ALSO_DUE_NAMED,
   type FeedItem,
   type FeedReason,
+  type LastAttempt,
+  type LastAutomatic,
+  type LastTouch,
+  type NextPromise,
+  type QuietStory,
   type OneTapAction,
   feedGroupOfItem,
+  followUpActions,
+  followUpTodayReasons,
+  isFollowUpItemType,
   parseForeignFeedKey,
   reasonFromCode,
   renderFeedItem,
+  selectNextPromise,
   renderFeedLabel,
   scoreFeed,
 } from '@realty/core/priority';
@@ -82,6 +92,7 @@ import { AppError } from '../errors.js';
 import { blockedPondIds, claimStatus } from '../leads/claimable.js';
 import { maskLastName } from '../leads/views.js';
 import { type FeedScope, loadFeedInputsScoped } from './repos/feedInputs.js';
+import { type FollowUpContext, loadFollowUpToday } from './repos/followUp.js';
 
 /** What a refresh needs besides the transaction: transcript evidence is encrypted; row ids are UUIDv7. */
 export interface FeedDeps {
@@ -137,7 +148,92 @@ export interface FeedCard {
   subjectId: string;
   assistantActionId: string | null;
   createdAt: string;
+  // ---- warm follow-up (batch 19, R-TODAY-1): set on a follow-up card about a person; null on every other card ----
+  /** why the person is due: the card's own reason sentences, unchanged */
+  why: string[] | null;
+  /** the person's stage, with the team's own label (null: the viewer may not open the person) */
+  stage: { key: string; label: string } | null;
+  /** the most recent HUMAN contact the viewer may see (never an automated message); null: none */
+  lastTouch: LastTouchView | null;
+  /** the most recent automated message after it, as its own line; never its text */
+  lastAutomatic: { kind: LastAutomatic['kind']; at: string; bulk: boolean } | null;
+  /** only with no last touch: when the latest imported entry of the person's history is dated */
+  importedHistoryAt: string | null;
+  /** the viewer's earliest open task for the person, worded as written */
+  nextPromise: NextPromiseView | null;
+  /** the latest human CONTACT, only when `lastTouch` is something newer that is not contact (a manual note): R-TODAY-12 */
+  lastConversation: LastTouchView | null;
+  /**
+   * R-TODAY-14: what stands at the ONE instant the Due line and the Last line are worded from (core quietStory), so a
+   * screen can never write "no conversation yet" under "no conversation for 9 days". Null: not a follow-up card, or
+   * the viewer may not open the person.
+   */
+  quiet: QuietView | null;
 }
+
+export type QuietView = { basis: QuietStory['basis']; at: string | null; attempt: { kind: LastAttempt['kind']; at: string; what: LastAttempt['what'] } | null };
+
+/** `byMe`: the viewer's own call, message, note or log (the teammate's id itself is not sent). */
+export type LastTouchView = Omit<LastTouch, 'at' | 'byUserId'> & { at: string; byMe: boolean };
+/** `deadlineAt`: when the task stops being on time (an all-day task: the end of its local day), for the replace-a-task rule. */
+export type NextPromiseView = Omit<NextPromise, 'dueAt' | 'deadline'> & { dueAt: string | null; deadlineAt: string | null };
+
+function promiseView(p: NextPromise): NextPromiseView {
+  const { deadline, ...rest } = p;
+  return { ...rest, dueAt: p.dueAt === null ? null : iso(p.dueAt), deadlineAt: deadline === null ? null : iso(deadline) };
+}
+
+/** The follow-up lines of one card, as GET /feed sends them (instants as ISO strings). */
+type Lines = Pick<FeedCard, 'stage' | 'lastTouch' | 'lastConversation' | 'quiet' | 'lastAutomatic' | 'importedHistoryAt' | 'nextPromise'>;
+
+function touchView(t: LastTouch | null, viewerUserId: string): LastTouchView | null {
+  if (t === null) return null;
+  const { byUserId, ...touch } = t;
+  return { ...touch, at: iso(t.at), byMe: byUserId !== null && byUserId === viewerUserId };
+}
+
+export function followUpLines(ctx: FollowUpContext | undefined, viewerUserId: string): Lines {
+  if (!ctx) return { stage: null, lastTouch: null, lastConversation: null, quiet: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
+  const q = ctx.quiet;
+  return {
+    stage: ctx.stage,
+    lastTouch: touchView(ctx.lastTouch, viewerUserId),
+    lastConversation: touchView(ctx.lastConversation, viewerUserId),
+    quiet: q === null ? null : { basis: q.basis, at: q.at === null ? null : iso(q.at), attempt: q.attempt === null ? null : { kind: q.attempt.kind, at: iso(q.attempt.at), what: q.attempt.what } },
+    lastAutomatic: ctx.lastAutomatic ? { ...ctx.lastAutomatic, at: iso(ctx.lastAutomatic.at) } : null,
+    importedHistoryAt: ctx.importedHistoryAt === null ? null : iso(ctx.importedHistoryAt),
+    nextPromise: ctx.nextPromise ? promiseView(ctx.nextPromise) : null,
+  };
+}
+
+/** The actions that contact the person: none is offered on a card about someone the viewer cannot open (R-TODAY-16). */
+const CONTACTING_ACTIONS: ReadonlySet<string> = new Set(['call', 'text', 'email', 'send_draft', 'reply_chat']);
+
+/**
+ * A card's actions without the ones that contact the person. When the primary action was one of them, the card's one
+ * tap opens the person's card instead: what the viewer may do there (claim them, or see that they cannot) is that
+ * page's to say.
+ */
+function withoutContacting(a: { primaryAction: OneTapAction; alternatives: OneTapAction[] }, contactId: string): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
+  const alternatives = a.alternatives.filter((x) => !CONTACTING_ACTIONS.has(x.kind));
+  if (!CONTACTING_ACTIONS.has(a.primaryAction.kind)) return { primaryAction: a.primaryAction, alternatives };
+  const open = alternatives.find((x) => x.kind === 'open_contact') ?? ({ kind: 'open_contact', label: 'Open', contactId } as OneTapAction);
+  return { primaryAction: open, alternatives: alternatives.filter((x) => x !== open) };
+}
+
+const NO_LINES: Pick<FeedCard, 'why'> & Lines = { why: null, stage: null, lastTouch: null, lastConversation: null, quiet: null, lastAutomatic: null, importedHistoryAt: null, nextPromise: null };
+
+/** One person of the daily plan, shaped like a card so a screen draws both the same way. `id` is the person's id. */
+export type FollowUpTodayCard = FeedCard & {
+  /**
+   * the agent's tasks for the person that are due today or earlier (their own cards are in `scored`). The first is the
+   * one the row leads with: a due promise when there is one (R-TODAY-15); the others follow, earliest first.
+   */
+  taskIds: string[];
+  /** the other due tasks the row NAMES in its "Also due" line (at most core's ALSO_DUE_NAMED), and how many more it only counts */
+  alsoDue: { taskId: string; title: string }[];
+  alsoDueMore: number;
+};
 
 export interface FeedView {
   pinned: FeedCard[];
@@ -145,6 +241,15 @@ export interface FeedView {
   /** open cards in total (the response shows at most FEED_LIMIT) */
   total: number;
   generatedAt: string;
+  /**
+   * R-TODAY-6: the daily plan. People the viewer owns who are due by a task of theirs today or earlier, or who are
+   * quiet in a warm stage; most overdue first, capped. Read with the feed, never stored; reading it writes nothing.
+   */
+  /**
+   * R-TODAY-13: `checked` people were looked at; `complete` false means the bounded read stopped before every candidate
+   * was read (then `total` is a lower bound, and a screen may not say "nobody is due").
+   */
+  followUpToday: { people: FollowUpTodayCard[]; total: number; totalIsMinimum: boolean; checked: number; complete: boolean };
 }
 
 interface StoredRow {
@@ -504,14 +609,19 @@ type ReadRow = StoredRow & {
   card: StoredCard | null;
 };
 
+export interface FeedReadOptions {
+  /** R-TODAY-13: how many pages of candidates the daily plan may check (GET /feed?followUpDepth=N; the default is the repo's) */
+  followUpDepth?: number | undefined;
+}
+
 /**
  * GET /feed: bring the materialized feed up to `now` (materializeFeed), then read the top cards in feed order
  * straight from priority_feed_items (core.compareFeedItems as an index order: pinned by due instant, scored by
  * score; ties score / due, then the card's own instant and key), pinned first.
  */
-export async function getFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now: Instant): Promise<FeedView> {
+export async function getFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now: Instant, o: FeedReadOptions = {}): Promise<FeedView> {
   await materializeFeed(tx, actor, deps, now);
-  return readFeed(tx, actor, now);
+  return readFeed(tx, actor, now, o);
 }
 
 /** FROM/WHERE of the cards GET shows (the Phase 1 read's filters), for user `userId`. */
@@ -569,7 +679,7 @@ async function hiddenPondIds(tx: Tx, actor: UserActor, now: Instant): Promise<st
 }
 
 /** The feed as stored: the top cards in feed order with their wording for `now` (no re-scoring). */
-export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<FeedView> {
+export async function readFeed(tx: Tx, actor: UserActor, now: Instant, o: FeedReadOptions = {}): Promise<FeedView> {
   const base = shownCards(actor.userId);
   const hidden = await hiddenPondIds(tx, actor, now);
   const pondHidden = sql`(f.item_type = 'pond_new' AND (f.card->'primaryAction'->>'pondId') = ANY (${hidden}::text[]))`;
@@ -597,10 +707,31 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
     SELECT ((SELECT COALESCE(sum(n_open), 0) FROM feed_groups WHERE tenant_id = app.tenant_id() AND user_id = ${actor.userId})
           + (SELECT count(*) ${base} AND f.card IS NULL)
           - ${hidden.length > 0 ? sql`(SELECT count(*) ${base} AND f.card IS NOT NULL AND ${pondHidden})` : sql`0`})::int AS n`.execute(tx);
+  // R-TODAY-1: what each follow-up card says about its person, read once for the whole page (no per-card query)
+  const followUp = (row: ReadRow) => row.contact_id !== null && isFollowUpItemType(row.item_type);
+  // R-TODAY-6: the daily plan is read in the same statements
+  const today = await loadFollowUpToday(tx, actor, now, [...pinned.rows, ...scored.rows].filter(followUp).map((r) => r.contact_id as string), o.followUpDepth === undefined ? {} : { depth: o.followUpDepth });
+  const lines = today.contexts;
+  /**
+   * R-TODAY-16: true for a follow-up card about a person the VIEWER cannot open (their detail is not visible to them:
+   * a pond member holding a task on a lead that went back to the pond). Such a card is not decorated: no reason
+   * lines, no last touch, no next step, so the screen draws none of them and offers no Log. It names the lead as the
+   * pond card does, and offers no call, text or email (the server would refuse each).
+   */
+  const notOpenable = (row: ReadRow) => followUp(row) && (lines.byContact.get(row.contact_id as string)?.stage ?? null) === null;
   const card = (row: ReadRow): FeedCard => {
-    const actions = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
-    // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards)
-    const name = row.item_type === 'pond_new' && row.contact_name !== null
+    const closed = notOpenable(row);
+    const stored = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
+    const actions = closed ? withoutContacting(stored, row.contact_id as string) : stored;
+    const said = row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons);
+    // R-TODAY-16: nothing is claimed about how a person the viewer cannot open can be reached. The stored card's
+    // "Can't reach them right now: No working phone number" is read through the viewer's own eyes, who cannot see
+    // the person's phone or email at all: it is not something the read can prove, so it is not said.
+    const reasons = closed ? said.filter((r) => r.code !== 'CANT_CONTACT') : said;
+    // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards).
+    // R-TODAY-16: so does any follow-up card about a person the viewer cannot open. (The name is read by this file's
+    // older code, before this batch; it is masked here, where the batch decorates the card.)
+    const name = (row.item_type === 'pond_new' || closed) && row.contact_name !== null
       ? maskLastName({ first_name: row.contact_first_name, last_name: row.contact_last_name, display_name: row.contact_name })
       : row.contact_name;
     return {
@@ -610,15 +741,55 @@ export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<
       dueAt: row.due_at ? iso(row.due_at) : null,
       contact: row.contact_id && name ? { id: row.contact_id, name } : null,
       task: row.subject_type === 'task' && row.task_title !== null ? { id: row.subject_id, title: row.task_title } : null,
-      reasons: row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons),
+      reasons,
       ...actions,
       subjectType: row.subject_type,
       subjectId: row.subject_id,
       assistantActionId: row.assistant_action_id,
       createdAt: iso(row.created_at),
+      ...(followUp(row) && !closed ? { why: reasons.map((r) => r.label), ...followUpLines(lines.byContact.get(row.contact_id as string), actor.userId) } : NO_LINES),
     };
   };
-  return { pinned: pinned.rows.map(card), scored: scored.rows.map(card), total: total.rows[0]?.n ?? 0, generatedAt: iso(now) };
+  const people = today.plan.people.map((e): FollowUpTodayCard => {
+    const ctx = lines.byContact.get(e.contactId);
+    // R-TODAY-15: the row leads with taskIds[0] (a due promise when there is one) and names the others in one line
+    const dueTasks = e.taskIds.map((id) => ctx?.tasks.find((t) => t.taskId === id)).filter((t): t is NonNullable<typeof t> => t !== undefined);
+    const task = e.taskIds.length > 0 ? (dueTasks.find((t) => t.taskId === e.taskIds[0]) ?? null) : null;
+    const others = dueTasks.filter((t) => t !== task);
+    // R-TODAY-14: a quiet person's Due line is worded from the same story as their Last line
+    const reasons = followUpTodayReasons(e, { now, stageLabel: ctx?.stage?.label ?? 'Follow-up', story: ctx?.quiet ?? undefined, tasks: dueTasks, zone: lines.zone }).map(strip);
+    const firstTask = task?.taskId ?? null;
+    const said = followUpLines(ctx, actor.userId);
+    // the row's Next line is the task it leads with (the promise), not an earlier routine task named under "Also due"
+    const leadPromise = task ? selectNextPromise([task], now, lines.zone) : null;
+    return {
+      id: e.contactId,
+      itemType: e.reason === 'warm' ? 'warm_follow_up' : e.reason === 'promise' ? 'promise_due' : 'task_due',
+      band: 'scored',
+      dueAt: iso(e.dueAt),
+      contact: { id: e.contactId, name: today.names.get(e.contactId) ?? '' },
+      task: task ? { id: task.taskId, title: task.title } : null,
+      reasons,
+      ...followUpActions(e.contactId as never, today.gates.get(e.contactId), firstTask),
+      subjectType: task ? 'task' : 'contact',
+      subjectId: task ? task.taskId : e.contactId,
+      assistantActionId: null,
+      createdAt: iso(e.dueAt),
+      why: reasons.map((r) => r.label),
+      ...said,
+      ...(leadPromise ? { nextPromise: promiseView(leadPromise) } : {}),
+      taskIds: e.taskIds,
+      alsoDue: others.slice(0, ALSO_DUE_NAMED).map((t) => ({ taskId: t.taskId, title: t.title })),
+      alsoDueMore: Math.max(0, others.length - ALSO_DUE_NAMED),
+    };
+  });
+  return {
+    pinned: pinned.rows.map(card),
+    scored: scored.rows.map(card),
+    total: total.rows[0]?.n ?? 0,
+    generatedAt: iso(now),
+    followUpToday: { people, total: today.plan.total, totalIsMinimum: today.plan.totalIsMinimum, checked: today.plan.checked, complete: today.plan.complete },
+  };
 }
 
 export type FeedVerb = 'done' | 'snooze' | 'dismiss';

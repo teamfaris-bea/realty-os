@@ -27,7 +27,7 @@ import { Button, Dialog, Notice } from '../../design/index.js';
 import { firstNameOf } from '../people-edit/api.js';
 import { Chip, selectClass, textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
 import { NeverNote } from '../people-edit/StagePreview.js';
-import { Saved, StageStepBody, useStageStep } from '../people-edit/StageStep.js';
+import { type OnePassOptions, Saved, StageStepBody, TapEffects, describedBy, useStageStep } from '../people-edit/StageStep.js';
 import { type SuggestedStage, joinWords } from '../people-edit/stageFlow.js';
 
 const KINDS = [
@@ -45,11 +45,28 @@ function localInputValue(d: Date): string {
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
-export function LogSheet({ contactId, contactName, onClose }: { contactId: string; contactName: string; onClose: () => void }) {
+/**
+ * One-tap times for "when did it happen" (R-TODAY-9): now, an hour ago, and this morning (9:00) once the morning has
+ * passed. Each is a time today, never in the future; the field under them shows the exact time and stays editable.
+ */
+export function whenPresets(now: Date): { key: string; label: string; at: Date }[] {
+  const out = [{ key: 'now', label: 'Just now', at: now }];
+  const hourAgo = new Date(now.getTime() - 3_600_000);
+  if (hourAgo.getDate() === now.getDate()) out.push({ key: 'hour', label: 'An hour ago', at: hourAgo });
+  const morning = new Date(now);
+  morning.setHours(9, 0, 0, 0);
+  if (now.getTime() - morning.getTime() > 3_600_000) out.push({ key: 'morning', label: 'This morning', at: morning });
+  return out;
+}
+
+export function LogSheet({ contactId, contactName, onClose, onePass }: { contactId: string; contactName: string; onClose: () => void; /** R-TODAY-7: opened from Today or the global entry (StageStep.tsx OnePassOptions) */ onePass?: OnePassOptions | undefined }) {
   const [kind, setKind] = useState<'call' | 'text' | 'email'>('call');
   const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
   const [outcome, setOutcome] = useState<(typeof CALL_OUTCOMES)[number] | null>(null);
   const [when, setWhen] = useState(() => localInputValue(new Date()));
+  // false: the agent left "when" at now, so the log carries the instant of the save itself. (The field holds whole
+  // minutes: sent as it reads, a call logged "just now" would be dated before a note written seconds earlier.)
+  const [whenChosen, setWhenChosen] = useState(false);
   const [body, setBody] = useState('');
   const [remind, setRemind] = useState(0);
   // the chips shown again after an outcome folded them into one line
@@ -73,7 +90,7 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
 
   // The stage step. An outcome is what reveals it: a call's outcome chip, or a text or email (its own outcome).
   const hasOutcome = kind !== 'call' || outcome !== null;
-  const step = useStageStep(contactId, contactName, { signal: activitySignal({ kind, direction, outcome }), active: hasOutcome });
+  const step = useStageStep(contactId, contactName, { signal: activitySignal({ kind, direction, outcome }), active: hasOutcome, onePass });
   const stepOn = hasOutcome && step.canEdit;
   // the outcome is chosen and the person is still being read: the button waits, so the step is never skipped by a fast tap
   const stepPending = hasOutcome && step.details === null && step.failed === null;
@@ -85,7 +102,10 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
   const reminding = remind > 0 && !stepFollowUp;
 
   const kindLabel = KINDS.find((k) => k.key === kind)!.label;
-  const directionLabel = (d: 'outbound' | 'inbound') => (d === 'outbound' ? (kind === 'call' ? 'I called' : 'I sent') : kind === 'call' ? `${first} called` : `${first} sent`);
+  // R-TODAY-9: said as what it was, a call or text from the agent's own phone (never as something the app placed)
+  const directionLabel = (d: 'outbound' | 'inbound') => (d === 'outbound' ? (kind === 'call' ? 'I called from my phone' : kind === 'text' ? 'I texted from my phone' : 'I emailed') : kind === 'call' ? `${first} called me` : kind === 'text' ? `${first} texted me` : `${first} emailed me`);
+  // "when": now unless the agent says otherwise; "earlier today" is one tap, and the exact time stays editable below
+  const presets = whenPresets(new Date());
 
   const run = async () => {
     if (busy.current || done.current) return;
@@ -97,7 +117,7 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
         const r = await act.run('POST', `/contacts/${contactId}/activities`, {
           kind,
           direction,
-          at: at.toISOString(),
+          at: (whenChosen ? at : new Date()).toISOString(),
           ...(kind === 'call' && outcome ? { outcome } : {}),
           ...(body.trim() ? { body: body.trim() } : {}),
           ...(reminding ? { remindInDays: remind } : {}),
@@ -175,19 +195,28 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
   }
 
   const primary = saved !== null ? step.primary : stepOn ? `Save and ${lowerFirst(step.primary)}` : 'Save';
+  // R-TODAY-11: every task the one button makes is named under it, in the pinned footer: the stage step's follow-up
+  // (and the earlier task it marks done), or this sheet's own reminder (a task the log route makes with the note)
+  const reminderEffect = saved === null && reminding ? `Adds: a reminder task for you, due in ${remind} day${remind === 1 ? '' : 's'}.` : null;
+  const effects = { ids: step.ids, tapEffects: reminderEffect ?? (stepOn ? step.tapEffects : null) };
   return (
     <Dialog
       title={`Log for ${contactName}`}
       description={saved === null && !folded ? `Something that happened outside Realty OS. It shows as logged by you and doesn’t count as reaching ${first}.` : undefined}
-      onClose={onClose}
+      onClose={() => {
+        // left after a partial save: what was saved is said once, with the stage's Undo (StageStep.tsx leave)
+        if (saved !== null) step.leave({ lead: saved });
+        onClose();
+      }}
       closeButton
       footer={
         <div className="flex flex-col gap-2">
           {act.error ? <Notice tone="error">{act.error}</Notice> : null}
           {step.failure ? <Notice tone="error">{step.failure}</Notice> : null}
-          <Button block onClick={() => void run()} pending={working} disabled={(saved === null && future) || stepPending || (stepOn && step.blocked)} aria-describedby={stepOn ? step.ids.effect : undefined} data-testid="log-save">
+          <Button block onClick={() => void run()} pending={working} disabled={(saved === null && future) || stepPending || (stepOn && step.blocked)} aria-describedby={stepOn ? describedBy(effects) : effects.tapEffects ? step.ids.tap : undefined} data-testid="log-save">
             {primary}
           </Button>
+          <TapEffects s={effects} />
         </div>
       }
     >
@@ -254,7 +283,33 @@ export function LogSheet({ contactId, contactName, onClose }: { contactId: strin
               <label htmlFor={ids.when} className="text-[15px] font-medium text-ink">
                 When
               </label>
-              <input id={ids.when} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={selectClass} aria-invalid={future || undefined} />
+              <div role="group" aria-label="When, quickly" className="flex flex-wrap gap-2">
+                {presets.map((p) => (
+                  // (pressed while the field still holds that time, give or take the minute that may have turned since)
+                  <Chip
+                    key={p.key}
+                    selected={Math.abs(new Date(when).getTime() - p.at.getTime()) < 90_000}
+                    disabled={working}
+                    onClick={() => {
+                      setWhen(localInputValue(p.at));
+                      setWhenChosen(p.key !== 'now');
+                    }}
+                  >
+                    {p.label}
+                  </Chip>
+                ))}
+              </div>
+              <input
+                id={ids.when}
+                type="datetime-local"
+                value={when}
+                onChange={(e) => {
+                  setWhen(e.target.value);
+                  setWhenChosen(true);
+                }}
+                className={selectClass}
+                aria-invalid={future || undefined}
+              />
               {future ? <p className="text-[14px] font-medium text-danger">That time is in the future.</p> : null}
             </div>
             <div className="flex flex-col gap-1.5">

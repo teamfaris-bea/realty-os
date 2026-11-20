@@ -16,7 +16,7 @@
 // the person's first name and initial, deduped per note per user. Those who cannot see the person are named
 // back to the author as `no_access` (the UI offers Share, which is the audited collaborator add). A mention
 // never grants access. A logged activity is never a messages/calls row and never a touch (R-PAR-5, R-PAR-32).
-import { type Actor, type UserActor, instantFromDate, instantFromIso, toIso } from '@realty/core/foundation';
+import { type Actor, type UserActor, can, instantFromDate, instantFromIso, toIso } from '@realty/core/foundation';
 import { DAY_MS, plusMs } from '@realty/core/foundation';
 import { uuidV5 } from '@realty/core/parity/bulk';
 import { type ActivityDirection, type ActivityKind, type CallOutcome, addedMentions, followUpTitle, mentionTokens, mentionDedupeKey, mentionTitle, parseMentions, suggestsDoNotContact, validateLoggedActivity } from '@realty/core/parity/people';
@@ -35,6 +35,10 @@ import * as repo from './repos/people.js';
 import * as S from './schemas.js';
 import { noteView } from './views.js';
 import { activitySignal, suggestedStageInTx } from './stageSuggestion.js';
+
+/** "Recent people" (R-TODAY-18): how many the picker shows, and how many of the caller's latest people are read to find them. */
+export const RECENT_PEOPLE_SHOWN = 8;
+const RECENT_PEOPLE_READ = 16;
 
 const contactAuth = (req: FastifyRequest) => detailFacts(req);
 const writeAuth = (req: FastifyRequest) => liveDetailFacts(req);
@@ -247,30 +251,49 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  // R-TODAY-18: the people the caller most recently logged for, wrote a note about or called, newest first, and only
+  // those they may log for now (the same decision POST /contacts/:id/activities makes). Reads existing rows only.
+  r.get('/activities/recent-people', { config: { auth: 'self' }, schema: { response: { 200: S.RecentPeopleResponse } } }, async (req) =>
+    peopleTx(req, async (tx, _now, actor) => {
+      const out: { id: string; name: string }[] = [];
+      for (const id of await repo.ownRecentContactIds(tx, actor.userId, RECENT_PEOPLE_READ)) {
+        if (out.length >= RECENT_PEOPLE_SHOWN) break;
+        const row = await leads.getContact(tx, id);
+        // live, the caller sees their detail, and the matrix lets this role log for them in this relation
+        if (!row || !row.detail_visible || row.merged_into_contact_id !== null) continue;
+        if (!can(actor, 'activity.log', factsOf(row)).ok) continue;
+        out.push({ id: row.id, name: row.display_name });
+      }
+      return { people: out };
+    }),
+  );
+
   r.post('/contacts/:id/activities', { config: { auth: 'activity.log' }, preHandler: authorize('activity.log', writeAuth), schema: { params: S.IdParams, body: S.ActivityBody, response: { 201: S.ActivityResponse, 200: S.ActivityResponse } } }, async (req, reply) => {
     const p = platformOf(req);
     const b = req.body;
     const contactId = req.params.id;
     const at = instantFromIso(b.at);
     if (at === null) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/at', code: 'invalid' }] });
+    /** The answer for a note this id already made: the first save's note, never a second one (R-STG-6). */
+    const replayOf = async (prior: NonNullable<Awaited<ReturnType<typeof repo.note>>>) => {
+      if (prior.author_user_id !== (req.actor as UserActor).userId || prior.contact_id !== contactId || prior.source !== 'logged_activity') throw new AppError('COMMAND_ID_REUSED');
+      // R-STG-2: a replay reads the suggestion again from the stored activity and the person's stage as it is now
+      // (so a double tap shows the same suggestion, and none once the stage was confirmed)
+      const view = noteView(prior, req.actor as UserActor, new Map());
+      const a = view.loggedActivity;
+      const signal = a ? activitySignal({ kind: a.kind as ActivityKind, direction: (a.direction ?? 'outbound') as ActivityDirection, outcome: a.outcome as CallOutcome | null }) : null;
+      const suggestedStage = await peopleTx(req, (tx, _now, actor) => suggestedStageInTx(tx, actor, contactId, signal));
+      // E790: the reminder the first save made with this log, if it made one (its id is derived from the note's, so
+      // the replay finds it and never makes a second task); the retried body's own remindInDays is not read
+      const taskId = await peopleTx(req, (tx) => reminderTaskOf(tx, prior.id));
+      reply.status(200);
+      return { note: view, taskId, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
+    };
     if (b.noteId) {
       const prior = await peopleTx(req, (tx) => repo.note(tx, b.noteId!));
-      if (prior) {
-        if (prior.author_user_id !== (req.actor as UserActor).userId || prior.contact_id !== contactId || prior.source !== 'logged_activity') throw new AppError('COMMAND_ID_REUSED');
-        // R-STG-2: a replay reads the suggestion again from the stored activity and the person's stage as it is now
-        // (so a double tap shows the same suggestion, and none once the stage was confirmed)
-        const view = noteView(prior, req.actor as UserActor, new Map());
-        const a = view.loggedActivity;
-        const signal = a ? activitySignal({ kind: a.kind as ActivityKind, direction: (a.direction ?? 'outbound') as ActivityDirection, outcome: a.outcome as CallOutcome | null }) : null;
-        const suggestedStage = await peopleTx(req, (tx, _now, actor) => suggestedStageInTx(tx, actor, contactId, signal));
-        // E790: the reminder the first save made with this log, if it made one (its id is derived from the note's, so
-        // the replay finds it and never makes a second task); the retried body's own remindInDays is not read
-        const taskId = await peopleTx(req, (tx) => reminderTaskOf(tx, prior.id));
-        reply.status(200);
-        return { note: view, taskId, suggestDoNotContact: suggestsDoNotContact(prior.body), suggestedStage, replayed: true };
-      }
+      if (prior) return replayOf(prior);
     }
-    const out = await peopleTx(req, async (tx, now, actor) => {
+    const write = () => peopleTx(req, async (tx, now, actor) => {
       const v = validateLoggedActivity({ kind: b.kind, direction: b.direction ?? null, at, outcome: b.outcome ?? null, body: b.body ?? null, remindInDays: b.remindInDays ?? null }, now);
       if (!v.ok) throw new AppError(v.code);
       const a = v.activity;
@@ -286,6 +309,17 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
       const suggestedStage = await suggestedStageInTx(tx, actor, contactId, activitySignal(a));
       return { note: noteView((await repo.note(tx, id))!, actor, new Map()), taskId, suggestDoNotContact: suggestsDoNotContact(a.body), suggestedStage, replayed: false };
     });
+    let out: Awaited<ReturnType<typeof write>>;
+    try {
+      out = await write();
+    } catch (e) {
+      // R-TODAY-9: two requests with the same client id at the same moment (a double tap that got past the screen):
+      // the one that lost the insert answers the note the other stored, as any later retry does. Anything else is
+      // the error it was.
+      const prior = b.noteId ? await peopleTx(req, (tx) => repo.note(tx, b.noteId!)) : null;
+      if (!prior) throw e;
+      return replayOf(prior);
+    }
     reply.status(201);
     return out;
   });

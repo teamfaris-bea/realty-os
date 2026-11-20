@@ -59,7 +59,9 @@ export {
   type StageSuggestion,
   activitySignal,
   suggestStageFromOutcome,
+  suggestedFollowUpDays,
 } from './stageSuggestion.js';
+export { REPLACEABLE_TASK_KINDS, type TaskReplacement, type TaskReplacementInput, decideTaskReplacement } from './taskReplacement.js';
 export { MAX_MENTIONS, type MentionResult, type MentionToken, addedMentions, mentionDedupeKey, mentionTitle, mentionToken, mentionTokens, parseMentions, renderMentions } from './mentions.js';
 export {
   ACTIVITY_DIRECTIONS,

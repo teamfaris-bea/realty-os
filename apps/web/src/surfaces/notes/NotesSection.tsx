@@ -8,16 +8,19 @@ import { Button, Notice } from '../../design/index.js';
 import { formatDateTime } from '../feed/lib/format.js';
 import { type NoteView, useNotes } from '../people-edit/api.js';
 import { textareaClass, usePersonAction, useToast } from '../people-edit/hooks.js';
-import { OUTCOME_LABEL } from './LogSheet.js';
+import { useSession } from '../../shell/index.js';
+import { LOGGED_OUTCOME_WORDS, loggedWords } from '../feed/lib/followUp.js';
 
-const KIND_WORD: Record<string, string> = { call: 'call', text: 'text', email: 'email' };
-
-export function loggedLine(n: Pick<NoteView, 'loggedActivity' | 'author'>): string | null {
+/**
+ * R-PAR-30, R-TODAY-4: a logged outside activity always says who logged it and that it is not verified, in the same
+ * words as Today's card ("Logged by you: called from your phone, left a voicemail · not verified"). `viewerId`: the
+ * signed-in user, so their own log reads "you".
+ */
+export function loggedLine(n: Pick<NoteView, 'loggedActivity' | 'author'>, viewerId?: string | null): string | null {
   const a = n.loggedActivity;
   if (!a) return null;
-  const what = `${a.direction === 'inbound' ? 'Inbound' : 'Outbound'} ${KIND_WORD[a.kind] ?? a.kind}`;
-  const outcome = a.outcome ? ` · ${OUTCOME_LABEL[a.outcome as keyof typeof OUTCOME_LABEL] ?? a.outcome}` : '';
-  return `${what}${outcome} · Logged by ${n.author?.displayName ?? 'a teammate'} · not verified`;
+  const words = loggedWords({ kind: a.kind, direction: a.direction === 'inbound' ? 'inbound' : 'outbound', outcome: a.outcome ? (LOGGED_OUTCOME_WORDS[a.outcome] ?? null) : null, byName: n.author?.displayName ?? null, byMe: !!viewerId && n.author?.userId === viewerId });
+  return `${words} · not verified`;
 }
 
 export function NoteBody({ note }: { note: NoteView }) {
@@ -31,7 +34,8 @@ function NoteItem({ note, contactId }: { note: NoteView; contactId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const act = usePersonAction(contactId);
   const toast = useToast();
-  const logged = loggedLine(note);
+  const { session } = useSession();
+  const logged = loggedLine(note, session?.user?.id ?? null);
   const at = note.loggedActivity?.at ?? note.createdAt;
   return (
     <li className={`flex flex-col gap-1 rounded-xl border px-3 py-2 ${note.pinned ? 'border-accent bg-accent-soft' : 'border-line bg-surface'}`}>

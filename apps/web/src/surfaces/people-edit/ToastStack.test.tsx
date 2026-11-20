@@ -3,7 +3,9 @@
 // design/tokens.css adds to the scroll padding and shell/Layout.tsx to the end of the page); empty, it is neither.
 // Both toasts drawn in it count: the stage toast (useToast) and the agent sheets' announce toast, on every page that
 // mounts either provider. The browser half is e2e/journeys/toast-clear.spec.ts and e2e/marketing/marketing.spec.ts.
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentSheetsProvider, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { TOAST_STACK_VAR, ToastProvider, useToast } from './hooks.js';
@@ -18,6 +20,15 @@ function layOut() {
     const h = toasts * 60;
     return { height: h, width: 390, top: 0, left: 0, right: 390, bottom: h, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
   });
+}
+
+/** The agent sheets re-read the feed after a one-pass sheet (warm follow-up in Today), so they sit under the app's query client, as in shell/App.tsx. */
+function Sheets({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient()}>
+      <AgentSheetsProvider>{children}</AgentSheetsProvider>
+    </QueryClientProvider>
+  );
 }
 
 function StageToastButton() {
@@ -49,10 +60,10 @@ describe('the toast stack is a declared fixed element while it shows a toast (b1
 
   it('empty, the stack is not marked and reserves nothing', () => {
     render(
-      <AgentSheetsProvider>
+      <Sheets>
         <AnnounceButton />
         <StageToastButton />
-      </AgentSheetsProvider>,
+      </Sheets>,
     );
     expect(stack()).not.toHaveAttribute('data-sticky');
     expect(reserved()).toBe('');
@@ -60,9 +71,9 @@ describe('the toast stack is a declared fixed element while it shows a toast (b1
 
   it('the announce toast (any page with the agent sheets: Today, the approvals inbox, People, tasks, the pond, a conversation, the admin label pages) marks the stack and reserves its height plus the gap, in the same commit; both go with the toast', () => {
     render(
-      <AgentSheetsProvider>
+      <Sheets>
         <AnnounceButton />
-      </AgentSheetsProvider>,
+      </Sheets>,
     );
     act(() => screen.getByRole('button', { name: 'approve' }).click());
     // no timer, no observer and no second render has run: the mark is on the page with the toast
@@ -80,10 +91,10 @@ describe('the toast stack is a declared fixed element while it shows a toast (b1
 
   it('the stage toast (the person\'s page) marks the same stack; with both toasts at once the reserved room is the height of both; it follows each toast as it goes', () => {
     render(
-      <AgentSheetsProvider>
+      <Sheets>
         <AnnounceButton />
         <StageToastButton />
-      </AgentSheetsProvider>,
+      </Sheets>,
     );
     act(() => screen.getByRole('button', { name: 'change stage' }).click());
     expect(stack()).toHaveAttribute('data-sticky');

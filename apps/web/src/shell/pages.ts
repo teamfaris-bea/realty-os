@@ -3,6 +3,7 @@
 // validation (duplicate paths, conflicting error sentences or evidence routes).
 import type { Role } from '@realty/core/foundation';
 import type { EvidenceRouteFn, EvidenceRoutes, EvidenceSourceType } from '../design/index.js';
+import type { ComponentType, ReactNode } from 'react';
 import type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
 /** The bottom tab bar holds at most this many page tabs, plus the always-present More tab (PARITY_PLAN §5: People joins Home, Approvals, Search and Tasks). */
@@ -12,6 +13,10 @@ export interface PageTable {
   pages: PageDef[];
   errorMessages: Record<string, string>;
   evidenceRoutes: EvidenceRoutes;
+  /** every surface's header actions, in registry order (SurfaceModule.headerActions); absent on a hand-built table */
+  headerActions?: ComponentType[];
+  /** every surface's page providers, in registry order (SurfaceModule.pageProviders) */
+  pageProviders?: ComponentType<{ children: ReactNode }>[];
 }
 
 const CODE_KEY_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*(?:\/[a-z0-9_]+)?$/;
@@ -64,7 +69,11 @@ export function buildPageTable(surfaces: readonly SurfaceModule[], fallbackHome?
   const seen = new Set<string>();
   const errorMessages: Record<string, string> = {};
   const evidenceRoutes: Partial<Record<EvidenceSourceType, EvidenceRouteFn>> = {};
+  const headerActions: ComponentType[] = [];
+  const pageProviders: ComponentType<{ children: ReactNode }>[] = [];
   for (const s of surfaces) {
+    for (const a of s.headerActions ?? []) if (!headerActions.includes(a)) headerActions.push(a);
+    for (const p of s.pageProviders ?? []) if (!pageProviders.includes(p)) pageProviders.push(p);
     for (const p of s.pages) {
       const key = normalizePath(p.path);
       if (seen.has(key)) continue;
@@ -75,7 +84,7 @@ export function buildPageTable(surfaces: readonly SurfaceModule[], fallbackHome?
     for (const [t, fn] of Object.entries(s.evidenceRoutes ?? {}) as [EvidenceSourceType, EvidenceRouteFn][]) if (!evidenceRoutes[t]) evidenceRoutes[t] = fn;
   }
   if (fallbackHome && !seen.has('/')) pages.unshift(fallbackHome);
-  return { pages, errorMessages, evidenceRoutes };
+  return { pages, errorMessages, evidenceRoutes, headerActions, pageProviders };
 }
 
 export function canOpen(page: PageDef, role: Role): boolean {

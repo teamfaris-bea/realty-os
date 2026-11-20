@@ -18,7 +18,7 @@ import { type ReactNode, useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button, ButtonLink, Card, Notice } from '../../design/index.js';
 import { type ChannelState, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
-import { type ApiError, messageFor, useApi, usePageTitle } from '../../shell/index.js';
+import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../../shell/index.js';
 import { ActionCard, useInbox } from '../approvals/ApprovalsPage.js';
 import { ContactSearches } from '../approvals/SavedSearchReview.js';
 import { ActionButton } from '../feed/ActionButton.js';
@@ -307,7 +307,11 @@ function RecentTimeline({ contactId, contact }: { contactId: string; contact: { 
 function OtherItem({ item }: { item: TimelineItem }) {
   const { labelOf } = useStageGuide();
   // FUB parity: an outside activity is always labelled as logged (R-PAR-30); a stage change says from → to
-  const logged = item.type === 'note' && item.detail?.startsWith('logged_activity:') ? `Logged ${item.detail.slice('logged_activity:'.length)}` : null;
+  // (R-TODAY-4: in the words used everywhere a logged activity is shown, "Logged by you: …"; the timeline row knows the
+  // kind but not the direction, so it does not say whose phone, and the note under it carries the rest)
+  const { session } = useSession();
+  const kind = item.type === 'note' && item.detail?.startsWith('logged_activity:') ? item.detail.slice('logged_activity:'.length) : null;
+  const logged = kind === null ? null : `Logged by ${item.actor?.userId && item.actor.userId === session?.user?.id ? 'you' : (item.actor?.displayName ?? 'a teammate')}: ${kind} from outside Realty OS`;
   const stage = item.type === 'stage' && item.detail ? `Stage: ${item.detail.split('>').filter(Boolean).map(labelOf).join(' → ')}` : null;
   const what = logged ?? stage ?? (item.type === 'ownership' ? (OWNERSHIP_LABEL[item.detail ?? ''] ?? (item.detail ?? '').replace(/_/g, ' ')) : (TIMELINE_LABEL[item.type] ?? item.type));
   return (
@@ -317,8 +321,9 @@ function OtherItem({ item }: { item: TimelineItem }) {
       {item.type === 'ownership' && item.note ? <span>: {item.note}</span> : null}
       <span className="text-ink-muted">
         {' '}
-        · {logged ? 'by ' : ''}{item.actor?.displayName ? `${item.actor.displayName}, ` : ''}
+        · {!logged && item.actor?.displayName ? `${item.actor.displayName}, ` : ''}
         {formatDateTime(item.occurredAt)}
+        {logged ? ' · not verified' : ''}
         {item.provenance === 'imported' ? ' · Imported' : ''}
       </span>
     </li>

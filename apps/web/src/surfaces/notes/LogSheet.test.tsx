@@ -16,7 +16,7 @@ import type { Details } from '../people-edit/api.js';
 import { ToastProvider } from '../people-edit/hooks.js';
 import type { StagePreview, StageResponse } from '../people-edit/stageFlow.js';
 import { detailsFixture, fakeTaskStore, guideFixture, stageFixture } from '../people-edit/testing.js';
-import { LogSheet } from './LogSheet.js';
+import { LogSheet, whenPresets } from './LogSheet.js';
 
 const C = '01900000-0000-7000-8000-0000000c0001';
 const EV = '01900000-0000-7000-8000-0000000e0002';
@@ -97,7 +97,7 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     expect(suggested).toBeChecked();
     expect(suggested).toHaveAccessibleDescription(/We tried to reach them but have not had a two-way conversation yet\..*You left a voicemail\. That is a try, not a conversation yet\./);
     expect(within(group).getByRole('radio', { name: 'Keep New lead' })).toBeInTheDocument();
-    expect(within(s).getByTestId('log-summary')).toHaveTextContent('To log: Call · I called · Left voicemail');
+    expect(within(s).getByTestId('log-summary')).toHaveTextContent('To log: Call · I called from my phone · Left voicemail');
     expect(logPosts(fake)).toHaveLength(0);
     expect(stagePosts(fake)).toHaveLength(0);
     await waitFor(() => expect(within(s).getByTestId('stage-step-effect')).toHaveTextContent('No plan starts on this stage.'));
@@ -149,7 +149,8 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     await waitFor(() => expect(primary(s)).toBeEnabled());
     await tap(primary(s));
     const alert = await within(s).findByRole('alert');
-    expect(alert).toHaveTextContent('Call logged (left voicemail). The stage did not change: Reach them first (a call, text, email or reply in their website chat), or close the lead.');
+    // (b19 Today fix 1, R-TODAY-11: one consistent sentence, what was saved and what was not, then the server's reason)
+    expect(alert).toHaveTextContent(/^Saved: call logged \(left voicemail\)\. Not saved: the stage \(still New lead\)\. Reach them first \(a call, text, email or reply in their website chat\), or close the lead\.$/);
     expect(onClose).not.toHaveBeenCalled();
     // what was logged is now a fact, in place of the fields; no toast claims anything
     expect(within(s).getByRole('status')).toHaveTextContent('Call logged (left voicemail)');
@@ -167,14 +168,14 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     expect(await within(toast()).findByText('Call logged (left voicemail). Stage: Trying to reach')).toBeInTheDocument();
   });
 
-  it('a lost answer to the stage change is not called a refusal: "We could not confirm the stage change", and the same button asks again', async () => {
+  it('a lost answer to the stage change is not called a refusal: "Not confirmed: the stage change", and the same button asks again', async () => {
     const { fake, onClose, tap } = mount({ stage: (n) => (n === 1 ? 'network-error' : null) });
     const s = await sheet();
     await tap(within(s).getByRole('button', { name: 'Left voicemail' }));
     await waitFor(() => expect(primary(s)).toBeEnabled());
     await tap(primary(s));
-    expect(await within(s).findByRole('alert')).toHaveTextContent("Call logged (left voicemail). We could not confirm the stage change: Can't reach the server. Check your connection, then try again.");
-    expect(within(s).queryByText(/The stage did not change/)).toBeNull();
+    expect(await within(s).findByRole('alert')).toHaveTextContent(/^Saved: call logged \(left voicemail\)\. Not confirmed: the stage change\. Can't reach the server\. Check your connection, then try again\.$/);
+    expect(within(s).queryByText(/The stage did not change|Not saved/)).toBeNull();
     await tap(primary(s));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(logPosts(fake)).toHaveLength(1);
@@ -223,7 +224,10 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     const s = await sheet();
     await tap(within(s).getByRole('button', { name: 'Left voicemail' }));
     await tap(await within(s).findByRole('button', { name: 'Tomorrow' }));
-    expect(primary(s)).toHaveTextContent(/^Save and change to Trying to reach \+ follow-up$/);
+    // (b19 Today fix 1: the button stays one line; the task it adds is named under it, in the pinned footer)
+    expect(primary(s)).toHaveTextContent(/^Save and change to Trying to reach$/);
+    expect(within(within(s).getByTestId('dialog-footer')).getByTestId('tap-effects')).toHaveTextContent(/^Adds: Follow up with .+, tomorrow 9:00 AM\.$/);
+    expect(primary(s)).toHaveAccessibleDescription(/Adds: Follow up with .+, tomorrow 9:00 AM\./);
     await waitFor(() => expect(primary(s)).toBeEnabled());
     await tap(primary(s));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -302,8 +306,60 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     await tap(within(s).getByRole('button', { name: 'Edit what happened' }));
     expect(within(within(s).getByRole('group', { name: 'Outcome' })).getByRole('button', { name: 'Left voicemail' })).toHaveAttribute('aria-pressed', 'true');
     await tap(within(s).getByRole('button', { name: 'Talked' }));
-    expect(within(s).getByTestId('log-summary')).toHaveTextContent('To log: Call · I called · Talked');
+    expect(within(s).getByTestId('log-summary')).toHaveTextContent('To log: Call · I called from my phone · Talked');
     expect(await within(s).findByRole('radio', { name: 'Connected Suggested' })).toBeChecked();
+  });
+
+  it('R-TODAY-9: "when" is now by default, and earlier today is one tap ("An hour ago"); the save carries that time, and the exact time stays editable', async () => {
+    const { fake, tap } = mount();
+    const s = await sheet();
+    const quick = within(s).getByRole('group', { name: 'When, quickly' });
+    expect(within(quick).getByRole('button', { name: 'Just now' })).toHaveAttribute('aria-pressed', 'true');
+    const before = new Date((within(s).getByLabelText('When') as HTMLInputElement).value).getTime();
+    const hour = within(quick).queryByRole('button', { name: 'An hour ago' });
+    // (in the first hour after midnight an hour ago was yesterday, and the chip is not offered: nothing to assert then)
+    if (hour) {
+      await tap(hour);
+      expect(hour).toHaveAttribute('aria-pressed', 'true');
+      const after = new Date((within(s).getByLabelText('When') as HTMLInputElement).value).getTime();
+      // an hour back (59 minutes when the minute turned between the sheet opening and the tap)
+      expect([3_600_000, 3_540_000]).toContain(before - after);
+      await tap(within(s).getByRole('button', { name: 'No answer' }));
+      const save = primary(s);
+      await waitFor(() => expect(save).toBeEnabled());
+      await tap(save);
+      await waitFor(() => expect(logPosts(fake)).toHaveLength(1));
+      expect(Date.parse((logPosts(fake)[0]!.body as { at: string }).at)).toBe(after);
+    }
+  });
+
+  it('R-TODAY-9 E852: left at "Just now", the log carries the instant of the save, to the second (not the minute the sheet opened)', async () => {
+    const { fake, tap } = mount();
+    const s = await sheet();
+    await tap(within(s).getByRole('button', { name: 'No answer' }));
+    const save = primary(s);
+    await waitFor(() => expect(save).toBeEnabled());
+    const before = Date.now();
+    await tap(save);
+    await waitFor(() => expect(logPosts(fake)).toHaveLength(1));
+    const at = Date.parse((logPosts(fake)[0]!.body as { at: string }).at);
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('R-TODAY-9: the quick times are all today and never ahead: now; an hour ago unless that was yesterday; this morning once it is past 10', () => {
+    const at = (h: number, m = 0) => new Date(2026, 10, 19, h, m, 0, 0);
+    const keys = (d: Date) => whenPresets(d).map((p) => p.key);
+    expect(keys(at(14, 30))).toEqual(['now', 'hour', 'morning']);
+    expect(keys(at(9, 30))).toEqual(['now', 'hour']);
+    expect(keys(at(10, 0))).toEqual(['now', 'hour']);
+    expect(keys(at(10, 1))).toEqual(['now', 'hour', 'morning']);
+    expect(keys(at(0, 20))).toEqual(['now']);
+    for (const p of whenPresets(at(14, 30))) {
+      expect(p.at.getTime()).toBeLessThanOrEqual(at(14, 30).getTime());
+      expect(p.at.getDate()).toBe(19);
+    }
+    expect(whenPresets(at(14, 30)).find((p) => p.key === 'morning')!.at.getHours()).toBe(9);
   });
 
   it('a text or an email is its own outcome: the stage step shows at once, and an incoming one is their reply', async () => {
@@ -311,7 +367,9 @@ describe('M6 (E775): Log → outcome → one button saves the log and confirms t
     const s = await sheet();
     await tap(within(s).getByRole('button', { name: 'Text' }));
     expect(await within(s).findByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked();
-    await tap(within(s).getByRole('button', { name: 'Dana sent' }));
+    // (R-TODAY-9: the direction says what it was: "I texted from my phone" / "Dana texted me")
+    expect(within(s).getByRole('button', { name: 'I texted from my phone', pressed: true })).toBeInTheDocument();
+    await tap(within(s).getByRole('button', { name: 'Dana texted me' }));
     expect(await within(s).findByRole('radio', { name: 'Connected Suggested' })).toBeChecked();
     expect(primary(s)).toHaveTextContent(/^Save and change to Connected$/);
   });

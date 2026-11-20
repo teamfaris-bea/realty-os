@@ -173,7 +173,8 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
         <div data-testid="dialog-body" className={`min-h-0 flex-1 overflow-y-auto px-5 ${closeButton ? 'pb-4 pt-1' : 'pb-5 pt-4'}`}>
           {children}
         </div>
-        {footer ? <div className="border-t border-line px-5 py-3">{footer}</div> : null}
+        {/* pinned: the body scrolls above it, so what it holds is on screen whenever the sheet is (R-TODAY-11) */}
+        {footer ? <div data-testid="dialog-footer" className="border-t border-line px-5 py-3">{footer}</div> : null}
       </div>
       </div>
     </div>,

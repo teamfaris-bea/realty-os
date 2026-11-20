@@ -76,7 +76,7 @@ describe('R-STG-5 undo of a stage change', () => {
     const { fake, u } = mount({ undo: undone({ stillRunning: null }) });
     const toast = await changeThenUndo(u);
     expect(await within(toast).findByText('Stage back to Trying to reach.')).toBeInTheDocument();
-    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(within(toast).queryByRole('button', { name: /^Undo/ })).toBeNull();
     // exactly one request carried undoOf, and it named the change, never the undo's own event
     expect(fake.callsTo(`POST /contacts/${C}/stage`).filter((c) => (c.body as { undoOf?: string }).undoOf !== undefined).map((c) => c.body)).toEqual([{ stage: 'attempting', undoOf: EV }]);
   });
@@ -85,7 +85,7 @@ describe('R-STG-5 undo of a stage change', () => {
     const { u } = mount({ undo: undone(), stop: 'ok' });
     const toast = await changeThenUndo(u);
     await within(toast).findByRole('button', { name: 'Stop Buyer plan' });
-    expect(within(toast).queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(within(toast).queryByRole('button', { name: /^Undo/ })).toBeNull();
   });
 
   it('L3 (E782): a PAUSED plan is not said to be running: "is still paused; undo does not resume or stop it", with Stop when the server allows it', async () => {

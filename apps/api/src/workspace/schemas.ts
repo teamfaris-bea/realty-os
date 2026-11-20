@@ -17,6 +17,18 @@ export const IdParams = z.object({ id: uuid });
 // ---- feed ---------------------------------------------------------------------------------------------
 
 const Reason = z.object({ code: z.string(), label: z.string() });
+/** The most recent human contact with a person the viewer may see. `reported`: the agent's own report of something outside the app. */
+export const LastTouchSchema = z.object({
+  kind: z.enum(['call', 'text', 'email', 'chat', 'note', 'appointment']),
+  at: z.string(),
+  byName: z.string().nullable(),
+  byMe: z.boolean(),
+  direction: z.enum(['inbound', 'outbound']).nullable(),
+  outcome: z.string().nullable(),
+  snippet: z.string().max(140).nullable(),
+  reported: z.boolean(),
+});
+export const NextPromiseSchema = z.object({ taskId: uuid, text: z.string(), kind: z.string(), dueAt: z.string().nullable(), dueAllDay: z.boolean(), dueZone: z.string().nullable(), deadlineAt: z.string().nullable(), overdue: z.boolean() });
 export const FeedCardSchema = z.object({
   id: uuid,
   itemType: z.string(),
@@ -32,8 +44,34 @@ export const FeedCardSchema = z.object({
   subjectId: z.string(),
   assistantActionId: z.string().nullable(),
   createdAt: z.string(),
+  // warm follow-up (batch 19, R-TODAY-1): null on a card that is not about following up with a person
+  why: z.array(z.string()).nullable(),
+  stage: z.object({ key: z.string(), label: z.string() }).nullable(),
+  lastTouch: LastTouchSchema.nullable(),
+  lastAutomatic: z.object({ kind: z.enum(['text', 'email', 'chat']), at: z.string(), bulk: z.boolean() }).nullable(),
+  importedHistoryAt: z.string().nullable(),
+  nextPromise: NextPromiseSchema.nullable(),
+  // R-TODAY-12 / R-TODAY-14: the conversation under a newer note, and the one story both lines are worded from
+  lastConversation: LastTouchSchema.nullable(),
+  quiet: z
+    .object({
+      basis: z.enum(['contact', 'undelivered', 'failed_dial', 'touch_only', 'imported', 'never']),
+      at: z.string().nullable(),
+      attempt: z.object({ kind: z.enum(['text', 'email', 'call']), at: z.string(), what: z.enum(['undelivered', 'failed_dial']) }).nullable(),
+    })
+    .nullable(),
 });
-export const FeedResponse = z.object({ pinned: z.array(FeedCardSchema), scored: z.array(FeedCardSchema), total: z.number().int().min(0), generatedAt: z.string() });
+/** R-TODAY-6: one person of the daily plan, shaped like a card; `id` is the person's id, `taskIds` their due tasks. */
+export const FollowUpTodayCardSchema = FeedCardSchema.extend({ taskIds: z.array(uuid), alsoDue: z.array(z.object({ taskId: uuid, title: z.string() })), alsoDueMore: z.number().int().min(0) });
+export const FeedResponse = z.object({
+  pinned: z.array(FeedCardSchema),
+  scored: z.array(FeedCardSchema),
+  total: z.number().int().min(0),
+  generatedAt: z.string(),
+  followUpToday: z.object({ people: z.array(FollowUpTodayCardSchema), total: z.number().int().min(0), totalIsMinimum: z.boolean(), checked: z.number().int().min(0), complete: z.boolean() }),
+});
+/** R-TODAY-13: `followUpDepth`: pages of candidates the daily plan may check (1 to 10; workspace/repos/followUp.ts states the bound). */
+export const FeedQuery = z.strictObject({ followUpDepth: z.coerce.number().int().min(1).max(10).optional() });
 export const SnoozeBody = z.strictObject({ until: isoDate });
 export const FeedActionResponse = z.object({ item: z.object({ id: uuid, state: z.string(), snoozedUntil: z.string().nullable() }) });
 

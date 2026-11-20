@@ -47,6 +47,7 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
   const h1 = useRef<HTMLHeadingElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const { table } = useShell();
 
   useEffect(() => {
     document.title = session?.tenant ? `${shown} · ${session.tenant.name}` : shown;
@@ -59,8 +60,12 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
   }, [location.key]);
 
   const value = useMemo(() => ({ title: shown, setTitle: setOverride }), [shown]);
+  // providers the surfaces register around the whole frame (SurfaceModule.pageProviders), outermost first
+  const provided = (inner: ReactNode) => (table.pageProviders ?? []).reduceRight<ReactNode>((acc, Provider) => <Provider>{acc}</Provider>, inner);
   return (
     <TitleContext.Provider value={value}>
+      {provided(
+        <>
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur md:static md:border-0 md:bg-transparent md:backdrop-blur-none">
         <div className="mx-auto flex min-h-[52px] max-w-5xl items-center gap-2 px-2 md:mx-0 md:min-h-0 md:px-8 md:pb-2 md:pt-8">
           {detail ? (
@@ -77,6 +82,8 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
           <h1 ref={h1} tabIndex={-1} className="min-w-0 flex-1 text-[17px] font-semibold text-ink outline-none [overflow-wrap:anywhere] md:text-[28px] md:font-bold">
             {shown}
           </h1>
+          {/* header actions the surfaces register (SurfaceModule.headerActions): today "Log a call or conversation" */}
+          {session?.tenant ? (table.headerActions ?? []).map((Action, i) => <Action key={i} />) : null}
           {/* FUB parity module 58: the global + opens Add person (PARITY_PLAN §5); not for TCs, who create no contacts */}
           {session?.tenant && session.tenant.role !== 'tc' && location.pathname !== '/people/new' ? (
             <Link to="/people/new" aria-label="Add person" className="inline-flex min-h-tap min-w-tap items-center justify-center rounded-xl text-[28px] font-semibold leading-none text-accent">
@@ -86,6 +93,8 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
         </div>
       </header>
       <div className="mx-auto w-full max-w-5xl px-4 pb-6 pt-4 md:mx-0 md:px-8">{children}</div>
+        </>,
+      )}
     </TitleContext.Provider>
   );
 }

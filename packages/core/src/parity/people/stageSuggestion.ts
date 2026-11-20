@@ -147,3 +147,24 @@ export function activitySignal(a: { kind: ActivityKind; direction: ActivityDirec
   if (a.direction === 'inbound' && a.outcome !== 'connected') return null;
   return { kind: 'call', outcome: a.outcome };
 }
+
+/**
+ * R-TODAY-7 (warm follow-up in Today): the follow-up a one-pass sheet PRESELECTS after an outcome, in days from now,
+ * or null for none. It is one of the sheet's own chips (Tomorrow, 3 days, 1 week): the agent sees it, can change it
+ * or choose None, and nothing is created until they tap the sheet's one button. Someone we could not reach is tried
+ * again tomorrow; a text or email with no reply yet, in 3 days; after a real conversation, in a week. An outcome that
+ * ends the follow-up (a wrong or dead number, a request not to be called) or says nothing ("other") suggests none.
+ */
+export function suggestedFollowUpDays(signal: StageSignal | null | undefined): 1 | 3 | 7 | null {
+  if (!signal) return null;
+  const s = signal as { kind?: unknown; outcome?: unknown; direction?: unknown; channel?: unknown };
+  if (s.kind === 'call') {
+    if (s.outcome === 'left_voicemail' || s.outcome === 'no_answer' || s.outcome === 'callback_requested') return 1;
+    return s.outcome === 'connected' ? 7 : null;
+  }
+  if (s.kind === 'message') {
+    if (s.channel !== 'text' && s.channel !== 'email') return null;
+    return s.direction === 'outbound' ? 3 : s.direction === 'inbound' ? 7 : null;
+  }
+  return null;
+}

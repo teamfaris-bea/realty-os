@@ -1,7 +1,7 @@
 // Page registry types (CONVENTIONS §3). A surface exports `surface: SurfaceModule` from
 // apps/web/src/surfaces/<surface>/index.ts and is listed in registry.ts.
 import type { Role } from '@realty/core/foundation';
-import type { ComponentType, LazyExoticComponent } from 'react';
+import type { ComponentType, LazyExoticComponent, ReactNode } from 'react';
 import type { EvidenceRoutes, IconName } from '../design/index.js';
 
 /**
@@ -46,4 +46,16 @@ export interface SurfaceModule {
    * `message` → `/contacts/${ref.contactId}/thread#${ref.sourceId}`. Return null when it can't.
    */
   evidenceRoutes?: EvidenceRoutes;
+  /**
+   * Small actions this surface adds to every page's header, beside the global "+" (e.g. "Log a call or conversation").
+   * Each is one self-contained component: it decides for itself whether the signed-in role sees it and brings its own
+   * sheet. The shell only gives it a place, so a change of navigation moves the place and nothing else.
+   */
+  headerActions?: ComponentType[];
+  /**
+   * Providers wrapped around every page's frame (its header and its content), outermost first. For state a header
+   * action and the page must share: today the one toast (people-edit ToastProvider), so the result a header sheet
+   * reports is drawn in the page's single toast stack and not in a second one.
+   */
+  pageProviders?: ComponentType<{ children: ReactNode }>[];
 }

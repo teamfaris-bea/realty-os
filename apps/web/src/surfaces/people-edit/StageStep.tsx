@@ -23,19 +23,28 @@
 // the preview says the change is not allowed. The stage route decides again when the button is tapped; what it did
 // is then on the toast (with Undo) and stays on the page's "What happens next" panel.
 //
-// A partial save is said exactly (E775): when the follow-up or the stage change fails after something was saved, the
-// sheet stays open, says what was saved and what was not with the server's reason, and the button stays enabled.
-import { type StageSignal, suggestStageFromOutcome } from '@realty/core/parity/people';
+// A partial save is said exactly (E775; b19 Today fix 1, R-TODAY-11): when the follow-up, the stage change or the
+// closing of an earlier task fails after something was saved, the sheet stays open and says in one sentence what was
+// saved and what was not (partialSave.ts), with the server's reason; the button stays enabled, and a retry finishes
+// only what is left.
+//
+// Nothing is created or closed unseen (R-TODAY-11). What the one button will ADD (the follow-up task) and what it will
+// MARK DONE (an earlier follow-up, only by core's rule decideTaskReplacement) is named in the sheet's PINNED footer,
+// directly under the button and described-by it, so it is on screen before the tap on the smallest phone. The earlier
+// task is closed LAST, after the follow-up and the stage have saved.
+import { type StageSignal, decideTaskReplacement, suggestStageFromOutcome, suggestedFollowUpDays } from '@realty/core/parity/people';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { useApi } from '../../shell/index.js';
+import { allDayWords, whenWords as dayWords } from '../feed/lib/followUp.js';
 import { type Details, type StageGuideRow, detailsKey, firstNameOf, guideOf, labelIn } from './api.js';
-import { FollowUpChips, followUpSavedText, morningIn, useFollowUp } from './FollowUp.js';
-import { peopleMessage, useToast } from './hooks.js';
+import { FollowUpChips, followUpKeyForDays, followUpSavedText, morningIn, useFollowUp } from './FollowUp.js';
+import { peopleMessage, usePersonAction, useToast } from './hooks.js';
 import { StageRow } from './StageChoices.js';
+import { type PartialSave, partialSaveWords, unsureReason } from './partialSave.js';
 import { NeverNote, StagePreviewBlock } from './StagePreview.js';
-import { type SuggestedStage, effectLabel, joinWords, useStagePreview } from './stageFlow.js';
+import { type StageResponse, type SuggestedStage, effectLabel, joinWords, useStagePreview, whenWords } from './stageFlow.js';
 import { useStageChange } from './useStageChange.js';
 
 export type { StageSignal };
@@ -53,6 +62,51 @@ export interface StageStepSource {
   signal?: StageSignal | null | undefined;
   /** false: no outcome is chosen yet (the Log sheet before its outcome), so nothing is asked about any stage */
   active?: boolean | undefined;
+  /** R-TODAY-7: the sheet was opened from Today or the global "Log a call or conversation" entry (see OnePassOptions) */
+  onePass?: OnePassOptions | undefined;
+}
+
+/**
+ * One pass from Today or from any screen (R-TODAY-7; feed/OnePass.tsx). The step is the SAME one the person's page
+ * uses; these only say how it opens and what else its one button does:
+ *   - a follow-up is PRESELECTED from the outcome (core suggestedFollowUpDays: tomorrow after a voicemail or no
+ *     answer, 3 days after a text or email, a week after a conversation). The line above the chips says the exact task,
+ *     and the pinned footer names it under the button ("Adds: …"); None removes it. Nothing is created before the tap;
+ *   - `cardTask`: the task the card or row was about. Core's rule (decideTaskReplacement, R-TODAY-11) decides whether
+ *     the new follow-up replaces it: only the card's own follow-up or callback, only once its deadline has passed, and
+ *     only by a later follow-up. Then the same tap marks it done, LAST, and the footer says so first ("Marks done:
+ *     …"). Otherwise it stays open, and the footer says the person will have two follow-ups;
+ *   - the closing toast says the whole result once ("Voicemail logged. Stage: Trying to reach. Follow-up saved …").
+ */
+export interface OnePassOptions {
+  /** the outcome's signal, when `signal` is not given because the server answered the stage suggestion itself (a call) */
+  followUpSignal?: StageSignal | null | undefined;
+  cardTask?: CardTask | null | undefined;
+  /** R-TODAY-15: the titles of the row's OTHER due tasks (its "Also due" line). The sheet never closes them, and says so when it adds a follow-up */
+  alsoDue?: readonly string[] | undefined;
+}
+
+/** The task a follow-up card or a row of the daily plan is about, as GET /feed says it (its `nextPromise`). */
+export interface CardTask {
+  taskId: string;
+  title: string;
+  /** tasks.kind */
+  kind: string;
+  dueAt: string | null;
+  dueAllDay: boolean;
+  /** for an all-day task, the zone its day is in (R-TODAY-19) */
+  dueZone?: string | null | undefined;
+  /** when it stops being on time (the server's own deadline); null or absent: undated, or an older server: never replaced */
+  deadlineAt: string | null | undefined;
+}
+
+/** "today 2:10 PM", "yesterday", "Tue" for a time that has passed; "tomorrow 10:48 AM" for one ahead; a day alone for an all-day task. */
+function taskDueWords(t: Pick<CardTask, 'dueAt' | 'dueAllDay' | 'dueZone'>, now: number): string | null {
+  if (t.dueAt === null) return null;
+  const at = Date.parse(t.dueAt);
+  if (!Number.isFinite(at)) return null;
+  if (t.dueAllDay) return allDayWords(t.dueAt, t.dueZone, now);
+  return dayWords(t.dueAt, now, { time: at > now });
 }
 
 export interface StageStepProps extends StageStepSource {
@@ -78,8 +132,6 @@ export function Saved({ text }: { text: string }) {
     </p>
   );
 }
-
-const sentence = (s: string) => (/[.!?]$/.test(s) ? s : `${s}.`);
 
 /**
  * The step's state: the person read afresh, the selected stage, the follow-up, and `finish` (the follow-up, then the
@@ -122,24 +174,64 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
   // everything asked for was done and the sheet is closing: a late tap does nothing
   const done = useRef(false);
   const [working, setWorking] = useState(false);
-  // what was not saved, in words (null: nothing failed since the last tap)
-  const [failure, setFailure] = useState<string | null>(null);
+  // what the last tap saved and what it did not (null: nothing failed since the last tap). Kept as facts and worded at
+  // render, so the sentence stays true when the saved follow-up is then changed or removed with its own controls.
+  const [failure, setFailure] = useState<PartialSave | null>(null);
   const stage = useStageChange(contactId, labelOf);
   const toast = useToast();
-  const ids = { locked: useId(), effect: useId() };
+  const ids = { locked: useId(), effect: useId(), tap: useId() };
   const first = firstNameOf(contactName);
+  // R-TODAY-7: in a one-pass sheet the follow-up the outcome suggests is preselected (never on the person's page)
+  const onePass = src.onePass;
+  const suggestedDays = onePass && (src.active ?? true) ? suggestedFollowUpDays(onePass.followUpSignal ?? src.signal ?? null) : null;
   // M1: what the screen says about the follow-up is the task the server answered (FollowUp.tsx)
-  const follow = useFollowUp(contactId, first);
+  const follow = useFollowUp(contactId, first, { suggested: followUpKeyForDays(suggestedDays) });
+  const cardTask = onePass?.cardTask ?? null;
+  const closer = usePersonAction<{ task: { id: string; status: string } }>(contactId);
+  // the earlier task was marked done by this sheet (a retry does not ask again)
+  const [replaced, setReplaced] = useState(false);
+  // the stage change this sheet's button already made (a retry does not send it again); its toast is held until the
+  // rest of the tap has saved, or the sheet is left
+  const [stageSaved, setStageSaved] = useState<{ data: StageResponse; from: string; to: string } | null>(null);
 
   const preview = useStagePreview(contactId, canEdit && (src.active ?? true) ? selected : null);
   // never a control the server would refuse: the change waits for its preview, and a refused one cannot be sent
-  const refused = selected !== current && preview.data !== undefined && !preview.data.allowed;
-  const waiting = selected !== current && preview.isPending;
+  const stagePending = selected !== current && stageSaved === null;
+  const refused = stagePending && preview.data !== undefined && !preview.data.allowed;
+  const waiting = stagePending && preview.isPending;
+
+  // R-TODAY-11: what the one button will add and close, decided by core's rule from what is on screen NOW. `finish`
+  // acts on exactly this (it is the same render's value), so nothing is closed that was not named before the tap.
+  const nowMs = Date.now();
+  const newDueAt = follow.stored ? (follow.stored.dueAt ? Date.parse(follow.stored.dueAt) : null) : follow.due && follow.dueOk ? follow.due.getTime() : null;
+  const deadline = cardTask?.deadlineAt ? Date.parse(cardTask.deadlineAt) : null;
+  const replacement = decideTaskReplacement({ task: cardTask ? { isCardTask: true, kind: cardTask.kind, deadline: deadline !== null && Number.isFinite(deadline) ? deadline : null } : null, newDueAt: newDueAt !== null && Number.isFinite(newDueAt) ? newDueAt : null, now: nowMs });
+  const willClose = cardTask !== null && replacement.replace && !replaced;
+  const adds = follow.willAdd && follow.due !== null && follow.dueOk;
+  const tapEffects = (() => {
+    const parts: string[] = [];
+    if (adds && follow.due) parts.push(`Adds: ${follow.title}, ${follow.due.getTime() > nowMs ? whenWords(follow.due.toISOString(), nowMs) : dayWords(follow.due.toISOString(), nowMs, { time: true })}.`);
+    if (cardTask && willClose) {
+      const was = taskDueWords(cardTask, nowMs);
+      parts.push(`Marks done: ${cardTask.title}${was ? ` (was due ${was})` : ''}.`);
+    }
+    // what the same tap leaves open, so a new follow-up is never added beside a task the agent was not reminded of
+    const open = adds ? [...(onePass?.alsoDue ?? [])] : [];
+    if (cardTask && adds && !replacement.replace) {
+      const due = taskDueWords(cardTask, nowMs);
+      if (replacement.twoFollowUps) parts.push(`${first} will have two follow-ups: “${cardTask.title}” (${due ? `due ${due}` : 'no date set'}) stays open.`);
+      else open.unshift(cardTask.title);
+    }
+    if (open.length > 0) parts.push(`Stays open: ${open.join(', ')}.`);
+    return parts.length > 0 ? parts.join(' ') : null;
+  })();
 
   /**
-   * The follow-up, then the stage change. `saved`: what is already stored, in words (for the sentence of a partial
-   * save). `lead`: words the closing toast starts with (the Log sheet's "Call logged": that sheet has no banner left
-   * once it closes). Resolves true when everything asked for was done; the caller then closes the sheet.
+   * The follow-up, then the stage change, then LAST the earlier task the new follow-up replaces. `saved`: what is
+   * already stored, in words (for the sentence of a partial save). `lead`: words the closing toast starts with (the
+   * Log sheet's "Call logged": that sheet has no banner left once it closes). Resolves true when everything asked for
+   * was done; the caller then closes the sheet. On a failure the sheet says what was saved and what was not
+   * (partialSave.ts) and the next tap does only what is left.
    */
   const finish = async (o: { saved: string; lead?: string | undefined }): Promise<boolean> => {
     if (busy.current || done.current) return false;
@@ -147,25 +239,44 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
     setWorking(true);
     setFailure(null);
     try {
-      const changing = selected !== current;
-      // the follow-up first: the toast of the stage change may then say it, in the words of the task the server stored
+      const still = labelOf(current);
+      const earlier = (state: 'failed' | 'unsure' | 'not_tried') => (willClose && cardTask ? { title: cardTask.title, state } : undefined);
+      const why = (r: { message: string; uncertain: boolean }) => (r.uncertain ? unsureReason(r.message) : r.message);
+      // 1. the follow-up (a stored one is answered again, never made twice: FollowUp.tsx)
       const f = await follow.save();
       if (!f.ok) {
-        // a lost answer is not a refusal: the task may be stored (the retry then answers it, FollowUp.tsx)
-        const what = f.uncertain ? `We could not confirm the follow-up was saved${changing ? ', and the stage was not changed' : ''}` : `The follow-up was not saved${changing ? ' and the stage did not change' : ''}`;
-        setFailure(`${sentence(o.saved)} ${what}: ${f.message}`);
+        // a lost answer is not a refusal: the task may be stored (the retry then answers it)
+        setFailure({ before: o.saved, followUp: { state: f.uncertain ? 'unsure' : 'failed' }, stage: stagePending ? { state: 'not_tried', label: still } : undefined, earlier: earlier('not_tried'), reason: why(f) });
         return false;
       }
-      const also = f.task ? followUpSavedText(f.task) : undefined;
-      if (changing) {
-        const r = await stage.change(selected, { from: current, ...(o.lead ? { lead: o.lead } : {}), ...(also ? { also } : {}) });
+      const followUp = f.task ? ({ state: 'saved', text: followUpSavedText(f.task) } as const) : undefined;
+      // 2. the stage (its toast is held: the tap is not finished)
+      let st = stageSaved;
+      if (stagePending) {
+        const r = await stage.change(selected, { from: current, hold: true });
         if (!r.ok) {
           // refused: the stage did not change. A lost answer: nobody knows yet; the retry reads what is stored (E780)
-          // (the follow-up is not repeated here: its own line says the stored task, and stays true if it is changed)
-          setFailure(`${sentence(o.saved)} ${r.uncertain ? 'We could not confirm the stage change' : 'The stage did not change'}: ${r.message}`);
+          setFailure({ before: o.saved, followUp, stage: { state: r.uncertain ? 'unsure' : 'failed', label: still }, earlier: earlier('not_tried'), reason: why(r) });
           return false;
         }
-      } else {
+        st = { data: r.data, from: current, to: selected };
+        setStageSaved(st);
+      }
+      // 3. LAST, the earlier task the new follow-up replaces (only what the footer named before this tap)
+      let closed = replaced;
+      if (willClose && cardTask && f.task) {
+        const d = await closer.run('PATCH', `/tasks/${cardTask.taskId}`, { status: 'done' });
+        if (!d.ok) {
+          setFailure({ before: o.saved, followUp, stage: st ? { state: 'saved', label: st.data.stage.label } : undefined, earlier: { title: cardTask.title, state: d.uncertain ? 'unsure' : 'failed' }, reason: why(d) });
+          return false;
+        }
+        closed = true;
+        setReplaced(true);
+      }
+      // everything asked for is saved: the one toast says all of it
+      const also = joinWords([f.task ? followUpSavedText(f.task) : undefined, closed && cardTask ? `Marked done: “${cardTask.title}”` : undefined]) || undefined;
+      if (st) stage.say(st.data, { to: st.to, from: st.from, lead: o.lead, also });
+      else {
         const text = joinWords([o.lead, also]);
         if (text) toast({ text });
       }
@@ -175,6 +286,18 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
       busy.current = false;
       setWorking(false);
     }
+  };
+
+  /**
+   * The sheet is being closed by the agent. When a stage change of this sheet is saved and its toast was still held
+   * (something after it failed), the toast is shown now, so what WAS saved is said once and the stage keeps its Undo.
+   * It claims nothing that did not save: the earlier task is said to be still open.
+   */
+  const leave = (o: { lead?: string | undefined } = {}) => {
+    if (done.current || stageSaved === null) return;
+    done.current = true;
+    const also = joinWords([follow.stored ? followUpSavedText(follow.stored) : undefined, willClose && cardTask ? `Still open: “${cardTask.title}”` : undefined]) || undefined;
+    stage.say(stageSaved.data, { to: stageSaved.to, from: stageSaved.from, lead: o.lead, also });
   };
 
   return {
@@ -196,13 +319,24 @@ export function useStageStep(contactId: string, contactName: string, src: StageS
     showAll: () => setAll(true),
     follow,
     working,
-    failure,
+    /** the partial save in words; a follow-up it names is the task as it is stored NOW (changed since: the new date; removed: not named) */
+    failure: failure === null ? null : partialSaveWords({ ...failure, followUp: failure.followUp?.state === 'saved' ? (follow.stored ? { state: 'saved', text: followUpSavedText(follow.stored) } : undefined) : failure.followUp }),
     ids,
     refused,
-    /** the button is named for its effect: "Change to Connected", "Keep New lead" (+ follow-up when it will add one) */
-    primary: `${effectLabel(selected, current, labelOf)}${follow.willAdd ? ' + follow-up' : ''}`,
+    /**
+     * The button is named for its effect on the stage, and stays short enough for one line on a phone: "Change to
+     * Connected", "Keep New lead". The task it adds and the task it marks done are named under it (`tapEffects`).
+     * Once this sheet's stage change is saved and only the rest is left: "Try again".
+     */
+    primary: stageSaved ? 'Try again' : effectLabel(selected, current, labelOf),
+    /** R-TODAY-11: what the tap will add and mark done, for the pinned footer (null: neither) */
+    tapEffects,
+    /** this sheet's stage change is saved: the stage choices are settled */
+    stageSaved: stageSaved !== null,
+    onePass: onePass !== undefined,
     blocked: refused || waiting || !follow.dueOk,
     finish,
+    leave,
   };
 }
 
@@ -211,7 +345,7 @@ export type StageStepState = ReturnType<typeof useStageStep>;
 /** The step's choices, the one effect line and the follow-up, in that order (for someone who may edit). */
 export function StageStepBody({ s, disabled = false, followUpNote }: { s: StageStepState; disabled?: boolean; /** E790: the sheet already makes this log's one follow-up another way (the Log sheet's "Remind me"): said here in place of the chips */ followUpNote?: string | undefined }) {
   const { offer, offerLocked, current, lockedSet, selected, all, ids } = s;
-  const off = disabled || s.working;
+  const off = disabled || s.working || s.stageSaved;
   const choice = (k: string, o: { badge?: string; why?: string; label?: string; brief?: boolean } = {}) => (
     <StageRow key={k} mode="select" compact plain={!all} brief={o.brief ?? false} stage={s.row(k)} locked={k !== current && lockedSet.has(k)} lockedBy={ids.locked} selected={selected === k} badge={o.badge} why={o.why} label={o.label} disabled={off} onPick={() => s.pick(k)} />
   );
@@ -261,6 +395,24 @@ export function StageStepBody({ s, disabled = false, followUpNote }: { s: StageS
   );
 }
 
+/**
+ * R-TODAY-11: what the one button will add and mark done, directly under it in the sheet's pinned footer (the button
+ * is described by it). Null when the tap adds and closes nothing.
+ */
+export function TapEffects({ s }: { s: Pick<StageStepState, 'tapEffects' | 'ids'> }) {
+  if (!s.tapEffects) return null;
+  return (
+    <p id={s.ids.tap} data-testid="tap-effects" className="text-[14px] leading-snug text-ink [overflow-wrap:anywhere]">
+      {s.tapEffects}
+    </p>
+  );
+}
+
+/** The ids the one button is described by: the plan's one effect line, and what the tap adds and marks done. */
+export function describedBy(s: Pick<StageStepState, 'tapEffects' | 'ids'>): string {
+  return s.tapEffects ? `${s.ids.effect} ${s.ids.tap}` : s.ids.effect;
+}
+
 export function StageStep(props: StageStepProps) {
   const { contactId, contactName, saved, onClose } = props;
   const s = useStageStep(contactId, contactName, props);
@@ -290,20 +442,27 @@ export function StageStep(props: StageStepProps) {
       </Dialog>
     );
   }
+  // R-TODAY-7: away from the person's page the closing toast is the only place the result stays: it says all of it
+  const lead = s.onePass ? { lead: saved } : {};
   const confirm = async () => {
-    if (await s.finish({ saved })) onClose();
+    if (await s.finish({ saved, ...lead })) onClose();
   };
   return (
     <Dialog
       title={title}
-      onClose={onClose}
+      onClose={() => {
+        // left after a partial save: what was saved is said once, with the stage's Undo
+        s.leave(lead);
+        onClose();
+      }}
       closeButton
       footer={
         <div className="flex flex-col gap-2">
           {s.failure ? <Notice tone="error">{s.failure}</Notice> : null}
-          <Button block pending={s.working} disabled={s.blocked} aria-describedby={s.ids.effect} onClick={() => void confirm()} data-testid="stage-step-confirm">
+          <Button block pending={s.working} disabled={s.blocked} aria-describedby={describedBy(s)} onClick={() => void confirm()} data-testid="stage-step-confirm">
             {s.primary}
           </Button>
+          <TapEffects s={s} />
         </div>
       }
     >

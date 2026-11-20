@@ -33,7 +33,9 @@ import { type ChannelState, ReasonCaption, channelState, useChannelState, useRea
 import { replyChatState } from '../compose/channelChoice.js';
 import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
+import type { OnePassOptions } from '../people-edit/StageStep.js';
 import { UNCONFIRMED, sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
+import { useOnePass } from './OnePass.js';
 import { useMutate } from './lib/hooks.js';
 import { automatedDraftRefusalWords, dealDateStaleWords, homeValueRefusalWords } from './lib/messages.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
@@ -67,6 +69,11 @@ export interface ActionButtonProps {
   details?: { open: boolean; controls: string; onOpen: () => void } | undefined;
   block?: boolean;
   className?: string;
+  /**
+   * R-TODAY-7: the action is on a follow-up card of Today. Call goes on to the stage step in its own sheet, and Text
+   * opens the text sheet on the page (feed/OnePass.tsx) instead of the conversation page. Absent: as it always was.
+   */
+  onePass?: Pick<OnePassOptions, 'cardTask' | 'alsoDue'> | undefined;
 }
 
 const FEED_KEYS = [['feed'], ['inbox']];
@@ -226,13 +233,13 @@ function CompleteButton({ action, variant = 'primary', block, className }: Actio
   );
 }
 
-function CallButton({ action, card, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'call' }> }) {
+function CallButton({ action, card, variant = 'primary', block, className, onePass }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'call' }> }) {
   const { call } = useAgentSheets();
   const reach = useChannelState(action.contactId, 'voice');
   const reasonId = useId();
   return (
     <Wrap note={action.note} block={block} reach={reach} reasonId={reasonId}>
-      <Button variant={variant} icon="phone" block={block} className={className} disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => call({ id: action.contactId, name: card?.contact?.name ?? 'this contact' })}>
+      <Button variant={variant} icon="phone" block={block} className={className} disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => call({ id: action.contactId, name: card?.contact?.name ?? 'this contact' }, onePass ? { onePass } : undefined)}>
         {action.label}
       </Button>
     </Wrap>
@@ -297,9 +304,27 @@ export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): s
   }
 }
 
-function NavButton({ action, card, variant = 'primary', block, className }: ActionButtonProps) {
+/**
+ * R-TODAY-7: "Log" on a follow-up card. A call, text or email that happened outside the app (the agent's own phone),
+ * logged without leaving Today: the person page's Log sheet, with its stage step.
+ */
+export function LogButton({ contact, onePass }: { contact: { id: string; name: string }; onePass?: Pick<OnePassOptions, 'cardTask' | 'alsoDue'> | undefined }) {
+  const sheets = useOnePass();
+  if (!sheets) return null;
+  return (
+    // named like the sheet it opens ("Log for Dana Reyes"): a name with "call" in it would be found by "Call"
+    <Button variant="secondary" icon="checklist" aria-label={`Log for ${contact.name}`} title="Log a call or conversation" onClick={() => sheets.log(contact, onePass)}>
+      Log
+    </Button>
+  );
+}
+
+function NavButton({ action, card, variant = 'primary', block, className, onePass }: ActionButtonProps) {
   const navigate = useNavigate();
+  const sheets = useOnePass();
   const href = actionHref(action, card);
+  // R-TODAY-7: Text on a follow-up card opens the page's text sheet (the same compose box), not the conversation page
+  const textHere = action.kind === 'text' && onePass !== undefined && sheets !== null && card?.contact ? { id: action.contactId, name: card.contact.name } : null;
   const note = 'note' in action ? action.note : undefined;
   // Text / Email / Reply (web chat) open the composer: say before the tap when that channel is blocked
   const channel = action.kind === 'text' ? 'sms' : action.kind === 'email' ? 'email' : null;
@@ -309,7 +334,7 @@ function NavButton({ action, card, variant = 'primary', block, className }: Acti
   const reasonId = useId();
   return (
     <Wrap note={note} block={block} reach={reach} reasonId={reasonId}>
-      <Button variant={variant} icon={ACTION_ICON[action.kind]} block={block} className={className} disabled={href === null || reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => href && navigate(href)}>
+      <Button variant={variant} icon={ACTION_ICON[action.kind]} block={block} className={className} disabled={href === null || reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => (textHere ? sheets?.text(textHere, onePass) : href && navigate(href))}>
         {action.label}
       </Button>
     </Wrap>
