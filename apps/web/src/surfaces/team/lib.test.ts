@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { evidenceText } from '../../design/index.js';
 import { board } from '../admin/lib/testing.js';
-import { exceptionEvidenceView, normLine, periodLabel, scoreboardLines } from './lib.js';
+import { clock12, exceptionEvidenceView, normLine, periodLabel, queueCount, queueFootnote, queueMoreLine, queueWait, scoreboardLines } from './lib.js';
 
 describe('exceptionEvidenceView', () => {
   it('keeps source, place and explanation; carries no score', () => {
@@ -81,5 +81,41 @@ describe('normLine', () => {
     expect(normLine({ medianDays: 9, sample: 12, enough: true }, 5)).toBe('Team median 9 days (of 12 deals)');
     expect(normLine({ medianDays: 1, sample: 1, enough: false }, 5)).toBe('Not enough team history to compare yet (1 of 5 deals needed)');
     expect(normLine(null, 5)).toBe('Not enough team history to compare yet (0 of 5 deals needed)');
+  });
+});
+
+// b19 team-queue lane: the display helpers of the team work queue
+describe('team work queue helpers', () => {
+  it('R-TEAMQ-1 E826: the count is the number, or "at least" it when the server read was capped', () => {
+    expect(queueCount({ total: 32, atLeast: false })).toBe('32');
+    expect(queueCount({ total: 500, atLeast: true })).toBe('at least 500');
+  });
+
+  it('R-TEAMQ-2 E823: a new lead waits from arrival; staffed time is said apart only when it differs by a minute or more', () => {
+    const table: [Parameters<typeof queueWait>[0], number, number | null, string][] = [
+      ['new_lead', 720, 720, 'Waiting 12 min'],
+      ['new_lead', 30, 30, 'Waiting under a minute'],
+      ['new_lead', 8 * 3600, 2 * 3600, 'Waiting 8 h · 2 h in staffed hours'],
+      ['new_lead', 600, 0, 'Waiting 10 min · under a minute in staffed hours'],
+      ['unanswered_reply', 1200, null, 'Waiting 20 min'],
+      ['due_promise', 10_800, null, 'Past due 3 h'],
+      ['overdue_follow_up', 2 * 86_400, null, 'Past due 2 days'],
+      ['appointment_outcome', 600, null, 'Ended 10 min ago'],
+    ];
+    for (const [key, waitingSeconds, staffedSeconds, want] of table) expect(queueWait(key, { waitingSeconds, staffedSeconds })).toBe(want);
+  });
+
+  it('R-TEAMQ-1 E826: the more line says how many are shown and how many are not, and nothing when all are shown', () => {
+    const rows = [{}, {}] as never[];
+    expect(queueMoreLine({ rows, more: 0, atLeast: false })).toBeNull();
+    expect(queueMoreLine({ rows, more: 1, atLeast: false })).toBe('Showing the 2 waiting longest. 1 more is not shown.');
+    expect(queueMoreLine({ rows, more: 7, atLeast: false })).toBe('Showing the 2 waiting longest. 7 more are not shown.');
+    expect(queueMoreLine({ rows, more: 498, atLeast: true })).toBe('Showing the 2 waiting longest. At least 498 more are not shown.');
+  });
+
+  it('staffed hours are wall-clock times of the team’s zone, shown the same in every viewer zone', () => {
+    expect([clock12('08:00'), clock12('21:00'), clock12('00:00'), clock12('12:30'), clock12('24:00')]).toEqual(['8:00 AM', '9:00 PM', '12:00 AM', '12:30 PM', '12:00 AM']);
+    const line = queueFootnote({ generatedAt: '2026-11-10T15:00:00.000Z', staffedHours: { open: '08:00', close: '21:00', zone: 'America/New_York' }, windows: { newLeadDays: 14, replyDays: 7, taskDays: 90, appointmentDays: 30 } });
+    expect(line).toMatch(/^Checked Nov 10, \d{1,2}:00 [AP]M\. Staffed hours are 8:00 AM to 9:00 PM \(America\/New_York\)\. Looks back 14 days for new leads, 7 days for replies, 90 days for promises and follow-ups, 30 days for appointments\.$/);
   });
 });

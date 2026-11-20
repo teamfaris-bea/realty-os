@@ -6,6 +6,9 @@
 // Agents and ISAs see their own line; Team Leads see their team; Owners and Admins see everyone.
 // Momentum (R-ACC-5) shows open deals by stage and flags those slower than the team median only when
 // the team has enough history to compare; otherwise it says so.
+// b19 team-queue lane: under the board, Owners, Admins and Team Leads also get "Lead response, from arrival"
+// (LeadResponse.tsx): the board's speed to lead starts when an agent ACCEPTS a lead; that report starts when the
+// lead ARRIVES and credits whoever made the first human attempt.
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -17,6 +20,7 @@ import { formatDate, formatDays, plural } from '../admin/lib/format.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { MomentumResponse, RangeKey, RangeView, Scoreboard } from '../admin/lib/types.js';
 import { Pill, Section, Segmented } from '../admin/lib/ui.js';
+import { LeadResponse } from './LeadResponse.js';
 import { normLine, scoreboardLines } from './lib.js';
 
 const RANGES: readonly { value: RangeKey; label: string }[] = [
@@ -38,6 +42,8 @@ export default function ScoreboardPage() {
         <Segmented<RangeKey> label="Period" value={range} onChange={setRange} options={RANGES} />
       </div>
       {team ? <TeamBoard range={range} /> : <OwnBoard range={range} />}
+      {/* b19: response time from ARRIVAL by lead source (Owner, Admin, Team Lead; read-only) */}
+      {team ? <LeadResponse range={range} /> : null}
       <Momentum />
     </div>
   );

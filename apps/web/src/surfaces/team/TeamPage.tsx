@@ -11,6 +11,9 @@
 //   and goes through the ownership engine on the server, with the command id generated per tap.
 // - The list refreshes every 30 s while open, so a change shows within the 60 s the plan allows; the
 //   page says when it was last updated instead of pretending to be live.
+// - b19 team-queue lane: the team work queue (WorkQueue.tsx, GET /team/queue) sits above this list. That
+//   queue is who is waiting for a person right now, counted from arrival, whoever holds the lead; this list
+//   ("Missed deadlines") is the record of deadlines already missed that a person resolves or verifies.
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -23,6 +26,7 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ExceptionItem, ExceptionType, ItemResponse, Member, MembersResponse, QueueResponse } from '../admin/lib/types.js';
 import { Pill, Segmented, StatusLine, TextArea } from '../admin/lib/ui.js';
 import { EVENT_LABEL, TYPES, TYPE_LABEL, TYPE_PLURAL, exceptionEvidenceView, ownerName, periodLabel } from './lib.js';
+import { WorkQueue } from './WorkQueue.js';
 
 export const QUEUE_KEY = ['team', 'exceptions'] as const;
 const REFRESH_MS = 30_000;
@@ -51,6 +55,9 @@ export default function TeamPage() {
 
   return (
     <div className="flex w-full max-w-3xl flex-col gap-4">
+      {/* b19: what is waiting right now, from arrival (read-only), above the record of misses below */}
+      <WorkQueue />
+      <h2 className="mt-2 text-[19px] font-semibold text-ink">Missed deadlines</h2>
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
         <Segmented<View>
           label="Show"

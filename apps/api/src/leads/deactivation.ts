@@ -35,6 +35,7 @@ import { authorize } from '../rbac.js';
 import { jobPayload, zId } from '../worker/payload.js';
 import type { StandaloneJobHandler } from '../worker/types.js';
 import { leadsTx, platformOf } from './common.js';
+import { queueReleaseRecheck } from './releaseRecheck.js';
 import * as repo from './repos/members.js';
 import { DeactivateBody, DeactivationResponse } from './schemas.js';
 import { syncReviewCards } from '../marketing/cards.js';
@@ -158,6 +159,9 @@ export async function registerDeactivationRoutes(app: FastifyInstance): Promise<
               changes: redactDiff({ status: m.status, accepting_leads: null }, { status: 'deactivating', accepting_leads: false }, { entity: 'membership' }),
               reason: `DESTINATION_${destination.toUpperCase()}`,
             });
+            // b19 R-TEAMQ-20: no longer active: a source they are the named owner or backup of is not covered now, so
+            // the releases waived for its leads are re-checked (their own leads are moved by the job below)
+            await queueReleaseRecheck(tx, p.ids);
           }
           status = 'deactivating';
           const id = p.ids.next<'DeactivationId'>();

@@ -94,7 +94,7 @@ export async function speedRows(tx: Tx, userIds: readonly string[], from: Instan
            floor(extract(epoch FROM p.first_touch_due_at) * 1000)::float8 AS due_ms,
            floor(extract(epoch FROM p.first_touch_at) * 1000)::float8 AS ft_ms
       FROM periods p`.execute(tx);
-  return r.rows.map((x, i) => ({
+  const out: SpeedOut[] = r.rows.map((x, i) => ({
     userId: x.user_id as UserId,
     contactId: '' as never, // not returned across the boundary: the summary needs timings only
     ownedSeq: i + 1,
@@ -102,6 +102,32 @@ export async function speedRows(tx: Tx, userIds: readonly string[], from: Instan
     firstTouchDueAt: x.due_ms as Instant,
     firstTouchAt: x.ft_ms === null ? null : (x.ft_ms as Instant),
   }));
+  return markBackupFirstTouches(tx, ids, from, to, out);
+}
+
+/**
+ * R-TEAMQ-23 (review fix M5): marks the periods whose first touch the source's BACKUP made (after the backup alert
+ * went to them), so the summary counts them apart and never as the owner's own response. One live read of
+ * app.scoreboard_backup_first_touches (migration 0109: the same member rule, range and period rule as
+ * app.scoreboard_speed; it starts from the tenant's few alerted-backup rows), matched to the speed rows by member and
+ * period start. The speed rows themselves, live or rolled, are untouched.
+ */
+async function markBackupFirstTouches(tx: Tx, userIds: readonly string[], from: Instant, to: Instant, rows: SpeedOut[]): Promise<SpeedOut[]> {
+  if (rows.length === 0) return rows;
+  const r = await sql<{ user_id: string; owned_ms: number }>`
+    SELECT b.user_id, floor(extract(epoch FROM b.owned_at) * 1000)::float8 AS owned_ms
+      FROM app.scoreboard_backup_first_touches(${[...userIds]}::uuid[], ${iso(from)}::timestamptz, ${iso(to)}::timestamptz) b`.execute(tx);
+  if (r.rows.length === 0) return rows;
+  // how many periods of that member started at that instant were first touched by the backup (one, in practice)
+  const left = new Map<string, number>();
+  for (const x of r.rows) left.set(`${x.user_id}:${x.owned_ms}`, (left.get(`${x.user_id}:${x.owned_ms}`) ?? 0) + 1);
+  return rows.map((row) => {
+    const key = `${row.userId}:${row.ownedAt}`;
+    const n = left.get(key) ?? 0;
+    if (n === 0 || row.firstTouchAt === null) return row;
+    left.set(key, n - 1);
+    return { ...row, firstTouchByBackup: true };
+  });
 }
 
 /** The all-live computation (the 0012 function over the whole range): what speedRows must equal. */
@@ -110,7 +136,7 @@ export async function liveSpeedRows(tx: Tx, userIds: readonly string[], from: In
   const r = await sql<SpeedDb>`
     SELECT user_id, owned_at, first_touch_due_at, first_touch_at
       FROM app.scoreboard_speed(${[...userIds]}::uuid[], ${iso(from)}::timestamptz, ${iso(to)}::timestamptz)`.execute(tx);
-  return speedOut(r.rows);
+  return markBackupFirstTouches(tx, userIds, from, to, speedOut(r.rows));
 }
 
 export interface ActivityRow {

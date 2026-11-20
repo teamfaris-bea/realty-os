@@ -95,4 +95,5 @@ export const SpeedToLeadSummarySchema = z.object({
   total: z.number().int().min(0),
   responded: z.number().int().min(0),
   pending: z.number().int().min(0),
+  byBackup: z.number().int().min(0),
 });

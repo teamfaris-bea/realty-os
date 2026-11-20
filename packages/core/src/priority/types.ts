@@ -586,6 +586,11 @@ export interface SpeedRow {
   ownedAt: Instant;
   firstTouchDueAt: Instant;
   firstTouchAt: Instant | null;
+  /**
+   * R-TEAMQ-23 (review fix M5): the period's first touch was made by the source's BACKUP after the minute-three alert
+   * went to them, not by the owner. It is not the owner's response: the summary counts the period apart.
+   */
+  firstTouchByBackup?: boolean;
 }
 
 export interface SpeedToLeadSummary {
@@ -599,6 +604,12 @@ export interface SpeedToLeadSummary {
   responded: number;
   /** Untouched periods whose deadline is still ahead (only when `now` is given); not in `total`. */
   pending: number;
+  /**
+   * R-TEAMQ-23: periods whose first touch was made by the source's backup (after the backup alert), not by the owner.
+   * Shown apart: not in `total`, `withinSla`, `responded` or the median (it is not the owner's own response, and it
+   * is not held against them either: the ledger records one first touch per period).
+   */
+  byBackup: number;
 }
 
 export interface TouchCounts {

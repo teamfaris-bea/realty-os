@@ -286,6 +286,16 @@ function RelationshipSheet({ contactId, name, onClose }: { contactId: string; na
   );
 }
 
+/**
+ * A collaborator's role in words, in the person's Collaborators list. `backup` (b19 R-TEAMQ-16) is the lead source's
+ * named backup, given this one lead for a limited time when the minute-three alert named them; the other roles read
+ * as they always did ("co-agent", "tc", "isa").
+ */
+const COLLABORATOR_ROLE_LABEL: Record<string, string> = { backup: 'backup for this lead' };
+export function collaboratorRoleLabel(role: string): string {
+  return COLLABORATOR_ROLE_LABEL[role] ?? role.replace('_', '-');
+}
+
 function CollaboratorSheet({ contactId, name, current, onClose }: { contactId: string; name: string; current: Set<string>; onClose: () => void }) {
   const members = useCandidates(contactId, true);
   const act = usePersonAction(contactId);
@@ -439,7 +449,7 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
           {details.collaborators.map((c) => (
             <li key={c.userId} className="flex items-center gap-2 text-[15px] text-ink">
               <span className="flex-1">
-                {c.displayName ?? 'Member'} <span className="text-ink-muted">· {c.role.replace('_', '-')}</span>
+                {c.displayName ?? 'Member'} <span className="text-ink-muted">· {collaboratorRoleLabel(c.role)}</span>
               </span>
               {details.canManageCollaborators ? (
                 <Button variant="quiet" aria-label={`Stop sharing with ${c.displayName ?? 'member'}`} onClick={() => void act.run('DELETE', `/contacts/${contact.id}/collaborators/${c.userId}`).then((x) => x.ok && toast({ text: 'Stopped sharing' }))}>

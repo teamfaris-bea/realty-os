@@ -219,6 +219,36 @@ describe('R-AUDIT-4 redacted diffs', () => {
     for (const n of ['cause', 'lost_cause', 'unreachable_cause_note', 'reason']) expect([n, classifyField(n)]).toEqual([n, 'pii']);
   });
 
+  it('R-AUDIT-4: the team work queue\'s columns (0107 to 0109) are classified on purpose: two switches of a lead source, one closed set of codes of the backup alert and one yes/no of the scoreboard view are plain by name; a name, an address or a free-text reason under a similar name is still PII', async () => {
+    const declared = ['covered', 'fallback_reason', 'first_touch_by_backup', 'high_intent'];
+    // `recipient` and `holder` hold only codes too, but the names are generic, so they stay on the fail-closed default on purpose
+    for (const n of ['recipient', 'holder']) expect([n, classifyField(n)]).toEqual([n, 'pii']);
+    for (const n of declared) expect([n, classifyField(n)]).toEqual([n, 'plain']);
+    for (const n of ['fallbackReason', 'firstTouchByBackup', 'highIntent']) expect([n, classifyField(n)]).toEqual([n, 'plain']);
+    // the database allows only these codes in the three text columns, so the plain class can never carry free text
+    const checks = await h.su.query<{ conname: string; def: string }>(
+      "SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'public.lead_backup_alerts'::regclass AND conname IN ('lead_backup_alerts_recipient_check', 'lead_backup_alerts_holder_check', 'lead_backup_alerts_fallback_reason_check') ORDER BY conname",
+    );
+    const codes = Object.fromEntries(checks.rows.map((r) => [r.conname, [...r.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).sort()]));
+    expect(codes).toEqual({
+      lead_backup_alerts_fallback_reason_check: ['backup_is_holder', 'backup_unavailable'],
+      lead_backup_alerts_holder_check: ['on_offer', 'owner', 'pond', 'unassigned'],
+      lead_backup_alerts_recipient_check: ['admins', 'backup', 'team_lead'],
+    });
+    // exactly one column carries each name (the three codes are text, the other three boolean), so the by-name rule classifies no other column
+    const owners = await h.su.query<{ t: string; c: string; u: string }>("SELECT table_name AS t, column_name AS c, udt_name AS u FROM information_schema.columns WHERE table_schema = 'public' AND column_name = ANY($1) ORDER BY 2, 1", [declared]);
+    expect(owners.rows).toEqual([
+      { t: 'lead_sources', c: 'covered', u: 'bool' },
+      { t: 'lead_backup_alerts', c: 'fallback_reason', u: 'text' },
+      { t: 'v_speed_to_lead', c: 'first_touch_by_backup', u: 'bool' },
+      { t: 'lead_sources', c: 'high_intent', u: 'bool' },
+    ]);
+    // the rule is the exact name, not a pattern: who the recipient or the holder IS, and any free-text reason, still fail closed
+    for (const n of ['recipient_name', 'recipient_email', 'recipient_address', 'holder_name', 'fallback_note', 'reason', 'recipients', 'holders']) expect([n, classifyField(n)]).toEqual([n, 'pii']);
+    // a plain key shows its code
+    expect(redactDiff({ fallback_reason: 'backup_unavailable' }, { fallback_reason: 'backup_is_holder' })).toEqual({ fallback_reason: { from: 'backup_unavailable', to: 'backup_is_holder' } });
+  });
+
   it('R-AUDIT-4: generated field classification — every column in the schema gets a definite class, unknown names fail closed to PII (snapshot)', async () => {
     const cols = await h.su.query<{ table_name: string; column_name: string; udt_name: string }>(
       "SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",

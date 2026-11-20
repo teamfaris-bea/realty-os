@@ -7,6 +7,8 @@
 //   ownership.first_touch_breach  fence ownership_period_seq + due        first_touch_breached (+ notify owner, TL)
 //   ownership.auto_release        fence ownership_period_seq + due        auto_released → default pond
 //   ownership.inactivity          fence ownership_period_seq + stored at  inactivity_warned / inactivity_released
+// and leads.backup_alert (leads/backupAlert.ts): the minute-three backup alert of a covered source's inquiry.
+// and leads.release_recheck (leads/releaseRecheck.ts): a waived auto-release is re-evaluated when coverage or a member's status changes.
 // The command id is derived from the fence, so a duplicate delivery (or the sweeper's re-issue)
 // replays the stored outcome (R-OWN-7, E6); a stale fence is a no-op; an early wake makes core
 // enqueue the same timer again at the stored deadline under an `:early:` key (R-OWN-15). Payload schemas, kinds, queues and dedupe keys are
@@ -16,7 +18,9 @@ import type { OwnershipCommand, TimerFence } from '@realty/core/ownership';
 import { applyOwnershipCommandInTx, derivedCommandId } from '@realty/db';
 import { TIMER_KIND_OF, TimerPayload } from '../worker/contracts.js';
 import type { JobHandler, TxJobHandler } from '../worker/types.js';
+import { backupAlertHandler, backupAlertSweepHandler } from './backupAlert.js';
 import { deactivationHandler } from './deactivation.js';
+import { releaseRecheckHandler } from './releaseRecheck.js';
 
 export type { TimerPayload };
 
@@ -43,4 +47,13 @@ function timerHandler(kind: TxJobHandler<TimerPayload>['kind']): TxJobHandler<Ti
 export const timerHandlers: TxJobHandler<TimerPayload>[] = [...new Set(Object.values(TIMER_KIND_OF))].map((k) => timerHandler(k));
 
 /** Everything api/leads registers with the worker (CONVENTIONS §3). */
-export const leadsHandlers: JobHandler<unknown>[] = [...(timerHandlers as JobHandler<unknown>[]), deactivationHandler() as unknown as JobHandler<unknown>];
+export const leadsHandlers: JobHandler<unknown>[] = [
+  ...(timerHandlers as JobHandler<unknown>[]),
+  deactivationHandler() as unknown as JobHandler<unknown>,
+  // b19 R-TEAMQ-14: the minute-three backup alert of a covered source's inquiry (alerts only)
+  backupAlertHandler() as unknown as JobHandler<unknown>,
+  // b19 R-TEAMQ-28: every five minutes, the minute-three job of an inquiry that lost its job is re-issued
+  backupAlertSweepHandler() as unknown as JobHandler<unknown>,
+  // b19 R-TEAMQ-20: a waived auto-release comes back when its source stops being covered or its owner stops being active
+  releaseRecheckHandler() as unknown as JobHandler<unknown>,
+];

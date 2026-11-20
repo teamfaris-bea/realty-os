@@ -7,7 +7,7 @@ import { member } from '../admin/lib/testing.js';
 import type { PhoneNumber } from '../admin/lib/types.js';
 import { leadEmailApp } from '../lead-email/testing.js';
 import type { ImportLabelView } from './reviewWords.js';
-import type { GoogleLeadForm, OverviewResponse, SourceOverview } from './types.js';
+import type { GoogleLeadForm, OverviewResponse, SourceCoverage, SourceOverview } from './types.js';
 
 export const S1 = '01900000-0000-7000-8000-00000000510a';
 export const S2 = '01900000-0000-7000-8000-00000000510b';
@@ -40,6 +40,24 @@ export function source(over: Omit<Partial<SourceOverview>, 'paths'> & { paths?: 
       webChats: [],
       ...paths,
     },
+  };
+}
+
+/** A source's coverage as the API sends it (leads/coverage.ts): by default nobody named, not covered, its two warnings. */
+export function coverage(over: Partial<SourceCoverage> = {}): SourceCoverage {
+  return {
+    owner: null,
+    backup: null,
+    highIntent: false,
+    covered: false,
+    setting: false,
+    sentence: 'Not covered: no owner and no backup are named.',
+    warnings: [
+      { code: 'NO_OWNER', sentence: 'No owner is named for this source.' },
+      { code: 'NO_BACKUP', sentence: 'No backup is named for this source.' },
+    ],
+    changedAt: null,
+    ...over,
   };
 }
 

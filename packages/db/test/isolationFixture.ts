@@ -122,6 +122,8 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   jobs: { kind: "'fixture.job'" },
   sender_registrations: {},
   lead_inquiries: { fingerprint: "'fp'", outcome: "'new_contact'" },
+  // 0108 (b19): a decision that alerted nobody carries no alerted member (the table's own check)
+  lead_backup_alerts: { outcome: "'human_attempt'" },
   // 0018 (Phase 2-3 schema)
   webchat_sessions: { purge_after: 'now()' },
   lead_source_costs: { month: "date_trunc('month', now())::date", origin: "'ads_sync'" },

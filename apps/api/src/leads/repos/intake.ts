@@ -13,11 +13,13 @@ export interface LeadSourceRow {
   active: boolean;
   /** b18 item f: the Owner's "No AI care for leads from this source" (0094) */
   no_ai_care: boolean;
+  /** b19 R-TEAMQ-10: the coverage switch (on only while an owner and a backup are named) */
+  covered: boolean;
 }
 
 export async function leadSource(tx: Tx, id: string): Promise<LeadSourceRow | null> {
   const r = await sql<LeadSourceRow>`
-    SELECT id, name, kind, consent_disclosure_id, active, no_ai_care FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
+    SELECT id, name, kind, consent_disclosure_id, active, no_ai_care, covered FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
   return r.rows[0] ?? null;
 }
 

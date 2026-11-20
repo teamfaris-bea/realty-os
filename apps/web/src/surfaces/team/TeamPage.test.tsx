@@ -8,6 +8,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ID, FakeFetch, err, exceptionItem, leadAdminApp, member, queue } from '../admin/lib/testing.js';
+import { QUEUE_PATH, workQueue } from './testing.js';
 
 const LIVE = 'GET /team/exceptions?state=live&limit=200';
 const keyPath = (key: string, verb: string) => `POST /team/exceptions/${encodeURIComponent(key)}/${verb}`;
@@ -16,6 +17,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function teamFake(items = [exceptionItem()]) {
   return new FakeFetch()
     .on(LIVE, { status: 200, body: queue(items) })
+    // b19: the team work queue above the exception list (its own tests: WorkQueue.test.tsx); empty here
+    .on(QUEUE_PATH, { status: 200, body: workQueue() })
     .on('GET /team/scoreboard?range=today', { status: 200, body: { range: { key: 'today', from: '', to: '', days: 1, zone: 'UTC' }, members: [{ userId: ID.ava, name: 'Ava Agent' }, { userId: ID.ben, name: 'Ben Agent' }, { userId: ID.me, name: 'Sam Lead' }] } });
 }
 

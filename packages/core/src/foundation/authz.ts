@@ -185,6 +185,7 @@ export const ACTIONS = [
   'portal.view', // module 45: a deal's or listing's portal state, a grant's client-view preview, an item preview (DATA_MODEL §8 split row)
   'portal.manage', // module 45: invite, publish, retract, revoke, disable, change the login point (Owner, Admin, TL T, agent own)
   'lead_source.ai_care', // b18 item f / B18S-5: "No automated contact for leads from this source" on a lead source (the Owner only; 🔒 when turning it off; DB guard)
+  'team_queue.view', // b19 team-queue lane: the team work queue and the lead response report (read-only; Owner/Admin all, a Team Lead their teams)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -788,6 +789,10 @@ const MATRIX: Record<Action, ActionRule> = {
   // b18 item f (owner product boundary, 2026-11-14): the Owner only, as themselves; turning it off re-allows AI care for
   // the source's leads (loosening), so it asks for a fresh re-auth. app.lead_sources_no_ai_care_guard is the backstop.
   'lead_source.ai_care': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' } } },
+  // b19 team-queue lane (DATA_MODEL R-TEAMQ-6): the team work queue and the lead response report. ✅ | ✅ | T | — | — | —.
+  // Read-only. The rows a Team Lead gets are narrowed by the queries (their teams' leads and pond leads) and by RLS.
+  // People only: no system via and no support (fail closed; nothing automated reads a manager's queue).
+  'team_queue.view': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['team'] } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

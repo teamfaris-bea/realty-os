@@ -34,6 +34,13 @@ const TITLES: Record<string, string> = {
   REINQUIRY: 'A lead you own inquired again',
   REINQUIRY_CLOSED: 'A closed contact inquired again',
   MERGED: 'Two contacts were merged',
+  // b19 R-TEAMQ-12: a pond arrival, by why it arrived (kind pond_new, to the team leads)
+  POND_NEW_RULE_POND: 'New lead in the pond: a routing rule sends leads like this there',
+  POND_NEW_NO_RULE_MATCH: 'New lead in the pond: no routing rule matched',
+  POND_NEW_MAX_OFFERS_REACHED: 'A lead went to the pond: nobody accepted the offer',
+  POND_NEW_NO_ELIGIBLE_AGENT: 'A lead went to the pond: nobody was available',
+  POND_NEW_RELEASED: 'A lead was released to the pond',
+  POND_NEW_AUTO_RELEASED: 'A lead went back to the pond (no first touch)',
 };
 
 export const FOLLOWUP_JOB_KIND = 'ownership.followup';
@@ -296,6 +303,14 @@ export async function applyEffects(tx: Tx, c: EffectContext, effects: readonly E
           VALUES (app.tenant_id(), ${c.contactId}, ${e.userId}, ${e.role}, ${toIso(e.expiresAt)}::timestamptz)
           ON CONFLICT (tenant_id, contact_id, user_id) DO UPDATE SET role = EXCLUDED.role, expires_at = EXCLUDED.expires_at,
                  removed_at = NULL`.execute(tx);
+        break;
+      case 'endBackupAccess':
+        // b19 R-TEAMQ-16: the owner's own human attempt ends the backup's time-boxed access (the owner may manage the
+        // collaborators of their own lead under row-level security). The row stays, as the record of the grant.
+        await sql`
+          UPDATE contact_collaborators SET expires_at = ${toIso(c.now)}::timestamptz
+           WHERE tenant_id = app.tenant_id() AND contact_id = ${c.contactId} AND role = 'backup' AND removed_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ${toIso(c.now)}::timestamptz)`.execute(tx);
         break;
       case 'route':
         await flush();

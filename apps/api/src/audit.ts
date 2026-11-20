@@ -156,6 +156,18 @@ const PLAIN_EXACT = new Set([
   // anything the person wrote. The same kind of fact as consent_level and status above. (0105's other column,
   // contact_stage_events.undo_of_event_id, is the id of a stage event: plain by the structural rule `_id$` below.)
   'unreachable_cause',
+  // ---- batch 19 team-queue lane, classified on purpose (R-AUDIT-4): two on/off settings of a lead source (0107) ----
+  'high_intent', // lead_sources: the team's "high intent" mark; its audit row shows from and to
+  'covered', // lead_sources: the coverage switch; its audit row shows from and to
+  // The backup alert's decision row and the scoreboard's view (0108, 0109): closed sets of codes the database's CHECKs
+  // allow, and one yes/no. None holds a name, an address or anything a person wrote; WHO was alerted and who held the
+  // lead are the row's *_user_id and *_pond_id columns (ids, plain by the structural rule below). Declared here, not
+  // left to the fail-closed default, like unreachable_cause above. A string under one of these keys is still masked
+  // for emails and phone numbers, and the keys of an object under one are still classified one by one (toJson).
+  // `recipient` and `holder` (lead_backup_alerts) also hold only codes, but the names are generic: a later audit key
+  // spelled `recipient` could carry a person's name, so they stay on the fail-closed default on purpose.
+  'fallback_reason', // lead_backup_alerts (0109): why it was not the named backup: 'backup_unavailable' | 'backup_is_holder'
+  'first_touch_by_backup', // v_speed_to_lead (0109): a boolean, whether the period's first touch was the alerted backup's
 ]);
 
 /** Structural suffixes that never hold free text (ids, instants, counts, digests), checked after secrets. */

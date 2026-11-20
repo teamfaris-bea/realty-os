@@ -46,6 +46,18 @@ describe('Scoreboard', () => {
     }
   });
 
+  it('R-TEAMQ-23 E985: periods first touched by the backup are a line of their own with their denominator, never inside "within the first-touch window"; with none, no such line', () => {
+    const lines = scoreboardLines(board({ speedToLead: { medianSeconds: 240, withinSla: 12, total: 14, responded: 13, pending: 1, byBackup: 2 } }));
+    expect(lines[0]).toMatchObject({ label: 'Speed to lead (first attempt)', text: '12 of 14 within the first-touch window' });
+    expect(lines[1]).toMatchObject({ label: 'First touch by the backup', text: '2 of 16 first touched by the backup' });
+    expect(lines[1]!.detail).toMatch(/Not counted above as their own response/);
+    for (const l of lines) assertDenominated(`${l.text} ${l.detail ?? ''}`);
+    for (const byBackup of [0, undefined]) {
+      const none = scoreboardLines(board({ speedToLead: { medianSeconds: 240, withinSla: 12, total: 14, responded: 13, pending: 1, ...(byBackup === undefined ? {} : { byBackup }) } }));
+      expect(none.map((l) => l.label)).not.toContain('First touch by the backup');
+    }
+  });
+
   it('R-ACC-4: a Team Lead sees the team with denominators: "12 of 14 within the first-touch window", "34 in 7 days", "3 of 5 held"', async () => {
     const fake = new FakeFetch()
       .on('GET /team/scoreboard?range=7d', { status: 200, body: { range: range('7d'), members: [board(), board({ userId: ID.ben, name: 'Ben Agent', speedToLead: { medianSeconds: null, withinSla: 0, total: 0, responded: 0, pending: 0 } })] } })

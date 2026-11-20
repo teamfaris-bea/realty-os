@@ -1453,6 +1453,27 @@ export interface JurisdictionPacksTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.lead_backup_alerts (table) */
+export interface LeadBackupAlertsTable {
+  tenant_id: string;
+  id: string;
+  inquiry_id: string;
+  lead_source_id: string;
+  arrived_at: Timestamp;
+  due_at: Timestamp;
+  decided_at: Timestamp;
+  outcome: string;
+  alerted_user_id: string | null;
+  recipient: string | null;
+  holder: string | null;
+  holder_user_id: string | null;
+  holder_pond_id: string | null;
+  grant_expires_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  fallback_reason: string | null;
+  alerted_count: Generated<number>;
+}
+
 /** public.lead_email_inbox_keys (table) */
 export interface LeadEmailInboxKeysTable {
   tenant_id: string;
@@ -1593,6 +1614,11 @@ export interface LeadSourcesTable {
   no_ai_care_changed_at: Timestamp | null;
   import_labels: Generated<string[]>;
   import_unlabeled_batches: Generated<string[]>;
+  owner_user_id: string | null;
+  backup_user_id: string | null;
+  high_intent: Generated<boolean>;
+  covered: Generated<boolean>;
+  coverage_changed_at: Timestamp | null;
 }
 
 /** public.listing_contacts (table) */
@@ -2950,6 +2976,8 @@ export interface VSpeedToLeadTable {
   first_touch_at: Timestamp | null;
   response_seconds: Int8 | null;
   within_sla: boolean | null;
+  first_touch_user_id: string | null;
+  first_touch_by_backup: boolean | null;
 }
 
 /** public.voice_settings (table) */
@@ -3089,6 +3117,7 @@ export interface DB {
   invites: InvitesTable;
   jobs: JobsTable;
   jurisdiction_packs: JurisdictionPacksTable;
+  lead_backup_alerts: LeadBackupAlertsTable;
   lead_email_inbox_keys: LeadEmailInboxKeysTable;
   lead_email_messages: LeadEmailMessagesTable;
   lead_inquiries: LeadInquiriesTable;
@@ -3268,6 +3297,7 @@ export const TABLE_NAMES = [
   'invites',
   'jobs',
   'jurisdiction_packs',
+  'lead_backup_alerts',
   'lead_email_inbox_keys',
   'lead_email_messages',
   'lead_inquiries',

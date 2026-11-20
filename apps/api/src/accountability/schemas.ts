@@ -4,7 +4,7 @@
 // R-AST-13: no response carries a confidence field; exceptions explain themselves with evidence (source,
 // locator, short explanation) and needs-review flags. R-ACC-4: every count travels with its denominator.
 // Snapshot-tested in schemas.test.ts.
-import { EXCEPTION_TYPES } from '@realty/core/priority';
+import { EXCEPTION_TYPES, TEAM_QUEUE_GROUPS } from '@realty/core/priority';
 import { z } from 'zod';
 import { DEDUPE_KEY_PATTERN } from './exceptions.js';
 import { RANGE_KEYS } from './scoreboard.js';
@@ -106,7 +106,8 @@ const count = z.number().int().min(0);
 export const ScoreboardSchema = z.object({
   userId: uuid,
   name: z.string().nullable(),
-  speedToLead: z.object({ medianSeconds: z.number().int().min(0).nullable(), withinSla: count, total: count, responded: count, pending: count }),
+  // byBackup (R-TEAMQ-23): periods whose first touch the source's backup made; outside every other number
+  speedToLead: z.object({ medianSeconds: z.number().int().min(0).nullable(), withinSla: count, total: count, responded: count, pending: count, byBackup: count }),
   touches: z.object({ count, calls: count, textsAndEmails: count, days: count }),
   appointmentsSet: z.object({ count, days: count }),
   appointmentsHeld: z.object({ count, of: count }),
@@ -139,6 +140,130 @@ export const MomentumResponse = z.object({
   generatedAt: z.string(),
 });
 
+// ---- the team work queue (b19 team-queue lane; R-TEAMQ-1..6) -------------------------------------------------
+
+/** GET /team/queue takes no input: the caller's role and teams decide the rows (R-TEN-3: never a tenant id). */
+export const TeamQueueQuery = z.strictObject({});
+
+const QueueOwnerSchema = z.object({
+  kind: z.enum(['owner', 'on_offer', 'pond', 'unassigned']),
+  userId: uuid.nullable(),
+  name: z.string().nullable(),
+  pondId: uuid.nullable(),
+  label: z.string().min(1),
+});
+export const TeamQueueRowSchema = z.object({
+  key: z.string(),
+  contact: z.object({ id: uuid, name: z.string() }),
+  source: z.string().nullable(),
+  owner: QueueOwnerSchema,
+  why: z.string().min(1),
+  since: z.string(),
+  waitingSeconds: count,
+  staffedSeconds: count.nullable(),
+  offHours: z.boolean(),
+  /** new leads only (R-TEAMQ-18): the backup alert of this person's latest alerted inquiry, as its own line */
+  backupAlert: z.object({ at: z.string(), alerted: z.boolean(), recipient: z.enum(['backup', 'team_lead', 'admins']).nullable(), line: z.string().min(1) }).nullable(),
+  /** new leads only (R-TEAMQ-22): when a person answered the lead's own call since it arrived; else null */
+  answeredCallAt: z.string().nullable(),
+  /** new leads only (R-TEAMQ-27): when a person's send to them was last reported failed by the provider; else null */
+  failedAttemptAt: z.string().nullable(),
+});
+export const TeamQueueResponse = z.object({
+  groups: z.array(
+    z.object({
+      key: z.enum(TEAM_QUEUE_GROUPS as unknown as ['new_lead', 'unanswered_reply', 'due_promise', 'overdue_follow_up', 'appointment_outcome']),
+      label: z.string(),
+      empty: z.string(),
+      rows: z.array(TeamQueueRowSchema),
+      total: count,
+      more: count,
+      atLeast: z.boolean(),
+      /** new_lead only (R-TEAMQ-18): of `total`, the rows whose backup was alerted; null for the other groups */
+      backupAlerted: count.nullable(),
+      /** new_lead only (R-TEAMQ-25): of `total`, the rows whose alert went to a team lead or to the Owners and Admins instead */
+      othersAlerted: count.nullable(),
+      /** new_lead only (R-TEAMQ-22): of `total`, the rows whose own call a person answered; null for the other groups */
+      answeredCalls: count.nullable(),
+      /** new_lead only (R-TEAMQ-27): of `total`, the rows where a person tried and the send was reported failed */
+      failedAttempts: count.nullable(),
+    }),
+  ),
+  staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
+  windows: z.object({ newLeadDays: count, replyDays: count, taskDays: count, appointmentDays: count }),
+  generatedAt: z.string(),
+});
+
+// ---- the lead response report (b19 team-queue lane; R-TEAMQ-6..9) -----------------------------------------------
+
+export const LeadResponseQuery = z.strictObject({ range: RangeKeySchema.optional() });
+
+const Waited = z.object({ wallSeconds: count, staffedSeconds: count });
+export const ResponseInquirySchema = z.object({
+  inquiryId: uuid,
+  contact: z.object({ id: uuid, name: z.string() }),
+  sourceId: uuid,
+  sourceName: z.string().nullable(),
+  arrivedAt: z.string(),
+  offHours: z.boolean(),
+  countedFrom: z.string(),
+  attempt: Waited.extend({
+    at: z.string(),
+    kind: z.enum(['call', 'text', 'email', 'chat']),
+    by: Person.nullable(),
+    // R-TEAMQ-25: `backup` only for the source's named backup; a team lead or an Owner/Admin alerted in their place is said as that
+    role: z.enum(['owner', 'backup', 'team_lead', 'admin', 'collaborator', 'other']),
+    /** R-TEAMQ-27: the provider reported this send as failed, undelivered or bounced (it is still the attempt) */
+    failed: z.boolean(),
+  }).nullable(),
+  /** R-TEAMQ-22: attempted, else answered_call (a person answered the lead's own call; never an attempt), else waiting */
+  state: z.enum(['attempted', 'answered_call', 'waiting']),
+  answeredCall: Waited.extend({ at: z.string(), by: Person.nullable() }).nullable(),
+  waiting: Waited.nullable(),
+  automatedReplyAt: z.string().nullable(),
+  /** R-TEAMQ-18: the inquiry's minute-three backup alert (null: nobody was alerted) */
+  backupAlert: z.object({ at: z.string(), to: Person, recipient: z.enum(['backup', 'team_lead', 'admins']) }).nullable(),
+  within5: z.boolean(),
+  within15: z.boolean(),
+});
+const ResponseRollupSchema = z.object({
+  inquiries: count,
+  attempted: count,
+  /** R-TEAMQ-27: of `attempted`, those whose first attempt was a send the provider reported as failed */
+  failedAttempts: count,
+  within5: count,
+  within15: count,
+  /** R-TEAMQ-22: no human attempt, and a person answered the lead's own call (attempted + answeredCalls + waiting = inquiries) */
+  answeredCalls: count,
+  waiting: count,
+  automatedReplies: count,
+  /** R-TEAMQ-18: inquiries whose backup alert was raised (of `inquiries`), and of those, first attempted by the alerted person */
+  backupAlerted: count,
+  byBackup: count,
+  /** R-TEAMQ-25: alerts that went to a team lead in the backup's place, and of those, first attempted by that team lead; alerts that went to the Owners and Admins */
+  teamLeadAlerted: count,
+  byTeamLead: count,
+  adminsAlerted: count,
+  sample: count,
+  medianStaffedSeconds: count.nullable(),
+  p90StaffedSeconds: count.nullable(),
+});
+export const LeadResponseResponse = z.object({
+  range: RangeSchema,
+  staffedHours: z.object({ open: z.string(), close: z.string(), zone: z.string() }),
+  rules: z.object({ within5Seconds: count, within15Seconds: count, medianMinSample: count, p90MinSample: count }),
+  totals: ResponseRollupSchema,
+  sources: z.array(ResponseRollupSchema.extend({ sourceId: uuid, sourceName: z.string().nullable(), notWithin5: z.array(ResponseInquirySchema), notWithin5More: count })),
+  inquiries: z.array(ResponseInquirySchema),
+  inquiriesMore: count,
+  imports: z.object({ people: count }),
+  closedExcluded: count,
+  /** R-TEAMQ-28: inquiries of people since deleted: left out of the measure */
+  deletedExcluded: count,
+  truncated: z.boolean(),
+  generatedAt: z.string(),
+});
+
 /** Every response schema of the module (snapshot-tested: no confidence, no tenant id). */
 export const ACCOUNTABILITY_RESPONSE_SCHEMAS = {
   QueueResponse,
@@ -146,4 +271,6 @@ export const ACCOUNTABILITY_RESPONSE_SCHEMAS = {
   ScoreboardResponse,
   TeamScoreboardResponse,
   MomentumResponse,
+  TeamQueueResponse,
+  LeadResponseResponse,
 } as const;

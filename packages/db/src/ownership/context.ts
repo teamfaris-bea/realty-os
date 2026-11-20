@@ -16,6 +16,7 @@ import {
   type RotationCursor,
   type RoutingSnapshot,
   type RuleFacts,
+  autoReleaseWaivedNow,
   matchRule,
   offeredInCurrentSequence,
   parseRoutingMatch,
@@ -105,13 +106,16 @@ const PEOPLE_COLUMNS = sql`
                       FROM team_members tm
                       JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
                       JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
-                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads`;
-type PeopleRow = { admins: string[] | null; leads: { member: string; lead: string }[] | null };
+                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads,
+           -- b19 R-TEAMQ-12: who a pond arrival alerts: every active Team Lead of the tenant (a Team Lead sees every pond)
+           (SELECT array_agg(user_id ORDER BY user_id) FROM memberships
+             WHERE tenant_id = app.tenant_id() AND role = 'team_lead' AND status = 'active') AS team_leads`;
+type PeopleRow = { admins: string[] | null; leads: { member: string; lead: string }[] | null; team_leads: string[] | null };
 
 function peopleOf(row: PeopleRow | undefined): PeopleFacts {
   const teamLeadsOf: Record<string, UserId[]> = {};
   for (const x of row?.leads ?? []) (teamLeadsOf[x.member] ??= []).push(x.lead as UserId);
-  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf };
+  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf, teamLeads: (row?.team_leads ?? []).map((a) => a as UserId) };
 }
 
 const DEAL_OPEN = (contactId: ContactId) => sql`
@@ -260,12 +264,69 @@ export async function loadDealOpen(tx: Tx, contactId: ContactId): Promise<boolea
   return r.rows[0]?.open ?? false;
 }
 
-export async function loadIsCollaborator(tx: Tx, contactId: ContactId, userId: UserId, now: Instant): Promise<boolean> {
-  const r = await sql<{ ok: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM contact_collaborators WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}
-                     AND user_id = ${userId} AND removed_at IS NULL
-                     AND (expires_at IS NULL OR expires_at > ${toIso(now)}::timestamptz)) AS ok`.execute(tx);
-  return r.rows[0]?.ok ?? false;
+/**
+ * b19 R-TEAMQ-13, R-TEAMQ-20 (review fix M1): whether the lead's auto-release is WAIVED now (core
+ * autoReleaseWaivedNow): its source is covered now (the coverage switch on, its named owner and backup both active
+ * members) AND the lead's own owner is an active member: a lead held by a suspended or deactivating member is
+ * released as on an uncovered source. The lead's source is the source of the person's latest inquiry that is not an
+ * ignored duplicate (lead_inquiries_contact_idx), else the source they first came from; a person with neither (typed
+ * in, imported with no source) is never waived. Read by the `auto_release` timer and by `release_recheck`, as the
+ * system actor, under the contact lock.
+ */
+export async function loadAutoReleaseWaived(tx: Tx, contactId: ContactId): Promise<boolean> {
+  const r = await sql<{ setting: boolean; owner_status: MembershipStatus | null; backup_status: MembershipStatus | null; lead_owner_status: MembershipStatus | null }>`
+    SELECT s.covered AS setting, om.status AS owner_status, bm.status AS backup_status, lm.status AS lead_owner_status
+      FROM contacts c
+      JOIN lead_sources s ON s.tenant_id = c.tenant_id AND s.id = COALESCE(
+             (SELECT i.lead_source_id FROM lead_inquiries i
+               WHERE i.tenant_id = c.tenant_id AND i.contact_id = c.id AND i.outcome <> 'duplicate_ignored'
+               ORDER BY i.received_at DESC, i.id DESC LIMIT 1),
+             c.original_lead_source_id)
+      LEFT JOIN memberships om ON om.tenant_id = s.tenant_id AND om.user_id = s.owner_user_id
+      LEFT JOIN memberships bm ON bm.tenant_id = s.tenant_id AND bm.user_id = s.backup_user_id
+      LEFT JOIN memberships lm ON lm.tenant_id = c.tenant_id AND lm.user_id = c.owner_user_id
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}`.execute(tx);
+  const row = r.rows[0];
+  if (!row) return false;
+  return autoReleaseWaivedNow({ setting: row.setting, ownerStatus: row.owner_status, backupStatus: row.backup_status, leadOwnerStatus: row.lead_owner_status });
+}
+
+/**
+ * b19 R-TEAMQ-20: whether the ownership period that starts at ledger seq `periodSeq` holds a waiver of its
+ * auto-release (an `sla_waived` event with payload.waived = 'auto_release'; the ledger's primary key). Read by
+ * `release_recheck` only, as the system actor, under the contact lock.
+ */
+export async function loadReleaseWaivedInPeriod(tx: Tx, contactId: ContactId, periodSeq: number): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM lead_ownership_events e
+                    WHERE e.tenant_id = app.tenant_id() AND e.contact_id = ${contactId} AND e.seq >= ${periodSeq}
+                      AND e.type = 'sla_waived' AND e.payload->>'waived' = 'auto_release') AS x`.execute(tx);
+  return r.rows[0]?.x === true;
+}
+
+/**
+ * The touch command's collaborator facts, in one statement (the round trip the touch always made): whether the actor
+ * is a live collaborator, and (b19 R-TEAMQ-16) whether a time-boxed `backup` grant is live on the contact (anyone's).
+ */
+export async function loadCollaboration(tx: Tx, contactId: ContactId, userId: UserId, now: Instant): Promise<{ actorIsCollaborator: boolean; backupAccessLive: boolean }> {
+  const r = await sql<{ ok: boolean; backup: boolean }>`
+    SELECT COALESCE(bool_or(user_id = ${userId}), false) AS ok, COALESCE(bool_or(role = 'backup'), false) AS backup
+      FROM contact_collaborators
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND removed_at IS NULL
+       AND (expires_at IS NULL OR expires_at > ${toIso(now)}::timestamptz)`.execute(tx);
+  return { actorIsCollaborator: r.rows[0]?.ok ?? false, backupAccessLive: r.rows[0]?.backup ?? false };
+}
+
+/**
+ * b19 R-TEAMQ-28: whether a time-boxed `backup` grant is live on the contact. Read for the commands that can take an
+ * owned lead from its owner (the grant then ends); contact_collaborators' primary key prefix.
+ */
+export async function loadBackupAccessLive(tx: Tx, contactId: ContactId, now: Instant): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM contact_collaborators
+                    WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND role = 'backup' AND removed_at IS NULL
+                      AND expires_at > ${toIso(now)}::timestamptz) AS x`.execute(tx);
+  return r.rows[0]?.x === true;
 }
 
 // ---- routing (system actor only) -----------------------------------------------------------------
