@@ -164,8 +164,8 @@ const PLAIN_EXACT = new Set([
   // lead are the row's *_user_id and *_pond_id columns (ids, plain by the structural rule below). Declared here, not
   // left to the fail-closed default, like unreachable_cause above. A string under one of these keys is still masked
   // for emails and phone numbers, and the keys of an object under one are still classified one by one (toJson).
-  'recipient', // lead_backup_alerts: the ROLE the alert went to: 'backup' | 'team_lead' | 'admins'
-  'holder', // lead_backup_alerts: the KIND of holder the lead was with then: 'owner' | 'on_offer' | 'pond' | 'unassigned'
+  // `recipient` and `holder` (lead_backup_alerts) also hold only codes, but the names are generic: a later audit key
+  // spelled `recipient` could carry a person's name, so they stay on the fail-closed default on purpose.
   'fallback_reason', // lead_backup_alerts (0109): why it was not the named backup: 'backup_unavailable' | 'backup_is_holder'
   'first_touch_by_backup', // v_speed_to_lead (0109): a boolean, whether the period's first touch was the alerted backup's
 ]);
