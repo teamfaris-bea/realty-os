@@ -90,7 +90,8 @@ export type RangeKey = 'today' | '7d' | '30d' | '90d';
 export interface Scoreboard {
   userId: string;
   name: string | null;
-  speedToLead: { medianSeconds: number | null; withinSla: number; total: number; responded: number; pending: number };
+  /** byBackup (R-TEAMQ-23): periods whose first touch the source's backup made; outside every other number */
+  speedToLead: { medianSeconds: number | null; withinSla: number; total: number; responded: number; pending: number; byBackup?: number };
   touches: { count: number; calls: number; textsAndEmails: number; days: number };
   appointmentsSet: { count: number; days: number };
   appointmentsHeld: { count: number; of: number };

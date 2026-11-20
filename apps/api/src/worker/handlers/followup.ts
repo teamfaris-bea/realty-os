@@ -25,6 +25,7 @@ export const FOLLOWUP_EFFECT_KINDS = [
   'membershipAutoPause',
   'missedOfferCounter',
   'addCollaborator',
+  'endBackupAccess',
   'rehomeHandbacks',
   'route',
   'setInactivityDeadlines',

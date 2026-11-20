@@ -3,5 +3,7 @@
 // that apply a merge pass this list: leads/ownership.ts runOwnershipCommand and worker/handlers/followup.ts.
 import type { MergeStep } from '@realty/db';
 import { cmaMergeStep } from './cma/merge.js';
+import { teamQueueMergeStep } from './leads/mergeStep.js';
 
-export const MERGE_STEPS: readonly MergeStep[] = [cmaMergeStep];
+// teamQueueMergeStep (b19 R-TEAMQ-26): the person's inquiries and a backup's live time-boxed grant go to the survivor
+export const MERGE_STEPS: readonly MergeStep[] = [cmaMergeStep, teamQueueMergeStep];

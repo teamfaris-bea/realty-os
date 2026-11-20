@@ -358,7 +358,8 @@ async function seedDemo(su: pg.Pool, opts: DemoSeedOptions): Promise<void> {
     await suFixture(su, [
       { text: `UPDATE lead_ownership_events SET occurred_at = occurred_at - interval '70 minutes', deadline_at = deadline_at - interval '70 minutes' WHERE contact_id = $1`, values: [u.id] },
       { text: `UPDATE contacts SET created_at = created_at - interval '70 minutes', owned_at = owned_at - interval '70 minutes', first_touch_due_at = $2, release_due_at = $3 WHERE id = $1`, values: [u.id, t.due, t.rel] },
-      { text: `UPDATE lead_inquiries SET received_at = received_at - interval '70 minutes' WHERE contact_id = $1`, values: [u.id] },
+      // b19 R-TEAMQ-19: arrival is the moment the inquiry reached the team (created_at), so both times move together
+      { text: `UPDATE lead_inquiries SET received_at = received_at - interval '70 minutes', created_at = created_at - interval '70 minutes' WHERE contact_id = $1`, values: [u.id] },
       { text: `UPDATE lead_ownership_events e SET deadline_at = $2, payload = jsonb_set(e.payload, '{releaseDueAt}', to_jsonb($3::bigint)) FROM contacts c WHERE c.id = $1 AND e.contact_id = c.id AND e.seq = c.ownership_period_seq`, values: [u.id, t.due, t.rel.getTime()] },
       { text: `UPDATE jobs SET run_at = to_timestamp($2::bigint / 1000.0), payload = jsonb_set(payload, '{dueAt}', to_jsonb($2::bigint)) WHERE kind = 'ownership.first_touch_breach' AND payload->>'contactId' = $1::text AND status = 'pending'`, values: [u.id, t.due.getTime()] },
       { text: `UPDATE jobs SET run_at = to_timestamp($2::bigint / 1000.0), payload = jsonb_set(payload, '{dueAt}', to_jsonb($2::bigint)) WHERE kind = 'ownership.auto_release' AND payload->>'contactId' = $1::text AND status = 'pending'`, values: [u.id, t.rel.getTime()] },

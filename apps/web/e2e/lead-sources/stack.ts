@@ -63,6 +63,27 @@ const routes = {
     const numbers = (await h.su.query('SELECT e164 FROM phone_numbers WHERE tenant_id = $1 AND lead_source_id = $2 AND released_at IS NULL', [w.tenantId, s.id])).rows.map((r) => r.e164);
     return { id: s.id, inquiries, numbers };
   },
+  /** coverage.spec.ts: a second agent with a readable (fictional) name, so a source can have an owner and a backup */
+  async '/second-agent'() {
+    const a = await h.invite(w.owner, 'agent');
+    await name(a.userId, 'Riley Backup');
+    return { userId: a.userId, firstAgentUserId: w.agents[0].userId };
+  },
+  /** coverage.spec.ts: what the database holds for a source's coverage, and how many coverage changes were audited */
+  async '/coverage-facts'(b) {
+    const s = (await h.su.query('SELECT id, owner_user_id, backup_user_id, high_intent, covered FROM lead_sources WHERE tenant_id = $1 AND name = $2', [w.tenantId, b.name])).rows[0];
+    if (!s) return { id: null };
+    const audits = (await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1 AND entity_type = 'lead_source' AND entity_id = $2 AND reason = 'LEAD_SOURCE_COVERAGE_CHANGED'", [w.tenantId, s.id])).rows[0].n;
+    return { id: s.id, ownerUserId: s.owner_user_id, backupUserId: s.backup_user_id, highIntent: s.high_intent, covered: s.covered, audits };
+  },
+  /** coverage.spec.ts: the Owner suspends a member, through the API (PATCH /members/:userId, after a fresh re-auth) */
+  async '/suspend'(b) {
+    await h.su.query('UPDATE sessions SET reauthenticated_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [w.owner.userId]);
+    const members = (await w.owner.request('GET', '/api/members')).json().members;
+    const m = members.find((x) => x.userId === b.userId);
+    const r = await w.owner.request('PATCH', '/api/members/' + b.userId, { status: 'suspended', version: m.version });
+    return { status: r.statusCode };
+  },
   /** a stranger texts a number (the signed telephony webhook, as the fake provider does) */
   async '/text'(b) {
     const r = await inboundSms(h, randomPhone(), b.to, b.body ?? 'Hi, I saw your sign on Elm St. Is it still for sale?');
@@ -91,7 +112,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/totp' | '/google' | '/source-facts' | '/text';
+export type FixturePath = '/world' | '/totp' | '/google' | '/source-facts' | '/text' | '/second-agent' | '/coverage-facts' | '/suspend';
 
 export interface World {
   owner: { email: string; password: string };
@@ -101,6 +122,15 @@ export interface SourceFacts {
   id: string | null;
   inquiries: { outcome: string; channel: string | null }[];
   numbers: string[];
+}
+
+export interface CoverageFacts {
+  id: string | null;
+  ownerUserId: string | null;
+  backupUserId: string | null;
+  highIntent: boolean;
+  covered: boolean;
+  audits: number;
 }
 
 export interface LeadSourcesStack {

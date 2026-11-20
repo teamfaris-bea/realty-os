@@ -1,5 +1,6 @@
 // Response and body schemas of the Lead sources routes (module 22; DATA_MODEL R-LSRC-1..5). No confidence or score
 // field and no tenant id in any response (R-AST-13, R-TEN-3; matrix.test.ts checks LEAD_SOURCES_RESPONSE_SCHEMAS).
+import { COVERAGE_WARNING_CODES, MEMBERSHIP_STATUSES } from '@realty/core/ownership';
 import { z } from 'zod';
 import { ConsentDisclosureInput } from './schemas.js';
 import { TelephonyMode } from '../comms/telephonyMode.js';
@@ -8,6 +9,30 @@ const Id = z.uuid();
 const Iso = z.string();
 
 export const PathState = z.enum(['on', 'off', 'not_available']);
+
+/**
+ * b19 step 2 (R-TEAMQ-10, R-TEAMQ-11): a source's coverage. `covered` is true only while the switch (`setting`) is
+ * on and the owner and the backup are both active members; `sentence` says the state in words ("Covered: …",
+ * "Not covered: no backup is named."); `warnings` are computed, each a code and a sentence. A suspended or
+ * deactivated member stays named (their `status` says so): nothing is reassigned.
+ */
+export const CoverageMemberView = z.object({ userId: Id, name: z.string().nullable(), status: z.enum(MEMBERSHIP_STATUSES) });
+export const CoverageView = z.object({
+  owner: CoverageMemberView.nullable(),
+  backup: CoverageMemberView.nullable(),
+  highIntent: z.boolean(),
+  covered: z.boolean(),
+  setting: z.boolean(),
+  sentence: z.string(),
+  warnings: z.array(z.object({ code: z.enum(COVERAGE_WARNING_CODES), sentence: z.string() })),
+  /** R-TEAMQ-24: what happens to this source's leads now, in words: the minute-three alert, then the automatic return to the pond with the team's own time */
+  effects: z.array(z.string()),
+  /** when the owner, the backup, the mark or the switch last changed (null: never set) */
+  changedAt: Iso.nullable(),
+});
+export const CoverageResponse = z.object({ coverage: CoverageView });
+/** PUT /lead-sources/:id/coverage: the whole coverage. `covered` true needs both people (422 otherwise). */
+export const CoverageBody = z.strictObject({ ownerUserId: Id.nullable(), backupUserId: Id.nullable(), highIntent: z.boolean(), covered: z.boolean() });
 
 export const SourceOverview = z.object({
   id: Id,
@@ -43,6 +68,8 @@ export const SourceOverview = z.object({
   /** b18 item f / B18S-5: "No automated contact for leads from this source" (an Owner setting; the field keeps its b18 name) and its sentence */
   noAiCare: z.boolean(),
   noAiCareSentence: z.string(),
+  /** b19 step 2: the source's owner, backup, high-intent mark, covered state and warnings (R-TEAMQ-10, R-TEAMQ-11) */
+  coverage: CoverageView,
 });
 export const OverviewResponse = z.object({ sources: z.array(SourceOverview), deployment: z.object({ inboundEmail: z.boolean(), publicHttps: z.boolean(), telephony: TelephonyMode }) });
 
@@ -137,4 +164,4 @@ export const PreviewResponse = z.object({
   firstResponse: z.enum(['queued', 'off']),
 });
 
-export const LEAD_SOURCES_RESPONSE_SCHEMAS = { OverviewResponse, SourceResponse, OnOffResponse, WebhookRotatedResponse, PreviewResponse, ImportLabelsResponse, ImportLabelResponse };
+export const LEAD_SOURCES_RESPONSE_SCHEMAS = { OverviewResponse, SourceResponse, OnOffResponse, WebhookRotatedResponse, PreviewResponse, ImportLabelsResponse, ImportLabelResponse, CoverageResponse };

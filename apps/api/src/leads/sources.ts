@@ -32,6 +32,7 @@ import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
+import { coverageBySource, registerCoverageRoutes } from './coverage.js';
 import { noAutomatedContactSentence } from './automatedContact.js';
 import { type ImportLabelRow, labelRowOf, recordMapping, sourceCatalog, tenantLabels, unlabeledRowOf } from './importLabels.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
@@ -289,6 +290,8 @@ export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.i
          ORDER BY kind, id`.execute(tx)
     ).rows;
     const https = publicHttps(deps.publicBaseUrl);
+    // b19 step 2: each source's coverage (R-TEAMQ-10, R-TEAMQ-11), the same read as GET /lead-sources/:id/coverage
+    const coverage = await coverageBySource(tx);
     const sources = [];
     for (const s of rows) {
       const inbox = await le.inboxOfSource(tx, s.id);
@@ -333,6 +336,7 @@ export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.i
         hasConsentText: s.has_disclosure,
         noAiCare: s.no_ai_care,
         noAiCareSentence: noAiCareSentence(s.no_ai_care),
+        coverage: coverage.get(s.id)!,
       });
     }
     return { sources, deployment: { inboundEmail: deps.inboundDomain !== null, publicHttps: https, telephony: deps.telephony ?? 'simulated' } };
@@ -592,6 +596,8 @@ async function register(app: FastifyInstance): Promise<void> {
   r.post('/lead-sources/:id/preview', { ...routing, schema: { params: Params, body: PreviewBody, response: { 200: PreviewResponse } } }, async (req) =>
     leadsTx(req, (tx, now) => preview(tx, req.params.id, req.body, now)),
   );
+
+  await registerCoverageRoutes(app);
 }
 
 export const leadSourcesRoutes: RouteModule = { name: 'lead-sources', register };

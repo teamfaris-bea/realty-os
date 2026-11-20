@@ -105,7 +105,12 @@ describe('loadPeople (one statement since lane perf-misses)', () => {
          ORDER BY 1, 2`.execute(tx);
       const teamLeadsOf: Record<string, string[]> = {};
       for (const row of leads.rows) (teamLeadsOf[row.member] ??= []).push(row.lead);
-      return { admins: admins.rows.map((a) => a.user_id), teamLeadsOf };
+      // b19 R-TEAMQ-12: the people facts also carry every active Team Lead of the tenant (who a pond arrival alerts);
+      // compared against its own plain statement, like the two above
+      const teamLeads = await sql<{ user_id: string }>`
+        SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id() AND role = 'team_lead' AND status = 'active'
+         ORDER BY user_id`.execute(tx);
+      return { admins: admins.rows.map((a) => a.user_id), teamLeadsOf, teamLeads: teamLeads.rows.map((a) => a.user_id) };
     };
     for (const actor of [w.owner.actor, w.tl!.actor, ...w.agents.map((m) => m.actor), w.system()]) {
       const [now, before] = await withTenantTx(actor, async (tx) => [await loadPeople(tx), await legacy(tx)] as const, { db: h.app });
@@ -114,6 +119,7 @@ describe('loadPeople (one statement since lane perf-misses)', () => {
     const mine = await withTenantTx(w.owner.actor, (tx) => loadPeople(tx), { db: h.app });
     expect(mine.admins).toContain(w.owner.id);
     expect(Object.keys(mine.teamLeadsOf).length).toBeGreaterThan(0);
+    expect(mine.teamLeads).toEqual([w.tl!.id]);
   });
 });
 

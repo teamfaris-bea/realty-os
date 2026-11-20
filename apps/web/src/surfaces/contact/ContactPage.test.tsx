@@ -256,6 +256,36 @@ describe('Contact: full view', () => {
     expect(await screen.findByRole('dialog', { name: 'Appointment with Jane Doe' })).toBeInTheDocument();
   });
 
+  it('R-TEAMQ-20, R-TEAMQ-16: the timeline says a release deadline that is back on in words, and the Collaborators list says the backup\'s role in words (never the stored keys)', async () => {
+    const c = fullContact();
+    const at = iso(-600_000);
+    const event = (id: string, detail: string) => ({ id, type: 'ownership', occurredAt: at, actor: null, detail, preview: null, note: null, provenance: 'native' });
+    const fake = fullFake(c)
+      .on(`GET /contacts/${c.id}/timeline?limit=100`, { status: 200, body: { items: [event('01900000-0000-7000-8000-0000000000e2', 'sla_restored'), event('01900000-0000-7000-8000-0000000000e1', 'sla_waived')], nextCursor: null } })
+      .on(`GET /contacts/${c.id}/details`, {
+        status: 200,
+        body: {
+          details: detailsFixture(c.id, 'new', {
+            collaborators: [
+              { userId: '01900000-0000-7000-8000-0000000000c1', displayName: 'Bea Backup', role: 'backup', expiresAt: iso(3_600_000) },
+              { userId: '01900000-0000-7000-8000-0000000000c2', displayName: 'Cal Co', role: 'co_agent', expiresAt: null },
+            ],
+          }),
+        },
+      });
+    agentApp(fake, `/contacts/${c.id}`);
+    const restored = await screen.findByText('First-contact deadline back on');
+    expect(restored.closest('li')).not.toBeNull();
+    expect(screen.getByText('First-contact deadline waived')).toBeInTheDocument();
+    const collaborators = (await screen.findByRole('heading', { level: 3, name: 'Collaborators' })).parentElement!;
+    expect(await within(collaborators).findByText('· backup for this lead')).toBeInTheDocument();
+    // the roles that were there before read as they did
+    expect(within(collaborators).getByText('· co-agent')).toBeInTheDocument();
+    // neither stored key is on the page, raw or with its underscore swapped for a space
+    expect(document.body.textContent).not.toMatch(/sla[_ ]restored/i);
+    expect(within(collaborators).queryByText('· backup')).toBeNull();
+  });
+
   it('an invisible or missing contact reads as not available, the same either way', async () => {
     const fake = new FakeFetch().on(`GET /contacts/${IDS.pat}`, err(404, 'NOT_FOUND'));
     agentApp(fake, `/contacts/${IDS.pat}`);

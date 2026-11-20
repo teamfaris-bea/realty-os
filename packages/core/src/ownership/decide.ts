@@ -21,6 +21,7 @@ import {
   type Instant,
   type PondId,
   type UserId,
+  addBusinessDuration,
   addLocalDays,
   canOwnLeads,
   plusMs,
@@ -340,9 +341,66 @@ function finalize(b: Builder, auditAction: AuditAction | null, auditAlways = fal
   return [...pre, ...b.effects, ...out];
 }
 
+// ---- pond arrival (R-TEAMQ-12) -----------------------------------------------------------------------
+
+/** The ledger events that are a lead ARRIVING in a pond for a person to pick up. */
+const POND_ARRIVAL_TYPES: ReadonlySet<OwnershipEventType> = new Set<OwnershipEventType>(['sent_to_pond', 'released', 'auto_released']);
+
+/**
+ * R-TEAMQ-12 (b19, owner decision 4 of 2026-11-19): a pond arrival alerts the team leads. When this decision leaves
+ * the lead in a pond it was not in before, through routing (the rule sends it there, no rule matched, every offer
+ * expired, nobody was available), a release by its owner or the first-touch auto-release, every active Team Lead of
+ * the tenant gets one `pond_new` notification at high priority (ponds belong to no team, and a Team Lead sees every
+ * pond); a tenant with no Team Lead alerts its Owners and Admins instead. Decided here, with the move, so the alert
+ * commits in the same transaction as the ledger event, and keyed on that event (`pond_new:{contact}:{seq}`), so a
+ * replay or a retry alerts nobody twice and a later arrival is its own alert.
+ *
+ * Fewest alerts: the person who made the move is not told about their own move, and a person this decision already
+ * alerts (the critical "nobody was available" notice, the auto-release notice to the owner's Team Lead) gets no
+ * second notification for the same arrival. Not an arrival, so no alert: an import (never notifies, R-OWN-13), a
+ * merge, a re-inquiry that stays in the pond, the inactivity release of an old lead, and a member's deactivation
+ * (an Owner's or Admin's own bulk move of that member's leads). Notifications go to members only: nothing here is,
+ * or causes, a message to the client.
+ */
+function pondArrival(b: Builder): void {
+  const ctx = b.ctx;
+  const final = b.state;
+  if (final.state !== 'in_pond' || isSystem(ctx.actor, 'import') || ctx.deactivation !== undefined) return;
+  if (b.initial?.state === 'in_pond' && b.initial.pondId === final.pondId && !b.events.some((e) => e.toState !== 'in_pond')) return; // it never left
+  const arrival = [...b.events].reverse().find((e) => e.toState === 'in_pond' && e.fromState !== 'in_pond');
+  if (!arrival || !POND_ARRIVAL_TYPES.has(arrival.type)) return;
+  const people = ctx.people;
+  const leads = people?.teamLeads ?? Object.values(people?.teamLeadsOf ?? {}).flat();
+  const recipients = leads.length > 0 ? leads : (people?.admins ?? []);
+  const actorId = ctx.actor.kind === 'user' ? ctx.actor.userId : null;
+  const alreadyTold = new Set(b.effects.filter((e): e is Extract<Effect, { kind: 'notify' }> => e.kind === 'notify').map((e) => e.userId));
+  const key = `pond_new:${b.contactId}:${arrival.seq}`;
+  const reason = `POND_NEW_${arrival.type === 'sent_to_pond' ? arrival.reasonCode : arrival.type === 'released' ? 'RELEASED' : 'AUTO_RELEASED'}`;
+  for (const u of [...new Set(recipients)].sort()) {
+    if (u === actorId || alreadyTold.has(u)) continue;
+    b.notify(u, 'pond_new', 'high', key, reason);
+  }
+}
+
 // ---- results ---------------------------------------------------------------------------------------
 
+/**
+ * R-TEAMQ-28 (b19 review fix L7): the backup's time-boxed access was given for a lead waiting on its owner. When this
+ * decision takes the lead from that owner (to another owner, a pond, unassigned or closed), a live `backup` grant
+ * ends with it. Not on a merge: there the merge step carries a live grant to the surviving record (R-TEAMQ-26).
+ */
+function ownerChangeEndsBackupAccess(b: Builder): void {
+  const was = b.initial;
+  if (b.ctx.backupAccessLive !== true || !was || was.state !== 'owned' || was.ownerUserId === null) return;
+  if (b.events.some((e) => e.type === 'merged_away' || e.type === 'merged_in')) return;
+  const now = b.state;
+  if (now.state === 'owned' && now.ownerUserId === was.ownerUserId) return;
+  b.effect({ kind: 'endBackupAccess', ownerChanged: true });
+}
+
 function accepted(b: Builder, auditAction: AuditAction | null, auditAlways = false): Decision {
+  pondArrival(b);
+  ownerChangeEndsBackupAccess(b);
   const effects = finalize(b, auditAction, auditAlways);
   return { ok: true, events: b.events, next: b.state, effects };
 }
@@ -432,6 +490,8 @@ export function decide(state: OwnershipProjection | null, cmd: OwnershipCommand,
       return decideHandoff(state, cmd, ctx);
     case 'timer':
       return decideTimer(state, cmd, ctx);
+    case 'release_recheck':
+      return decideReleaseRecheck(state, cmd, ctx);
     case 'touch':
       return decideTouch(state, cmd, ctx);
     case 'reinquiry':
@@ -701,6 +761,27 @@ function decideTimer(state: OwnershipProjection, cmd: Cmd<'timer'>, ctx: Decisio
       // E70: the breach advanced the seq but not the period, so this fence still matches.
       if (!inPeriod || state.releaseDueAt !== fence.dueAt || state.firstTouchAt !== null) return noop(state);
       if (now < fence.dueAt) return noop(state, [rescheduleTimer(ctx.contactId, cmd.deadline, fence, fence.dueAt, now)]);
+      // Precedence of the auto-release, decided here when the timer fires (b19 R-TEAMQ-13; owner decision 3 of
+      // 2026-11-19, for the pilot; R-TEAMQ-20, review fix M1):
+      //   1. a first touch already recorded, a stale period or a stale deadline: nothing to release (above);
+      //   2. the release is WAIVED now (ctx.autoReleaseWaived: the lead's source is covered now, its switch on and its
+      //      named owner and backup both active, AND the lead's own owner is an active member): the auto-release does
+      //      NOT fire, whatever the tenant's first_touch_release_seconds says. The lead stays with its owner; the
+      //      stored release deadline is cleared by a ledgered `sla_waived` event (so the sweeper stops asking and no
+      //      screen promises a return to the pond); nobody is notified by this. The first-touch breach is a separate
+      //      timer on the same period and still fires and alerts as before, and the source's backup is alerted at
+      //      minute three (apps/api leads/backupAlert.ts). The waiver is not final: `release_recheck` below brings the
+      //      release back when its reason is gone;
+      //   3. otherwise the tenant setting decides, exactly as before: the lead goes to the default pond. This includes
+      //      a covered source's lead whose owner is suspended or being deactivated: nobody is there to make the first
+      //      touch, so it is released as on an uncovered source, and the pond arrival tells the team leads (R-TEAMQ-12).
+      // Read at this moment, not when the period started: a source covered since then is honoured, and one that
+      // stopped being covered (switched off, or its owner or backup suspended) releases as before.
+      if (ctx.autoReleaseWaived === true) {
+        const w = new Builder(state, ctx.contactId, ctx);
+        w.emit('sla_waived', 'owned', { reasonCode: 'AUTO_RELEASE_OFF_COVERED_SOURCE', payload: { waived: 'auto_release', releaseDueAt: null } });
+        return accepted(w, null);
+      }
       const b = new Builder(state, ctx.contactId, ctx);
       b.emit('auto_released', 'in_pond', { reasonCode: 'FIRST_TOUCH_MISSED', pondId: s.defaultPondId });
       const key = `auto_released:${ctx.contactId}:${fence.periodSeq}`;
@@ -741,6 +822,40 @@ function decideTimer(state: OwnershipProjection, cmd: Cmd<'timer'>, ctx: Decisio
   }
 }
 
+/**
+ * b19 R-TEAMQ-20 (review fix M1): the waiver of the auto-release is re-evaluated, not one-shot. Asked by the system
+ * when a source's coverage or a member's status changes (apps/api leads/releaseRecheck.ts), for a lead that is owned,
+ * has had no first touch, and whose release was waived in this ownership period (its stored release deadline is null):
+ *   - the waiver still holds (ctx.autoReleaseWaived): nothing happens;
+ *   - it no longer holds: the release applies again FROM THIS MOMENT. A ledgered `sla_restored` event stores a new
+ *     release deadline, the tenant's release window (first_touch_release_seconds of staffed time, the settings in
+ *     force now) counted from now, and the ordinary `auto_release` timer is enqueued for it. That timer decides again
+ *     when it fires (covered again by then: waived again; else released to the default pond, where the pond arrival
+ *     alerts the team leads). The stored deadline is what the sweeper reads (app.due_work), so a lost timer job is
+ *     re-issued like any other.
+ * It never changes the owner itself and notifies nobody. Unknown facts (either flag absent) leave the lead alone.
+ */
+function decideReleaseRecheck(state: OwnershipProjection, cmd: Cmd<'release_recheck'>, ctx: DecisionContext): Decision {
+  if (!isSystem(ctx.actor, 'timer', 'worker')) return rejection(state, cmd, ctx, 'NOT_FOUND');
+  if (state.state !== 'owned' || state.periodSeq === null || state.firstTouchAt !== null || state.releaseDueAt !== null) return noop(state);
+  if (ctx.releaseWaivedInPeriod !== true || ctx.autoReleaseWaived !== false) return noop(state);
+  const window = ctx.settings.firstTouchReleaseSeconds;
+  if (window === null) return noop(state); // the tenant turned the auto-release off since: there is none to bring back
+  const due = addBusinessDuration(ctx.now, window, ctx.calendar);
+  const b = new Builder(state, ctx.contactId, ctx);
+  b.emit('sla_restored', 'owned', { reasonCode: 'AUTO_RELEASE_BACK_ON', payload: { restored: 'auto_release', releaseDueAt: due } });
+  // the period's release timer at the NEW deadline, under the period's own key (the first one's job has finished):
+  // the key the sweeper derives and the one a first touch cancels
+  b.effect({
+    kind: 'enqueueTimer',
+    jobKind: 'ownership.auto_release',
+    runAt: due,
+    dedupeKey: releaseTimerKey(ctx.contactId, state.periodSeq),
+    fence: { contactId: ctx.contactId, deadline: 'auto_release', periodSeq: state.periodSeq, dueAt: due },
+  });
+  return accepted(b, null);
+}
+
 function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: DecisionContext): Decision {
   // R-OWN-14 / R-AST-15: only a human outbound by the owner or a collaborator, after owned_at: a call, text, email or
   // reply in the website chat (owner decision D8), all alike. The assistant (its chat first response too) never is.
@@ -760,6 +875,10 @@ function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: Decisio
     if (state.firstTouchDueAt !== null) b.effect({ kind: 'resolveFeed', dedupeKey: firstTouchFeedKey(ctx.contactId, period), userId: state.ownerUserId as UserId });
   }
   b.effect({ kind: 'recordHumanTouch', at: ctx.now });
+  // R-TEAMQ-16 (b19): the backup's access was given because nobody had made a human attempt. The OWNER's own attempt
+  // ends it (the backup's own attempt does not: they keep their window). Written by the owner, who may manage the
+  // collaborators of their own lead, in this same transaction.
+  if (state.ownerUserId === u.userId && ctx.backupAccessLive === true) b.effect({ kind: 'endBackupAccess' });
   // R-OWN-23: any touch resets the stored inactivity deadlines, computed with the settings in force now.
   const old = ctx.inactivity;
   const oldKeys = [
@@ -1071,6 +1190,10 @@ export function effectPlacement(e: Effect, actor: Actor): 'inline' | 'followup' 
     case 'membershipAutoPause':
     case 'missedOfferCounter':
       return e.userId === actor.userId ? 'inline' : 'followup';
+    case 'endBackupAccess':
+      // the owner's own touch: their own lead's collaborator rows, inline. The lead left its owner (R-TEAMQ-28): an
+      // Owner, an Admin or a Team Lead may write the rows inline; an agent who just gave the lead up no longer may
+      return e.ownerChanged === true && !(actor.role === 'owner' || actor.role === 'admin' || actor.role === 'team_lead') ? 'followup' : 'inline';
     case 'enqueueTimer':
     case 'cancelTimers':
     case 'notify':

@@ -271,6 +271,8 @@ const OWNERSHIP_LABEL: Record<string, string> = {
   offer_rescinded: 'Offer withdrawn',
   reinquiry: 'Asked again',
   sla_waived: 'First-contact deadline waived',
+  // b19 R-TEAMQ-20: the release that was waived for a covered source applies again, from a new deadline
+  sla_restored: 'First-contact deadline back on',
   inactivity_warned: 'No contact in a while: warning sent',
   merged_away: 'Merged into another contact',
   merged_in: 'Merged with a duplicate',

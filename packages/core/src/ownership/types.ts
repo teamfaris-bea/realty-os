@@ -111,6 +111,12 @@ export type OwnershipCommand =
   | { kind: 'assign' | 'reassign'; toUserId: UserId; reason: OwnershipReasonCode; note?: string }
   | { kind: 'isa_handoff'; toUserId: UserId; note: string }
   | { kind: 'timer'; deadline: TimerDeadline; fence: TimerFence }
+  /**
+   * b19 R-TEAMQ-20 (review fix M1): the system asks whether a WAIVED auto-release must come back (the source is no
+   * longer covered now, or the lead's own owner is no longer an active member). It never moves a lead itself: it
+   * stores a new release deadline (`sla_restored`) and the ordinary `auto_release` timer decides at that time.
+   */
+  | { kind: 'release_recheck' }
   | { kind: 'touch'; via: TouchVia; refId: string; at: Instant }
   | { kind: 'reinquiry'; inquiryId: string }
   | { kind: 'close'; reason: CloseReason }
@@ -130,7 +136,7 @@ export type OwnershipCommandKind = OwnershipCommand['kind'];
 export const OWNERSHIP_EVENT_TYPES = [
   'created', 'imported', 'offered', 'offer_accepted', 'offer_declined', 'offer_expired', 'offer_rescinded',
   'claimed', 'assigned', 'reassigned', 'released', 'sent_to_pond', 'auto_released', 'reinquiry',
-  'first_touch_recorded', 'first_touch_breached', 'sla_waived', 'inactivity_warned', 'inactivity_released',
+  'first_touch_recorded', 'first_touch_breached', 'sla_waived', 'sla_restored', 'inactivity_warned', 'inactivity_released',
   'closed', 'reopened', 'merged_away', 'merged_in',
 ] as const;
 export type OwnershipEventType = (typeof OWNERSHIP_EVENT_TYPES)[number];
@@ -173,6 +179,10 @@ export interface OwnershipEventPayload {
   closedReason?: CloseReason;
   /** owned → owned event that starts a new ownership period without an owner change (re-inquiry SLA). */
   newPeriod?: boolean;
+  /** sla_waived: which deadline of the period was waived (its releaseDueAt is then null). */
+  waived?: 'auto_release';
+  /** sla_restored (b19 R-TEAMQ-20): which waived deadline of the period is back (its releaseDueAt is the new deadline). */
+  restored?: 'auto_release';
   [k: string]: unknown;
 }
 
@@ -358,6 +368,11 @@ export interface PeopleFacts {
   admins: readonly UserId[];
   /** user id -> the team leads of that user's teams. */
   teamLeadsOf: Readonly<Record<string, readonly UserId[]>>;
+  /**
+   * Every active Team Lead of the tenant (b19, R-TEAMQ-12: who a pond arrival alerts; a Team Lead sees every pond).
+   * When not given, the leaders named in `teamLeadsOf` stand in.
+   */
+  teamLeads?: readonly UserId[];
 }
 
 export interface DeactivationFacts {
@@ -409,6 +424,22 @@ export interface DecisionContext {
   ownerInActorTeam?: boolean;
   /** The actor is a live collaborator on the contact (touch). */
   actorIsCollaborator?: boolean;
+  /**
+   * b19 R-TEAMQ-16, R-TEAMQ-28: a time-boxed `backup` collaborator grant is live on the contact (the minute-three
+   * backup alert gave it). The owner's own human attempt ends it (touch), and so does the lead leaving its owner
+   * (db loads it for the commands that can take an owned lead from its owner).
+   */
+  backupAccessLive?: boolean;
+  /**
+   * `auto_release` timer and `release_recheck` (b19 R-TEAMQ-13, R-TEAMQ-20): the lead's auto-release is WAIVED now:
+   * its source is covered now (core coveredNow: the switch on, its named owner and backup both active members) AND
+   * the lead's own owner is an active member (core autoReleaseWaivedNow). The lead's source is the source of the
+   * person's latest inquiry, else the one they first came from. db reads it under the contact lock; unknown reads as
+   * not waived for the timer (the tenant setting decides) and as "leave it alone" for the re-check.
+   */
+  autoReleaseWaived?: boolean;
+  /** `release_recheck` only (b19 R-TEAMQ-20): the current ownership period holds a waiver of its auto-release. */
+  releaseWaivedInPeriod?: boolean;
   /** Offeree's memberships.consecutive_missed_offers before this command (R-OWN-12). */
   offereeMissedOffers?: number;
   people?: PeopleFacts;
@@ -478,6 +509,11 @@ export type Effect =
   /** memberships.consecutive_missed_offers: +1 on a missed/declined offer, 0 on accept (R-OWN-12). */
   | { kind: 'missedOfferCounter'; userId: UserId; op: 'increment' | 'reset' }
   | { kind: 'addCollaborator'; userId: UserId; role: 'isa'; expiresAt: Instant }
+  /**
+   * b19 R-TEAMQ-16: the owner made a human attempt: live `backup` collaborator grants on the contact end now.
+   * R-TEAMQ-28 (`ownerChanged`): the lead left its owner (reassigned, released, auto-released, closed): they end too.
+   */
+  | { kind: 'endBackupAccess'; ownerChanged?: boolean }
   | { kind: 'rehomeHandbacks'; toUserId: UserId | null }
   | { kind: 'route' }
   /** Stored inactivity deadlines (non-guarded columns; must be null outside `owned`). */
