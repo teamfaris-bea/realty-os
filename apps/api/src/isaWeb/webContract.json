@@ -433,7 +433,7 @@
                               "type": "string"
                             }
                           },
-                          "rewords": {
+                          "changes": {
                             "type": "array",
                             "items": {
                               "type": "string"
@@ -446,7 +446,7 @@
                         "required": [
                           "adds",
                           "removes",
-                          "rewords",
+                          "changes",
                           "wider"
                         ],
                         "additionalProperties": false
@@ -892,7 +892,7 @@
                                   "type": "string"
                                 }
                               },
-                              "rewords": {
+                              "changes": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
@@ -905,7 +905,7 @@
                             "required": [
                               "adds",
                               "removes",
-                              "rewords",
+                              "changes",
                               "wider"
                             ],
                             "additionalProperties": false
@@ -1366,7 +1366,7 @@
                               "type": "string"
                             }
                           },
-                          "rewords": {
+                          "changes": {
                             "type": "array",
                             "items": {
                               "type": "string"
@@ -1379,7 +1379,7 @@
                         "required": [
                           "adds",
                           "removes",
-                          "rewords",
+                          "changes",
                           "wider"
                         ],
                         "additionalProperties": false
@@ -1874,7 +1874,7 @@
                                   "type": "string"
                                 }
                               },
-                              "rewords": {
+                              "changes": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
@@ -1887,7 +1887,7 @@
                             "required": [
                               "adds",
                               "removes",
-                              "rewords",
+                              "changes",
                               "wider"
                             ],
                             "additionalProperties": false
@@ -2377,7 +2377,7 @@
                                   "type": "string"
                                 }
                               },
-                              "rewords": {
+                              "changes": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
@@ -2390,7 +2390,7 @@
                             "required": [
                               "adds",
                               "removes",
-                              "rewords",
+                              "changes",
                               "wider"
                             ],
                             "additionalProperties": false
@@ -2816,7 +2816,7 @@
                               "type": "string"
                             }
                           },
-                          "rewords": {
+                          "changes": {
                             "type": "array",
                             "items": {
                               "type": "string"
@@ -2829,7 +2829,7 @@
                         "required": [
                           "adds",
                           "removes",
-                          "rewords",
+                          "changes",
                           "wider"
                         ],
                         "additionalProperties": false

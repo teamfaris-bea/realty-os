@@ -209,6 +209,14 @@ const fieldsView = (): PolicyView['fields'] => AI_ISA_POLICY_FIELDS.map((f) => (
 export function policyVersion(content: AiIsaContent, over: Partial<PolicyVersion> = {}): PolicyVersion {
   return { versionId: POLICY_IDS.v1, versionNo: 1, contentSha256: SHA, content: content as unknown as Record<string, unknown>, sections: policySections(content), decidedAt: iso(-86_400_000), decidedBy: 'Olive Owner', decidedByRole: 'Owner', ...over };
 }
+/** The wider banner as the server writes it (apps/api/src/isa/policy.ts widerBanner): what is added, what is changed, what approving does. */
+function widerBanner(d: { adds: string[]; changes: string[] }): string {
+  const joined = (xs: readonly string[]) => (xs.length === 1 ? xs[0]! : `${xs.slice(0, -1).join('; ')}; and ${xs.at(-1)!}`);
+  const more = d.adds.length === 0 ? null : `This version lets the assistant do more than the approved one: it ${joined(d.adds)}.`.replace(/: it may /, ': it may now ');
+  const rules = d.changes.length === 1 ? 'a rule' : 'rules';
+  const changed = d.changes.length === 0 ? null : more === null ? `This version changes ${rules} each agent must agree to again: it ${joined(d.changes)}.` : `It also changes ${rules} each agent must agree to again: it ${joined(d.changes)}.`;
+  return [more ?? (changed === null ? 'This version lets the assistant do more than the approved one.' : null), changed, 'Approving it pauses AI care for every lead until each agent re-confirms.'].filter((x) => x !== null).join(' ');
+}
 /** A draft against `approved` (null: nothing approved): the diff, the effect and the texts are core's. */
 export function policyDraft(content: AiIsaContent, approved: AiIsaContent | null, over: Partial<PolicyDraft> = {}): PolicyDraft {
   const diff = approved ? policyDiff(approved, content) : null;
@@ -218,7 +226,7 @@ export function policyDraft(content: AiIsaContent, approved: AiIsaContent | null
   return {
     versionId: approved ? POLICY_IDS.v2 : POLICY_IDS.v1, versionNo, contentSha256: sha, content: content as unknown as Record<string, unknown>, sections: policySections(content), savedAt: iso(-3_600_000), savedBy: 'Olive Owner', issues: [],
     effect,
-    effectSentence: effect === 'wider' ? `This version lets the assistant do more than the approved one: it ${diff!.adds.join('; ').replace(/^may /, 'may now ')}. Approving it pauses AI care for every lead until each agent re-confirms.`
+    effectSentence: effect === 'wider' ? widerBanner(diff ?? { adds: [], changes: [] })
       : effect === 'narrower' ? 'This version lets the assistant do no more than the approved one. AI care continues under it at once.'
       : effect === 'first' ? 'Nothing is approved yet, so approving this pauses nothing. Agents can opt in once it is approved.'
       : effect === 'after_revoke' ? 'The last approved version was revoked. AI care stays paused for every lead until each agent re-confirms on this version.' : 'This draft cannot be approved until the marked values are fixed.',

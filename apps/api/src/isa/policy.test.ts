@@ -17,7 +17,7 @@ let isa: TestClient;
 let tc: TestClient;
 
 interface Draft { versionId: string; versionNo: number; contentSha256: string; content: Record<string, unknown>; issues: { field: string | null; sentence: string }[]; effect: string | null; effectSentence: string;
-  diff: { adds: string[]; removes: string[]; rewords: string[]; wider: boolean } | null; approvalText: string | null }
+  diff: { adds: string[]; removes: string[]; changes: string[]; wider: boolean } | null; approvalText: string | null }
 interface Version { versionId: string; versionNo: number; contentSha256: string; content: Record<string, unknown>; sections: { key: string; may: string[]; mayNot: string[] }[]; decidedBy: string | null; decidedByRole: string | null }
 interface View { state: string; sentence: string; approved: Version | null; revoked: Version | null; draft: Draft | null; revokeText: string | null; underCare: number; optedIn: number;
   can: { create: boolean; saveDraft: boolean; approve: boolean; revoke: boolean }; fields: { key: string }[] }

@@ -78,7 +78,7 @@ export const MeView = z.object({
     sections: z.array(z.object({ key: z.string(), title: z.string(), may: z.array(z.string()), mayNot: z.array(z.string()) })) }).nullable(),
   /** R-ISA-34: what changed since the version this agent confirmed, and what it did to their care; null when they confirmed the current one (or never opted in) */
   policyChange: z.object({ state: z.enum(['narrowed', 'widened', 'revoked']), fromVersionNo: z.number().int().nullable(),
-    diff: z.object({ adds: z.array(z.string()), removes: z.array(z.string()), rewords: z.array(z.string()), wider: z.boolean() }).nullable(), sentence: z.string() }).nullable(),
+    diff: z.object({ adds: z.array(z.string()), removes: z.array(z.string()), changes: z.array(z.string()), wider: z.boolean() }).nullable(), sentence: z.string() }).nullable(),
   /** the canonical attestation text the opt-in will hash (it embeds the version hash) */
   attestationText: z.string().nullable(),
   needsReattest: z.boolean(),
@@ -240,7 +240,7 @@ export const PolicyField = z.object({
   maxLength: z.number().optional(),
 });
 const PolicySection = z.object({ key: z.string(), title: z.string(), may: z.array(z.string()), mayNot: z.array(z.string()) });
-const PolicyDiff = z.object({ adds: z.array(z.string()), removes: z.array(z.string()), rewords: z.array(z.string()), wider: z.boolean() });
+const PolicyDiff = z.object({ adds: z.array(z.string()), removes: z.array(z.string()), changes: z.array(z.string()), wider: z.boolean() });
 const PolicyIssue = z.object({ code: z.string(), field: z.string().nullable(), sentence: z.string() });
 export const POLICY_EFFECTS = ['first', 'narrower', 'wider', 'after_revoke'] as const;
 const PolicyVersion = z.object({

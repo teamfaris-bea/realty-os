@@ -102,7 +102,8 @@ export interface PolicySection {
 export interface PolicyDiffWords {
   adds: string[];
   removes: string[];
-  rewords: string[];
+  /** changes nothing can rank as more or less (R-ISA-38): each makes the version wider, so agents re-confirm */
+  changes: string[];
   wider: boolean;
 }
 export interface PolicyFieldView {

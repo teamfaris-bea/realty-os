@@ -2,7 +2,7 @@
 // E1003; docs/AI_ISA.md §3.2).
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { type AiIsaContent, DEFAULT_AI_ISA_CONTENT, narrowsPrevious, validateAiIsaContent } from './content.js';
+import { AI_ISA_FIELD_KEYS, AI_ISA_FIELD_WIDENS, type AiIsaContent, type AiIsaFieldKey, DEFAULT_AI_ISA_CONTENT, narrowsPrevious, policyFieldChanges, validateAiIsaContent } from './content.js';
 import { ISA_CADENCES, ISA_PACK_CEILING } from './constants.js';
 import {
   AI_ISA_POLICY_FIELDS,
@@ -121,14 +121,42 @@ describe('R-ISA-34 the diff in words and whether it is wider (E1001, E1002)', ()
     expect(policyDiff(D, withC({ cadence: '7d' })).removes).toEqual(['follows up every 7 days (was every 3 days)']);
     expect(policyDiff(D, withC({ window: { startSec: 10 * 3600, endSec: 20 * 3600 } })).removes).toEqual(['writes no earlier than 10:00 AM (was 9:00 AM)']);
   });
-  it('new wording alone is neither wider nor narrower', () => {
+  it('b19 review F5 (R-ISA-38): new wording is a change nothing can rank, so it is wider and says so under "changes"', () => {
     const d = policyDiff(D, withC({ tone: 'Warm and brief.', holdingLines: { financial: 'I will ask your agent to go over that with you.' } }));
-    expect(d).toMatchObject({ adds: [], removes: [], wider: false });
-    expect(d.rewords).toEqual(['the line it uses for money questions', 'the tone sample']);
-    expect(policyDiff(D, D)).toEqual({ adds: [], removes: [], rewords: [], wider: false });
+    expect(d).toMatchObject({ adds: [], removes: [], wider: true });
+    expect(d.changes).toEqual(['has a different line for money questions', 'has a different tone sample']);
+    expect(policyDiff(D, D)).toEqual({ adds: [], removes: [], changes: [], wider: false });
     expect(policyDiff(null, D).wider).toBe(false);
   });
-  it('property: wider is exactly the existing comparison, and every wider version says what it adds', () => {
+  it('b19 review F2 (R-ISA-38; E1011): the ready-within days changed in either direction is a change, wider, never "removes"', () => {
+    const d30 = withC({ readiness: { timelineDays: 30 } });
+    expect(policyDiff(D, d30)).toEqual({ adds: [], removes: [], changes: ['treats a move within 30 days as ready (was 90)'], wider: true });
+    expect(policyDiff(d30, D)).toEqual({ adds: [], removes: [], changes: ['treats a move within 90 days as ready (was 30)'], wider: true });
+    expect(policyDiff(D, withC({ booking: { ...D.booking, durationMinutes: 45 } }))).toEqual({ adds: [], removes: [], changes: ['appointments of 45 minutes (was 30)'], wider: true });
+  });
+  it('b19 review F8 (R-ISA-38; E1011): a field this code does not know is a change, wider, in words with no key or code', () => {
+    const d = policyDiff(D, { ...D, shareOpenHouses: true } as unknown as AiIsaContent);
+    expect(d).toEqual({ adds: [], removes: [], changes: ['changes a setting this version of the app cannot compare'], wider: true });
+    // two unknown fields are still one line
+    expect(policyDiff(D, { ...D, a1: 1, b2: 2 } as unknown as AiIsaContent).changes).toEqual(['changes a setting this version of the app cannot compare']);
+  });
+  it('every field has diff words: each single-field change of the default content says something, in the list its rule names', () => {
+    const other: Record<string, unknown> = { capabilities: ['converse', 'share_listings'], channels: ['sms'], 'window.startSec': 10 * 3600, 'window.endSec': 19 * 3600, initiatedDays: [1, 2, 3, 4, 5, 6, 7], noInitiatedOnHolidays: false,
+      cadence: '7d', 'booking.kinds.buyer': ['consult'], 'booking.kinds.seller': ['consult'], tone: 'Warm.' };
+    for (const key of AI_ISA_FIELD_KEYS) {
+      const f = { path: key.split('.') };
+      const was = policyFieldValue(D, f);
+      const next = setPolicyField(D, f, key in other ? other[key] : typeof was === 'number' ? was + 1 : 'A line of the team’s own words.');
+      const d = policyDiff(D, next);
+      const lists = d.adds.length + d.removes.length + d.changes.length;
+      expect(lists, key).toBeGreaterThan(0);
+      expect(d.wider, key).toBe(!narrowsPrevious(D, next));
+      if (AI_ISA_FIELD_WIDENS[key] === 'any') expect(d, key).toMatchObject({ adds: [], removes: [], wider: true });
+      else expect(d.changes, key).toEqual([]);
+      for (const t of [...d.adds, ...d.removes, ...d.changes]) expect(t, key).not.toMatch(/undefined|NaN|[a-z]\.[a-z]/);
+    }
+  });
+  it('property: wider is exactly the comparison, and every wider version says what it adds or changes', () => {
     const sub = <T,>(xs: readonly T[]) => fc.subarray([...xs]);
     const arb: fc.Arbitrary<AiIsaContent> = fc.record({
       capabilities: sub(ISA_CAPABILITIES.filter((c) => c !== 'converse')).map((x) => ['converse', ...x]),
@@ -139,31 +167,38 @@ describe('R-ISA-34 the diff in words and whether it is wider (E1001, E1002)', ()
       caps: fc.record({ ai24h: fc.integer({ min: 0, max: 3 }), automated24h: fc.integer({ min: 0, max: 3 }), initiated24h: fc.integer({ min: 0, max: 1 }), initiated7d: fc.integer({ min: 0, max: 3 }), minGapSeconds: fc.integer({ min: 120, max: 240 }) }),
       cadence: fc.constantFrom(...ISA_CADENCES),
       limits: fc.record({ maxMessagesPerAssignment: fc.integer({ min: 38, max: 40 }), maxDays: fc.integer({ min: 178, max: 180 }), slowAfterUnanswered: fc.integer({ min: 2, max: 4 }), dormantAfterUnanswered: fc.integer({ min: 5, max: 7 }) }),
-      readiness: fc.record({ timelineDays: fc.integer({ min: 88, max: 90 }) }),
+      readiness: fc.record({ timelineDays: fc.constantFrom(30, 60, 90) }),
       booking: fc.record({
         kinds: fc.record({ buyer: sub(['buyer_consult', 'consult'] as const), seller: sub(['listing_appointment', 'consult'] as const) }),
         durationMinutes: fc.constantFrom(30, 45), minNoticeHours: fc.integer({ min: 4, max: 6 }), horizonDays: fc.integer({ min: 12, max: 14 }), bufferMinutes: fc.integer({ min: 15, max: 17 }),
       }),
-      holdingLines: fc.constant({}),
+      holdingLines: fc.constantFrom({}, { financial: 'I will ask your agent to go over that with you.' }),
       tone: fc.constantFrom('', 'Warm.'),
     });
     fc.assert(fc.property(arb, arb, (a, b) => {
       const d = policyDiff(a, b);
       expect(d.wider).toBe(!narrowsPrevious(a, b));
-      expect(d.adds.length > 0).toBe(d.wider);
-      if (JSON.stringify(a) !== JSON.stringify(b)) expect(d.adds.length + d.removes.length + d.rewords.length).toBeGreaterThan(0);
+      // a wider version always says why: what it adds, or what it changes that nothing can rank
+      expect(d.adds.length + d.changes.length > 0).toBe(d.wider);
+      if (JSON.stringify(a) !== JSON.stringify(b)) expect(d.adds.length + d.removes.length + d.changes.length).toBeGreaterThan(0);
+      // the lists are the per-field verdicts: a field ranked wider is under adds or changes, one ranked narrower under removes
+      const verdicts = policyFieldChanges(a, b);
+      if (verdicts.some((v) => v.change === 'narrower')) expect(d.removes.length).toBeGreaterThan(0);
+      expect(d.adds.length > 0).toBe(verdicts.some((v) => v.change === 'wider' && AI_ISA_FIELD_WIDENS[v.key as AiIsaFieldKey] !== 'any'));
+      expect(d.changes.length > 0).toBe(verdicts.some((v) => v.change === 'wider' && AI_ISA_FIELD_WIDENS[v.key as AiIsaFieldKey] === 'any'));
     }), { numRuns: 400 });
   });
 });
 
 describe('R-ISA-34 the texts an approver accepts (Q2: served by core, versioned)', () => {
   it('name the version and its exact content, and say what a wider version does', () => {
-    expect(AI_ISA_POLICY_TEXT_VERSION).toBe('ai_isa.policy_attestation/1');
+    // /2 (b19 review): the wider text also covers a change nothing can rank; the revoke text says what may still be sent
+    expect(AI_ISA_POLICY_TEXT_VERSION).toBe('ai_isa.policy_attestation/2');
     const first = aiIsaPolicyApprovalText({ versionNo: 1, contentSha256: SHA, effect: 'first' });
     expect(first).toContain(`version 1 of the team's AI assistant policy (content ${SHA})`);
     expect(first).toContain('engineering defaults that counsel has not reviewed');
     expect(first).not.toContain('pauses');
-    expect(aiIsaPolicyApprovalText({ versionNo: 3, contentSha256: SHA, effect: 'wider' })).toContain('It lets the assistant do more than the approved version, so AI care pauses for every lead until each agent re-confirms.');
+    expect(aiIsaPolicyApprovalText({ versionNo: 3, contentSha256: SHA, effect: 'wider' })).toContain('It lets the assistant do more than the approved version, or changes a rule each agent must agree to again, so AI care pauses for every lead until each agent re-confirms.');
     expect(aiIsaPolicyApprovalText({ versionNo: 3, contentSha256: SHA, effect: 'narrower' })).toContain('It lets the assistant do no more than the approved version, so AI care continues under it at once.');
     expect(aiIsaPolicyApprovalText({ versionNo: 4, contentSha256: SHA, effect: 'after_revoke' })).toContain('The last approved version was revoked, so AI care stays paused for every lead until each agent re-confirms.');
     expect(aiIsaPolicyRevokeText({ versionNo: 3, contentSha256: SHA })).toBe(

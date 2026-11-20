@@ -104,6 +104,18 @@ describe('AI assistant (ISA): the team policy (/settings/ai-assistant/team)', ()
     expect(draft.queryByText(/^Adds:/)).toBeNull();
   });
 
+  it('E1011 a draft that changes the ready-within days: "Changes: …. Agents must re-confirm.", the wider banner, and an approve that pauses AI care', async () => {
+    const v = withDraft({ ...D, readiness: { timelineDays: 30 } });
+    expect(v.draft).toMatchObject({ effect: 'wider', diff: { adds: [], removes: [], changes: ['treats a move within 30 days as ready (was 90)'], wider: true } });
+    team(new FakeFetch().on('GET /admin/ai-isa/policy', { status: 200, body: v }));
+    const draft = within(await screen.findByTestId('policy-draft'));
+    expect(draft.getByText('Changes: treats a move within 30 days as ready (was 90). Agents must re-confirm.')).toBeInTheDocument();
+    expect(draft.queryByText(/^Adds:|^Removes:/)).toBeNull();
+    expect(within(screen.getByTestId('policy-wider')).getByText(v.draft!.effectSentence)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve version 2 and pause AI care' })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/lets the assistant do more than the approved one/);
+  });
+
   it('R-ISA-33 Edit: the form is the validator’s field list; a locked choice cannot be unticked; a save sends the whole content; a refusal lands on its field in words', async () => {
     const v = policyView();
     const saved = withDraft({ ...D, caps: { ...D.caps, ai24h: 2 } });
@@ -195,7 +207,7 @@ describe('My AI assistant: the team policy, read-only (/settings/ai-assistant)',
   });
 
   it('E1002 narrowed since they confirmed: what was removed, care continues, and no re-attest is demanded', async () => {
-    const change = { state: 'narrowed' as const, fromVersionNo: 1, diff: { adds: [], removes: ['no longer writes by email'], rewords: [], wider: false },
+    const change = { state: 'narrowed' as const, fromVersionNo: 1, diff: { adds: [], removes: ['no longer writes by email'], changes: [], wider: false },
       sentence: 'The team narrowed the AI rules since you confirmed them. AI care for your leads continues under the narrower rules. To start AI care for another lead, confirm the current version.' };
     const me = meView({ optIn: optIn({ versionId: POLICY_IDS.v1 }), needsReattest: false, policyChange: change, sentence: change.sentence, underCare: 2 });
     expect(isaResponseViolations('GET /me/ai-isa', me)).toEqual([]);
@@ -208,7 +220,7 @@ describe('My AI assistant: the team policy, read-only (/settings/ai-assistant)',
   });
 
   it('E1003 widened since they confirmed: what was added, care is paused, and the re-attest card is there', async () => {
-    const change = { state: 'widened' as const, fromVersionNo: 1, diff: { adds: ['may propose appointment times and book them on the agent’s calendar'], removes: [], rewords: [], wider: true },
+    const change = { state: 'widened' as const, fromVersionNo: 1, diff: { adds: ['may propose appointment times and book them on the agent’s calendar'], removes: [], changes: [], wider: true },
       sentence: 'The team changed the AI rules since you confirmed them, and the new version lets the assistant do more. AI care for your leads is paused until you confirm it.' };
     isaApp(new FakeFetch().on('GET /me/ai-isa', { status: 200, body: meView({ optIn: optIn({ versionId: POLICY_IDS.v1 }), needsReattest: true, policyChange: change, sentence: change.sentence, underCare: 1 }) })
       .on('GET /ai-isa/assignments?scope=mine&state=any', { status: 200, body: { rows: [], holdSentence: null } }), '/settings/ai-assistant', 'agent');

@@ -231,9 +231,13 @@ export function PolicySections({ sections }: { sections: readonly PolicySection[
   );
 }
 
-/** "Adds: …", "Removes: …", "Rewords: …", one line each (the server's words). */
-export function DiffLines({ diff }: { diff: { adds: string[]; removes: string[]; rewords: string[] } }) {
-  const none = diff.adds.length + diff.removes.length + diff.rewords.length === 0;
+/**
+ * "Adds: …", "Removes: …", "Changes: …. Agents must re-confirm.", one line each (the server's words). A change is one
+ * nothing can rank as more or less (R-ISA-38: the ready-within days, the length of an appointment, the team's own
+ * words): the version is wider for it, so the line says what that costs.
+ */
+export function DiffLines({ diff }: { diff: { adds: string[]; removes: string[]; changes: string[] } }) {
+  const none = diff.adds.length + diff.removes.length + diff.changes.length === 0;
   return (
     <ul className="flex flex-col gap-1 text-[15px]">
       {diff.adds.map((t) => (
@@ -242,8 +246,8 @@ export function DiffLines({ diff }: { diff: { adds: string[]; removes: string[];
       {diff.removes.map((t) => (
         <li key={`r${t}`}>Removes: {t}.</li>
       ))}
-      {diff.rewords.map((t) => (
-        <li key={`w${t}`}>Rewords: {t}.</li>
+      {diff.changes.map((t) => (
+        <li key={`c${t}`}>Changes: {t}. Agents must re-confirm.</li>
       ))}
       {none ? <li>No difference from the approved version.</li> : null}
     </ul>

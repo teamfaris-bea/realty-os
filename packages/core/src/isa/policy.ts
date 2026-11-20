@@ -4,15 +4,19 @@
 // - AI_ISA_POLICY_FIELDS: one entry per value of the content, with the bounds the validator enforces (the same
 //   constants). The web builds its edit form from this list.
 // - policySections: the policy in plain words, what the assistant may and may not do, by section.
-// - policyDiff: what a version adds, removes and rewords against another; `wider` is `!narrowsPrevious`.
+// - policyDiff: what a version adds, removes and changes against another, field by field from the comparison's own
+//   verdicts (content.ts policyFieldChange); `wider` is `!narrowsPrevious`.
 // - the texts an approver or a revoker accepts, versioned (Q2: served by the server, never a web constant).
 // Every default and ceiling is an engineering default. VERIFY WITH COUNSEL.
-import { CADENCE_MS, ISA_CADENCES, ISA_PACK_CEILING } from './constants.js';
-import { type AiIsaContent, type AiIsaContentIssue, narrowsPrevious } from './content.js';
+import { ISA_CADENCES, ISA_PACK_CEILING } from './constants.js';
+import { AI_ISA_FIELD_WIDENS, type AiIsaContent, type AiIsaContentIssue, type AiIsaFieldKey, narrowsPrevious, policyFieldChanges } from './content.js';
 import { ISA_CAPABILITIES } from './types.js';
 
-/** Bump when any sentence of the approval or revoke text changes; stored inside each text. */
-export const AI_ISA_POLICY_TEXT_VERSION = 'ai_isa.policy_attestation/1';
+/**
+ * Bump when any sentence of the approval or revoke text changes; stored inside each text. /2 (b19 review): the wider
+ * approval also covers a change nothing can rank (R-ISA-38), and the revoke says what may still be sent (R-ISA-42).
+ */
+export const AI_ISA_POLICY_TEXT_VERSION = 'ai_isa.policy_attestation/2';
 
 export const AI_ISA_POLICY_SECTIONS = [
   { key: 'does', title: 'What it may do' },
@@ -25,8 +29,8 @@ export const AI_ISA_POLICY_SECTIONS = [
 export type PolicySectionKey = (typeof AI_ISA_POLICY_SECTIONS)[number]['key'];
 
 export interface PolicyField {
-  /** the dotted path: the id a form, an issue and a diff all use */
-  key: string;
+  /** the dotted path: the id a form, an issue, a diff and a comparison rule all use (content.ts AiIsaFieldKey) */
+  key: AiIsaFieldKey;
   path: readonly string[];
   section: PolicySectionKey;
   /** options: any of several; choice: exactly one; toggle: yes or no; int: a whole number; time: seconds after midnight, to the minute; text */
@@ -67,8 +71,8 @@ export function policyClock(sec: number): string {
 }
 
 const C = ISA_PACK_CEILING;
-const int = (key: string, section: PolicySectionKey, label: string, min: number, max: number, unit: string, help?: string): PolicyField => ({ key, path: key.split('.'), section, kind: 'int', label, min, max, unit, ...(help ? { help } : {}) });
-const line = (cls: string): PolicyField => ({ key: `holdingLines.${cls}`, path: ['holdingLines', cls], section: 'words', kind: 'text', label: `The line it uses for ${LINE[cls]!}`, help: 'Optional. 10 to 240 characters. Left empty, the platform’s own line is used.', maxLength: 240 });
+const int = (key: AiIsaFieldKey, section: PolicySectionKey, label: string, min: number, max: number, unit: string, help?: string): PolicyField => ({ key, path: key.split('.'), section, kind: 'int', label, min, max, unit, ...(help ? { help } : {}) });
+const line = (cls: keyof AiIsaContent['holdingLines']): PolicyField => ({ key: `holdingLines.${cls}`, path: ['holdingLines', cls], section: 'words', kind: 'text', label: `The line it uses for ${LINE[cls]!}`, help: 'Optional. 10 to 240 characters. Left empty, the platform’s own line is used.', maxLength: 240 });
 
 /**
  * One entry per value of `AiIsaContent` (policy.test.ts: exactly the content's leaves). The bounds are the validator's:
@@ -233,60 +237,86 @@ export interface PolicyDiff {
   adds: string[];
   /** each change that lets it do less */
   removes: string[];
-  /** wording that changed (neither more nor less) */
-  rewords: string[];
+  /**
+   * each change nothing here can rank as more or less (the ready-within days, the length of an appointment, the team's
+   * own words, a field this code does not know): every one of them makes the version wider, so agents re-confirm
+   */
+  changes: string[];
   /** `!narrowsPrevious(prev, next)`: approving `next` over `prev` pauses AI care until each agent re-confirms */
   wider: boolean;
 }
 
+/** One sentence for a changed value (`next` against `prev`), or the two sentences of a list of choices. */
+type DiffWords = ((prev: never, next: never) => string) | { add(x: never): string; remove(x: never): string };
+
+const isCap = (x: string): x is keyof typeof CAP => Object.hasOwn(CAP, x);
+/** `up` when the number rose, `down` when it fell; each gets the new value and the old one in words */
+const num = (up: (v: string, was: string) => string, down: (v: string, was: string) => string, say: (v: number) => string = String) => (a: number, b: number) => (b > a ? up : down)(say(b), say(a));
+const count = (what: string) => num((v, was) => `up to ${v} ${what} (was ${was})`, (v, was) => `at most ${v} ${what} (was ${was})`);
+const reworded = (cls: keyof typeof LINE) => () => `has a different line for ${LINE[cls]}`;
+
 /**
- * What `next` changes against `prev` (the approved version), in words. `wider` is the existing comparison's answer and
- * nothing else; policy.test.ts proves the sentences agree with it (a wider version always says what it adds). With no
- * `prev` there is nothing to compare: a first version pauses nothing.
+ * The words of every field's change. A map over `AiIsaFieldKey`, like the comparison rules: a field with no words does
+ * not compile. Which list a sentence lands in is NOT decided here: policyDiff takes it from the comparison's verdict.
+ */
+const DIFF_WORDS: { readonly [K in AiIsaFieldKey]: DiffWords } = {
+  capabilities: { add: (x: string) => (isCap(x) ? `may ${CAP[x].may}` : 'may do one more thing'), remove: (x: string) => (isCap(x) ? `no longer ${CAP[x].does}` : 'no longer does one thing') },
+  channels: { add: (x: string) => `may write by ${CHANNEL[x] ?? 'another channel'}`, remove: (x: string) => `no longer writes by ${CHANNEL[x] ?? 'one channel'}` },
+  'window.startSec': num((v, was) => `writes no earlier than ${v} (was ${was})`, (v, was) => `may write from ${v} (was ${was})`, policyClock),
+  'window.endSec': num((v, was) => `may write until ${v} (was ${was})`, (v, was) => `writes no later than ${v} (was ${was})`, policyClock),
+  initiatedDays: { add: (x: number) => `may start follow-ups on ${DAY[x] ?? 'one more day'}`, remove: (x: number) => `no longer starts follow-ups on ${DAY[x] ?? 'one day'}` },
+  noInitiatedOnHolidays: (_a: boolean, b: boolean) => (b ? 'no longer starts follow-ups on US federal holidays' : 'may start follow-ups on US federal holidays'),
+  'caps.ai24h': count('AI messages per person in 24 hours'),
+  'caps.automated24h': count('automated messages of any kind per person in 24 hours before it waits'),
+  'caps.initiated24h': count('follow-ups it starts per person in 24 hours'),
+  'caps.initiated7d': count('follow-ups it starts per person in 7 days'),
+  'caps.minGapSeconds': num((v, was) => `waits at least ${v} seconds between messages (was ${was})`, (v, was) => `may write again after ${v} seconds (was ${was})`),
+  cadence: (a: string, b: string) => `follows up ${every(b)} (was ${every(a)})`,
+  'limits.maxMessagesPerAssignment': count('AI messages to one person'),
+  'limits.maxDays': count('days of AI care for one person'),
+  'limits.slowAfterUnanswered': num((v, was) => `keeps its pace for ${v} unanswered follow-ups (was ${was})`, (v, was) => `slows down after ${v} unanswered follow-ups (was ${was})`),
+  'limits.dormantAfterUnanswered': num((v, was) => `goes on for ${v} unanswered follow-ups (was ${was})`, (v, was) => `stops after ${v} unanswered follow-ups (was ${was})`),
+  // either direction, one sentence: fewer days keeps more people in AI care, more days hands back sooner (Q-ISA-46)
+  'readiness.timelineDays': (a: number, b: number) => `treats a move within ${b} days as ready (was ${a})`,
+  'booking.kinds.buyer': { add: (x: string) => `may propose ${KIND[x] ?? 'another appointment'} to buyers`, remove: (x: string) => `no longer proposes ${KIND[x] ?? 'one appointment'} to buyers` },
+  'booking.kinds.seller': { add: (x: string) => `may propose ${KIND[x] ?? 'another appointment'} to sellers`, remove: (x: string) => `no longer proposes ${KIND[x] ?? 'one appointment'} to sellers` },
+  'booking.minNoticeHours': num((v, was) => `proposes times at least ${v} hours away (was ${was})`, (v, was) => `may propose times ${v} hours away (was ${was})`),
+  'booking.horizonDays': num((v, was) => `may propose times up to ${v} days ahead (was ${was})`, (v, was) => `proposes times at most ${v} days ahead (was ${was})`),
+  'booking.bufferMinutes': num((v, was) => `keeps ${v} minutes free around an appointment (was ${was})`, (v, was) => `may book ${v} minutes from something else (was ${was})`),
+  'booking.durationMinutes': (a: number, b: number) => `appointments of ${b} minutes (was ${a})`,
+  'holdingLines.pricing_negotiation': reworded('pricing_negotiation'),
+  'holdingLines.financial': reworded('financial'),
+  'holdingLines.data_unavailable': reworded('data_unavailable'),
+  'holdingLines.booking_unavailable': reworded('booking_unavailable'),
+  tone: () => 'has a different tone sample',
+};
+
+const UNKNOWN_CHANGE = 'changes a setting this version of the app cannot compare';
+
+/**
+ * What `next` changes against `prev` (the approved version), in words. Each field's verdict is the comparison's own
+ * (content.ts policyFieldChanges), so the lists cannot disagree with `wider`: a field ranked wider is under `adds`, or
+ * under `changes` when its rule is "any change" or the field is not known; one ranked narrower is under `removes`
+ * (policy.test.ts holds the sentences to that). With no `prev` there is nothing to compare: a first version pauses nothing.
  */
 export function policyDiff(prev: AiIsaContent | null, next: AiIsaContent): PolicyDiff {
-  const d: PolicyDiff = { adds: [], removes: [], rewords: [], wider: false };
+  const d: PolicyDiff = { adds: [], removes: [], changes: [], wider: false };
   if (prev === null) return d;
-  const sets = <T,>(a: readonly T[], b: readonly T[], add: (x: T) => string, remove: (x: T) => string) => {
-    for (const x of b) if (!a.includes(x)) d.adds.push(add(x));
-    for (const x of a) if (!b.includes(x)) d.removes.push(remove(x));
-  };
-  /** `more`: whether a higher number lets the assistant do more */
-  const num = (a: number, b: number, more: boolean, up: (v: string, was: string) => string, down: (v: string, was: string) => string, say: (v: number) => string = String) => {
-    if (a === b) return;
-    const text = (b > a ? up : down)(say(b), say(a));
-    (b > a === more ? d.adds : d.removes).push(text);
-  };
-  const isCap = (x: string): x is keyof typeof CAP => x in CAP;
-  sets(prev.capabilities, next.capabilities, (x) => (isCap(x) ? `may ${CAP[x].may}` : 'may do one more thing'), (x) => (isCap(x) ? `no longer ${CAP[x].does}` : 'no longer does one thing'));
-  sets(prev.channels, next.channels, (x) => `may write by ${CHANNEL[x]}`, (x) => `no longer writes by ${CHANNEL[x]}`);
-  num(prev.window.startSec, next.window.startSec, false, (v, was) => `writes no earlier than ${v} (was ${was})`, (v, was) => `may write from ${v} (was ${was})`, policyClock);
-  num(prev.window.endSec, next.window.endSec, true, (v, was) => `may write until ${v} (was ${was})`, (v, was) => `writes no later than ${v} (was ${was})`, policyClock);
-  sets(prev.initiatedDays, next.initiatedDays, (x) => `may start follow-ups on ${DAY[x]}`, (x) => `no longer starts follow-ups on ${DAY[x]}`);
-  if (prev.noInitiatedOnHolidays !== next.noInitiatedOnHolidays) (next.noInitiatedOnHolidays ? d.removes : d.adds).push(next.noInitiatedOnHolidays ? 'no longer starts follow-ups on US federal holidays' : 'may start follow-ups on US federal holidays');
-  const count = (a: number, b: number, what: string) => num(a, b, true, (v, was) => `up to ${v} ${what} (was ${was})`, (v, was) => `at most ${v} ${what} (was ${was})`);
-  count(prev.caps.ai24h, next.caps.ai24h, 'AI messages per person in 24 hours');
-  count(prev.caps.automated24h, next.caps.automated24h, 'automated messages of any kind per person in 24 hours before it waits');
-  count(prev.caps.initiated24h, next.caps.initiated24h, 'follow-ups it starts per person in 24 hours');
-  count(prev.caps.initiated7d, next.caps.initiated7d, 'follow-ups it starts per person in 7 days');
-  num(prev.caps.minGapSeconds, next.caps.minGapSeconds, false, (v, was) => `waits at least ${v} seconds between messages (was ${was})`, (v, was) => `may write again after ${v} seconds (was ${was})`);
-  if (prev.cadence !== next.cadence) (CADENCE_MS[next.cadence] < CADENCE_MS[prev.cadence] ? d.adds : d.removes).push(`follows up ${every(next.cadence)} (was ${every(prev.cadence)})`);
-  count(prev.limits.maxMessagesPerAssignment, next.limits.maxMessagesPerAssignment, 'AI messages to one person');
-  count(prev.limits.maxDays, next.limits.maxDays, 'days of AI care for one person');
-  num(prev.limits.slowAfterUnanswered, next.limits.slowAfterUnanswered, true, (v, was) => `keeps its pace for ${v} unanswered follow-ups (was ${was})`, (v, was) => `slows down after ${v} unanswered follow-ups (was ${was})`);
-  num(prev.limits.dormantAfterUnanswered, next.limits.dormantAfterUnanswered, true, (v, was) => `goes on for ${v} unanswered follow-ups (was ${was})`, (v, was) => `stops after ${v} unanswered follow-ups (was ${was})`);
-  num(prev.readiness.timelineDays, next.readiness.timelineDays, true, (v, was) => `treats a move within ${v} days as ready (was ${was})`, (v, was) => `treats only a move within ${v} days as ready (was ${was})`);
-  sets(prev.booking.kinds.buyer, next.booking.kinds.buyer, (x) => `may propose ${KIND[x]} to buyers`, (x) => `no longer proposes ${KIND[x]} to buyers`);
-  sets(prev.booking.kinds.seller, next.booking.kinds.seller, (x) => `may propose ${KIND[x]} to sellers`, (x) => `no longer proposes ${KIND[x]} to sellers`);
-  num(prev.booking.minNoticeHours, next.booking.minNoticeHours, false, (v, was) => `proposes times at least ${v} hours away (was ${was})`, (v, was) => `may propose times ${v} hours away (was ${was})`);
-  num(prev.booking.horizonDays, next.booking.horizonDays, true, (v, was) => `may propose times up to ${v} days ahead (was ${was})`, (v, was) => `proposes times at most ${v} days ahead (was ${was})`);
-  num(prev.booking.bufferMinutes, next.booking.bufferMinutes, false, (v, was) => `keeps ${v} minutes free around an appointment (was ${was})`, (v, was) => `may book ${v} minutes from something else (was ${was})`);
-  // the existing comparison treats any change of length as more (content.ts narrowsPrevious), so this says so
-  if (prev.booking.durationMinutes !== next.booking.durationMinutes) d.adds.push(`appointments of ${next.booking.durationMinutes} minutes (was ${prev.booking.durationMinutes}; a change of length counts as more)`);
-  for (const k of Object.keys(LINE)) {
-    if ((prev.holdingLines as Record<string, string | undefined>)[k] !== (next.holdingLines as Record<string, string | undefined>)[k]) d.rewords.push(`the line it uses for ${LINE[k]}`);
+  const lists = (v: unknown): readonly unknown[] => (Array.isArray(v) ? v : []);
+  for (const c of policyFieldChanges(prev, next)) {
+    if (!c.known) {
+      if (!d.changes.includes(UNKNOWN_CHANGE)) d.changes.push(UNKNOWN_CHANGE);
+      continue;
+    }
+    const key = c.key as AiIsaFieldKey;
+    const words = DIFF_WORDS[key];
+    const [a, b] = [policyFieldValue(prev, { path: key.split('.') }), policyFieldValue(next, { path: key.split('.') })];
+    if (typeof words !== 'function') {
+      if (!Array.isArray(a) || !Array.isArray(b)) d.changes.push(UNKNOWN_CHANGE);
+      for (const x of lists(b)) if (!lists(a).includes(x)) d.adds.push(words.add(x as never));
+      for (const x of lists(a)) if (!lists(b).includes(x)) d.removes.push(words.remove(x as never));
+    } else (c.change === 'narrower' ? d.removes : AI_ISA_FIELD_WIDENS[key] === 'any' ? d.changes : d.adds).push(words(a as never, b as never));
   }
-  if (prev.tone !== next.tone) d.rewords.push('the tone sample');
   d.wider = !narrowsPrevious(prev, next);
   return d;
 }
@@ -301,7 +331,7 @@ export type PolicyApprovalEffect = 'first' | 'wider' | 'narrower' | 'after_revok
  * rebuilds it and refuses any other). It names the version and its content hash, and says what approving does.
  */
 export function aiIsaPolicyApprovalText(i: { versionNo: number; contentSha256: string; effect: PolicyApprovalEffect }): string {
-  const effect = i.effect === 'wider' ? ' It lets the assistant do more than the approved version, so AI care pauses for every lead until each agent re-confirms.'
+  const effect = i.effect === 'wider' ? ' It lets the assistant do more than the approved version, or changes a rule each agent must agree to again, so AI care pauses for every lead until each agent re-confirms.'
     : i.effect === 'narrower' ? ' It lets the assistant do no more than the approved version, so AI care continues under it at once.'
     : i.effect === 'after_revoke' ? ' The last approved version was revoked, so AI care stays paused for every lead until each agent re-confirms.' : '';
   return `I approve version ${i.versionNo} of the team's AI assistant policy (content ${i.contentSha256}).${effect} Its consent, quiet-hours and frequency limits are engineering defaults that counsel has not reviewed, and I accept responsibility for that. [${AI_ISA_POLICY_TEXT_VERSION}]`;

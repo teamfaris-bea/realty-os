@@ -116,14 +116,24 @@ function effectOf(approved: { content: AiIsaContent | null } | null, hadDecision
 const EFFECT_SENTENCE: Record<PolicyApprovalEffect, string> = {
   first: 'Nothing is approved yet, so approving this pauses nothing. Agents can opt in once it is approved.',
   narrower: 'This version lets the assistant do no more than the approved one. AI care continues under it at once.',
-  wider: 'This version lets the assistant do more than the approved one. Approving it pauses AI care for every lead until each agent re-confirms.',
+  // shown only when there is no diff to quote: the approved version's stored content no longer parses, so nothing can
+  // show this one allows no more (effectOf)
+  wider: 'The approved version cannot be compared with this one, so this one is treated as allowing more. Approving it pauses AI care for every lead until each agent re-confirms.',
   after_revoke: 'The last approved version was revoked. AI care stays paused for every lead until each agent re-confirms on this version.',
 };
 
-/** The widening banner (the brief's wording): what is added, then what approving does. */
+const joined = (xs: readonly string[]) => (xs.length === 1 ? xs[0]! : `${xs.slice(0, -1).join('; ')}; and ${xs.at(-1)!}`);
+
+/**
+ * The widening banner: what is added, what is changed that nothing can rank (R-ISA-38: the ready-within days, the
+ * length of an appointment, the team's own words, a field this code does not know), then what approving does. A wider
+ * diff always has one of the two (core policy.test.ts), so the banner never says "more" without saying what.
+ */
 export function widerBanner(d: PolicyDiff): string {
-  const what = d.adds.length === 0 ? '' : `: it ${d.adds.length === 1 ? d.adds[0]! : `${d.adds.slice(0, -1).join('; ')}; and ${d.adds.at(-1)!}`}`;
-  return `This version lets the assistant do more than the approved one${what.replace(/^: it may /, ': it may now ')}. Approving it pauses AI care for every lead until each agent re-confirms.`;
+  const more = d.adds.length === 0 ? null : `This version lets the assistant do more than the approved one: it ${joined(d.adds)}.`.replace(/: it may /, ': it may now ');
+  const rules = d.changes.length === 1 ? 'a rule' : 'rules';
+  const changed = d.changes.length === 0 ? null : more === null ? `This version changes ${rules} each agent must agree to again: it ${joined(d.changes)}.` : `It also changes ${rules} each agent must agree to again: it ${joined(d.changes)}.`;
+  return [more ?? (changed === null ? 'This version lets the assistant do more than the approved one.' : null), changed, 'Approving it pauses AI care for every lead until each agent re-confirms.'].filter((x) => x !== null).join(' ');
 }
 
 const iso = (d: Date) => d.toISOString();
@@ -360,7 +370,10 @@ export async function policyForAgent(tx: Tx, current: { versionId: string; steps
   const sentence = optInVersionState === 'narrowed'
     ? 'The team narrowed the AI rules since you confirmed them. AI care for your leads continues under the narrower rules. To start AI care for another lead, confirm the current version.'
     : optInVersionState === 'widened'
-      ? 'The team changed the AI rules since you confirmed them, and the new version lets the assistant do more. AI care for your leads is paused until you confirm it.'
+      // "lets the assistant do more" only when the diff adds something; a change nothing can rank (R-ISA-38) says so
+      ? diff !== null && diff.adds.length > 0
+        ? 'The team changed the AI rules since you confirmed them, and the new version lets the assistant do more. AI care for your leads is paused until you confirm it.'
+        : 'The team changed the AI rules since you confirmed them, and the change needs your agreement. AI care for your leads is paused until you confirm the new version.'
       : current === null
         ? 'The team revoked the AI rules you confirmed. AI care for your leads is paused, and nothing is sent, until a new version is approved and you confirm it.'
         : 'The team revoked the AI rules you confirmed and approved a new version. AI care for your leads is paused until you confirm it.';
