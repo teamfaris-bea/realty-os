@@ -229,6 +229,28 @@ export async function versionState(tx: Tx, versionId: string): Promise<'approved
   return 'missing';
 }
 
+/**
+ * The policy content in effect for care bound to `versionId` (R-ISA-34, E912; docs/AI_ISA.md §3.2 "narrowing-only").
+ * The bound version's own content, unless it was superseded by narrowing versions only: then the content of the version
+ * approved now, which by construction allows no more than the bound one, so a narrower rule applies from its approval
+ * and nobody re-confirms. The condition is link 4's `narrowed` (versionState) word for word. `sha` names the version
+ * whose content it is (stored on the turn as its policy version).
+ */
+export const EFFECTIVE_POLICY_SQL = (versionId: unknown) => sql<{ steps: unknown; sha: string }>`
+  SELECT COALESCE(cur.steps, v.steps) AS steps, COALESCE(cur.content_sha256, v.content_sha256) AS sha
+    FROM playbook_versions v
+    LEFT JOIN LATERAL (
+      SELECT w.steps, w.content_sha256 FROM playbook_versions w
+       WHERE w.tenant_id = v.tenant_id AND w.playbook_id = v.playbook_id AND w.version_no > v.version_no AND w.status = 'approved' AND v.status = 'superseded'
+         AND NOT EXISTS (SELECT 1 FROM playbook_versions x WHERE x.tenant_id = v.tenant_id AND x.playbook_id = v.playbook_id AND x.version_no > v.version_no
+                           AND x.status IN ('approved','superseded','revoked') AND (x.status = 'revoked' OR x.narrows_previous IS NOT TRUE))
+       LIMIT 1) cur ON true
+   WHERE v.tenant_id = app.tenant_id() AND v.id = ${versionId}`;
+
+export async function effectivePolicy(tx: Tx, versionId: string): Promise<{ steps: unknown; sha: string } | null> {
+  return (await EFFECTIVE_POLICY_SQL(versionId).execute(tx)).rows[0] ?? null;
+}
+
 const L = (link: number, name: string, effect: LinkEffect, code: string | null, reason: string | null, sentence: string): LinkResult => ({ link, name, effect, code, reason, sentence });
 
 /**

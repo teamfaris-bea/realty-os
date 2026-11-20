@@ -73,7 +73,12 @@ export const OptInView = z.object({
 });
 export const MeView = z.object({
   optIn: OptInView.nullable(),
-  policy: z.object({ versionId: z.uuid(), versionSha: z.string(), capabilities: z.array(z.string()), channels: z.array(z.string()) }).nullable(),
+  /** the approved version, with (R-ISA-33) its number and its words by section: what the assistant may and may not do */
+  policy: z.object({ versionId: z.uuid(), versionSha: z.string(), capabilities: z.array(z.string()), channels: z.array(z.string()), versionNo: z.number().int().nullable(),
+    sections: z.array(z.object({ key: z.string(), title: z.string(), may: z.array(z.string()), mayNot: z.array(z.string()) })) }).nullable(),
+  /** R-ISA-34: what changed since the version this agent confirmed, and what it did to their care; null when they confirmed the current one (or never opted in) */
+  policyChange: z.object({ state: z.enum(['narrowed', 'widened', 'revoked']), fromVersionNo: z.number().int().nullable(),
+    diff: z.object({ adds: z.array(z.string()), removes: z.array(z.string()), rewords: z.array(z.string()), wider: z.boolean() }).nullable(), sentence: z.string() }).nullable(),
   /** the canonical attestation text the opt-in will hash (it embeds the version hash) */
   attestationText: z.string().nullable(),
   needsReattest: z.boolean(),
@@ -214,3 +219,88 @@ export const AckResult = z.strictObject({ handoffId: z.uuid(), acknowledgedAt: I
 export const ResolveResult = z.object({ assignmentId: z.uuid(), cleared: z.string() });
 export const EscalationParams = z.strictObject({ id: z.uuid() });
 export const ResolveBody = z.strictObject({ class: z.string().regex(/^[a-z_]{2,40}$/) });
+
+// ---- the team AI policy (R-ISA-33, R-ISA-34; isa/policy.ts) --------------------------------------------------------
+const Sha = z.string().regex(/^[0-9a-f]{64}$/);
+/** The content as stored and as sent: one AiIsaContent. Its shape is core's to judge (validateAiIsaContent), so a
+ *  refusal comes back per field in words (422 AI_ISA_POLICY_INVALID) rather than as a bare 400. */
+const PolicyContent = z.record(z.string(), z.unknown());
+export const PolicyField = z.object({
+  key: z.string(),
+  path: z.array(z.string()),
+  section: z.string(),
+  kind: z.enum(['options', 'choice', 'toggle', 'int', 'time', 'text']),
+  label: z.string(),
+  help: z.string().optional(),
+  options: z.array(z.object({ value: z.union([z.string(), z.number()]), label: z.string() })).optional(),
+  locked: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  unit: z.string().optional(),
+  maxLength: z.number().optional(),
+});
+const PolicySection = z.object({ key: z.string(), title: z.string(), may: z.array(z.string()), mayNot: z.array(z.string()) });
+const PolicyDiff = z.object({ adds: z.array(z.string()), removes: z.array(z.string()), rewords: z.array(z.string()), wider: z.boolean() });
+const PolicyIssue = z.object({ code: z.string(), field: z.string().nullable(), sentence: z.string() });
+export const POLICY_EFFECTS = ['first', 'narrower', 'wider', 'after_revoke'] as const;
+const PolicyVersion = z.object({
+  versionId: z.uuid(),
+  versionNo: z.number().int(),
+  contentSha256: z.string(),
+  /** null when the stored content no longer passes the validator (it is then not shown as words either) */
+  content: PolicyContent.nullable(),
+  sections: z.array(PolicySection),
+  decidedAt: Iso.nullable(),
+  decidedBy: z.string().nullable(),
+  decidedByRole: z.string().nullable(),
+});
+export const PolicyView = z.object({
+  state: z.enum(['none', 'draft_only', 'approved', 'approved_with_draft', 'revoked', 'revoked_with_draft']),
+  sentence: z.string(),
+  /** the validator's field list (core AI_ISA_POLICY_FIELDS): the edit form is built from it */
+  fields: z.array(PolicyField),
+  textVersion: z.string(),
+  /** live AI care now, and agents opted in: what a pause would reach */
+  underCare: z.number().int(),
+  optedIn: z.number().int(),
+  approved: PolicyVersion.nullable(),
+  /** the last revoked version, only while nothing is approved */
+  revoked: PolicyVersion.nullable(),
+  draft: z.object({
+    versionId: z.uuid(),
+    versionNo: z.number().int(),
+    contentSha256: z.string(),
+    content: PolicyContent,
+    sections: z.array(PolicySection),
+    savedAt: Iso,
+    savedBy: z.string(),
+    issues: z.array(PolicyIssue),
+    /** what approving it does; null while it has issues */
+    effect: z.enum(POLICY_EFFECTS).nullable(),
+    effectSentence: z.string(),
+    /** against the approved version; null when none is approved */
+    diff: PolicyDiff.nullable(),
+    /** the exact text the Owner accepts to approve it (sent back verbatim); null while it has issues */
+    approvalText: z.string().nullable(),
+  }).nullable(),
+  /** the exact text accepted to revoke the approved version; null when none is approved */
+  revokeText: z.string().nullable(),
+  /** what THIS viewer may do now: a control the server would refuse is never offered */
+  can: z.object({ create: z.boolean(), saveDraft: z.boolean(), approve: z.boolean(), revoke: z.boolean() }),
+  /** true for an Admin: only the Owner approves */
+  approveOwnerOnly: z.boolean(),
+});
+export const PolicyCreateResult = z.object({ created: z.boolean(), policy: PolicyView });
+export const PolicyDraftBody = z.strictObject({ content: PolicyContent });
+export const PolicyDecisionBody = z.strictObject({ versionId: z.uuid(), contentSha256: Sha, attestation: z.string().min(20).max(600) });
+export const PolicyApproveResult = z.object({
+  effect: z.enum(POLICY_EFFECTS),
+  /** true: running AI care continues (first, narrower); false: it is paused until each agent re-confirms */
+  careContinues: z.boolean(),
+  pausedCare: z.number().int(),
+  agentsToReconfirm: z.number().int(),
+  sentence: z.string(),
+  replayed: z.boolean(),
+  policy: PolicyView,
+});
+export const PolicyRevokeResult = z.object({ pausedCare: z.number().int(), sentence: z.string(), replayed: z.boolean(), policy: PolicyView });

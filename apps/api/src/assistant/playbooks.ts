@@ -110,6 +110,15 @@ function parseContent(kind: string, raw: unknown): PlaybookStep[] | PlaybookCont
   return raw as PlaybookContent;
 }
 
+/**
+ * R-ISA-33: the team AI policy (kind ai_isa) has one door, isa/policy.ts (Owner-only approval, the served attestation,
+ * narrows_previous written with the status). These generic routes never write it: an Admin approving it here, or a
+ * revoke that skipped the policy's own audit, would be a second door.
+ */
+function notThePolicy(p: P.PlaybookRow): void {
+  if (p.kind === 'ai_isa') throw new AppError('AI_ISA_POLICY_USE_ITS_ROUTES');
+}
+
 function parseTone(raw: unknown): Tone {
   const r = ToneSchema.safeParse(raw ?? {});
   if (!r.success) throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'TONE' }] });
@@ -153,6 +162,7 @@ export async function createVersion(actor: UserActor, playbookId: string, input:
   return asUser(deps, actor, async (tx) => {
     const p = await P.playbookById(tx, playbookId, { lock: true });
     if (!p) throw new AppError('NOT_FOUND');
+    notThePolicy(p);
     const steps = parseContent(p.kind, input.steps);
     const versions = await P.versionsOf(tx, [p.id]);
     const last = versions[versions.length - 1];
@@ -174,6 +184,7 @@ export async function approveVersion(actor: UserActor, versionId: string, input:
     const peek = await P.versionById(tx, versionId);
     if (!peek) throw new AppError('NOT_FOUND');
     const p = (await P.playbookById(tx, peek.playbookId, { lock: true }))!; // serializes approvals of one playbook
+    notThePolicy(p);
     const v = (await P.versionById(tx, versionId, { lock: true }))!;
     if (v.status === 'approved' && (await P.latestApproval(tx, v.id))?.contentSha256 === input.contentSha256) return view(tx, p); // idempotent re-tap
     if (v.status !== 'draft') throw new AppError('PLAYBOOK_VERSION_NOT_DRAFT', { status: v.status });
@@ -198,6 +209,7 @@ export async function revokeVersion(actor: UserActor, versionId: string, input: 
     const peek = await P.versionById(tx, versionId);
     if (!peek) throw new AppError('NOT_FOUND');
     const p = (await P.playbookById(tx, peek.playbookId, { lock: true }))!;
+    notThePolicy(p);
     const v = (await P.versionById(tx, versionId, { lock: true }))!;
     if (v.status === 'revoked') return view(tx, p);
     if (v.status !== 'approved') throw new AppError('PLAYBOOK_NOT_APPROVED', { status: v.status });

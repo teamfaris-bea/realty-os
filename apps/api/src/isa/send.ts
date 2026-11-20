@@ -10,7 +10,7 @@ import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { type AiIsaContent, aiIsaSendWindow, DEFAULT_AI_ISA_CONTENT, fromDisplayName, parseAiIsaContent, holidaysAround, icuOffsetMinutes, ISA_DEFAULT_CAPS, isaReasonClass, refusalClass } from './coreSeam.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
-import { assignmentById, evaluateChain, exclusivity, stopSignalSince } from './repo.js';
+import { EFFECTIVE_POLICY_SQL, assignmentById, evaluateChain, exclusivity, stopSignalSince } from './repo.js';
 import { factChangedAtSendInTx } from './buyer/facts.js';
 import { sellerFactsCurrentInTx } from './seller/index.js';
 
@@ -55,10 +55,10 @@ export async function deferralFor(tx: Tx, m: IsaMessageRef, reasons: readonly st
     // batch 13 audit ISA2B-05: a message carrying shared facts is initiated whatever its turn planned (the guard's
     // has_facts derived tier, 0080/0083; TX1's consent tier), so it is deferred to an initiated window, never a reply's
     const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null; steps: unknown; has_facts: boolean }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we,
-        t.message_kind AS kind, v.steps,
+        t.message_kind AS kind, eff.steps,
         EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = t.tenant_id AND f.message_id = t.message_id) AS has_facts
       FROM ai_isa_turns t JOIN ai_isa_assignments a ON a.tenant_id = t.tenant_id AND a.id = t.assignment_id
-      LEFT JOIN playbook_versions v ON v.tenant_id = a.tenant_id AND v.id = a.playbook_version_id
+      LEFT JOIN LATERAL (${EFFECTIVE_POLICY_SQL(sql`a.playbook_version_id`)}) eff ON true
      WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${m.id}`.execute(tx);
     const r = t.rows[0];
     if (r?.zones && r.ws && r.we) {
@@ -171,8 +171,9 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
       hasMedia: r.media,
       consentMissing: consent.missing,
       zones,
-      windowStartSec: Math.max(sec(r.ws, ctx.content.window.startSec), 8 * 3600),
-      windowEndSec: Math.min(sec(r.we, ctx.content.window.endSec), 20 * 3600),
+      // R-ISA-34 (E912): a message composed before a narrower version was approved is sent inside the narrower window too
+      windowStartSec: Math.max(sec(r.ws, ctx.content.window.startSec), ctx.content.window.startSec, 8 * 3600),
+      windowEndSec: Math.min(sec(r.we, ctx.content.window.endSec), ctx.content.window.endSec, 20 * 3600),
       initiated,
       initiatedDays: ctx.content.initiatedDays,
       holidays: ctx.content.noInitiatedOnHolidays ? holidaysAround(now) : [],

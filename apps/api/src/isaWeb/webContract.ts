@@ -25,6 +25,11 @@ interface RouteSpec {
 export const ISA_CONTRACT_ROUTES: Readonly<Record<string, RouteSpec>> = {
   'GET /admin/ai-isa': { response: S.AdminView },
   'PUT /admin/ai-isa': { body: S.AdminPutBody, response: S.AdminView },
+  'GET /admin/ai-isa/policy': { response: S.PolicyView },
+  'POST /admin/ai-isa/policy': { body: S.EmptyBody, response: S.PolicyCreateResult },
+  'PUT /admin/ai-isa/policy/draft': { body: S.PolicyDraftBody, response: S.PolicyView },
+  'POST /admin/ai-isa/policy/approve': { body: S.PolicyDecisionBody, response: S.PolicyApproveResult },
+  'POST /admin/ai-isa/policy/revoke': { body: S.PolicyDecisionBody, response: S.PolicyRevokeResult },
   'GET /me/ai-isa': { response: S.MeView },
   'PUT /me/ai-isa/opt-in': { body: S.OptInBody, response: S.OptInResult },
   'POST /me/ai-isa/opt-in/revoke': { body: S.EmptyBody, response: S.RevokeResult },

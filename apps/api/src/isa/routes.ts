@@ -16,6 +16,7 @@ import { actorOf, platformOf } from '../workspace/common.js';
 import { continueCare, continueEndReasonOf, liftBlock, sharedAddressAsSystem, pauseAll, pauseCare, resumeCare, startCare, startRefusal, undoControl } from './controls.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
 import { closeHandoffInTx, confirmationNotSentOf, type HandoffCloseReason } from './handoff.js';
+import { approvePolicy, createPolicy, policyViewInTx, revokePolicy, savePolicyDraft } from './policy.js';
 import { activeBlock, assignmentById, evaluateChain, latestAssignmentOf, personNoAiCareSource } from './repo.js';
 import { resolveEscalation } from './resolve.js';
 import * as S from './schemas.js';
@@ -171,6 +172,27 @@ async function register(app: FastifyInstance): Promise<void> {
     await adminPut(actorOf(req), depsOf(req), req.body);
     return withTenantTx(actorOf(req), (tx) => adminView(tx, p.config.aiIsaLiveSends), { db: p.db });
   });
+
+  // ---- the team AI policy (R-ISA-33, R-ISA-34; isa/policy.ts) ----
+  //   GET  /admin/ai-isa/policy           settings.ai_isa (Owner, Admin)       the policy, its draft, what approving does
+  //   POST /admin/ai-isa/policy           ai_isa.policy_draft (🔒)             create it as a draft of the default; a repeat returns it
+  //   PUT  /admin/ai-isa/policy/draft     ai_isa.policy_draft (🔒)             save a change as a draft version
+  //   POST /admin/ai-isa/policy/approve   ai_isa.policy_approve (Owner, 🔒)    the served text, verbatim
+  //   POST /admin/ai-isa/policy/revoke    ai_isa.policy_revoke (Owner, Admin)  the served text, verbatim
+  r.get('/admin/ai-isa/policy', { config: { auth: 'settings.ai_isa' }, preHandler: authorize('settings.ai_isa', () => ({ loosening: false })), schema: { response: { 200: S.PolicyView } } },
+    async (req) => withTenantTx(actorOf(req), (tx) => policyViewInTx(tx, actorOf(req)), { db: platformOf(req).db }));
+  r.post('/admin/ai-isa/policy', { config: { auth: 'ai_isa.policy_draft' }, preHandler: authorize('ai_isa.policy_draft', () => ({})), schema: { body: S.EmptyBody, response: { 200: S.PolicyCreateResult, 201: S.PolicyCreateResult } } },
+    async (req, reply) => {
+      const out = await createPolicy(actorOf(req), depsOf(req));
+      reply.code(out.created ? 201 : 200);
+      return out;
+    });
+  r.put('/admin/ai-isa/policy/draft', { config: { auth: 'ai_isa.policy_draft' }, preHandler: authorize('ai_isa.policy_draft', () => ({})), schema: { body: S.PolicyDraftBody, response: { 200: S.PolicyView } } },
+    async (req) => savePolicyDraft(actorOf(req), depsOf(req), req.body.content));
+  r.post('/admin/ai-isa/policy/approve', { config: { auth: 'ai_isa.policy_approve' }, preHandler: authorize('ai_isa.policy_approve', () => ({})), schema: { body: S.PolicyDecisionBody, response: { 200: S.PolicyApproveResult } } },
+    async (req) => approvePolicy(actorOf(req), depsOf(req), req.body));
+  r.post('/admin/ai-isa/policy/revoke', { config: { auth: 'ai_isa.policy_revoke' }, preHandler: authorize('ai_isa.policy_revoke', () => ({})), schema: { body: S.PolicyDecisionBody, response: { 200: S.PolicyRevokeResult } } },
+    async (req) => revokePolicy(actorOf(req), depsOf(req), req.body));
 
   // ---- the agent ----
   r.get('/me/ai-isa', { config: { auth: 'self' }, schema: { response: { 200: S.MeView } } }, async (req) => withTenantTx(actorOf(req), (tx) => meView(tx, actorOf(req)), { db: platformOf(req).db }));

@@ -22,7 +22,7 @@ import { markAcceptingInTx, reconcileOfferRowsInTx } from './booking/rows.js';
 import type { BuyerBundle } from './buyer/bundle.js';
 import { pauseAiSearchesAtHandoffInTx } from './buyer/handoffSearches.js';
 import { insertPendingFactsInTx, type PlannedFacts, planFactsMessageInTx } from './buyer/facts.js';
-import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
+import { type AssignmentRow, type ChainEnv, effectivePolicy, saveMachine } from './repo.js';
 import { onEscalationInTx, renderSellerFactsInTx, writeSellerFactsInTx } from './seller/index.js';
 import { ACTIVITY_ANSWERING, ACTIVITY_WAITING_BUDGET, BUDGET_HOLD_OUTREACH, sourcePauseNote } from './sentences.js';
 
@@ -50,7 +50,8 @@ export interface IsaContext {
 
 /** The facts one transition needs, read in `tx` (the policy content, the identity, the zones, the thread's team texts). */
 export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promise<IsaContext> {
-  const v = await sql<{ steps: unknown; sha: string }>`SELECT steps, content_sha256 AS sha FROM playbook_versions WHERE tenant_id = app.tenant_id() AND id = ${a.playbookVersionId}`.execute(tx);
+  // R-ISA-34 (E912): the content in effect, which is a narrower successor's from the moment it is approved
+  const v = { rows: [await effectivePolicy(tx, a.playbookVersionId)] };
   const content = parseAiIsaContent(v.rows[0]?.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
   const id = await sql<{ first: string | null; team: string | null; brokerage: string; postal: string | null; tz: string; ctz: string | null; csrc: string | null }>`
     SELECT split_part(COALESCE(u.display_name, ''), ' ', 1) AS first, s.team_name AS team, s.brokerage_legal_name AS brokerage, s.brokerage_postal_address AS postal,

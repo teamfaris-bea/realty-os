@@ -17,6 +17,22 @@ describe('AI ISA authorization matrix (R-ISA-32, R-ISA-15; §3.5)', () => {
     for (const r of ['team_lead', 'agent', 'isa', 'tc'] as Role[]) expect(ok(r, 'settings.ai_isa', { loosening: false }), r).toBe(false);
   });
 
+  it('R-ISA-33 R-ISA-34: the team policy: Owner and Admin draft (re-authenticated); only the Owner approves; Owner and Admin revoke; nobody else does any of it', () => {
+    const stale = { reauth: { reauthenticatedAt: NOW - 3_600_000, now: NOW } } as ResourceFacts;
+    for (const r of ['owner', 'admin'] as Role[]) {
+      expect(ok(r, 'ai_isa.policy_draft', {}), r).toBe(true);
+      expect(can(actor(r), 'ai_isa.policy_draft', stale), r).toMatchObject({ ok: false, code: 'REAUTH_REQUIRED' });
+      // stopping needs no re-authentication, as turning the team switch off does not
+      expect(can(actor(r), 'ai_isa.policy_revoke', stale).ok, r).toBe(true);
+    }
+    expect(ok('owner', 'ai_isa.policy_approve', {})).toBe(true);
+    expect(can(actor('owner'), 'ai_isa.policy_approve', stale)).toMatchObject({ ok: false, code: 'REAUTH_REQUIRED' });
+    expect(ok('admin', 'ai_isa.policy_approve', {})).toBe(false);
+    for (const r of ['team_lead', 'agent', 'isa', 'tc'] as Role[]) {
+      for (const a of ['ai_isa.policy_draft', 'ai_isa.policy_approve', 'ai_isa.policy_revoke'] as Action[]) expect(ok(r, a, { own: true, team: true }), `${r} ${a}`).toBe(false);
+    }
+  });
+
   it('R-ISA-32 Q-ISA-8: opt-in for owner, admin, team lead and agent (re-auth when widening); never TC or the human ISA role', () => {
     for (const r of ['owner', 'admin', 'team_lead', 'agent'] as Role[]) expect(ok(r, 'ai_isa.optin', { loosening: true }), r).toBe(true);
     for (const r of ['isa', 'tc'] as Role[]) expect(ok(r, 'ai_isa.optin', { loosening: true }), r).toBe(false);
