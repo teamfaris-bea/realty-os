@@ -3,7 +3,7 @@
 // may open one, fails here until e2e/a11y/pages.ts says the same.
 import { ROLES } from '@realty/core/foundation';
 import { describe, expect, it } from 'vitest';
-import { ROLES as SWEEP_ROLES, SWEEP_PAGES } from '../../e2e/a11y/pages.js';
+import { ROLES as SWEEP_ROLES, SWEEP_PAGES, SWEEP_SLICE, sweepSlices } from '../../e2e/a11y/pages.js';
 import { buildPageTable } from './pages.js';
 import { surfaces } from './registry.js';
 import { homeFallback } from './shellSurface.js';
@@ -19,5 +19,14 @@ describe('a11y sweep coverage', () => {
     const registered = Object.fromEntries(table.pages.map((p) => [p.path, p.roles === 'all' ? [...ROLES].sort() : [...p.roles].sort()]));
     const swept = Object.fromEntries(SWEEP_PAGES.map((p) => [p.path, [...p.roles].sort()]));
     expect(swept).toEqual(registered);
+  });
+
+  it('slices each role\'s sweep without dropping, repeating or reordering a page', () => {
+    for (const role of SWEEP_ROLES) {
+      const slices = sweepSlices(role);
+      expect(slices.flat().map((p) => p.path)).toEqual(SWEEP_PAGES.filter((p) => p.roles.includes(role)).map((p) => p.path));
+      for (const s of slices) expect(s.length).toBeGreaterThan(0);
+      for (const s of slices) expect(s.length).toBeLessThanOrEqual(SWEEP_SLICE);
+    }
   });
 });
