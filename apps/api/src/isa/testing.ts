@@ -1,7 +1,8 @@
 // Test fixtures for module 75 (fakes only: FakeIsaAi / HostileIsaAi, the fake telephony and email adapters, the fake
 // DNC provider; no real model, send, call or vendor). Every application step goes through the API routes or the
-// worker; the superuser pool only clears the counsel pack, seeds the approved ai_isa policy (the policy editor is the
-// web lane's) and moves stored instants (there is no fake clock).
+// worker, the team's AI policy included (approvePolicyAsOwner: created and approved by the Owner through isa/policy.ts);
+// the superuser pool only records counsel's review of the pack (never application code's to write) and moves stored
+// instants and the calendar day (there is no fake clock).
 import { randomUUID } from 'node:crypto';
 import type { Instant } from '@realty/core/foundation';
 import type { AiProvider } from '../providers/types.js';
@@ -59,23 +60,38 @@ export interface IsaWorld extends CommsWorld {
   ai: FakeIsaAi;
 }
 
-/** A tenant with the AI ISA fully authorized on fakes: pack cleared, switch on, an approved policy, agent 0 opted in. */
+interface PolicyDraftView { versionId: string; contentSha256: string; approvalText: string | null; issues: { field: string | null; sentence: string }[] }
+
+/**
+ * The team's AI policy, created and approved by the Owner through the policy routes (isa/policy.ts; R-ISA-33,
+ * R-ISA-34): POST create (a draft of the shipped default), PUT draft when the content differs, POST approve with the
+ * served text. No playbook, version or approval row is written by the superuser pool. Returns the approved version.
+ */
+export async function approvePolicyAsOwner(h: ApiHarness, owner: TestClient, content: Record<string, unknown> | null = null): Promise<{ versionId: string; versionSha: string }> {
+  await freshReauth(h, owner);
+  const made = await call<{ policy: { draft: PolicyDraftView | null } }>(owner, 'POST', '/admin/ai-isa/policy', {});
+  if (made.status !== 201 && made.status !== 200) throw new Error(`policy create: ${made.status} ${JSON.stringify(made.body)}`);
+  let draft = made.body.policy.draft;
+  if (content !== null) {
+    const saved = await call<{ draft: PolicyDraftView | null }>(owner, 'PUT', '/admin/ai-isa/policy/draft', { content });
+    if (saved.status !== 200) throw new Error(`policy draft: ${saved.status} ${JSON.stringify(saved.body)}`);
+    draft = saved.body.draft;
+  }
+  if (!draft || draft.approvalText === null) throw new Error(`policy draft cannot be approved: ${JSON.stringify(draft?.issues ?? null)}`);
+  const ok = await call(owner, 'POST', '/admin/ai-isa/policy/approve', { versionId: draft.versionId, contentSha256: draft.contentSha256, attestation: draft.approvalText });
+  if (ok.status !== 200) throw new Error(`policy approve: ${ok.status} ${JSON.stringify(ok.body)}`);
+  return { versionId: draft.versionId, versionSha: draft.contentSha256 };
+}
+
+/**
+ * A tenant with the AI ISA fully authorized on fakes: pack cleared, switch on, an approved policy, agent 0 opted in.
+ * The policy is created and approved by the Owner through the API (approvePolicyAsOwner), so the consent chain's link 4
+ * reads rows the application wrote. The superuser pool records counsel's review of the pack (never application code's
+ * to write) and turns the team's AI features on.
+ */
 export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[] } = {}): Promise<IsaWorld> {
   const w = await commsWorld(h, { agents: 2, teamLead: true });
-  const pb = randomUUID();
-  const versionId = randomUUID();
-  const versionSha = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
-  const content = { ...DEFAULT_AI_ISA_CONTENT, ...(o.capabilities ? { capabilities: o.capabilities } : {}) };
-  await h.su.query(`SET session_replication_role = replica`);
-  try {
-    await h.su.query(`INSERT INTO playbooks (tenant_id, id, kind, scope, name, status) VALUES ($1, $2, 'ai_isa', 'team', 'AI assistant', 'active')`, [w.tenantId, pb]);
-    await h.su.query(`INSERT INTO playbook_versions (tenant_id, id, playbook_id, version_no, steps, tone, content_sha256, status, created_by_user_id)
-      VALUES ($1, $2, $3, 1, $4::jsonb, '{}'::jsonb, $5, 'approved', $6)`, [w.tenantId, versionId, pb, JSON.stringify(content), versionSha, w.owner.userId]);
-    await h.su.query(`INSERT INTO playbook_approvals (tenant_id, id, playbook_version_id, decision, decided_by_user_id, decided_by_role, content_sha256, attestation, decided_at)
-      VALUES ($1, gen_random_uuid(), $2, 'approve', $3, 'owner', $4, 'approved', now())`, [w.tenantId, versionId, w.owner.userId, versionSha]);
-  } finally {
-    await h.su.query(`SET session_replication_role = origin`);
-  }
+  const { versionId, versionSha } = await approvePolicyAsOwner(h, w.owner, o.capabilities ? { ...DEFAULT_AI_ISA_CONTENT, capabilities: o.capabilities } : null);
   if (o.clear ?? true) await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:ai_isa'`);
   await h.su.query(`UPDATE tenant_settings SET ai_enabled = true WHERE tenant_id = $1`, [w.tenantId]);
   await freshReauth(h, w.owner);

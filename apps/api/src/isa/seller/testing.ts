@@ -21,9 +21,8 @@ export interface SellerWorld extends IsaWorld {
 
 /** The AI ISA world plus an MLS feed whose pack records every valuation use (ai_isa_comps included unless told). */
 export async function sellerWorld(h: ApiHarness, o: { valuation?: Record<string, unknown>; pack?: Record<string, unknown> } = {}): Promise<SellerWorld> {
-  const w = await isaWorld(h, { optIn: false });
-  // the seeded policy widened to the seller capabilities (the guard freezes an approved version; the editor is the web lane's)
-  await h.su.query(`SET session_replication_role = replica; UPDATE playbook_versions SET steps = jsonb_set(steps, '{capabilities}', '${JSON.stringify(SELLER_CAPS)}'::jsonb) WHERE id = '${w.versionId}'; SET session_replication_role = origin`);
+  // the policy the Owner approves through the API allows the seller capabilities from the start
+  const w = await isaWorld(h, { optIn: false, capabilities: SELLER_CAPS });
   await optInAgent(h, w.agents[0]!, w.versionId, SELLER_CAPS);
   const mls = await mlsConnection(h, w.tenantId, w.owner.userId!, { pack: o.pack ?? cmaPack({ valuation: { ai_isa_comps: true, ...o.valuation } }), lastSyncedAt: new Date() });
   return { ...w, mls };
