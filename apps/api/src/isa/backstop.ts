@@ -14,7 +14,7 @@ import type { AssignmentRow } from './repo.js';
  * are written: at 10 minutes, or at once when care is no longer live. A client's portal sign-in link (a system message
  * they asked for) is never an answer (b14 review B14-PORTAL-R2).
  *
- * E795: `immediate` writes them now for live care too, with `explanation` as the handback's words: the reply's turn was
+ * E905: `immediate` writes them now for live care too, with `explanation` as the handback's words: the reply's turn was
  * just held at a daily model-call budget, so nobody will answer today unless the owner does (spend.ts holdTurn). The
  * same dedupe keys as the 10-minute pass, which then writes nothing again.
  */

@@ -304,7 +304,7 @@ export async function sendExisting(actor: UserActor, messageId: string, deps: Co
     if (m.status !== 'queued' && m.status !== 'scheduled') throw new AppError('MESSAGE_NOT_SENDABLE', { status: m.status });
     if (m.bulkActionId === null && m.marketingPieceId === null) await takeoverInTx(tx, deps.ids, actor, m.contactId, Date.now() as Instant); // R-ISA-3
     // the human tap is the audited decision (R-AUDIT-5). It is written by dispatch TX1 (retap), in the transaction
-    // that decides the tap under the contact's lock, as what it is (E799): message.held_send when the re-tap goes on to
+    // that decides the tap under the contact's lock, as what it is (E909): message.held_send when the re-tap goes on to
     // the send-time gate, message.held_send_refused when the held CMA share is refused and canceled instead
   });
   const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, actor, retap: true });

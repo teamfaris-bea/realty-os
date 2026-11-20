@@ -1,5 +1,5 @@
 // A turn left `deciding` between its first transaction and its last is picked up again (R-ISA-4, R-ISA-20; docs/AI_ISA.md
-// §4.2; b19 review F5; E796). Synthetic PostgreSQL, FakeIsaAi, the real worker and handlers. A failure is injected where
+// §4.2; b19 review F5; E906). Synthetic PostgreSQL, FakeIsaAi, the real worker and handlers. A failure is injected where
 // the review named it, by a database trigger that raises inside the transaction under test (the reservation's INSERT, the
 // hold's UPDATE, the usage record's UPDATE); the trigger is dropped before the retry.
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
@@ -64,7 +64,7 @@ const ageTurns = (c: Care, o: { attempt?: number } = {}) => h.su.query(`SET sess
   UPDATE ai_isa_turns SET updated_at = now() - interval '9 minutes'${o.attempt ? `, attempt = ${o.attempt}` : ''} WHERE assignment_id = '${c.assignmentId}' AND status = 'deciding';
   SET session_replication_role = origin`);
 
-it('E796 R-ISA-4 R-ISA-20: a throw in the reserve transaction leaves a deciding turn; the retry of its job adopts it and completes it with exactly one reply', async () => {
+it('E906 R-ISA-4 R-ISA-20: a throw in the reserve transaction leaves a deciding turn; the retry of its job adopts it and completes it with exactly one reply', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
   const out = await outbound(c);
@@ -85,7 +85,7 @@ it('E796 R-ISA-4 R-ISA-20: a throw in the reserve transaction leaves a deciding 
   expect((await machine(c)).awaiting).toBe(false);
 });
 
-it('E796 R-ISA-4 R-ISA-20: a throw in the usage record (the provider had answered): the retry makes a fresh reservation and one reply; the first reservation stays counted', async () => {
+it('E906 R-ISA-4 R-ISA-20: a throw in the usage record (the provider had answered): the retry makes a fresh reservation and one reply; the first reservation stays counted', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
   const out = await outbound(c);
@@ -105,7 +105,7 @@ it('E796 R-ISA-4 R-ISA-20: a throw in the usage record (the provider had answere
   expect(await runs(c)).toEqual([{ status: 'failed', error: 'CALL_OUTCOME_UNKNOWN' }, { status: 'succeeded', error: null }]);
 });
 
-it('E796 R-ISA-4 R-ISA-20: a throw in the hold transaction: the retry holds the turn, and after the rollover it is answered once; the budget held throughout', async () => {
+it('E906 R-ISA-4 R-ISA-20: a throw in the hold transaction: the retry holds the turn, and after the rollover it is answered once; the budget held throughout', async () => {
   const c = await care();
   await recordedToday(c, 12);
   const calls = c.w.ai.calls.length;
@@ -126,7 +126,7 @@ it('E796 R-ISA-4 R-ISA-20: a throw in the hold transaction: the retry holds the 
   expect(await outbound(c)).toBe(out + 1);
 });
 
-it('E796 R-ISA-4: a deciding turn whose job is gone is recovered by the sweep after eight minutes: adopted again, one reply; another job of the person never adopts a turn it does not own', async () => {
+it('E906 R-ISA-4: a deciding turn whose job is gone is recovered by the sweep after eight minutes: adopted again, one reply; another job of the person never adopts a turn it does not own', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
   const out = await outbound(c);
@@ -152,7 +152,7 @@ it('E796 R-ISA-4: a deciding turn whose job is gone is recovered by the sweep af
   expect((await machine(c)).awaiting).toBe(false);
 });
 
-it('E796 E798 R-ISA-20: a recovered turn that meets a used-up budget is held for the resume job (the recover job is the sweep\'s and does not park), and is answered once after the rollover', async () => {
+it('E906 E908 R-ISA-20: a recovered turn that meets a used-up budget is held for the resume job (the recover job is the sweep\'s and does not park), and is answered once after the rollover', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
   const out = await outbound(c);
@@ -175,7 +175,7 @@ it('E796 E798 R-ISA-20: a recovered turn that meets a used-up budget is held for
   expect(await outbound(c)).toBe(out + 1);
 });
 
-it('E796 R-ISA-4: a turn recovered too often is given up: care is paused for a person to check, the machine no longer awaits the model, and the unanswered reply is pinned for the owner', async () => {
+it('E906 R-ISA-4: a turn recovered too often is given up: care is paused for a person to check, the machine no longer awaits the model, and the unanswered reply is pinned for the owner', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
   const out = await outbound(c);
@@ -195,7 +195,7 @@ it('E796 R-ISA-4: a turn recovered too often is given up: care is paused for a p
   expect(await outbound(c)).toBe(out);
 });
 
-it('E796 R-ISA-4: while a turn is in its model call, a second job of the same person (a text inside the debounce has its own job) does not adopt it: one provider call, one reply', async () => {
+it('E906 R-ISA-4: while a turn is in its model call, a second job of the same person (a text inside the debounce has its own job) does not adopt it: one provider call, one reply', async () => {
   const c = await care();
   const calls = c.w.ai.calls.length;
   const out = await outbound(c);

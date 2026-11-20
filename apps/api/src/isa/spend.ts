@@ -39,17 +39,17 @@ export interface TurnCall {
   repair: boolean;
   /** who resumes the turn if it is held: the worker job that runs it (its id), or RESUME_OWNER; null for a run outside a job (tests) */
   owner: string | null;
-  /** true: the job that runs the turn is parked until the rollover; false (E798, a sweep-triggered turn): it finishes and a resume job is queued */
+  /** true: the job that runs the turn is parked until the rollover; false (E908, a sweep-triggered turn): it finishes and a resume job is queued */
   park: boolean;
   /** the person's reply waits for this call (the machine's inboundUnanswered); false for a start or a follow-up */
   inboundUnanswered: boolean;
 }
 
-/** E798: the owner written on a held turn that the resume job resumes (never a job id: those are digits). */
+/** E908: the owner written on a held turn that the resume job resumes (never a job id: those are digits). */
 export const RESUME_OWNER = 'resume';
 
 /**
- * E794: every held turn of a team would otherwise resume at the same instant (the rollover). Each assignment's resume
+ * E904: every held turn of a team would otherwise resume at the same instant (the rollover). Each assignment's resume
  * waits a fixed part of the first ten minutes after it, derived from the assignment id (no randomness: a replay parks
  * the job at the same instant).
  */
@@ -109,7 +109,7 @@ async function countAndReserve(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: Assignment
  * The hold of a refused call: the turn waits, `deferred`, for the next team-local day (`not_before`), and the job that
  * owns it is parked until then plus the assignment's spread. A turn that is no longer open is left as it is. A turn an
  * inbound has overtaken since TX-A pinned its sequence is not held: it is `stale` (E493, as TX-B does it) and a new
- * turn reads both messages, so a person never has two held turns (E794).
+ * turn reads both messages, so a person never has two held turns (E904).
  */
 async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t: TurnCall, refused: Refused, now: Instant): Promise<{ kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string }> {
   const open = sql`(status = 'deciding' OR (status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')))`;
@@ -127,7 +127,7 @@ async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t:
     WHERE tenant_id = app.tenant_id() AND id = ${t.id} AND ${open}
     RETURNING id`.execute(tx);
   if (held.rows.length === 0) return { kind: 'done', code: 'DISCARDED' };
-  // E795: the hold is visible to a human in this same transaction, and nothing about it goes to the person. A reply
+  // E905: the hold is visible to a human in this same transaction, and nothing about it goes to the person. A reply
   // that now waits until tomorrow gets the existing unanswered-inbound backstop at once (pinned card, handback,
   // notification; not after 10 minutes) and an activity card that says it waits. A start or a follow-up (nobody wrote)
   // gets the owner's notification. Every write has its dedupe key: a job re-run while still held writes nothing twice.
@@ -139,7 +139,7 @@ async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t:
   }
   const resumeAt = (refused.reset.getTime() + budgetResumeSpreadMs(a.id)) as Instant;
   if (!t.park) {
-    // E798: the sweep's job is not parked. One resume job per care and epoch (a live one makes this a no-op, and it
+    // E908: the sweep's job is not parked. One resume job per care and epoch (a live one makes this a no-op, and it
     // resumes this turn: the owner written above is RESUME_OWNER); a resume job refused again parks itself (park).
     await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch, resume: true },
       dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:budget`, runAt: resumeAt });
@@ -149,7 +149,7 @@ async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t:
 }
 
 /**
- * E794: one open model turn per assignment. When a newer turn of the assignment awaits the model (a newer inbound was
+ * E904: one open model turn per assignment. When a newer turn of the assignment awaits the model (a newer inbound was
  * consumed), every other turn of it still held at a budget is superseded (`stale`), in the transaction that consumed
  * the inbound (TX-A, under the turn lock). The newer turn's prompt reads every message, so one call answers them all.
  */
@@ -165,7 +165,7 @@ export async function supersedeHeldTurns(tx: Tx, assignmentId: string, exceptTur
  * What a turn does before each provider call (the original and the repair), with no other lock held: one short
  * transaction takes the team lock, counts and reserves, and commits. A refused call is then held in a second
  * transaction, after the lock is gone (holdTurn: the UPDATE of the turn's own row, guarded by its status, and with it
- * what tells the owner, E795, and for a sweep-triggered turn the resume job, E798). This is the only reservation path:
+ * what tells the owner, E905, and for a sweep-triggered turn the resume job, E908). This is the only reservation path:
  * turn.spend.test.ts and turn.budgetLock.test.ts exercise it, as runTurn does.
  */
 export async function reserveForTurn(deps: Pick<IsaDeps, 'ids' | 'db'>, tenantId: string, a: AssignmentRow, t: TurnCall): Promise<Reservation> {

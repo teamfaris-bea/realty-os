@@ -51,6 +51,18 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no assistant response schema ca
     "claimId",
     "reviewStatus",
   ],
+  "EnrollmentChangeResponse": [
+    "changed",
+    "contactId",
+    "currentStep",
+    "enrollment",
+    "id",
+    "nextStepDueAt",
+    "pauseReason",
+    "playbookId",
+    "state",
+    "versionId",
+  ],
   "EnrollmentResponse": [
     "contactId",
     "currentStep",

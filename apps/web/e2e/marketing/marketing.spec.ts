@@ -9,7 +9,7 @@
 // Each project boots its own stack, so the phone and desktop runs never share data.
 import { type Locator, type Page, expect, test } from 'playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { phoneProblems } from '../a11y/checks.js';
+import { phoneProblems, toastProblems } from '../a11y/checks.js';
 import { type MarketingSeed, type MarketingStack, startMarketingStack } from './stack.js';
 
 test.describe.configure({ mode: 'serial' });
@@ -92,8 +92,35 @@ test('a draft is approved in ONE tap from the approvals inbox', async ({ page })
   await expect(card).toHaveCount(0, { timeout: 15_000 });
   expect(n.taps).toBe(1);
   console.log(`[${isPhone(page) ? 'phone' : 'desktop'}] approve from the approvals inbox: ${n.taps} tap`);
+  // b19: the "Approved: …" toast is drawn in the page's one stack of toasts, a fixed element declared while it shows
+  // (data-sticky). With it on screen (the phone project's 390 × 664; desktop 1440 × 900): it sits on no bar, every
+  // control of the inbox can be brought clear of it, and the phone layout check is clean
+  await expect(page.getByTestId('toast').getByText(`Approved: listing page for ${seed.address}`, { exact: false })).toBeVisible();
+  expect(await toastProblems(page)).toEqual([]);
+  if (isPhone(page)) expect(await phoneProblems(page)).toEqual([]);
   expect(await axe(page)).toEqual([]);
   if (isPhone(page)) expect(await phoneProblems(page)).toEqual([]);
+  if (isPhone(page)) {
+    // the same on the phone's whole screen, 390 × 844, with the next draft of the inbox (no later test reads it)
+    // (the open house invite: it can be approved once its time is set, which is done on the marketing tab)
+    const size = page.viewportSize()!;
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${stack.webUrl}/listings/${seed.listingId}/marketing`);
+    const time = pieceOf(page, 'open_house_invite').getByRole('form', { name: 'Open-house time' });
+    await time.getByLabel('Open house starts').fill('2027-03-06T13:00');
+    await time.getByLabel('Ends').fill('2027-03-06T15:00');
+    await tap(page, time.getByRole('button', { name: 'Set the time' }), { taps: 0 });
+    await expect(page.getByTestId('announcer')).toHaveText(/Open-house time set\./, { timeout: 15_000 });
+    await page.goto(`${stack.webUrl}/approvals`);
+    await expect(page.getByTestId('toast-stack')).not.toHaveAttribute('data-sticky', /.*/);
+    const invite = section.locator('article').filter({ hasText: /Open house invite · Version \d/ });
+    await expect(invite).toHaveCount(1, { timeout: 15_000 });
+    await tap(page, invite.getByRole('button', { name: 'Approve' }), { taps: 0 });
+    await expect(page.getByTestId('toast').getByText(`Approved: open house invite for ${seed.address}`, { exact: false })).toBeVisible({ timeout: 15_000 });
+    expect(await toastProblems(page)).toEqual([]);
+    expect(await phoneProblems(page)).toEqual([]);
+    await page.setViewportSize(size);
+  }
   await page.goto(`${stack.webUrl}/listings/${seed.listingId}/marketing`);
   await expect(pieceOf(page, 'website_page').getByTestId('status-label')).toHaveText('Approved: not shared anywhere yet', { timeout: 15_000 });
 });

@@ -1,7 +1,7 @@
 // The Anthropic adapter against a local node:http stand-in (no network, a synthetic key). What is counted is the
 // number of HTTP requests the stand-in received for ONE AiProvider.complete call.
 //
-// E793 (R-ISA-20; b19 review F2): the AI assistant's turn reserves one model call and then makes at most ONE provider
+// E903 (R-ISA-20; b19 review F2): the AI assistant's turn reserves one model call and then makes at most ONE provider
 // request for it (`singleRequest`): a 500 or a timeout is not retried inside the SDK, because a request that timed
 // out may already have been processed and billed. Other AI features keep the SDK's two retries.
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
@@ -50,20 +50,20 @@ beforeEach(() => {
 const REQUEST: AiRequest = { templateKey: 'synthetic', system: 'synthetic system', user: 'synthetic user', maxOutputTokens: 64 };
 const ai = (timeoutMs = 5_000) => anthropicAi({ apiKey: 'sk-ant-synthetic', model: 'synthetic-model', timeoutMs, baseUrl });
 
-describe('E793 anthropic adapter: one provider request for an assistant turn', () => {
+describe('E903 anthropic adapter: one provider request for an assistant turn', () => {
   it('a successful call is one request and reports the real token counts', async () => {
     const res = await ai().complete({ ...REQUEST, singleRequest: true });
     expect(res).toMatchObject({ text: 'hello', model: 'synthetic-model', stopReason: 'end_turn', inputTokens: 11, outputTokens: 5 });
     expect(requests).toBe(1);
   });
 
-  it('E793: the server answers 500: exactly one request was made for a single-request call', async () => {
+  it('E903: the server answers 500: exactly one request was made for a single-request call', async () => {
     mode = '500';
     await expect(ai().complete({ ...REQUEST, singleRequest: true })).rejects.toMatchObject({ kind: 'unavailable', providerCode: 'HTTP_500' });
     expect(requests).toBe(1);
   });
 
-  it('E793: the server never answers: exactly one request was made for a single-request call', async () => {
+  it('E903: the server never answers: exactly one request was made for a single-request call', async () => {
     mode = 'hang';
     const err = await ai(300).complete({ ...REQUEST, singleRequest: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ProviderError);

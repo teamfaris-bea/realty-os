@@ -1,5 +1,6 @@
 // api/stage-automation routes (parity module 67), mounted under /api by routes.ts:
 //
+//   GET /contacts/:id/playbook-status     the person's plan, its next step, and the last stage change (R-STG-4)  contact.view_detail
 //   GET /playbooks/:id/auto-enroll-stage                                            self (RLS: whoever sees the playbook)
 //   PUT /playbooks/:id/auto-enroll-stage  { stage: <one of the eight> | null }     playbook.auto_enroll_stage
 //
@@ -26,13 +27,48 @@ import { AppError } from '../errors.js';
 import { actorOf, platformOf } from '../leads/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
+import { detailFacts } from '../people/common.js';
 import * as R from './repos.js';
+import { playbookStatus } from './status.js';
 
 const IdParams = z.object({ id: z.uuid() });
 const Body = z.strictObject({ stage: z.enum(STAGES).nullable() });
 const PlaybookSetting = z.object({ id: z.string(), name: z.string(), scope: z.enum(['team', 'agent']), autoEnrollStage: z.string().nullable() });
 const Response = z.object({ playbook: PlaybookSetting });
 const GetResponse = z.object({ playbook: PlaybookSetting, canChange: z.boolean() });
+const Iso = z.string();
+/** R-STG-4: GET /contacts/:id/playbook-status */
+export const PlaybookStatusResponse = z.object({
+  plan: z
+    .object({
+      enrollmentId: z.uuid(),
+      /** the plan's name, or "the owner's plan" when the viewer may not see that playbook */
+      name: z.string(),
+      state: z.enum(['active', 'paused', 'completed', 'stopped']),
+      startedBy: z.object({ how: z.string(), userId: z.uuid().nullable(), displayName: z.string().nullable() }),
+      startedAt: Iso,
+      /** the next real step and when it is due (never the runner's wake-up time); null when no step is next */
+      next: z.object({ kind: z.literal('message'), channel: z.string(), dueAt: Iso }).nullable(),
+      /** why a paused or stopped plan is not moving */
+      blocked: z.object({ code: z.string(), sentence: z.string() }).nullable(),
+      /** the plan's most recent message could not be confirmed delivered; `checking`: the provider is still being asked */
+      deliveryUnconfirmed: z.object({ channel: z.string(), at: Iso, checking: z.boolean(), sentence: z.string() }).nullable(),
+      canPause: z.boolean(),
+      canResume: z.boolean(),
+      canStop: z.boolean(),
+    })
+    .nullable(),
+  lastStageChange: z
+    .object({
+      eventId: z.uuid(),
+      to: z.string(),
+      at: Iso,
+      /** the worker has not decided this change yet: neither started nor skipped */
+      pending: z.boolean(),
+      decision: z.object({ outcome: z.enum(['started', 'skipped']), plan: z.string(), reason: z.string().nullable(), sentence: z.string() }).nullable(),
+    })
+    .nullable(),
+});
 
 async function tx<T>(req: FastifyRequest, fn: (tx: Tx, now: Instant, actor: UserActor) => Promise<T>): Promise<T> {
   const actor = actorOf(req);
@@ -62,6 +98,12 @@ function playbookFacts(req: FastifyRequest): Promise<ResourceFacts | null> {
 
 async function register(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
+  // R-STG-4: the plan a person is in and what the last stage change did; whoever sees the person's detail. Read-only.
+  r.get(
+    '/contacts/:id/playbook-status',
+    { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', (req) => detailFacts(req)), schema: { params: IdParams, response: { 200: PlaybookStatusResponse } } },
+    async (req) => playbookStatus(platformOf(req).db, actorOf(req), req.params.id),
+  );
   r.get('/playbooks/:id/auto-enroll-stage', { config: { auth: 'self' }, schema: { params: IdParams, response: { 200: GetResponse } } }, async (req) =>
     tx(req, async (t, _now, actor) => {
       const p = await R.playbookSetting(t, req.params.id);

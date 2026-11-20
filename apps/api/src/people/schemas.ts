@@ -2,7 +2,7 @@
 // other key is a 422). Response schemas are snapshot-tested: no confidence* fields, no tenant id fields.
 import { ACTIVITY_DIRECTIONS, ACTIVITY_KINDS, CALL_OUTCOMES, POINT_LABELS, STAGES } from '@realty/core/parity/people';
 import { z } from 'zod';
-import { AutomationOutcomeSchema } from '../stageAutomation/index.js';
+import { AutomationOutcomeSchema, SKIP_REASONS } from '../stageAutomation/index.js';
 
 const Id = z.uuid();
 const Iso = z.string();
@@ -35,7 +35,8 @@ export const AddressBody = z.strictObject({
 
 export const CollaboratorBody = z.strictObject({ userId: Id, role: z.enum(['isa', 'tc', 'co_agent']).optional() });
 
-export const StageBody = z.strictObject({ stage: z.enum(STAGES), rowVersion: z.number().int().min(1).optional() });
+/** `undoOf` (R-STG-5): the stage event this change undoes; it must be the person's most recent one, and `stage` the stage it came from. */
+export const StageBody = z.strictObject({ stage: z.enum(STAGES), rowVersion: z.number().int().min(1).optional(), undoOf: Id.optional() });
 export const StageLabelsBody = z.strictObject({ labels: z.record(z.string(), z.string()) });
 
 export const RelationshipBody = z
@@ -112,10 +113,47 @@ export const RestoreAddressBody = z.strictObject({ restoreToken: z.string().min(
 export const CollaboratorView = z.object({ userId: Id, displayName: z.string().nullable(), role: z.string(), expiresAt: Iso.nullable() });
 export const CollaboratorsResponse = z.object({ collaborators: z.array(CollaboratorView) });
 
-export const StageInfo = z.object({ stage: z.string(), label: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
+/** R-STG-1: one stage of the guide: the label shown (the tenant's, else the default), what it means and what it does not. */
+export const StageGuideRow = z.object({ key: z.string(), label: z.string(), definition: z.string(), notThis: z.string() });
+export const StageInfo = z.object({ stage: z.string(), label: z.string(), definition: z.string(), notThis: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
 // parity module 67 (flagged edit): what the stage entry started, or why not (null: no plan for this stage)
-export const StageResponse = z.object({ stage: StageInfo, previousStage: z.string(), rowVersion: z.number().int(), automation: AutomationOutcomeSchema });
-export const StageLabelsResponse = z.object({ labels: z.record(z.string(), z.string()), stages: z.array(z.object({ key: z.string(), label: z.string() })) });
+export const StageResponse = z.object({
+  stage: StageInfo,
+  previousStage: z.string(),
+  rowVersion: z.number().int(),
+  /** R-STG-5: the stage event this change wrote; for the same stage again, the event that put the person there (null: none) */
+  eventId: Id.nullable(),
+  automation: AutomationOutcomeSchema,
+  /**
+   * E784: `automation` in words, the sentence the contact's playbook status then shows for this change
+   * (stageAutomation/sentences.ts decisionSentence): "Buyer plan started.", "Buyer plan did not start: …". Null when
+   * `automation` is null. It rides beside `automation` (whose two shapes many callers compare exactly), not inside it.
+   */
+  automationSentence: z.string().nullable(),
+  /**
+   * R-STG-5: for an undo, the plan the person is still in (an undo never stops it); null otherwise or when none.
+   * `state` (E782): 'active' or 'paused'; an undo resumes nothing either, and a paused plan is not called running.
+   */
+  stillRunning: z.object({ enrollmentId: Id, plan: z.string(), state: z.enum(['active', 'paused']), canStop: z.boolean() }).nullable(),
+});
+/** R-STG-3: GET /contacts/:id/stage/preview?to=<stage> */
+export const StagePreviewQuery = z.strictObject({ to: z.enum(STAGES) });
+export const StagePreviewResponse = z.object({
+  /** the stage rule lets this caller make the change now (R-PAR-14) */
+  allowed: z.boolean(),
+  lockedReason: z.literal('STAGE_NEEDS_CONTACT').nullable(),
+  /** the person is already in this stage: saving changes nothing */
+  sameStage: z.boolean(),
+  starts: z.object({ plan: z.string(), firstStep: z.object({ channel: z.string(), dueAt: Iso }).nullable() }).nullable(),
+  /** `alreadyIn`: for reason already_in_a_plan, the plan the person is in (its name as the viewer may see it) */
+  wontStart: z.object({ plan: z.string(), reason: z.enum(SKIP_REASONS), sentence: z.string(), alreadyIn: z.object({ enrollmentId: Id, plan: z.string() }).nullable() }).nullable(),
+  keepsRunning: z.object({ enrollmentId: Id, plan: z.string(), state: z.enum(['active', 'paused']), canStop: z.boolean() }).nullable(),
+  /** a stage change never stops a plan: always empty */
+  stops: z.array(z.never()),
+  aiCare: z.literal('unchanged'),
+  tasks: z.literal('unchanged'),
+});
+export const StageLabelsResponse = z.object({ labels: z.record(z.string(), z.string()), stages: z.array(StageGuideRow) });
 
 export const RelationshipView = z.object({ id: Id, kind: z.string(), label: z.string().nullable(), direction: z.enum(['outgoing', 'incoming']), other: z.object({ id: Id, displayName: z.string() }), createdAt: Iso });
 export const RelationshipsResponse = z.object({ relationships: z.array(RelationshipView) });
@@ -128,6 +166,7 @@ export const DetailsResponse = z.object({
     doNotContact: z.boolean(),
     stage: StageInfo,
     stageLabels: z.record(z.string(), z.string()),
+    stageGuide: z.array(StageGuideRow),
     addresses: z.array(AddressView),
     collaborators: z.array(CollaboratorView),
     relationships: z.array(RelationshipView),
@@ -158,7 +197,9 @@ export const MentionOutcome = z.object({ userId: Id, displayName: z.string().nul
 export const NoteResponse = z.object({ note: NoteView, mentions: z.array(MentionOutcome), replayed: z.boolean() });
 export const NotesResponse = z.object({ notes: z.array(NoteView), nextCursor: z.string().nullable(), audience: z.string() });
 export const MentionCandidatesResponse = z.object({ members: z.array(z.object({ userId: Id, displayName: z.string().nullable(), role: z.string(), canSee: z.boolean() })) });
-export const ActivityResponse = z.object({ note: NoteView, taskId: Id.nullable(), suggestDoNotContact: z.boolean(), replayed: z.boolean() });
+/** R-STG-2: the stage a logged outcome suggests, to confirm; `locked`: the stage route would refuse it now (STAGE_NEEDS_CONTACT). */
+export const SuggestedStage = z.object({ stage: z.enum(STAGES), why: z.string(), locked: z.boolean(), alsoOffer: z.array(z.object({ stage: z.enum(STAGES), locked: z.boolean() })) });
+export const ActivityResponse = z.object({ note: NoteView, taskId: Id.nullable(), suggestDoNotContact: z.boolean(), suggestedStage: SuggestedStage.nullable(), replayed: z.boolean() });
 export const DoNotContactResponse = z.object({ doNotContact: z.literal(true), alreadySet: z.boolean(), revokedPoints: z.number().int() });
 
 export const PEOPLE_RESPONSE_SCHEMAS = {
@@ -171,6 +212,7 @@ export const PEOPLE_RESPONSE_SCHEMAS = {
   CollaboratorsResponse,
   StageResponse,
   StageLabelsResponse,
+  StagePreviewResponse,
   RelationshipsResponse,
   RelationshipResponse,
   DetailsResponse,

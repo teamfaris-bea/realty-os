@@ -35,7 +35,7 @@ export function sourcePauseNote(reason: string): string | null {
 }
 
 /**
- * E795 (R-ISA-20; b19 review F4): what the lead's owner is told the moment a turn is held at a daily model-call budget.
+ * E905 (R-ISA-20; b19 review F4): what the lead's owner is told the moment a turn is held at a daily model-call budget.
  * Staff words only: nothing about a budget is ever written to the person. The first is the unanswered-reply handback
  * (after "They replied. "), the second the notification for a start or a follow-up that waits (nobody wrote), the third
  * the activity card while a reply waits (it never says the assistant is answering while it is not).

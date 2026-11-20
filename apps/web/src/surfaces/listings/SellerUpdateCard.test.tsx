@@ -256,7 +256,7 @@ describe('Seller update card (module 38)', () => {
     expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ valueRemoved: true, recipientIds: [SAM] });
   });
 
-  it('E797 R-CMA-10: Send is off while the removal of the value range is still saving (the PATCH unanswered); once it is saved Send is on again and carries valueRemoved', async () => {
+  it('E907 R-CMA-10: Send is off while the removal of the value range is still saving (the PATCH unanswered); once it is saved Send is on again and carries valueRemoved', async () => {
     let answer!: () => void;
     const unanswered = new Promise<void>((r) => { answer = r; });
     const u = update({ recommendation: REC, sections: [...update().sections, valueSection()] });
@@ -283,7 +283,7 @@ describe('Seller update card (module 38)', () => {
     expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ valueRemoved: true, recipientIds: [SAM] });
   });
 
-  it('E797: Send is off while a removed feedback item is still saving, and back on when it is saved', async () => {
+  it('E907: Send is off while a removed feedback item is still saving, and back on when it is saved', async () => {
     let answer!: () => void;
     const unanswered = new Promise<void>((r) => { answer = r; });
     const u = update({ recommendation: REC });
@@ -298,7 +298,7 @@ describe('Seller update card (module 38)', () => {
     await waitFor(() => expect(sendBtn).toBeEnabled());
   });
 
-  it('E797: typing the recommendation and going straight to Send still sends in one tap (the save on leaving the box does not switch Send off: the send carries the recommendation itself)', async () => {
+  it('E907: typing the recommendation and going straight to Send still sends in one tap (the save on leaving the box does not switch Send off: the send carries the recommendation itself)', async () => {
     let answer!: () => void;
     const unanswered = new Promise<void>((r) => { answer = r; });
     const u = update();

@@ -107,9 +107,16 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
     "voiceCapable",
   ],
   "OutcomeResponse": [
+    "alsoOffer",
     "callId",
+    "locked",
+    "locked",
     "outcome",
     "recordedAs",
+    "stage",
+    "stage",
+    "suggestedStage",
+    "why",
   ],
   "PreviewResponse": [
     "body",

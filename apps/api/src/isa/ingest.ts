@@ -82,7 +82,7 @@ export async function ingestForAiIsaInTx(tx: Tx, deps: IsaDeps, actor: SystemAct
     else await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.turn', payload: { assignmentId: a.id, trigger: 'sweep', epoch: a.epoch }, dedupeKey: `ai_isa.turn:${a.id}:${a.epoch}:chain` });
     return { kind: 'none' };
   }
-  // E795: while a turn of this care is held at a daily model-call budget (until not_before, the next team-local day), a
+  // E905: while a turn of this care is held at a daily model-call budget (until not_before, the next team-local day), a
   // further reply will wait too: the card says so, never that the assistant is answering
   const waiting = await sql<{ held: boolean }>`SELECT EXISTS (SELECT 1 FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND epoch = ${a.epoch}
     AND status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT') AND not_before > ${new Date(now)}) AS held`.execute(tx);

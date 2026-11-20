@@ -4,7 +4,8 @@
 //   card (first name + last initial for pond cards, intent, source, area/summary, age) and the one
 //   action that makes it theirs: Accept (with the live offer countdown) / Decline, or Claim. No
 //   phone, email, timeline, task, deal or search is requested or shown until it is theirs.
-// - Full view: Call / Text / Email in one tap each (the send-time check runs at the tap), what the
+// - Full view: Call / Text / Email in one tap each (the send-time check runs at the tap; Text opens the text sheet on
+//   this page and never leaves it, b19 fix pass M3; Email opens the conversation), what the
 //   assistant has for this contact, saved searches, open tasks, deals (+ Start a deal, which copies
 //   the lead's attribution server-side, A7d), and the recent timeline. If texts or email to this
 //   contact would be blocked (they texted STOP, unsubscribed, asked not to be contacted, or the address
@@ -29,6 +30,8 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, TimelineItem } from '../feed/lib/types.js';
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
 import { INQUIRY_REDACTION_NOTE } from '../thread/redaction.js';
+import { useStageGuide } from '../people/stageGuide.js';
+import { TextSheetProvider, useTextSheet } from '../people-edit/TextSheet.js';
 import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
@@ -38,7 +41,8 @@ import { renderMentions } from '@realty/core/parity/people';
 
 export default function ContactPage() {
   return (
-    <AgentSheetsProvider>
+    // R-STG-2: on the person's page a call's outcome goes on to the stage step, in the same sheet
+    <AgentSheetsProvider stageStep>
       <Contact />
     </AgentSheetsProvider>
   );
@@ -51,7 +55,14 @@ function Contact() {
   if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
   if (q.isError || !q.data) return <Notice tone="error">{q.error ? messageFor(q.error, AGENT_ERROR_MESSAGES) : null}</Notice>;
   const c = q.data.contact;
-  return c.view === 'card' ? <CardView contact={c} /> : <FullView contact={c} />;
+  // M3: the page's one text sheet; the header's Text, the phone bar's Text and the stage pill's Text all open it
+  return c.view === 'card' ? (
+    <CardView contact={c} />
+  ) : (
+    <TextSheetProvider contact={c}>
+      <FullView contact={c} />
+    </TextSheetProvider>
+  );
 }
 
 // ---- card view (R-PERM-6) ---------------------------------------------------------------------
@@ -126,6 +137,7 @@ function ChannelAction({ label, icon, variant = 'secondary', missing, state, onC
 
 function FullView({ contact }: { contact: ContactFullView }) {
   const { call } = useAgentSheets();
+  const textSheet = useTextSheet();
   const navigate = useNavigate();
   const { hash } = useLocation();
   const now = useNow(1000);
@@ -138,6 +150,8 @@ function FullView({ contact }: { contact: ContactFullView }) {
   const text = channelState(reach, 'sms');
   const email = channelState(reach, 'email');
   const voice = channelState(reach, 'voice');
+  // R-STG-1: the stage is named by its label (the team's, else the default), never by its key
+  const { labelOf } = useStageGuide();
 
   useEffect(() => {
     if (hash) document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' });
@@ -152,7 +166,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
             {contact.displayName}
           </h2>
           <p className="text-[15px] text-ink-muted">
-            {[intentLabel(contact.intent), contact.stage.replace(/_/g, ' '), o.ownedByMe ? 'Yours' : contact.owner?.displayName ? `Owner: ${contact.owner.displayName}` : null, contact.source?.name ? `From ${contact.source.name}` : null]
+            {[intentLabel(contact.intent), labelOf(contact.stage), o.ownedByMe ? 'Yours' : contact.owner?.displayName ? `Owner: ${contact.owner.displayName}` : null, contact.source?.name ? `From ${contact.source.name}` : null]
               .filter(Boolean)
               .join(' · ')}
           </p>
@@ -173,7 +187,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
         ) : (
           <div className="grid grid-cols-3 gap-2">
             <ChannelAction label="Call" icon="phone" variant="primary" missing={contact.phones.length === 0} state={voice} onClick={() => call({ id: contact.id, name: contact.displayName })} />
-            <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} />
+            <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={textSheet.open} />
             <ChannelAction label="Email" icon="message" missing={contact.emails.length === 0} state={email} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)} />
           </div>
         )}
@@ -229,7 +243,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
         </AiLabelsProvider>
       </Section>
 
-      <Section title="Tasks">
+      <Section title="Tasks" id="tasks">
         <ContactTasks contactId={contact.id} />
       </Section>
 
@@ -243,8 +257,6 @@ function FullView({ contact }: { contact: ContactFullView }) {
     </div>
   );
 }
-
-const STAGE_WORD: Record<string, string> = { new: 'New', attempting: 'Attempting', connected: 'Connected', nurture: 'Nurture', active: 'Active', under_contract: 'Under contract', closed: 'Closed', lost: 'Lost' };
 
 const TIMELINE_LABEL: Record<string, string> = {
   note: 'Note',
@@ -293,9 +305,10 @@ function RecentTimeline({ contactId, contact }: { contactId: string; contact: { 
 }
 
 function OtherItem({ item }: { item: TimelineItem }) {
+  const { labelOf } = useStageGuide();
   // FUB parity: an outside activity is always labelled as logged (R-PAR-30); a stage change says from → to
   const logged = item.type === 'note' && item.detail?.startsWith('logged_activity:') ? `Logged ${item.detail.slice('logged_activity:'.length)}` : null;
-  const stage = item.type === 'stage' && item.detail ? `Stage: ${item.detail.split('>').map((s) => STAGE_WORD[s] ?? s.replace(/_/g, ' ')).filter(Boolean).join(' → ')}` : null;
+  const stage = item.type === 'stage' && item.detail ? `Stage: ${item.detail.split('>').filter(Boolean).map(labelOf).join(' → ')}` : null;
   const what = logged ?? stage ?? (item.type === 'ownership' ? (OWNERSHIP_LABEL[item.detail ?? ''] ?? (item.detail ?? '').replace(/_/g, ' ')) : (TIMELINE_LABEL[item.type] ?? item.type));
   return (
     <li className="rounded-xl border border-line bg-surface px-3 py-2 text-[15px] text-ink">

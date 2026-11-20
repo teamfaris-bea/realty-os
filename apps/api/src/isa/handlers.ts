@@ -165,7 +165,7 @@ export async function sweepInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, now: 
     // the link-failure table and the stop-signal backstop run through the turn's TX-A (one table everywhere)
     await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: r.id, trigger: 'sweep', epoch: r.epoch }, dedupeKey: `ai_isa.turn:${r.id}:${r.epoch}:sweep` });
   }
-  // stuck turns (E796): `deciding` and unchanged for 8 minutes. Under live care the pending model call may still be
+  // stuck turns (E906): `deciding` and unchanged for 8 minutes. Under live care the pending model call may still be
   // wanted: a recover job (one live per assignment and epoch) adopts the turn again in its TX-A, under the turn's
   // locks, or gives it up there; the sweep itself cancels nothing the machine may be awaiting. A care that is paused or
   // ended awaits no model call (the pause and the end clear it): its stuck turns are canceled here, as before.

@@ -476,7 +476,7 @@ describe('details', () => {
   it('shows the edit facts, removed points (tail only), and toIso round-trips', async () => {
     const id = await own(agent);
     const d = (await details(agent, id)).body.details;
-    expect(d).toMatchObject({ canEdit: true, doNotContact: false, stage: { stage: 'new', locked: [], label: 'New' } });
+    expect(d).toMatchObject({ canEdit: true, doNotContact: false, stage: { stage: 'new', locked: [], label: 'New lead' } });
     expect(toIso(0 as never)).toBe('1970-01-01T00:00:00.000Z');
     expect((await details(tc, id)).status).toBe(404);
   });

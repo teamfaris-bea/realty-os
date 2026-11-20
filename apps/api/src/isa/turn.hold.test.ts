@@ -53,7 +53,7 @@ const turnJobs = async (c: Care) => (await h.su.query<{ status: string; run_at: 
 const todaysRuns = async (c: Care) => (await h.su.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_runs r JOIN tenant_settings s ON s.tenant_id = r.tenant_id
   WHERE r.tenant_id = $1 AND r.purpose = 'ai_isa_turn' AND r.created_at >= ((now() AT TIME ZONE s.default_timezone)::date::timestamp AT TIME ZONE s.default_timezone)`, [c.w.tenantId])).rows[0]!.n;
 
-it('E794 R-ISA-20: two texts from a person at the limit: the older held turn is superseded, one job resumes, and after the rollover one provider call makes one reply that read both texts', async () => {
+it('E904 R-ISA-20: two texts from a person at the limit: the older held turn is superseded, one job resumes, and after the rollover one provider call makes one reply that read both texts', async () => {
   const c = await care();
   await recordedToday(c, 12);
   const callsBefore = c.w.ai.calls.length;
@@ -83,7 +83,7 @@ it('E794 R-ISA-20: two texts from a person at the limit: the older held turn is 
   expect(await turnJobs(c)).toEqual([]);
 });
 
-it('E794 R-ISA-20: at the rollover two jobs of the same person run at the same moment: only the job that owns the held turn calls the provider', async () => {
+it('E904 R-ISA-20: at the rollover two jobs of the same person run at the same moment: only the job that owns the held turn calls the provider', async () => {
   const c = await care();
   await recordedToday(c, 12);
   const deps = depsFromPlatform(h.app.platform);
@@ -105,7 +105,7 @@ it('E794 R-ISA-20: at the rollover two jobs of the same person run at the same m
   expect(await todaysRuns(c)).toBe(1);
 });
 
-it('E794 R-ISA-20: twelve held texts spend one call after the rollover, not twelve, and the person is not at the limit again', async () => {
+it('E904 R-ISA-20: twelve held texts spend one call after the rollover, not twelve, and the person is not at the limit again', async () => {
   const c = await care();
   await recordedToday(c, 12);
   const callsBefore = c.w.ai.calls.length;
@@ -129,7 +129,7 @@ it('E794 R-ISA-20: twelve held texts spend one call after the rollover, not twel
   expect(await turnJobs(c)).toEqual([]);
 }, 180_000);
 
-it('E794 R-ISA-20: the resume of a held turn is spread over the first minutes after the rollover, by a fixed amount per assignment', async () => {
+it('E904 R-ISA-20: the resume of a held turn is spread over the first minutes after the rollover, by a fixed amount per assignment', async () => {
   const a = '0190aaaa-0000-7000-8000-000000000001';
   const b = '0190aaaa-0000-7000-8000-000000000002';
   expect(budgetResumeSpreadMs(a)).toBe(budgetResumeSpreadMs(a));
@@ -159,7 +159,7 @@ const notices = async (c: Care, kind: string) => (await h.su.query<{ title: stri
 const activity = async (c: Care) => (await h.su.query<{ code: string; text: string }>(
   `SELECT reasons->0->>'code' AS code, reasons->0->>'text' AS text FROM priority_feed_items WHERE dedupe_key = $1 AND state = 'open'`, [`ai_isa_activity:${c.assignmentId}`])).rows;
 
-it('E795 R-ISA-29 R-ISA-20: a reply held at a budget is visible at once: the pinned unanswered card, the handback and the notification are written with the hold, the activity card does not say the assistant is answering, and nothing goes to the person', async () => {
+it('E905 R-ISA-29 R-ISA-20: a reply held at a budget is visible at once: the pinned unanswered card, the handback and the notification are written with the hold, the activity card does not say the assistant is answering, and nothing goes to the person', async () => {
   const c = await care();
   await recordedToday(c, 12);
   const callsBefore = c.w.ai.calls.length;
@@ -204,7 +204,7 @@ it('E795 R-ISA-29 R-ISA-20: a reply held at a budget is visible at once: the pin
   expect(sent).not.toMatch(/budget|limit|tomorrow/i);
 });
 
-it('E795 R-ISA-20: a start turn held at a budget tells the lead\'s owner at once, by the pause notification, that AI care waits for tomorrow\'s budget and that they can reach out; nothing goes to the person', async () => {
+it('E905 R-ISA-20: a start turn held at a budget tells the lead\'s owner at once, by the pause notification, that AI care waits for tomorrow\'s budget and that they can reach out; nothing goes to the person', async () => {
   const w = await isaWorld(h);
   const lead = await isaLead(h, w.agents[0]!);
   expect((await startCare(w.agents[0]!, lead.id)).status).toBe(200);
@@ -227,7 +227,7 @@ it('E795 R-ISA-20: a start turn held at a budget tells the lead\'s owner at once
   expect(w.ai.calls.length).toBe(0);
 });
 
-it('E795 R-ISA-20: a follow-up held at a budget tells the owner the same way, once for the day', async () => {
+it('E905 R-ISA-20: a follow-up held at a budget tells the owner the same way, once for the day', async () => {
   const w = await isaWorld(h);
   const lead = await isaLead(h, w.agents[0]!);
   expect((await startCare(w.agents[0]!, lead.id)).status).toBe(200);
@@ -281,7 +281,7 @@ async function sweepOwnedHold(body: string): Promise<Care> {
   return c;
 }
 
-it('E798 R-ISA-20: a turn the sweep\'s job read and that is held at a budget does not park the sweep job: it finishes, a separate resume job waits for the rollover, and the next sweep for the same care is accepted and does its other duties', async () => {
+it('E908 R-ISA-20: a turn the sweep\'s job read and that is held at a budget does not park the sweep job: it finishes, a separate resume job waits for the rollover, and the next sweep for the same care is accepted and does its other duties', async () => {
   const c = await sweepOwnedHold('We want to buy a home near Oak Hollow this spring.');
   // the sweep job finished; it is not parked until midnight under its dedupe key
   expect(await jobsByKey(c, 'sweep')).toEqual([]);
@@ -291,7 +291,7 @@ it('E798 R-ISA-20: a turn the sweep\'s job read and that is held at a budget doe
   expect(resume).toHaveLength(1);
   expect(resume[0]!.payload).toMatchObject({ assignmentId: c.assignmentId, trigger: 'sweep', epoch: c.epoch, resume: true });
   expect(resume[0]!.run_at.getTime()).toBe(reset.getTime() + budgetResumeSpreadMs(c.assignmentId));
-  // the hold was told to the owner like any other (E795)
+  // the hold was told to the owner like any other (E905)
   expect((await feedItems(h, c.lead.id)).filter((f) => f.item_type === 'unanswered_inbound')).toHaveLength(1);
   // a later sweep enqueue for the same assignment is accepted, and an ordinary sweep job leaves the held turn alone
   await sweepOnce(c);
@@ -310,7 +310,7 @@ it('E798 R-ISA-20: a turn the sweep\'s job read and that is held at a budget doe
   }
 });
 
-it('E798 R-ISA-20: after the rollover the resume job answers the reply the sweep\'s job had read: one provider call, one reply', async () => {
+it('E908 R-ISA-20: after the rollover the resume job answers the reply the sweep\'s job had read: one provider call, one reply', async () => {
   const c = await sweepOwnedHold('We want to buy a home near Pine Reach this spring.');
   const callsBefore = c.w.ai.calls.length;
   const outBefore = await outbound(c);
@@ -323,7 +323,7 @@ it('E798 R-ISA-20: after the rollover the resume job answers the reply the sweep
   expect((await h.su.query(`SELECT status FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_key LIKE 'sweep:%'`, [c.assignmentId])).rows).toEqual([{ status: 'sent' }]);
 });
 
-it('E798 R-ISA-20: a resume job that is refused again (the team is still at its limit) parks itself for the next day: the care keeps exactly one resume job', async () => {
+it('E908 R-ISA-20: a resume job that is refused again (the team is still at its limit) parks itself for the next day: the care keeps exactly one resume job', async () => {
   const c = await sweepOwnedHold('We want to buy a home near Quince Lane this spring.');
   const callsBefore = c.w.ai.calls.length;
   // made due while the budget is still used up

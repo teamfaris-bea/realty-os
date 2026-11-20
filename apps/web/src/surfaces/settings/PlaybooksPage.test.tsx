@@ -315,3 +315,64 @@ describe('b7 ui/F2: trigger playbooks are read-only here (R-AST-4)', () => {
     expect(document.body.textContent).not.toMatch(/\btrigger\b/);
   });
 });
+
+// R-STG owner decision (19 Nov): an Owner or Admin may create a team-wide stage plan from this page. The API already
+// takes `scope` on POST /playbooks and authorizes a team playbook for Owner/Admin only (assistant/routes.ts), so the
+// page offers the choice exactly to them, and only for the plans that are personal by default (stage plans).
+describe('E798: Start a playbook: "For the whole team" (Owner and Admin only)', () => {
+  const list = () => new FakeFetch().on('GET /playbooks', { status: 200, body: { playbooks: [] } });
+  const created = (scope: 'team' | 'agent') => ({ status: 201, body: { playbook: playbook({ id: 'pb9', scope, ownerUserId: scope === 'team' ? null : ID.me }) } });
+
+  it.each(['owner', 'admin'] as const)('an %s picks "For the whole team" for a stage plan; the create request carries scope team and the draft opens', async (role) => {
+    const fake = list().on('POST /playbooks', created('team')).on('GET /playbooks/pb9', { status: 200, body: { playbook: playbook({ id: 'pb9', scope: 'team', ownerUserId: null }) } });
+    const { router } = leadAdminApp(fake, '/settings/playbooks', role);
+    const u = userEvent.setup();
+    await u.selectOptions(await screen.findByLabelText('Start from'), 'nurture');
+    const who = screen.getByRole('radiogroup', { name: 'Who is it for' });
+    // personal stays the default: nobody creates a team-wide plan by accident
+    expect(within(who).getByRole('radio', { name: 'Just me' })).toBeChecked();
+    await u.click(within(who).getByRole('radio', { name: 'For the whole team' }));
+    expect(screen.getByText('Everyone’s people can start it. It still runs only from a version an Owner or Admin approved.')).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Create draft' }));
+    await waitFor(() => expect(fake.callsTo('POST /playbooks')).toHaveLength(1));
+    expect(fake.callsTo('POST /playbooks')[0]!.body).toEqual({ templateKey: 'nurture', scope: 'team' });
+    await waitFor(() => expect(router.state.location.pathname).toBe('/settings/playbooks/pb9'));
+    cleanup();
+  });
+
+  it('an Owner who leaves it on "Just me" creates a personal plan exactly as before (no scope in the request)', async () => {
+    const fake = list().on('POST /playbooks', created('agent'));
+    leadAdminApp(fake, '/settings/playbooks', 'owner');
+    const u = userEvent.setup();
+    await u.selectOptions(await screen.findByLabelText('Start from'), 'nurture');
+    await u.click(screen.getByRole('button', { name: 'Create draft' }));
+    await waitFor(() => expect(fake.callsTo('POST /playbooks')).toHaveLength(1));
+    expect(fake.callsTo('POST /playbooks')[0]!.body).toEqual({ templateKey: 'nurture' });
+  });
+
+  it('the choice is not shown for a playbook that is always the team\'s (the instant reply), and picking one drops an earlier "whole team" pick', async () => {
+    const fake = list().on('POST /playbooks', created('team'));
+    leadAdminApp(fake, '/settings/playbooks', 'owner');
+    const u = userEvent.setup();
+    const from = await screen.findByLabelText('Start from');
+    await u.selectOptions(from, 'nurture');
+    await u.click(screen.getByRole('radio', { name: 'For the whole team' }));
+    await u.selectOptions(from, 'new_lead_response');
+    expect(screen.queryByRole('radiogroup', { name: 'Who is it for' })).toBeNull();
+    await u.click(screen.getByRole('button', { name: 'Create draft' }));
+    await waitFor(() => expect(fake.callsTo('POST /playbooks')).toHaveLength(1));
+    expect(fake.callsTo('POST /playbooks')[0]!.body).toEqual({ templateKey: 'new_lead_response' });
+  });
+
+  it('an Agent sees no such choice, and their create request never carries a scope', async () => {
+    const fake = list().on('POST /playbooks', created('agent'));
+    leadAdminApp(fake, '/settings/playbooks', 'agent');
+    const u = userEvent.setup();
+    await u.selectOptions(await screen.findByLabelText('Start from'), 'nurture');
+    expect(screen.queryByRole('radiogroup', { name: 'Who is it for' })).toBeNull();
+    expect(screen.queryByText('For the whole team')).toBeNull();
+    await u.click(screen.getByRole('button', { name: 'Create draft' }));
+    await waitFor(() => expect(fake.callsTo('POST /playbooks')).toHaveLength(1));
+    expect(fake.callsTo('POST /playbooks')[0]!.body).toEqual({ templateKey: 'nurture' });
+  });
+});

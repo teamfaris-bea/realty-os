@@ -1,4 +1,5 @@
-// Stages (R-PAR-13, R-PAR-14). The fixed eight; tenant labels only rename them for display.
+// Stages (R-PAR-13, R-PAR-14, R-STG-1). The fixed eight; tenant labels only rename them for display, and the stage
+// guide says what each one means.
 //
 // stageChangeAllowed mirrors the DB guard app.contacts_stage_guard (migration "fub_parity"): an Agent
 // or ISA cannot move a routed lead whose first-touch SLA is unmet (owned, first_touch_due_at set,
@@ -14,15 +15,73 @@ export type Stage = (typeof STAGES)[number];
 /** Stages where the inactivity release (R-OWN-23) still applies: always open. */
 export const OPEN_STAGES: readonly Stage[] = ['new', 'attempting'];
 
+/** What a stage means, in the words the stage picker shows (R-STG-1). One line each. */
+export interface StageGuideEntry {
+  /** the default display label (a tenant's own label wins: stageLabel) */
+  label: string;
+  /** what is true of a person in this stage */
+  definition: string;
+  /** what the stage does NOT mean (the mistake agents make with it) */
+  notThis: string;
+}
+
+/**
+ * R-STG-1: the stage guide. The eight keys are the model (R-PAR-13) and never change here; the guide only describes
+ * them. A stage says how far the relationship has come: buyer or seller, urgency and permission to text are separate
+ * facts and no stage implies them. A label is display only: no trigger, enrollment or permission reads it.
+ */
+export const STAGE_GUIDE: Record<Stage, StageGuideEntry> = {
+  new: {
+    label: 'New lead',
+    definition: 'They just came in and nobody has tried to reach them yet.',
+    notThis: 'Does not mean anyone has called, texted or emailed them.',
+  },
+  attempting: {
+    label: 'Trying to reach',
+    definition: 'We tried to reach them but have not had a two-way conversation yet.',
+    notThis: 'A voicemail or an unanswered text is not a conversation.',
+  },
+  connected: {
+    label: 'Connected',
+    definition: 'We have talked, but we are not actively working together yet.',
+    notThis: 'Does not mean they are a client or have agreed to anything.',
+  },
+  nurture: {
+    label: 'Long-term follow-up',
+    definition: 'We have talked and they are months away, so we keep in touch.',
+    notThis: 'Does not mean they went quiet or said no.',
+  },
+  active: {
+    label: 'Active client',
+    definition: 'We are working together now.',
+    notThis: 'A reply or one good call does not make someone an active client.',
+  },
+  under_contract: {
+    label: 'Under contract',
+    definition: 'An offer was accepted and the sale has not closed yet.',
+    notThis: 'Does not mean the sale has closed.',
+  },
+  closed: {
+    label: 'Closed sale',
+    definition: 'Their sale closed.',
+    notThis: 'Does not mean we stop keeping in touch.',
+  },
+  lost: {
+    label: 'Not moving forward',
+    definition: 'We are not working together, as far as we know today.',
+    notThis: 'Does not mean do not contact. Record that separately if they asked.',
+  },
+};
+
 export const DEFAULT_STAGE_LABELS: Record<Stage, string> = {
-  new: 'New',
-  attempting: 'Attempting',
-  connected: 'Connected',
-  nurture: 'Nurture',
-  active: 'Active',
-  under_contract: 'Under contract',
-  closed: 'Closed',
-  lost: 'Lost',
+  new: STAGE_GUIDE.new.label,
+  attempting: STAGE_GUIDE.attempting.label,
+  connected: STAGE_GUIDE.connected.label,
+  nurture: STAGE_GUIDE.nurture.label,
+  active: STAGE_GUIDE.active.label,
+  under_contract: STAGE_GUIDE.under_contract.label,
+  closed: STAGE_GUIDE.closed.label,
+  lost: STAGE_GUIDE.lost.label,
 };
 
 export function isStage(s: string): s is Stage {
@@ -78,4 +137,9 @@ export function validateStageLabels(input: unknown): { ok: true; labels: StageLa
 /** The display label of a stage: the tenant's, else the default. */
 export function stageLabel(stage: Stage, labels: StageLabels = {}): string {
   return labels[stage] ?? DEFAULT_STAGE_LABELS[stage];
+}
+
+/** The eight stages in order with the label shown (the tenant's, else the default) and the guide's two lines (R-STG-1). */
+export function stageGuide(labels: StageLabels = {}): { key: Stage; label: string; definition: string; notThis: string }[] {
+  return STAGES.map((key) => ({ key, label: stageLabel(key, labels), definition: STAGE_GUIDE[key].definition, notThis: STAGE_GUIDE[key].notThis }));
 }

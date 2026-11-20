@@ -48,8 +48,8 @@ async function heldShare() {
   return { ...s, cmaId: tap.body.cma.id, messageId: r.message.id };
 }
 
-describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks client readiness', () => {
-  it('R-CMA-7 R-CMA-9 E790 E612: the report stopped being ready (the MLS feed went stale) before the re-tap: refused with that blocker, the email canceled, nothing dispatched', async () => {
+describe('R-CMA-7 E900 (VERIFY 9): the re-tap of a held CMA share re-checks client readiness', () => {
+  it('R-CMA-7 R-CMA-9 E900 E612: the report stopped being ready (the MLS feed went stale) before the re-tap: refused with that blocker, the email canceled, nothing dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     await withPlatformCmaCleared(h, async () => {
@@ -70,7 +70,7 @@ describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect(sentTo(q.email)).toBe(before);
   });
 
-  it('E799 R-AUDIT-5 R-CMA-7: the audit log says what the re-tap was: refused and canceled (message.held_send_refused, the blocker as its reason) when the CMA is no longer ready, never "held send"; a re-tap that goes on to the gate is message.held_send, once', async () => {
+  it('E909 R-AUDIT-5 R-CMA-7: the audit log says what the re-tap was: refused and canceled (message.held_send_refused, the blocker as its reason) when the CMA is no longer ready, never "held send"; a re-tap that goes on to the gate is message.held_send, once', async () => {
     const audits = async (messageId: string) => (await h.su.query<{ action: string; reason: string | null; actor_user_id: string | null; changes: unknown }>(
       `SELECT action, reason, actor_user_id, changes FROM audit_log WHERE tenant_id = $1 AND entity_id = $2 AND action LIKE 'message.held%' ORDER BY seq`, [w.tenantId, messageId])).rows;
     // refused: counsel review of platform:cma is not recorded at the re-tap
@@ -94,7 +94,7 @@ describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect(b[0]).toMatchObject({ reason: 'CLIENT_REPLIED_SINCE_SCHEDULED', actor_user_id: agent().userId });
   });
 
-  it('R-CMA-7 E790: counsel review of platform:cma is not recorded at the re-tap: refused PLATFORM_NOT_CLEARED, nothing dispatched', async () => {
+  it('R-CMA-7 E900: counsel review of platform:cma is not recorded at the re-tap: refused PLATFORM_NOT_CLEARED, nothing dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     const r = await retap(q.messageId);
@@ -104,7 +104,7 @@ describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect(await msg(q.messageId)).toEqual({ status: 'canceled', status_reason: 'CMA_PLATFORM_NOT_CLEARED', dispatched_at: null });
   });
 
-  it('E790 E27 R-CMA-9: a held share whose CMA is still client-ready is sent by the re-tap, once', async () => {
+  it('E900 E27 R-CMA-9: a held share whose CMA is still client-ready is sent by the re-tap, once', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     const r = await withPlatformCmaCleared(h, () => retap(q.messageId));
@@ -113,7 +113,7 @@ describe('R-CMA-7 E790 (VERIFY 9): the re-tap of a held CMA share re-checks clie
     expect((await msg(q.messageId)).status).toBe('sent');
   });
 
-  it('E790 E27 R-GATE-14: the send-time gate still decides a ready held share: the seller unsubscribed since, so the re-tap is blocked by the gate and nothing is dispatched', async () => {
+  it('E900 E27 R-GATE-14: the send-time gate still decides a ready held share: the seller unsubscribed since, so the re-tap is blocked by the gate and nothing is dispatched', async () => {
     const q = await heldShare();
     const before = sentTo(q.email);
     expect((await call(agent(), 'POST', `/contacts/${q.c}/do-not-contact`, {})).status).toBe(200);

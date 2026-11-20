@@ -6,7 +6,7 @@
 //   POST /messages/:id/send                re-tap / confirm a waiting message      comms.send
 //   POST /messages/:id/cancel              cancel a scheduled message              comms.send
 //   POST /contacts/:id/calls               tap-to-call (dial-time gate)            comms.call
-//   POST /calls/:id/outcome                post-call outcome                       comms.call
+//   POST /calls/:id/outcome                post-call outcome (answers the stage it suggests, R-STG-2)  comms.call
 //   POST /contacts/:id/consent             staff consent entry / revoke            consent.record
 //   POST /consent-events/:id/not-opt-out   R-CONSENT-8 review                      consent.record
 //   POST /suppressions/:id/lift            Owner/Admin, 🔒                          suppression.lift
@@ -54,6 +54,7 @@ import { contactAttachments, messageContact, readMedia } from './media.js';
 import { deleteOutboundMedia, serveProviderMedia, uploadOutboundMedia } from './outboundMedia.js';
 import { refuseContentEncoding } from '../imports/routes.js';
 import { telephonyMode } from './telephonyMode.js';
+import { suggestedStageInTx } from '../people/stageSuggestion.js';
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -167,9 +168,28 @@ async function register(app: FastifyInstance): Promise<void> {
     if (out.kind === 'failed') return { result: 'failed' as const, callId: out.callId, bridgeToken: null, reason: out.reason, decision: out.decision };
     return { result: 'dialing' as const, callId: out.callId, bridgeToken: out.bridgeToken, reason: null, decision: out.decision };
   });
-  r.post('/calls/:id/outcome', { config: { auth: 'comms.call' }, preHandler: authorize('comms.call', callFacts), schema: { params: IdParams, body: S.OutcomeBody, response: { 200: S.OutcomeResponse } } }, async (req) =>
-    logCallOutcome(actorOf(req), req.params.id, req.body.outcome, deps()),
-  );
+  r.post('/calls/:id/outcome', { config: { auth: 'comms.call' }, preHandler: authorize('comms.call', callFacts), schema: { params: IdParams, body: S.OutcomeBody, response: { 200: S.OutcomeResponse } } }, async (req) => {
+    const actor = actorOf(req);
+    const out = await logCallOutcome(actor, req.params.id, req.body.outcome, deps());
+    // R-STG-2: the stage this outcome suggests, read after the outcome committed, as the caller (their RLS). It is
+    // only a suggestion to confirm: this route never changes a stage. An outcome handed to the new owner (E14: the
+    // lead moved during the call) suggests nothing, because the caller no longer sees the person. An incoming call
+    // counts only when it connected (people/stageSuggestion.ts activitySignal: the same reading as a logged call).
+    const suggestedStage =
+      out.recordedAs !== 'call'
+        ? null
+        : await withTenantTx(
+            actor,
+            async (tx) => {
+              const c = (await sql<{ contact_id: string; direction: 'outbound' | 'inbound' }>`SELECT contact_id, direction FROM calls WHERE tenant_id = app.tenant_id() AND id = ${req.params.id}`.execute(tx)).rows[0];
+              if (!c) return null;
+              const signal = c.direction === 'inbound' && out.outcome !== 'connected' ? null : ({ kind: 'call', outcome: out.outcome } as const);
+              return suggestedStageInTx(tx, actor, c.contact_id, signal);
+            },
+            { db: req.server.platform.db },
+          );
+    return { ...out, suggestedStage };
+  });
 
   // ---- consent ----
   r.post('/contacts/:id/consent', { config: { auth: 'consent.record' }, preHandler: authorize('consent.record', (req) => factsTx(req, (tx) => consentFacts(tx, idOf(req)))), schema: { params: IdParams, body: S.ConsentBody, response: { 200: S.ConsentResponse } } }, async (req) =>

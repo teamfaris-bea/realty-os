@@ -27,11 +27,11 @@ import * as P from '../assistant/repos/playbooks.js';
 import { enqueueStep } from '../assistant/enrollments.js';
 import { stageAudienceProtected } from '../bulk/audience.js';
 import { systemActor } from '../worker/systemActor.js';
-import { type AutomationOutcome, decideStageEntry, outcomeOf } from './decide.js';
+import { type AutomationOutcome, type StageDecision, type StageEntryFacts, type UnreachableCause, decideStageEntry, outcomeOf } from './decide.js';
 import { stageEnrollmentId } from './ids.js';
 import { aiIsaLive } from '../isa/liveCare.js';
 import { noAutomatedContact } from '../leads/automatedContact.js';
-import { reachableForVersion } from './reach.js';
+import { reachOfVersion } from './reach.js';
 import * as R from './repos.js';
 
 export interface StageAutomationDeps {
@@ -67,6 +67,78 @@ export async function changerView(deps: StageAutomationDeps, tenantId: string, w
   );
 }
 
+/** What a stage entry is decided about: a stage event that happened (the reconcile), or one that would (the preview). */
+export interface EntrySubject {
+  contactId: string;
+  toStage: string;
+  /** who changed the stage (contact_stage_events.actor_kind); a preview is always a person asking */
+  actorKind: R.StageEventRow['actorKind'];
+  /** the change was made by a bulk action (judged on that action's audience, R-PAR-8); never true of a preview */
+  bulk: boolean;
+  /** the stage event is marked as an undo (R-STG-5; repos.ts StageEventRow.undoOfEventId); never true of a preview */
+  undo: boolean;
+  /**
+   * Which playbooks could cover the entry: for an event, the active ones naming its stage as they were configured
+   * when the stage was entered; for a preview, the active ones naming the stage now (the entry would happen now).
+   */
+  playbooksOf: { eventId: string } | { stage: string };
+  /**
+   * Preview only: the person is read as already in `toStage`, because the change has not happened yet. For an event
+   * this is false and the person's stored stage decides (an Undo or a later change wins: stage_changed_again).
+   */
+  assumeEntered: boolean;
+}
+
+/**
+ * The facts of one stage entry, read in `tx` as the tenant's system actor: THE one reader (R-STG-3). `view` is what
+ * the person who changed (or would change) the stage sees by their own RLS (changerView). Null: no active playbook
+ * names the stage, so nothing applies and nothing else is read. This function only reads.
+ */
+export async function readEntryFacts(tx: Tx, s: EntrySubject, view: ChangerView, now: Instant): Promise<StageEntryFacts | null> {
+  const row = await R.contactRow(tx, s.contactId);
+  const candidates = await R.candidatePlaybooks(tx, s.playbooksOf, row.ownerUserId);
+  if (candidates.length === 0) return null;
+  const contact = s.assumeEntered && row.exists ? { ...row, stage: s.toStage } : row;
+  const live = (await P.liveEnrollmentOf(tx, s.contactId)) !== null;
+  // R-ISA-2 (b12 review B12X-4): under live AI care the plan is skipped and the decision recorded, so the stage change
+  // says so and the scan stops retrying (0080's enrollment guard would roll the whole decision back)
+  const aiIsaActive = await aiIsaLive(tx, s.contactId);
+  // b18 review B18S-5: a person a source marked "No automated contact for leads from this source" sent gets no plan;
+  // R-LSRC-9: nor does an imported person whose source the Owner has not reviewed yet (the skip names which)
+  const sourceRefusal = await noAutomatedContact(tx, s.contactId);
+  const sees = view.sees;
+  // R-PAR-8 (batch 5 review F1): a change a bulk action made is judged on that action's audience as it is now
+  const protectedAudience = s.bulk && view.protectedAudience;
+  // reachability is read for the playbook decide would choose (the same choice, computed first)
+  const undo = s.undo;
+  const pre = decideStageEntry({ actorKind: s.actorKind, undo, protectedAudience, toStage: s.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true, aiIsaActive, sourceRefusal });
+  // E787: with why, when the answer is no (kept with the decision; the decision itself reads only `reachable`)
+  const reach = pre.kind === 'start' ? await reachOfVersion(tx, s.contactId, pre.versionId, now) : { reachable: true, cause: null };
+  return { actorKind: s.actorKind, undo, protectedAudience, toStage: s.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: reach.reachable, unreachableCause: reach.cause, aiIsaActive, sourceRefusal };
+}
+
+/**
+ * THE decision of one stage entry (R-STG-3): the facts from readEntryFacts, decided by the pure decideStageEntry. The
+ * reconcile calls it under the contact lock and then writes what it says; the preview calls it in a read-only
+ * transaction and writes nothing. Neither decides any other way, so a preview cannot disagree with the change on the
+ * same facts. It only reads.
+ */
+export async function decideEntry(tx: Tx, s: EntrySubject, view: ChangerView, now: Instant): Promise<StageDecision> {
+  return (await decideEntryWithCause(tx, s, view, now)).d;
+}
+
+/**
+ * decideEntry, with the detail of a `cannot_be_reached` skip (E787): which cause the facts showed. The cause is null
+ * for every other decision. The reconcile stores it with the decision row; the preview words it. It is read with the
+ * facts the decision was made on, never afterwards.
+ */
+export async function decideEntryWithCause(tx: Tx, s: EntrySubject, view: ChangerView, now: Instant): Promise<{ d: StageDecision; cause: UnreachableCause | null }> {
+  const f = await readEntryFacts(tx, s, view, now);
+  if (f === null) return { d: { kind: 'none' }, cause: null };
+  const d = decideStageEntry({ actorKind: f.actorKind, undo: f.undo === true, protectedAudience: f.protectedAudience, toStage: f.toStage, contact: f.contact, changerSeesDetail: f.changerSeesDetail, candidates: f.candidates, liveEnrollment: f.liveEnrollment, reachable: f.reachable, aiIsaActive: f.aiIsaActive, sourceRefusal: f.sourceRefusal });
+  return { d, cause: d.kind === 'skip' && d.reason === 'cannot_be_reached' ? (f.unreachableCause ?? null) : null };
+}
+
 export interface ReconcileResult {
   /** what the person who changed the stage is told */
   automation: AutomationOutcome;
@@ -87,27 +159,13 @@ export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventI
   if (prior) return { automation: outcomeOf(prior), decided: false, enrollmentId: prior.enrollmentId };
   if (e.actorKind === 'user' && (await R.isMergeCopy(tx, e.id))) return { automation: null, decided: false, enrollmentId: null };
 
-  const contact = await R.contactRow(tx, e.contactId);
-  const candidates = await R.candidatePlaybooks(tx, e.id, contact.ownerUserId);
-  if (candidates.length === 0) return { automation: null, decided: false, enrollmentId: null };
-  const live = (await P.liveEnrollmentOf(tx, e.contactId)) !== null;
-  // R-ISA-2 (b12 review B12X-4): under live AI care the plan is skipped and the decision recorded, so the stage change
-  // says so and the scan stops retrying (0080's enrollment guard would roll the whole decision back)
-  const aiIsaActive = await aiIsaLive(tx, e.contactId);
-  // b18 review B18S-5: a person a source marked "No automated contact for leads from this source" sent gets no plan;
-  // R-LSRC-9: nor does an imported person whose source the Owner has not reviewed yet (the skip names which)
-  const sourceRefusal = await noAutomatedContact(tx, e.contactId);
-  const sees = view.sees;
-  // R-PAR-8 (batch 5 review F1): a change a bulk action made is judged on that action's audience as it is now
-  const protectedAudience = e.bulkActionId !== null && view.protectedAudience;
-  // reachability is read for the playbook decide would choose (the same choice, computed first)
-  const pre = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true, aiIsaActive, sourceRefusal });
-  const reachable = pre.kind === 'start' ? await reachableForVersion(tx, e.contactId, pre.versionId, now) : true;
-  const d = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable, aiIsaActive, sourceRefusal });
+  // decided by the one function the preview decides with (decideEntry: readEntryFacts, then the pure
+  // decideStageEntry), so a preview cannot disagree with what the change then does (R-STG-3)
+  const { d, cause } = await decideEntryWithCause(tx, { contactId: e.contactId, toStage: e.toStage, actorKind: e.actorKind, bulk: e.bulkActionId !== null, undo: e.undoOfEventId !== null, playbooksOf: { eventId: e.id }, assumeEntered: false }, view, now);
 
   if (d.kind === 'none') return { automation: null, decided: false, enrollmentId: null };
   if (d.kind === 'skip') {
-    await R.insertDecision(tx, { stageEventId: e.id, contactId: e.contactId, toStage: e.toStage, outcome: 'skipped', reason: d.reason, playbookId: d.playbook.id, enrollmentId: null });
+    await R.insertDecision(tx, { stageEventId: e.id, contactId: e.contactId, toStage: e.toStage, outcome: 'skipped', reason: d.reason, playbookId: d.playbook.id, enrollmentId: null, unreachableCause: cause });
     return { automation: { skipped: d.reason, plan: d.playbook.name }, decided: true, enrollmentId: null };
   }
   const id = stageEnrollmentId(e.id);

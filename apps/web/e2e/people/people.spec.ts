@@ -4,7 +4,7 @@
 // not counted; picking a mention adds +0 by the plan's count):
 //   add a person: phone + → Save = 2 (+1 on a duplicate warning) · desktop + → ↵ = 1
 //   add a note:   phone Note → Save = 2 · desktop click the box → ⌘↵ = 1
-//   log a call:   Log (Call preselected) → outcome → Save = 3 (+ the follow-up task)
+//   log a call:   Log (Call preselected) → outcome → one button = 3, to a saved log and a confirmed stage (+ the follow-up task)
 //   change stage: pill → stage = 2, toast with Undo
 //   replace a phone: phone Details ✎ → field → Save = 3 · desktop inline field → ↵ = 1
 //   add a relationship; locked stages say why before the tap; logged items say "Logged by".
@@ -148,7 +148,7 @@ test('a note with an @mention: phone Note → Save = 2, desktop box → ⌘↵ =
   await expect(page.getByText(/^Everyone who can see Jane can read (this note|these notes)\.$/).first()).toBeVisible();
 });
 
-test('log an outside call: Log → outcome → Save = 3; "Logged by" and not verified; the follow-up task; "they said stop" asks', async ({ page }) => {
+test('log an outside call: Log → outcome → ONE button = 3 to a saved log AND a confirmed stage, every tap counted (no Close; b19 fix pass M6); "Logged by" and not verified; the follow-up task; "they said stop" asks', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page);
   await openContact(page, jane.id, 'Jane Doe');
@@ -157,10 +157,17 @@ test('log an outside call: Log → outcome → Save = 3; "Logged by" and not ver
   const sheet = page.getByRole('dialog', { name: 'Log for Jane Doe' });
   await expect(sheet.getByRole('button', { name: 'Call', exact: true, pressed: true })).toBeVisible();
   await tap(page, sheet.getByRole('button', { name: 'No answer' }), log);
+  // b19 (R-STG-2, M6): choosing the outcome shows the stage step in the SAME sheet: the stage it suggests, to confirm
+  await expect(sheet.getByRole('radio', { name: 'Trying to reach Suggested' })).toBeChecked({ timeout: 15_000 });
+  await expect(page.getByRole('dialog')).toHaveCount(1);
   await shot(page, 'log-sheet');
-  await tap(page, sheet.getByRole('button', { name: 'Save' }), log);
+  // the one button saves the log and the stage: the third and last tap
+  await tap(page, sheet.getByRole('button', { name: 'Save and change to Trying to reach' }), log);
   await expect(peopleToast(page).getByText('Call logged')).toBeVisible();
+  await expect(peopleToast(page).getByText('Call logged (no answer). Stage: Trying to reach')).toBeVisible();
   expect(log.taps).toBe(3);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stage: Trying to reach. Change stage' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('list', { name: 'Notes' }).getByText(/Outbound call · No answer · Logged by .+ · not verified/).first()).toBeVisible();
 
   // with a "remind me": an ordinary task appears in the person's tasks
@@ -168,8 +175,9 @@ test('log an outside call: Log → outcome → Save = 3; "Logged by" and not ver
   const again = page.getByRole('dialog', { name: 'Log for Jane Doe' });
   await again.getByRole('button', { name: 'Talked' }).click();
   await again.getByLabel('Remind me').selectOption('2');
-  await again.getByRole('button', { name: 'Save' }).click();
+  await again.getByRole('button', { name: /^Save and / }).click();
   await expect(peopleToast(page).getByText('Call logged, reminder in 2 days')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Follow up after the call' }).first()).toBeVisible({ timeout: 15_000 });
 
   // E193: "she said stop" only asks; nothing is blocked until the agent records it
@@ -187,12 +195,12 @@ test('change stage: pill → stage = 2 with an Undo toast; locked stages say why
   await signIn(page);
   await openContact(page, ben.id, 'Ben Doe');
   const stage = { taps: 0 };
-  await tap(page, page.getByRole('button', { name: 'Stage: New. Change stage' }), stage);
-  await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Nurture/ }), stage);
-  await expect(peopleToast(page).getByText('Stage: Nurture')).toBeVisible();
+  await tap(page, page.getByRole('button', { name: 'Stage: New lead. Change stage' }), stage);
+  await tap(page, page.getByRole('dialog').getByRole('button', { name: /^Long-term follow-up/ }), stage);
+  await expect(peopleToast(page).getByText('Stage: Long-term follow-up')).toBeVisible();
   expect(stage.taps).toBe(2);
   await peopleToast(page).getByRole('button', { name: 'Undo' }).click();
-  await expect(page.getByRole('button', { name: 'Stage: New. Change stage' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Stage: New lead. Change stage' })).toBeVisible({ timeout: 15_000 });
 
   // a routed lead nobody reached yet: the picker shows the locked stages and why, up front
   const lead = await stack.fixture<{ id: string; state: string }>('/offer', { name: isPhone(page) ? 'Lou Phone' : 'Lou Desk' });
@@ -203,8 +211,8 @@ test('change stage: pill → stage = 2 with an Undo toast; locked stages say why
   await page.getByRole('button', { name: /^Stage: New/ }).click();
   const picker = page.getByRole('dialog');
   await expect(picker.getByText('Reach them first.')).toBeVisible();
-  await expect(picker.getByRole('button', { name: /^Lost/ })).toBeDisabled();
-  await expect(picker.getByRole('button', { name: /^Attempting/ })).toBeEnabled();
+  await expect(picker.getByRole('button', { name: /^Not moving forward/ })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: /^Trying to reach/ })).toBeEnabled();
   await shot(page, 'stage-locked');
   await picker.getByRole('button', { name: 'Cancel' }).click();
 });
@@ -258,7 +266,7 @@ test('add a task and an appointment from the person’s page', async ({ page }) 
   test.setTimeout(120_000);
   await signIn(page);
   await openContact(page, ben.id, 'Ben Doe');
-  await page.getByRole('button', { name: 'Add task' }).click();
+  await page.getByRole('button', { name: 'Add follow-up' }).click();
   await page.getByRole('dialog').getByLabel('What').fill(`Send comps (${isPhone(page) ? 'p' : 'd'})`);
   await page.getByRole('dialog').getByRole('button', { name: 'Add task' }).click();
   await expect(peopleToast(page).getByText('Task added')).toBeVisible();

@@ -15,15 +15,17 @@ export interface StageEventRow {
   occurredAt: Instant;
   /** the bulk stage action that made this change (migration 0041: recorded by the history definer), else null */
   bulkActionId: string | null;
+  /** the stage event this change undoes (migration 0105: recorded by the history definer for a true undo), else null */
+  undoOfEventId: string | null;
 }
 
 export async function stageEvent(tx: Tx, id: string): Promise<StageEventRow | null> {
-  const r = await sql<{ id: string; contact_id: string; from_stage: string | null; to_stage: string; actor_kind: StageEventRow['actorKind']; actor_user_id: string | null; occurred_at: Date; bulk_action_id: string | null }>`
-    SELECT id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, occurred_at, bulk_action_id
+  const r = await sql<{ id: string; contact_id: string; from_stage: string | null; to_stage: string; actor_kind: StageEventRow['actorKind']; actor_user_id: string | null; occurred_at: Date; bulk_action_id: string | null; undo_of_event_id: string | null }>`
+    SELECT id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, occurred_at, bulk_action_id, undo_of_event_id
       FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   const x = r.rows[0];
   return x
-    ? { id: x.id, contactId: x.contact_id, fromStage: x.from_stage, toStage: x.to_stage, actorKind: x.actor_kind, actorUserId: x.actor_user_id, occurredAt: x.occurred_at.getTime() as Instant, bulkActionId: x.bulk_action_id }
+    ? { id: x.id, contactId: x.contact_id, fromStage: x.from_stage, toStage: x.to_stage, actorKind: x.actor_kind, actorUserId: x.actor_user_id, occurredAt: x.occurred_at.getTime() as Instant, bulkActionId: x.bulk_action_id, undoOfEventId: x.undo_of_event_id }
     : null;
 }
 
@@ -46,22 +48,25 @@ export interface DecisionRow {
   playbookId: string | null;
   playbookName: string | null;
   enrollmentId: string | null;
+  /** E787: for reason cannot_be_reached, which cause it was (migration 0105); null otherwise and for older rows */
+  unreachableCause: string | null;
 }
 
 export async function decisionOf(tx: Tx, stageEventId: string): Promise<DecisionRow | null> {
-  const r = await sql<{ outcome: DecisionRow['outcome']; reason: string | null; playbook_id: string | null; name: string | null; enrollment_id: string | null }>`
-    SELECT d.outcome, d.reason, d.playbook_id, p.name, d.enrollment_id
+  const r = await sql<{ outcome: DecisionRow['outcome']; reason: string | null; playbook_id: string | null; name: string | null; enrollment_id: string | null; unreachable_cause: string | null }>`
+    SELECT d.outcome, d.reason, d.playbook_id, p.name, d.enrollment_id, d.unreachable_cause
       FROM stage_automation_decisions d
       LEFT JOIN playbooks p ON p.tenant_id = d.tenant_id AND p.id = d.playbook_id
      WHERE d.tenant_id = app.tenant_id() AND d.stage_event_id = ${stageEventId}`.execute(tx);
   const x = r.rows[0];
-  return x ? { outcome: x.outcome, reason: x.reason, playbookId: x.playbook_id, playbookName: x.name, enrollmentId: x.enrollment_id } : null;
+  return x ? { outcome: x.outcome, reason: x.reason, playbookId: x.playbook_id, playbookName: x.name, enrollmentId: x.enrollment_id, unreachableCause: x.unreachable_cause } : null;
 }
 
-export async function insertDecision(tx: Tx, d: { stageEventId: string; contactId: string; toStage: string; outcome: 'started' | 'skipped'; reason: string | null; playbookId: string; enrollmentId: string | null }): Promise<boolean> {
+export async function insertDecision(tx: Tx, d: { stageEventId: string; contactId: string; toStage: string; outcome: 'started' | 'skipped'; reason: string | null; playbookId: string; enrollmentId: string | null; /** E787: only with reason cannot_be_reached */ unreachableCause?: string | null }): Promise<boolean> {
+  const cause = d.reason === 'cannot_be_reached' ? (d.unreachableCause ?? null) : null;
   const r = await sql`
-    INSERT INTO stage_automation_decisions (tenant_id, stage_event_id, contact_id, to_stage, outcome, reason, playbook_id, enrollment_id)
-    VALUES (app.tenant_id(), ${d.stageEventId}, ${d.contactId}, ${d.toStage}, ${d.outcome}, ${d.reason}, ${d.playbookId}, ${d.enrollmentId})
+    INSERT INTO stage_automation_decisions (tenant_id, stage_event_id, contact_id, to_stage, outcome, reason, playbook_id, enrollment_id, unreachable_cause)
+    VALUES (app.tenant_id(), ${d.stageEventId}, ${d.contactId}, ${d.toStage}, ${d.outcome}, ${d.reason}, ${d.playbookId}, ${d.enrollmentId}, ${cause})
     ON CONFLICT (tenant_id, stage_event_id) DO NOTHING`.execute(tx);
   return Number(r.numAffectedRows ?? 0n) === 1;
 }
@@ -83,17 +88,23 @@ export async function contactRow(tx: Tx, contactId: string): Promise<ContactRow>
 }
 
 /**
- * Active playbooks naming the event's stage that could cover a contact owned by `ownerUserId` (team playbooks,
- * and the owner's own agent playbook), as they were configured when the stage was entered: a playbook
- * changed after the event (its stage set later, renamed, retired) does not reach back to it.
+ * Active playbooks naming a stage that could cover a contact owned by `ownerUserId` (team playbooks, and the owner's
+ * own agent playbook). For a stage EVENT: as they were configured when the stage was entered, so a playbook changed
+ * after the event (its stage set later, renamed, retired) does not reach back to it. For a STAGE (the preview of an
+ * entry that would happen now, R-STG-3): as they are configured now. One query, so both read the same playbooks.
  */
-export async function candidatePlaybooks(tx: Tx, stageEventId: string, ownerUserId: string | null): Promise<StagePlaybook[]> {
+export async function candidatePlaybooks(tx: Tx, of: { eventId: string } | { stage: string }, ownerUserId: string | null): Promise<StagePlaybook[]> {
+  const from =
+    'eventId' in of
+      ? sql`FROM contact_stage_events e
+      JOIN playbooks p ON p.tenant_id = e.tenant_id AND p.auto_enroll_stage = e.to_stage AND p.updated_at <= e.occurred_at
+     WHERE e.tenant_id = app.tenant_id() AND e.id = ${of.eventId}`
+      : sql`FROM playbooks p
+     WHERE p.tenant_id = app.tenant_id() AND p.auto_enroll_stage = ${of.stage}`;
   const r = await sql<{ id: string; name: string; scope: 'team' | 'agent'; owner_user_id: string | null; approved: string | null }>`
     SELECT p.id, p.name, p.scope, p.owner_user_id,
            (SELECT v.id FROM playbook_versions v WHERE v.tenant_id = p.tenant_id AND v.playbook_id = p.id AND v.status = 'approved') AS approved
-      FROM contact_stage_events e
-      JOIN playbooks p ON p.tenant_id = e.tenant_id AND p.auto_enroll_stage = e.to_stage AND p.updated_at <= e.occurred_at
-     WHERE e.tenant_id = app.tenant_id() AND e.id = ${stageEventId} AND p.status = 'active' AND p.kind NOT IN ('new_lead_response','trigger','voice_answering')
+      ${from} AND p.status = 'active' AND p.kind NOT IN ('new_lead_response','trigger','voice_answering')
        AND (p.scope = 'team' OR (p.scope = 'agent' AND p.owner_user_id = ${ownerUserId}::uuid))
      ORDER BY p.id`.execute(tx);
   return r.rows.map((x) => ({ id: x.id, name: x.name, scope: x.scope, ownerUserId: x.owner_user_id, approvedVersionId: x.approved }));
@@ -116,11 +127,13 @@ export async function memberOf(tx: Tx, userId: string): Promise<{ role: string; 
  * survivor (0027, append-only copies with the original instant and actor) is not a stage entry and is
  * never reconciled.
  */
-export async function pendingStageEvents(tx: Tx, since: Instant, limit: number): Promise<string[]> {
+export async function pendingStageEvents(tx: Tx, since: Instant, limit: number, only?: { eventId: string }): Promise<string[]> {
+  // `only`: the same question about one event (the playbook status's "pending": is the scan still going to decide it?)
+  const one = only ? sql`AND e.id = ${only.eventId}` : sql``;
   const r = await sql<{ id: string }>`
     SELECT e.id FROM contact_stage_events e
       JOIN contacts c ON c.tenant_id = e.tenant_id AND c.id = e.contact_id
-     WHERE e.tenant_id = app.tenant_id() AND e.actor_kind = 'user' AND e.occurred_at > ${toIso(since)}::timestamptz
+     WHERE e.tenant_id = app.tenant_id() AND e.actor_kind = 'user' AND e.occurred_at > ${toIso(since)}::timestamptz ${one}
        AND NOT EXISTS (SELECT 1 FROM stage_automation_decisions d WHERE d.tenant_id = e.tenant_id AND d.stage_event_id = e.id)
        AND EXISTS (SELECT 1 FROM playbooks p WHERE p.tenant_id = e.tenant_id AND p.status = 'active' AND p.auto_enroll_stage = e.to_stage
                      AND p.updated_at <= e.occurred_at AND (p.scope = 'team' OR p.owner_user_id = c.owner_user_id))
@@ -130,6 +143,13 @@ export async function pendingStageEvents(tx: Tx, since: Instant, limit: number):
                           AND o.actor_kind = e.actor_kind AND o.actor_user_id IS NOT DISTINCT FROM e.actor_user_id)
      ORDER BY e.occurred_at, e.id LIMIT ${limit}`.execute(tx);
   return r.rows.map((x) => x.id);
+}
+
+/** The person's most recent stage event (any actor), read under the caller's RLS (visible with the person's detail). */
+export async function latestStageEvent(tx: Tx, contactId: string): Promise<StageEventRow | null> {
+  const r = await sql<{ id: string }>`
+    SELECT id FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} ORDER BY occurred_at DESC, id DESC LIMIT 1`.execute(tx);
+  return r.rows[0] ? stageEvent(tx, r.rows[0].id) : null;
 }
 
 /**

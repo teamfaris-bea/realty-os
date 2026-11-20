@@ -47,7 +47,7 @@ it.each(['PERSON', 'TENANT'] as const)('R-ISA-20: %s limit holds before the prov
   expect((await h.su.query(`SELECT decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_kind = 'inbound'`, [a.id])).rows)
     .toEqual([{ code: `ISA_MODEL_${scope}_DAILY_LIMIT` }]);
   const next = (await h.su.query<{ at: Date }>(`SELECT (((now() AT TIME ZONE default_timezone)::date + 1)::timestamp AT TIME ZONE default_timezone) AS at FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId])).rows[0]!.at;
-  // E794: the turn is held until the next team-local day exactly (not_before); the job that resumes it is parked a fixed
+  // E904: the turn is held until the next team-local day exactly (not_before); the job that resumes it is parked a fixed
   // part of the first ten minutes later, derived from the assignment id (the resumes of a team do not all fire at once)
   if (held.kind === 'retry') expect(held.retryAt).toBe(next.getTime() + budgetResumeSpreadMs(a.id));
   expect(budgetResumeSpreadMs(a.id)).toBeLessThan(10 * 60_000);
@@ -69,7 +69,7 @@ it('R-ISA-20: records exact tokens, with a separate row for the repair', async (
   spy.mockRestore();
 });
 
-it('E793 R-ISA-20: every provider call of a turn (the original and the repair) asks the adapter for a single request, one per reservation', async () => {
+it('E903 R-ISA-20: every provider call of a turn (the original and the repair) asks the adapter for a single request, one per reservation', async () => {
   const { w, a, run } = await ready();
   w.ai.script.push('invalid schema');
   const spy = vi.spyOn(w.ai, 'complete');

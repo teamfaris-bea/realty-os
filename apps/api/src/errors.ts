@@ -162,6 +162,7 @@ export const ERROR_STATUS = {
   STALE_CONTACT: 409, // R-PAR-43: the contact changed since it was read (row_version in details)
   FIELD_NOT_EDITABLE: 422, // R-PAR-43: ownership, attribution, do-not-contact, imported fields are never patched
   STAGE_NEEDS_CONTACT: 409, // R-PAR-14: reach this routed lead first, or close it
+  STAGE_UNDO_INVALID: 409, // R-STG-5: undoOf is not this person's most recent stage change, or the stage is not the one that change came from; nothing was changed
   STAGE_LABEL_INVALID: 422, // R-PAR-13
   POINT_EXISTS: 409, // the phone/email is already on this person
   POINT_UNCHANGED: 422, // a replace with the same address

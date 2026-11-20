@@ -53,6 +53,11 @@ const PROBES: Probe[] = [
   { name: 'GET details', action: 'contact.view_detail', run: (c, t) => call(c, 'GET', `/contacts/${t.id}/details`) },
   { name: 'PATCH contact', action: 'contact.edit', run: (c, t) => call(c, 'PATCH', `/contacts/${t.id}`, { rowVersion: 999, firstName: 'X' }) },
   { name: 'POST stage', action: 'contact.edit', run: (c, t) => call(c, 'POST', `/contacts/${t.id}/stage`, { stage: 'nurture' }) },
+  // b19 (R-STG-3, R-STG-4, R-STG-5): the stage preview has the stage route's own permission; an undo is a stage change
+  // (a forged undoOf is refused only after the permission passed); the playbook status needs the person's detail
+  { name: 'GET stage preview', action: 'contact.edit', run: (c, t) => call(c, 'GET', `/contacts/${t.id}/stage/preview?to=nurture`) },
+  { name: 'POST stage with undoOf', action: 'contact.edit', run: (c, t) => call(c, 'POST', `/contacts/${t.id}/stage`, { stage: 'nurture', undoOf: randomUUID() }) },
+  { name: 'GET playbook status', action: 'contact.view_detail', run: (c, t) => call(c, 'GET', `/contacts/${t.id}/playbook-status`) },
   { name: 'POST point', action: 'contact.edit', run: (c, t) => call(c, 'POST', `/contacts/${t.id}/points`, { kind: 'phone', address: randomPhone() }) },
   { name: 'PATCH point label', action: 'contact.edit', run: (c, t) => call(c, 'PATCH', `/contacts/${t.id}/points/${t.pointId}`, { label: 'work' }) },
   { name: 'POST address', action: 'contact.edit', run: (c, t) => call(c, 'POST', `/contacts/${t.id}/addresses`, { kind: 'home', city: 'Reno' }) },

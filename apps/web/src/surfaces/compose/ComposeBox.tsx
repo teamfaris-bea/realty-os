@@ -40,7 +40,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
+import { Button, CheckThis, GateBadge, Notice, announce as speak } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, channelState, useReachabilityQuery } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
@@ -114,7 +114,13 @@ export interface ComposeBoxProps {
   ready?: boolean;
   /** a web chat is live in the thread: the summary is asked again every 15 s, so a chat that ends is said at once */
   liveChat?: boolean;
-  onSent?: () => void;
+  /** after a send or schedule went out: the response, and the channel it went on (the contact's Text sheet reads both) */
+  onSent?: (r: ComposeResponse, channel: ComposeChannel) => void;
+  /**
+   * The caller shows what the send did itself (the contact's Text sheet goes on to a step whose first line says
+   * "Sent to Jane."): the box then only speaks the words and raises no toast over that line (b19 fix pass M4).
+   */
+  sentShownByCaller?: boolean;
   /**
    * Parity module 64: a template picker rendered beside Send (e.g. templates' TemplatePicker). It only puts
    * text in the box (`insert`); Send and the send-time check are unchanged.
@@ -132,7 +138,7 @@ function useDebounced<T>(v: T, ms: number): T {
   return d;
 }
 
-export function ComposeBox({ contact, initialChannel, lastInboundChannel = null, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, ready = true, liveChat = false, onSent, templatePicker }: ComposeBoxProps) {
+export function ComposeBox({ contact, initialChannel, lastInboundChannel = null, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, ready = true, liveChat = false, onSent, sentShownByCaller = false, templatePicker }: ComposeBoxProps) {
   const api = useApi();
   const qc = useQueryClient();
   const sheets = useAgentSheets();
@@ -324,8 +330,9 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       setDraftId(null);
       setOutcome(null);
       setLater(null);
-      sheets.announce(sendOutcomeText(r, contact.name).title);
-      onSent?.();
+      if (sentShownByCaller) speak(sendOutcomeText(r, contact.name).title);
+      else sheets.announce(sendOutcomeText(r, contact.name).title);
+      onSent?.(r, channel);
       aiCareSent(contact.id);
     }
   };

@@ -15,7 +15,7 @@
 //   - Stale data says so and offers one tap to refresh the update; Send stays off until then.
 //   - The value range (lane V2-B, E631) can be removed before sending and put back, by whoever can send the update
 //     (the API's own rule: the listing agent's own unsent draft). A refused removal says why and changes nothing.
-//   - E797: Send is off while a tap that changes what the seller gets is still saving (the value range, a feedback
+//   - E907: Send is off while a tap that changes what the seller gets is still saving (the value range, a feedback
 //     item): until the save is answered the saved update still holds the old choice. The recommendation's own save on
 //     leaving the box does not switch Send off (leaving the box is how the agent gets to Send, and the send carries
 //     the recommendation itself).
@@ -227,7 +227,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
   useEffect(() => setValueRemoved(update.valueRemoved ?? false), [update.valueRemoved]);
   const [valueError, setValueError] = useState<string | null>(null);
   const keys: QueryKey[] = [...invalidate, ['feed'], ['inbox']];
-  // the removal of a feedback item (a tap): Send waits for it (E797)
+  // the removal of a feedback item (a tap): Send waits for it (E907)
   const patch = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
   // the recommendation as typed, saved when the agent leaves the box: its own request, which Send does not wait for
   const patchText = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
@@ -281,7 +281,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
     const r = await reassemble.run(`/seller-updates/${update.id}/reassemble`);
     if (!r.ok) setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
   };
-  // E797: a tap that changes what the seller gets (the value range, a feedback item) is still being saved. Until it is
+  // E907: a tap that changes what the seller gets (the value range, a feedback item) is still being saved. Until it is
   // answered the saved update holds the old choice, so nothing is sent; when it is, the state below is the agent's last
   // choice (a refused save put it back and says why).
   const saving = patchValue.pending || patch.pending;

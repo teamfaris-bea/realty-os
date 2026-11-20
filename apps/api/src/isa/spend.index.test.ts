@@ -1,4 +1,4 @@
-// E796 (b19 review F5): the count the reservation makes under the team model-budget lock reads today's AI assistant
+// E906 (b19 review F5): the count the reservation makes under the team model-budget lock reads today's AI assistant
 // calls through an index, not every ai_runs row of the tenant. EXPLAIN of the query production runs (spend.ts
 // modelBudgetDay and modelBudgetUsageSql), as the system actor that runs it, over a synthetic ledger: 60 days of 20,000 runs of other
 // purposes and 3,000 AI assistant calls, 40 of them today. A plan shape, not a timing.
@@ -21,7 +21,7 @@ const walk = (n: PlanNode, out: PlanNode[] = []): PlanNode[] => {
   return out;
 };
 
-it('E796 R-ISA-20: the budget count reads ai_runs by (tenant, purpose, created time): today\'s AI assistant calls only, never the whole ledger', async () => {
+it('E906 R-ISA-20: the budget count reads ai_runs by (tenant, purpose, created time): today\'s AI assistant calls only, never the whole ledger', async () => {
   const w = await isaWorld(h);
   const lead = await isaLead(h, w.agents[0]!);
   expect((await startCare(w.agents[0]!, lead.id)).status).toBe(200);

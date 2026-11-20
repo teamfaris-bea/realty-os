@@ -118,7 +118,9 @@ test('M1 + M5: every FUB category lands on the person and each category undoes o
   await page.goto(`${stack.webUrl}/contacts/${jane!.id}`);
   await expect(page.getByRole('heading', { level: 1, name: `Jane ${surname}` })).toBeVisible({ timeout: 15_000 });
   const main = page.locator('main');
-  for (const t of ['active · Yours', '· mobile', '· work', `jane.${phone ? 81000 : 82000}@example.com · home`, '1 Main St, Springfield, IL, 62701 · home']) await expect(main.getByText(t, { exact: false }).first()).toBeVisible();
+  // the header names the stage by its label (R-STG-1; FUB "Hot Prospect" was mapped to the key `active`), never by the key
+  for (const t of ['Active client · Yours', '· mobile', '· work', `jane.${phone ? 81000 : 82000}@example.com · home`, '1 Main St, Springfield, IL, 62701 · home']) await expect(main.getByText(t, { exact: false }).first()).toBeVisible();
+  await expect(main.getByText(/(^|· )active · Yours/)).toHaveCount(0); // the raw key is not printed (the regex is case-sensitive)
   const tags = page.getByRole('region', { name: 'Tags' });
   for (const t of ['Buyer', 'Pre-approved', 'FUB stage: Hot Prospect']) await expect(tags.getByRole('button', { name: `Tag ${t}, show everyone with it` })).toBeVisible();
   const conv = main.locator('section').filter({ has: page.getByRole('heading', { name: /^Conversation$/i }) });

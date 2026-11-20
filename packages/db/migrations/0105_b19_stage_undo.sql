@@ -1,0 +1,126 @@
+-- Batch 19, the stage flow: an undo of a stage change is marked on the stage event itself, and never starts a plan
+-- (DATA_MODEL R-STG-5, E764, E765). Security notes: docs/ARCHITECTURE.md §21.72.
+--
+--   The Undo of a stage change was an ordinary stage change, so undoing a move away from a stage whose plan had ended
+--   put the person back INTO that stage and started the plan again. An undo now starts nothing: its stage event says
+--   which event it undoes, and the stage-entry decision skips such an event with the reason `undo`.
+--
+--   Why the mark is on the event, written in the same transaction as the stage change: the decision is made after the
+--   change commits, by the request path or, if that fails, by the worker's backup scan a minute later. A mark the
+--   request only carried in memory would be lost in exactly that case, and the scan would start the plan the undo
+--   must not start. contact_stage_events is append-only and written only by its definer trigger, so the definer is
+--   the one place the mark can be written.
+--
+--   * contact_stage_events.undo_of_event_id (uuid, NULL: an ordinary stage change). No foreign key, as bulk_action_id
+--     (0041): the history is append-only and the definer stores only an id it has just checked.
+--   * app.contacts_stage_history() (SECURITY DEFINER trigger, owner app_definer, pinned search_path; replaced: 0041's
+--     statement verbatim except the marked 0105 lines). The API names the event being undone in the transaction-local
+--     setting app.stage_undo_of (apps/api people/contacts.ts, after refusing a forged one with STAGE_UNDO_INVALID). The
+--     definer keeps it ONLY when all of these hold, else it stores NULL and the change is an ordinary one:
+--       - a user is making the change (never the system, an import or support);
+--       - the value is a uuid naming a stage event of THIS contact in THIS tenant (the lookup is by tenant_id and
+--         contact_id of the row being updated, so another person's or another tenant's event never matches);
+--       - that event is the contact's MOST RECENT stage event;
+--       - the change really reverses it: it goes from the event's to_stage back to its from_stage; and
+--       - an undo is only an undo (b19 fix pass L1, E779): the event was made by THIS user (a member never "undoes"
+--         someone else's change), it is not itself an undo (an undo cannot be undone: that "redo" would enter a stage
+--         and skip its plan), and it is at most 15 minutes old by the database clock (the API's UNDO_WINDOW_MS,
+--         apps/api people/contacts.ts: an undo takes back what was just done, it is not a way to move someone into a
+--         stage later without its plan).
+--     So the mark cannot be forged onto an arbitrary stage change by setting the variable: at most the changer's own
+--     prompt reversal of the latest change is called an undo, which is what it is. The mark only ever makes a plan NOT
+--     start. It grants nothing: who may change the stage (RLS, app.contacts_stage_guard) is unchanged, and the definer
+--     reads only the history of the row it is already writing for. The API refuses each of these before the update
+--     (409 STAGE_UNDO_INVALID, nothing changes) and, after it, checks that the event it wrote carries the mark, so a
+--     request the API took for an undo is never stored as an ordinary change.
+--   * stage_automation_decisions.reason gains 'undo' (the closed set of apps/api stageAutomation/decide.ts SKIP_REASONS).
+--   * stage_automation_decisions.unreachable_cause (text, NULL; b19 fix pass L6, E787). The skip reason
+--     'cannot_be_reached' covers several real causes (the person opted out, is marked do not contact, has a number
+--     reported as wrong, or has no phone or email the plan could use), and the contact page could only say all of
+--     them at once, so a person who texted STOP was never told that was the reason. The cause is read with the
+--     decision's own facts (apps/api stageAutomation/reach.ts) and kept here, in the row the decision already writes,
+--     so the request path, the worker and every later read word it the same way. It is a detail of one existing
+--     reason, not a new reason code: the closed set below is unchanged but for 'undo'. A check allows it only with
+--     reason 'cannot_be_reached' and only one of four values. It discloses nothing new: the row is read under the
+--     table's existing policy (with the contact's detail), where the opt-out and the do-not-contact flag already show.
+--   No new table, policy, grant or definer.
+--
+--   EXISTING DATA. Every existing stage event has no mark (NULL): nothing already decided changes, and no decision
+--   row is rewritten. Every existing decision has no cause (NULL): it keeps the sentence that names all the causes.
+
+ALTER TABLE contact_stage_events ADD COLUMN undo_of_event_id uuid;
+COMMENT ON COLUMN contact_stage_events.undo_of_event_id IS
+  'b19 0105: the stage event this change undoes (NULL: an ordinary change). Written only by app.contacts_stage_history, and only for a user''s true reversal of the contact''s most recent stage event, when that event is their own, is not itself an undo and is at most 15 minutes old. A stage entry marked as an undo never starts a plan (R-STG-5).';
+
+-- 0041's statement, verbatim except the marked 0105 lines.
+CREATE OR REPLACE FUNCTION app.contacts_stage_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE ak text := COALESCE(NULLIF(current_setting('app.actor_kind', true), ''), 'none');
+  uid uuid; bulk text := NULLIF(current_setting('app.bulk_action_id', true), ''); bid uuid;   -- 0041
+  undo text := NULLIF(current_setting('app.stage_undo_of', true), ''); uoid uuid;   -- 0105
+BEGIN
+  IF ak NOT IN ('user','system','support') THEN ak := 'none'; END IF;
+  uid := CASE WHEN ak = 'user' THEN NULLIF(current_setting('app.user_id', true), '')::uuid END;   -- 0041 (as 0021's VALUES)
+  -- 0041: the bulk runner names its action (app.bulk_action_id); kept only for a running stage action of this tenant
+  -- created by the user making this change, else NULL
+  IF uid IS NOT NULL AND bulk ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    SELECT b.id INTO bid FROM public.bulk_actions b
+     WHERE b.tenant_id = NEW.tenant_id AND b.id = bulk::uuid AND b.kind = 'stage' AND b.status = 'running'
+       AND b.created_by_user_id = uid;
+  END IF;
+  -- 0105: the API names the stage event this change undoes (app.stage_undo_of); kept only when a user is making the
+  -- change, the event is this contact's most recent stage event, this change reverses it, and the event is that
+  -- user's own, is not itself an undo and is at most 15 minutes old (an undo is only an undo); else NULL
+  IF uid IS NOT NULL AND undo ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    SELECT l.id INTO uoid
+      FROM (SELECT e.id, e.from_stage, e.to_stage, e.actor_kind, e.actor_user_id, e.undo_of_event_id, e.occurred_at
+              FROM public.contact_stage_events e
+             WHERE e.tenant_id = NEW.tenant_id AND e.contact_id = NEW.id
+             ORDER BY e.occurred_at DESC, e.id DESC LIMIT 1) l
+     WHERE l.id = undo::uuid AND l.to_stage = OLD.stage AND l.from_stage = NEW.stage
+       AND l.actor_kind = 'user' AND l.actor_user_id = uid AND l.undo_of_event_id IS NULL
+       AND l.occurred_at >= clock_timestamp() - interval '15 minutes';
+  END IF;
+  INSERT INTO public.contact_stage_events (tenant_id, id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, bulk_action_id, undo_of_event_id)   -- 0041: bulk_action_id; 0105: undo_of_event_id
+  VALUES (NEW.tenant_id, gen_random_uuid(), NEW.id, OLD.stage, NEW.stage, ak, uid, bid, uoid);
+  RETURN NULL;
+END $$;
+ALTER FUNCTION app.contacts_stage_history() OWNER TO app_definer;
+
+-- the closed set of skip reasons (apps/api/src/stageAutomation/decide.ts SKIP_REASONS), plus undo
+ALTER TABLE stage_automation_decisions DROP CONSTRAINT stage_automation_decisions_reason_check;
+ALTER TABLE stage_automation_decisions ADD CONSTRAINT stage_automation_decisions_reason_check
+  CHECK (reason IN ('not_a_person_change','person_removed','stage_changed_again','not_visible',
+                    'plan_not_approved','already_in_a_plan','cannot_be_reached','protected_audience','ai_isa_active',
+                    'source_no_automated_contact','source_unclassified','undo'));
+
+-- L6 (E787): why a person could not be reached, kept with the decision (a detail of the one reason, never a new one)
+ALTER TABLE stage_automation_decisions ADD COLUMN unreachable_cause text;
+ALTER TABLE stage_automation_decisions ADD CONSTRAINT stage_automation_decisions_unreachable_cause_check
+  CHECK (unreachable_cause IS NULL
+         OR (reason = 'cannot_be_reached' AND unreachable_cause IN ('opted_out','do_not_contact','wrong_number','no_address')));
+COMMENT ON COLUMN stage_automation_decisions.unreachable_cause IS
+  'b19 0105: for reason cannot_be_reached, which cause it was (opted_out, do_not_contact, wrong_number, no_address), read with the decision''s own facts; NULL for every other reason and for decisions made before this column. Worded by apps/api stageAutomation/sentences.ts.';
+
+-- Self-check: the replaced definer keeps its reviewed owner, SECURITY DEFINER and pinned search_path, and is still the
+-- function of the history trigger; the history table and the decisions table still force row-level security.
+DO $$
+DECLARE p record;
+BEGIN
+  SELECT r.rolname AS owner, x.prosecdef AS definer, x.proconfig AS config INTO p
+    FROM pg_proc x JOIN pg_roles r ON r.oid = x.proowner WHERE x.oid = 'app.contacts_stage_history()'::regprocedure;
+  IF p.owner <> 'app_definer' OR NOT p.definer OR p.config IS DISTINCT FROM ARRAY['search_path=pg_catalog, public'] THEN
+    RAISE EXCEPTION '0105: app.contacts_stage_history() must be a definer owned by app_definer with a pinned search_path';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = 'public.contacts'::regclass AND t.tgname = 'contacts_stage_history'
+                    AND t.tgfoid = 'app.contacts_stage_history()'::regprocedure AND t.tgenabled <> 'D' AND NOT t.tgisinternal) THEN
+    RAISE EXCEPTION '0105: the contacts_stage_history trigger must still call app.contacts_stage_history()';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.contact_stage_events'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
+    RAISE EXCEPTION '0105: contact_stage_events must force row-level security';
+  END IF;
+  -- the decisions table keeps its forced row-level security with the added column
+  IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.stage_automation_decisions'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
+    RAISE EXCEPTION '0105: stage_automation_decisions must force row-level security';
+  END IF;
+END $$;

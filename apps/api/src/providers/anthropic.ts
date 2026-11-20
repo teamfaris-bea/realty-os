@@ -33,7 +33,7 @@ export function anthropicAi(opts: { apiKey: string; model: string; timeoutMs?: n
           output_config: { effort: 'medium' },
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-          // R-ISA-20 (E793): a caller that reserved one call in a budget gets one HTTP request, never an SDK retry
+          // R-ISA-20 (E903): a caller that reserved one call in a budget gets one HTTP request, never an SDK retry
         }, r.singleRequest ? { maxRetries: 0 } : undefined);
         let text = '';
         for (const block of res.content) if (block.type === 'text') text += block.text;
