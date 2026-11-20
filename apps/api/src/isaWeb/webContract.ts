@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { ERROR_STATUS, type ErrorCode } from '../errors.js';
 import * as S from '../isa/schemas.js';
+import * as SellerS from '../isa/seller/schemas.js';
 import { zodInputKeys } from '../rbac.js';
 import { HandoffView } from './routes.js';
 
@@ -49,6 +50,11 @@ export const ISA_CONTRACT_ROUTES: Readonly<Record<string, RouteSpec>> = {
   'POST /ai-isa/handoffs/:id/ack': { body: S.EmptyBody, response: S.AckResult },
   'POST /ai-isa/escalations/:id/resolve': { body: S.ResolveBody, response: S.ResolveResult },
   'GET /ai-isa/handoffs/:id': { response: HandoffView },
+  'GET /contacts/:id/ai-isa/seller': { response: SellerS.SellerPanel },
+  'POST /contacts/:id/ai-isa/confirm-subject': { body: SellerS.ConfirmSubjectBody, response: SellerS.SellerResult },
+  'POST /contacts/:id/ai-isa/seller/subject-disputed': { body: S.EmptyBody, response: SellerS.SellerResult },
+  'POST /contacts/:id/ai-isa/seller/near-match-different': { body: SellerS.NearMatchBody, response: SellerS.SellerResult },
+  'POST /contacts/:id/ai-isa/seller/resume-comps': { body: S.EmptyBody, response: SellerS.SellerResult },
 };
 
 /** The module-75 codes (errors.ts, between its "module 75" header and the next header or the registry marker), plus the shell codes the surface meets. */

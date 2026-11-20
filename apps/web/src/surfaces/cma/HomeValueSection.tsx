@@ -98,7 +98,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
 
   const cmas = q.data?.cmas ?? [];
   return (
-    <section aria-labelledby={hid} className="flex scroll-mt-20 flex-col gap-2">
+    <section id="cma" aria-labelledby={hid} className="flex scroll-mt-20 flex-col gap-2">
       <div className="flex items-center gap-2">
         <h2 id={hid} className="flex-1 text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
           {W.homeValueHeading}

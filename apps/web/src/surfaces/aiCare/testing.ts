@@ -11,7 +11,7 @@ import { AGENT_SURFACES, IDS, fullContact, iso } from '../feed/lib/testing.js';
 import { surface as settingsSurface } from '../settings/index.js';
 import { surface as bulkSurface } from '../bulk/index.js';
 import { AI_ISA_POLICY_FIELDS, AI_ISA_POLICY_TEXT_VERSION, type AiIsaContent, DEFAULT_AI_ISA_CONTENT, aiIsaPolicyApprovalText, aiIsaPolicyRevokeText, policyDiff, policySections } from '@realty/core/isa';
-import type { AdminView, HandoffView, ListRow, MeView, PanelResponse, PolicyDraft, PolicyVersion, PolicyView, TurnRow } from './api.js';
+import type { AdminView, HandoffView, ListRow, MeView, PanelResponse, PolicyDraft, PolicyVersion, PolicyView, SellerPanelView, TurnRow } from './api.js';
 import { surface as aiCareSurface } from './index.js';
 import { resetUndoStore } from './undoStore.js';
 
@@ -181,6 +181,24 @@ export function meView(over: Partial<MeView> = {}): MeView {
     builtCapabilities: ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'],
     underCare: 0,
     sentence: 'You have not opted in. Nothing is sent for your leads.',
+    ...over,
+  };
+}
+
+// ---- the seller side of the panel (R-ISA-35) ----
+export const SELLER_IDS = { address: '01900000-0000-7000-8000-0000000d0001', record: '01900000-0000-7000-8000-0000000d0002', near: '01900000-0000-7000-8000-0000000d0003' } as const;
+const NO = (reason: string) => ({ available: false, reason });
+/** An unconfirmed home of a seller lead, as its owner sees it: Confirm is the one action offered. */
+export function sellerPanel(over: Partial<SellerPanelView> = {}): SellerPanelView {
+  return {
+    actions: { confirmSubject: { available: true, reason: null }, subjectDisputed: NO('The owner has not confirmed the home yet.'), nearMatchDifferent: { ...NO('No live listing may be this home.'), listingIds: [] }, resumeComps: NO('Recent sales are not paused.') },
+    contactId: IDS.jane, assignmentId: ISA_IDS.assignment, side: 'seller',
+    subject: { state: 'ok', code: null, sentence: 'The home’s MLS record was found.', nextStep: null, contactAddressId: SELLER_IDS.address, addressLine: '12 Sample Ct, Oakland, CA 94110', recordListingId: SELLER_IDS.record, recordDate: iso(-86_400_000 * 400),
+      facts: { type: 'single_family', beds: 3, baths_x10: 20, sqft: 1500 }, factsSha256: SHA, confirmed: false, confirmedAt: null, disputed: false, clearedReason: null, codes: ['SUBJECT_UNCONFIRMED'] },
+    blockers: [], lastCompsCheck: null,
+    capabilities: { comps: { available: false, sentence: 'Can share recent sales: no — SUBJECT_UNCONFIRMED.' }, competition: { available: false, sentence: 'Can share competing listings: no — confirm the home first.' } },
+    link: { effect: 'ok', code: null, sentence: 'No live listing at this home.', listingIds: [] },
+    suspension: { suspended: false, sentence: null }, watch: { lastRunAt: null, sentence: 'Competition updates are not sent yet (not built yet).' }, counts: null, factsSent: [],
     ...over,
   };
 }

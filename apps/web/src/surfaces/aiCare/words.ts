@@ -397,8 +397,8 @@ export function capabilityLine(c: { capability: string; allowed: boolean; built?
 
 // batch 13 isa-4 F5: ISA-2b appends approve_saved_search (a proposed AI-origin saved search) or review_saved_search
 export const NEXT_STEPS = ['call_now', 'confirm_appointment', 'answer_pricing_question', 'reply_to_complaint', 'review_fair_housing_question', 'review_consent', 'review_saved_search', 'approve_saved_search', 'prepare_cma', 'confirm_subject'] as const;
-/** Steps that are not built: they say "{step}: not available yet." (any other unknown step is "Another check", no claim). */
-export const UNBUILT_STEPS: ReadonlySet<string> = new Set(['prepare_cma', 'confirm_subject']);
+/** Steps that are not built say "{step}: not available yet." None is left: prepare_cma and confirm_subject are real actions (R-ISA-35; Feed.tsx NextStep). Any unknown step is "Another check", no claim. */
+export const UNBUILT_STEPS: ReadonlySet<string> = new Set();
 export type NextStep = (typeof NEXT_STEPS)[number];
 export const NEXT_STEP_WORDS: Record<NextStep, string> = {
   call_now: 'Call them',

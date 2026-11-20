@@ -9,7 +9,7 @@
 //   POST /contacts/:id/ai-isa/seller/resume-comps           ai_isa.subject_confirm ("Let the assistant keep sharing")
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { type Instant, type UserActor } from '@realty/core/foundation';
+import { type Instant, type UserActor, can } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import type { z } from 'zod';
@@ -93,7 +93,14 @@ async function ownedSeller(tx: Tx, actor: UserActor, contactId: string): Promise
   return a;
 }
 
-export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, now: Instant): Promise<z.infer<typeof S.SellerPanel>> {
+const NOT_SELLER = 'This lead is not under seller AI care.';
+const act = (available: boolean, reason: string | null) => ({ available, reason: available ? null : reason });
+
+/**
+ * `mayPause`: whether THIS viewer passes ai_isa.pause on the contact (the subject-disputed route's own authorization),
+ * computed by the caller from the same facts. Default false: a caller that does not say is offered no dispute.
+ */
+export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, now: Instant, mayPause = false): Promise<z.infer<typeof S.SellerPanel>> {
   const a = await liveAssignmentOf(tx, contactId);
   const subject = await currentSubjectInTx(tx, contactId, now);
   const w = sellerSide(a) ? await watchOf(tx, a.id) : null;
@@ -133,9 +140,24 @@ export async function sellerPanel(tx: Tx, viewer: UserActor, contactId: string, 
     ? (await sql<{ fact_kind: string; listing_id: string | null; created_at: Date }>`SELECT fact_kind, listing_id, created_at FROM ai_isa_shared_facts WHERE tenant_id = app.tenant_id()
         AND assignment_id = ${a.id} AND status = 'sent' AND fact_kind IN ('sold_comp_set','competitor') ORDER BY created_at DESC LIMIT 20`.execute(tx)).rows
     : [];
+  // R-ISA-35: which of this panel's own actions the routes below would accept from this viewer now, each from the facts
+  // its route checks (ownedSeller, the current subject, the watch row, link 10, the suspension). A control is drawn only
+  // when `available` is true; the route still decides for itself, and its refusal carries its own sentence.
+  const seller = sellerSide(a);
+  const owner = seller && a.ownerUserId === viewer.userId;
+  const confirmedNow = seller && codes.length === 0;
+  const actions = {
+    confirmSubject: act(owner && subject.state === 'ok' && !confirmedNow, !seller ? NOT_SELLER : !owner ? 'Only the lead’s owner confirms the home.' : confirmedNow ? 'The home is confirmed.' : subject.sentence),
+    subjectDisputed: act(seller && mayPause && w?.subject_confirmed_at != null && w.subject_disputed_at == null,
+      !seller ? NOT_SELLER : w?.subject_confirmed_at == null ? 'The owner has not confirmed the home yet.' : w.subject_disputed_at != null ? 'The home is already marked as not theirs.' : 'You cannot pause AI care for this lead, so you cannot mark the home.'),
+    nearMatchDifferent: { ...act(owner && link.code === 'AI_ISA_POSSIBLE_LISTING' && link.listingIds.length > 0, !seller ? NOT_SELLER : link.code !== 'AI_ISA_POSSIBLE_LISTING' ? 'No live listing may be this home.' : 'Only the lead’s owner can say it is a different home.'),
+      listingIds: owner && link.code === 'AI_ISA_POSSIBLE_LISTING' ? link.listingIds : [] },
+    resumeComps: act(owner && suspended, !seller ? NOT_SELLER : !suspended ? 'Recent sales are not paused.' : 'Only the lead’s owner can let the assistant keep sharing recent sales.'),
+  };
   return {
     contactId,
     assignmentId: a?.id ?? null,
+    actions,
     side: a?.side ?? null,
     subject: {
       state: subject.state, code: subject.code, sentence: subject.sentence, nextStep: subject.nextStep, contactAddressId: subject.contactAddressId, addressLine: subject.addressLine,
@@ -164,7 +186,12 @@ async function register(app: FastifyInstance): Promise<void> {
   };
 
   r.get('/contacts/:id/ai-isa/seller', { config: { auth: 'ai_isa.view' }, preHandler: authorize('ai_isa.view', facts), schema: { params: IdParams, response: { 200: S.SellerPanel } } },
-    async (req) => tx(req, (t, now, actor) => sellerPanel(t, actor, req.params.id, now)));
+    async (req) => {
+      // the dispute route's own authorization, asked of the same facts (ai_isa.pause on this contact)
+      const f = await facts(req);
+      const mayPause = f !== null && can(actorOf(req), 'ai_isa.pause', f).ok;
+      return tx(req, (t, now, actor) => sellerPanel(t, actor, req.params.id, now, mayPause));
+    });
 
   r.post('/contacts/:id/ai-isa/confirm-subject', { config: { auth: 'ai_isa.subject_confirm' }, preHandler: authorize('ai_isa.subject_confirm', live), schema: { params: IdParams, body: S.ConfirmSubjectBody, response: { 200: S.SellerResult } } },
     async (req) => tx(req, async (t, now, actor) => {

@@ -16,6 +16,8 @@ export const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const IMPORTS = String.raw`
 import { isaWorld, isaLead, runIsa, closedZone, openZone } from './src/isa/testing.ts';
 import { slaSweepInTx } from './src/isa/handoff.ts';
+import { sellerWorld, sellerLead, asSystem as sellerAsSystem } from './src/isa/seller/testing.ts';
+import { onEscalationInTx } from './src/isa/seller/index.ts';
 import { withTenantTx } from '@realty/db';
 import { systemActor } from './src/worker/systemActor.ts';
 `;
@@ -56,6 +58,23 @@ const ROUTES = String.raw`
   async '/isa-sms-in'(b) { const r = await inboundSms(h, b.from, world('i').mainNumber, b.body); return { status: r.statusCode }; },
   /** an Admin of the ISA world (invited and accepted through the API, with TOTP) */
   async '/isa-admin'() { const a = await h.invite(world('i').owner, 'admin', { mfa: true }); clients.set('i.admin', a); return who(a); },
+  /** a second tenant under SELLER-side AI care on fakes (isa/seller/testing.ts sellerWorld and sellerLead: a property
+   *  address, the home's own MLS record, the owner opted in to the seller capabilities, care started by hand through
+   *  the API); clients s.owner, s.agent0. Returns the agent and the lead. */
+  async '/isa-seller'() {
+    const w = await sellerWorld(h);
+    worlds.set('s', w);
+    clients.set('s.owner', w.owner);
+    clients.set('s.agent0', w.agents[0]);
+    const l = await sellerLead(h, w);
+    worlds.set('s.lead', l);
+    return { tenantId: w.tenantId, agent: who(w.agents[0]), lead: { id: l.id, line1: l.line1 } };
+  },
+  /** the lead of '/isa-seller' asked about price: the system suspends recent sales (seller/index.ts onEscalationInTx) */
+  async '/isa-seller-price-question'() {
+    await sellerAsSystem(h, world('s'), world('s.lead'), (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    return { ok: true };
+  },
   /** { as } a fresh re-auth for API setup steps */
   async '/isa-reauth'(b) { await freshReauth(h, client(b.as)); return { ok: true }; },
 `;

@@ -2,6 +2,8 @@
 // owner resumes in 1 tap; Take over → Undo within 10 s → paused; Take over, then the finalize job → "AI care ended" and
 // the handoff card; End (2 taps) with Undo; a hand-typed text shows the warning before Send and the Resume toast
 // after. Real API on a fresh database, fakes only. Phone 390×844 and desktop 1440×900; taps are counted.
+// R-ISA-35 (E1007, E1008): the seller's home in the panel: Confirm, "That is not their home", Confirm again, and
+// "Resume comps" only once the API offers it; each tap shows the server's sentence and the row it wrote is read back.
 import { expect, test } from 'playwright/test';
 import { pollSql, shot } from '../journeys/helpers.js';
 import type { JourneyStack } from '../journeys/stack.js';
@@ -136,4 +138,48 @@ test('J3 R-ISA-3: a hand-typed text shows the warning first, then the Resume toa
   await press(page, resume);
   await expect(t).toContainText('AI care resumed.');
   expect((await state(l.id))[0]!.paused_at).toBeNull();
+});
+
+test('R-ISA-35 E1007 E1008: the seller home in the panel: the owner confirms it, marks it not theirs, confirms again, and resumes recent sales only when the API offers it', async ({ page }) => {
+  test.setTimeout(240_000);
+  const sw = await stack.fixture<{ tenantId: string; agent: { email: string; password: string; userId: string }; lead: { id: string; line1: string } }>('/isa-seller');
+  const watch = async () => (await stack.sql<{ confirmed: boolean; disputed: boolean; resumed: boolean }>(`SELECT w.subject_confirmed_at IS NOT NULL AS confirmed, w.subject_disputed_at IS NOT NULL AS disputed, w.comps_resumed_at IS NOT NULL AS resumed
+    FROM ai_isa_seller_watch w JOIN ai_isa_assignments a ON a.id = w.assignment_id WHERE a.contact_id = $1 AND a.ended_at IS NULL`, [sw.lead.id]))[0]!;
+  const sent = async () => Number((await stack.sql<{ n: string }>(`SELECT count(*) AS n FROM messages WHERE tenant_id = $1 AND direction = 'outbound'`, [sw.tenantId]))[0]!.n);
+  const before = await sent();
+  await signInAs(page, stack, sw.agent);
+  await page.goto(`${stack.webUrl}/contacts/${sw.lead.id}`);
+  const home = page.getByTestId('ai-seller-home');
+  await expect(home).toContainText('The home the assistant believes it is discussing');
+  await expect(home).toContainText(sw.lead.line1);
+  await expect(home).toContainText('3 bedrooms');
+  await expect(home).toContainText('Not confirmed yet. The assistant shares nothing about this home until you confirm it.');
+  // only what the API offers: no dispute before a confirmation, no resume while nothing is paused
+  await expect(home.getByRole('button', { name: 'That is not their home' })).toHaveCount(0);
+  await expect(home.getByRole('button', { name: 'Resume comps' })).toHaveCount(0);
+  await expect(home.getByRole('button', { name: 'Near match, different home' })).toHaveCount(0);
+  expect(await axe(page)).toEqual([]);
+  await shot(page, test.info(), 'ai-care', 'seller-home');
+  await press(page, home.getByRole('button', { name: 'Confirm this is their home' }));
+  await expect(home.getByTestId('ai-seller-line')).toHaveText('Confirmed. The assistant compares recent sales with this home’s MLS record.');
+  expect(await watch()).toMatchObject({ confirmed: true, disputed: false });
+  await expect(home.getByRole('button', { name: 'Confirm this is their home' })).toHaveCount(0);
+  await press(page, home.getByRole('button', { name: 'That is not their home' }));
+  await expect(home.getByTestId('ai-seller-line')).toHaveText('Marked disputed. Recent sales stop until the owner confirms the home again.');
+  expect(await watch()).toMatchObject({ disputed: true });
+  await expect(home).toContainText('Marked as not their home.');
+  await press(page, home.getByRole('button', { name: 'Confirm this is their home' }));
+  await expect(home.getByTestId('ai-seller-line')).toHaveText('Confirmed. The assistant compares recent sales with this home’s MLS record.');
+  expect(await watch()).toMatchObject({ confirmed: true, disputed: false, resumed: false });
+  // they ask about price: recent sales are paused, and only now is "Resume comps" offered
+  await stack.fixture('/isa-seller-price-question');
+  await page.reload();
+  await expect(home).toContainText('Recent sales paused: they asked about price.');
+  await press(page, home.getByRole('button', { name: 'Resume comps' }));
+  await expect(home.getByTestId('ai-seller-line')).toHaveText('The assistant may share recent sales again, by email, when every check passes.');
+  expect(await watch()).toMatchObject({ resumed: true });
+  await expect(home.getByRole('button', { name: 'Resume comps' })).toHaveCount(0);
+  // none of these answers reaches the lead
+  expect(await sent()).toBe(before);
+  await expectNoCode(page);
 });

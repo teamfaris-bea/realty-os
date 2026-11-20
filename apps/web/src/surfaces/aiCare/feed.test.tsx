@@ -131,13 +131,13 @@ describe('AI care feed cards (module 76)', () => {
     expect(v.router.state.location.hash).toBe('#searches');
   });
 
-  it('R-ISA-22 (batch 13 isa-4 F5): an unknown next step reads "Another check" and never "not available yet"; Prepare a CMA is not available yet', async () => {
+  it('R-ISA-22 (batch 13 isa-4 F5): an unknown next step reads "Another check" and never "not available yet"; Prepare a CMA is a real action (R-ISA-35)', async () => {
     const h = handoffView();
     isaApp(feedOf([handoffCard()], { handoff: { ...h, package: { ...h.package, nextSteps: ['prepare_cma', 'brand_new_step'] } } }), '/', 'agent');
     const c = await screen.findByTestId('ai-card-ai_isa_handoff');
-    expect(await within(c).findByText('Prepare a CMA: not available yet.')).toBeInTheDocument();
+    expect(await within(c).findByRole('button', { name: 'Prepare a CMA' })).toBeInTheDocument();
     expect(within(c).getByText('Another check')).toBeInTheDocument();
-    expect(c.textContent).not.toMatch(/Another check: not available yet/);
+    expect(c.textContent).not.toMatch(/not available yet/);
   });
 
   it('R-ISA-14 (batch 13 isa-4 F6): ISA-2b\'s package fields render: the appointment\'s time, kind, organizer and their words, the saved search with its review link, who got it and the pond date', async () => {

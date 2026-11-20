@@ -8,10 +8,12 @@
 //   for a scheduled confirmation (Q3): the sheet says what stops it. A met deadline says "Done" and the card stays
 //   (V9, Q10: nothing in module 75 closes these cards yet).
 // - every other card of a contact under live care gets the strip "AI care is on" with Pause, Take over and End.
+import { useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, Card, Dialog, announce, useCountdownAnnouncement } from '../../design/index.js';
 import { useSession } from '../../shell/index.js';
+import { cmaKey, contactCmasKey, useCall as useCmaCall } from '../cma/lib.js';
 import { useContact } from '../contact/useContact.js';
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { countdownWords, formatCountdown } from '../feed/lib/format.js';
@@ -451,6 +453,46 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/**
+ * R-ISA-35: "Prepare a CMA" is the existing one tap of the person's Home value section (POST /contacts/:id/cma: the
+ * contact's property address, else home; a second tap on unchanged data opens the same draft) and opens the CMA. When
+ * the server refuses (no address, facts missing, a role without it) the card says its reason and links to that section,
+ * where the missing facts are asked for.
+ */
+function PrepareCmaStep({ contactId, label }: { contactId: string; label: string }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const tap = useCmaCall<Record<string, never>, { cma: { id: string } }>('POST', { invalidate: [contactCmasKey(contactId)] });
+  const [refused, setRefused] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-1">
+      <div>
+        <Button
+          variant="secondary"
+          pending={tap.pending}
+          onClick={async () => {
+            const r = await tap.run(`/contacts/${contactId}/cma`, {});
+            if (r.ok) {
+              qc.setQueryData(cmaKey(r.data.cma.id), { cma: r.data.cma });
+              navigate(`/cma/${r.data.cma.id}`);
+            } else setRefused(r.message);
+          }}
+        >
+          {label}
+        </Button>
+      </div>
+      {refused ? (
+        <p role="status" className="text-[15px]" data-testid="ai-cma-line">
+          {refused}{' '}
+          <Link to={`/contacts/${contactId}#cma`} className="font-medium text-accent underline">
+            Open their Home value section
+          </Link>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function NextStep({ step, contactId, name }: { step: string; contactId: string; name: string }) {
   const navigate = useNavigate();
   const { call } = useAgentSheets();
@@ -490,6 +532,15 @@ function NextStep({ step, contactId, name }: { step: string; contactId: string; 
           {label}
         </Button>
       );
+    case 'confirm_subject':
+      // R-ISA-35: the person's AI care panel, at the home and its Confirm (shown there only if the API offers it)
+      return (
+        <Button variant="secondary" onClick={() => navigate(`/contacts/${contactId}#ai-seller-home`)}>
+          {label}
+        </Button>
+      );
+    case 'prepare_cma':
+      return <PrepareCmaStep contactId={contactId} label={label} />;
     default:
       // batch 13 isa-4 F5: only a step known to be unbuilt says "not available yet"; an unknown one makes no claim
       return <span className="inline-flex min-h-tap items-center text-[15px] text-ink-muted">{UNBUILT_STEPS.has(step) ? `${cap(label)}: not available yet.` : label}</span>;

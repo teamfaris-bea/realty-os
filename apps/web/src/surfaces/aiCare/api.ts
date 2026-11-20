@@ -64,6 +64,34 @@ export interface MeView {
   underCare: number;
   sentence: string;
 }
+// ---- the seller side of the panel (R-ISA-35; apps/api/src/isa/seller/schemas.ts SellerPanel) ----
+export interface SellerAction {
+  available: boolean;
+  reason: string | null;
+}
+export interface SellerPanelView {
+  actions: { confirmSubject: SellerAction; subjectDisputed: SellerAction; nearMatchDifferent: SellerAction & { listingIds: string[] }; resumeComps: SellerAction };
+  contactId: string;
+  assignmentId: string | null;
+  side: string | null;
+  subject: {
+    state: string; code: string | null; sentence: string; nextStep: string | null; contactAddressId: string | null; addressLine: string | null; recordListingId: string | null; recordDate: string | null;
+    facts: { type: string; beds: number; baths_x10: number | null; sqft: number } | null; factsSha256: string | null; confirmed: boolean; confirmedAt: string | null; disputed: boolean; clearedReason: string | null; codes: string[];
+  };
+  blockers: { code: string; sentence: string }[];
+  lastCompsCheck: { codes: string[]; checkedAt: string } | null;
+  capabilities: { comps: { available: boolean; sentence: string }; competition: { available: boolean; sentence: string } };
+  link: { effect: 'ok' | 'pause' | 'end'; code: string | null; sentence: string; listingIds: string[] };
+  suspension: { suspended: boolean; sentence: string | null };
+  watch: { lastRunAt: string | null; sentence: string };
+  counts: { active: number; comingSoon: number; pending: number; sentence: string } | null;
+  factsSent: { factKind: string; listingId: string | null; sentAt: string }[];
+}
+export interface SellerResult {
+  ok: true;
+  sentence: string;
+}
+
 // ---- the team AI policy (R-ISA-33, R-ISA-34; apps/api/src/isa/schemas.ts PolicyView) ----
 export interface PolicySection {
   key: string;
@@ -450,6 +478,19 @@ export function useMe(enabled = true) {
 export function useAdmin(enabled = true) {
   const api = useApi();
   return useQuery<AdminView, ApiError>({ queryKey: isaKeys.admin(), queryFn: ({ signal }) => api.get<AdminView>('/admin/ai-isa', { signal }), enabled, retry: quiet });
+}
+
+/** The seller side of a person's AI care panel (asked only for seller-side care; a 403/404 renders nothing). */
+export function useSellerPanel(contactId: string, enabled = true) {
+  const api = useApi();
+  const visible = useIsaVisible();
+  return useQuery<SellerPanelView, ApiError>({
+    queryKey: isaKeys.seller(contactId),
+    queryFn: ({ signal }) => api.get<SellerPanelView>(`/contacts/${contactId}/ai-isa/seller`, { signal }),
+    enabled: visible && enabled && contactId !== '',
+    staleTime: 15_000,
+    retry: quiet,
+  });
 }
 
 /** The team AI policy (Owner and Admin; a 403/404 renders nothing). */
