@@ -111,6 +111,18 @@ export type PlaybookKind =
   | 'trigger'
   | 'voice_answering';
 
+/**
+ * Kinds that are never enrolled by hand or by stage (R-PAR-16, R-ISA-37; E1010). A person is put on these by nothing a
+ * member picks: the instant reply runs once on intake, trigger and voice playbooks hold one content object and run on
+ * their own events, and `ai_isa` is not a set of messages at all: it is the team's AI assistant policy (isa/policy.ts),
+ * whose content is one AiIsaContent. The stage-start setting, the stage entry and a bulk enrollment all read this list
+ * (api stageAutomation/routes.ts and repos.ts, bulk/service.ts), so a kind added here is refused at all of them.
+ */
+export const NEVER_ENROLLED_PLAYBOOK_KINDS = ['new_lead_response', 'trigger', 'voice_answering', 'ai_isa'] as const;
+export function isNeverEnrolledPlaybookKind(kind: string): boolean {
+  return (NEVER_ENROLLED_PLAYBOOK_KINDS as readonly string[]).includes(kind);
+}
+
 const KIND_CATEGORIES: Readonly<Record<PlaybookKind, readonly ActionCategory[]>> = {
   new_lead_response: ['speed_to_lead_reply'],
   nurture: ['nurture_step'],

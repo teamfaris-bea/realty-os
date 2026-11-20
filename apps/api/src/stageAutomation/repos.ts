@@ -1,5 +1,6 @@
 // SQL of api/stage-automation (PARITY_PLAN module 67). Every query runs in the caller's transaction under
 // RLS (the reconcile and the scans as the tenant's system actor; the settings route as the user).
+import { NEVER_ENROLLED_PLAYBOOK_KINDS } from '@realty/core/assistant';
 import { type Instant, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -104,7 +105,7 @@ export async function candidatePlaybooks(tx: Tx, of: { eventId: string } | { sta
   const r = await sql<{ id: string; name: string; scope: 'team' | 'agent'; owner_user_id: string | null; approved: string | null }>`
     SELECT p.id, p.name, p.scope, p.owner_user_id,
            (SELECT v.id FROM playbook_versions v WHERE v.tenant_id = p.tenant_id AND v.playbook_id = p.id AND v.status = 'approved') AS approved
-      ${from} AND p.status = 'active' AND p.kind NOT IN ('new_lead_response','trigger','voice_answering')
+      ${from} AND p.status = 'active' AND p.kind <> ALL (${[...NEVER_ENROLLED_PLAYBOOK_KINDS]}::text[])
        AND (p.scope = 'team' OR (p.scope = 'agent' AND p.owner_user_id = ${ownerUserId}::uuid))
      ORDER BY p.id`.execute(tx);
   return r.rows.map((x) => ({ id: x.id, name: x.name, scope: x.scope, ownerUserId: x.owner_user_id, approvedVersionId: x.approved }));

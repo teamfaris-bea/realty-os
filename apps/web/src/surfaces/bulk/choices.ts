@@ -11,6 +11,7 @@
 // Which plan (R-PAR-16, R-PAR-35): one with an approved version (an enrollment runs only from one), never the
 // instant reply to new leads (it starts on a new lead only), and either a team plan or the viewer's OWN
 // personal plan, which covers only the people they own (the server skips anyone else as not permitted).
+import { NEVER_ENROLLED_PLAYBOOK_KINDS } from '@realty/core/assistant';
 import { useQuery } from '@tanstack/react-query';
 import { type ApiError, useApi, useSession } from '../../shell/index.js';
 import type { Member, MembersResponse, Playbook } from '../admin/lib/types.js';
@@ -55,10 +56,11 @@ export interface PlanChoice {
 }
 
 /**
- * The plans Start plan offers: approved, not the instant reply to new leads, not module 26's alerts or call answering
- * (bulk/service.ts refuses those three; batch 7 review ui/F2), a team plan or the viewer's own.
+ * The plans Start plan offers: approved, not the instant reply to new leads, not module 26's alerts or call answering,
+ * not the team AI policy (core NEVER_ENROLLED_PLAYBOOK_KINDS, the list bulk/service.ts refuses with; batch 7 review
+ * ui/F2, R-ISA-37), a team plan or the viewer's own.
  */
-const NOT_ENROLLABLE: readonly string[] = ['new_lead_response', 'trigger', 'voice_answering'];
+const NOT_ENROLLABLE: readonly string[] = NEVER_ENROLLED_PLAYBOOK_KINDS;
 export function planChoices(playbooks: readonly Pick<Playbook, 'id' | 'name' | 'kind' | 'scope' | 'ownerUserId' | 'approvedVersionId'>[], me: string | undefined): PlanChoice[] {
   return playbooks
     .filter((p) => p.approvedVersionId !== null && !NOT_ENROLLABLE.includes(p.kind) && (p.scope === 'team' || (me !== undefined && p.ownerUserId === me)))
