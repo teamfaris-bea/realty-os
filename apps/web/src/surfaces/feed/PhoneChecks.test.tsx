@@ -89,7 +89,8 @@ describe('R-TODAY-10: the new controls on a phone', () => {
     const group = await screen.findByRole('region', { name: 'Follow up today' });
     const main = screen.getByRole('main');
     expect(main).toContainElement(group);
-    expect(main.className).toContain('pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+16px)]');
+    // (the stage flow's fix pass: the page also ends later by the room a showing toast takes, --toast-stack-h; E788)
+    expect(main.className).toContain('pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+var(--toast-stack-h,0px)+16px)]');
     const entry = screen.getByRole('button', { name: 'Log a call or conversation' });
     expect(entry.closest('header')!.className).toMatch(/\bpt-safe\b/);
     tap44(entry);
