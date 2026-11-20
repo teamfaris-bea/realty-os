@@ -47,31 +47,46 @@ export interface IsaMessageRef {
   assistantActionId: string | null;
 }
 
-/** When every refusal reason is deferrable, the instant to retry at (the next window start, the gap, or an hour). */
+/**
+ * When every refusal reason is deferrable, the instant to retry at: the next opening of the window the send transaction
+ * judges by, the gap of the policy in effect, or an hour.
+ * R-ISA-41 (E1014): the window and the gap are the ones aiIsaGateFacts refuses by, so one deferral lands where the
+ * message can go. The window is the later start and the earlier end of the turn's frozen window and the content in
+ * effect (a narrower version approved after the message was composed applies to it, R-ISA-34), inside the platform's
+ * 8:00 to 20:00; the gap is that content's. With the turn's window alone a message queued before a narrower approval
+ * was set back a minute at a time until the narrower window opened.
+ */
 export async function deferralFor(tx: Tx, m: IsaMessageRef, reasons: readonly string[], now: Instant): Promise<Instant | null> {
   if (reasons.length === 0 || refusalClass(reasons) !== 'deferrable') return null;
-  if (reasons.every((r) => r === 'ISA_MIN_GAP')) return (now + ISA_DEFAULT_CAPS.minGapSeconds * 1000) as Instant;
+  // batch 13 audit ISA2B-05: a message carrying shared facts is initiated whatever its turn planned (the guard's
+  // has_facts derived tier, 0080/0083; TX1's consent tier), so it is deferred to an initiated window, never a reply's
+  const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null; steps: unknown; has_facts: boolean }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we,
+      t.message_kind AS kind, eff.steps,
+      EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = t.tenant_id AND f.message_id = t.message_id) AS has_facts
+    FROM ai_isa_turns t JOIN ai_isa_assignments a ON a.tenant_id = t.tenant_id AND a.id = t.assignment_id
+    LEFT JOIN LATERAL (${EFFECTIVE_POLICY_SQL(sql`a.playbook_version_id`)}) eff ON true
+   WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${m.id}`.execute(tx);
+  const r = t.rows[0];
+  // R-ISA-10: the policy content's initiated days and holidays, so core, TX1, this deferral and the guard (0081, 0083) agree
+  const content = parseAiIsaContent(r?.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
+  if (reasons.every((x) => x === 'ISA_MIN_GAP')) return (now + Math.max(content.caps.minGapSeconds, ISA_DEFAULT_CAPS.minGapSeconds) * 1000) as Instant;
   if (reasons.includes('ISA_QUIET_HOURS') || reasons.includes('ISA_ZONE_UNRESOLVED')) {
-    // batch 13 audit ISA2B-05: a message carrying shared facts is initiated whatever its turn planned (the guard's
-    // has_facts derived tier, 0080/0083; TX1's consent tier), so it is deferred to an initiated window, never a reply's
-    const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null; steps: unknown; has_facts: boolean }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we,
-        t.message_kind AS kind, eff.steps,
-        EXISTS (SELECT 1 FROM ai_isa_shared_facts f WHERE f.tenant_id = t.tenant_id AND f.message_id = t.message_id) AS has_facts
-      FROM ai_isa_turns t JOIN ai_isa_assignments a ON a.tenant_id = t.tenant_id AND a.id = t.assignment_id
-      LEFT JOIN LATERAL (${EFFECTIVE_POLICY_SQL(sql`a.playbook_version_id`)}) eff ON true
-     WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${m.id}`.execute(tx);
-    const r = t.rows[0];
     if (r?.zones && r.ws && r.we) {
-      const sec = (s: string) => { const [h, mi] = s.split(':').map(Number); return h! * 3600 + mi! * 60; };
-      // R-ISA-10: the policy content's initiated days and holidays, so core, TX1, this deferral and the guard (0081, 0083) agree
-      const content = parseAiIsaContent(r.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
-      const next = aiIsaSendWindow({ at: (now + 60_000) as Instant, zones: r.zones as IanaZone[], startSec: sec(r.ws), endSec: sec(r.we), initiated: r.kind === 'initiated' || r.has_facts,
+      const sec = (x: string) => { const [h, mi, s] = x.split(':').map(Number); return h! * 3600 + mi! * 60 + (s ?? 0); };
+      const startSec = Math.max(sec(r.ws), content.window.startSec, ISA_WINDOW_FLOOR.startSec);
+      const endSec = Math.min(sec(r.we), content.window.endSec, ISA_WINDOW_FLOOR.endSec);
+      // a turn's window and a later version's that do not meet (the turn ended before the new start): the content in effect's own
+      const w = startSec < endSec ? { startSec, endSec } : { startSec: Math.max(content.window.startSec, ISA_WINDOW_FLOOR.startSec), endSec: Math.min(content.window.endSec, ISA_WINDOW_FLOOR.endSec) };
+      const next = aiIsaSendWindow({ at: (now + 60_000) as Instant, zones: r.zones as IanaZone[], startSec: w.startSec, endSec: w.endSec, initiated: r.kind === 'initiated' || r.has_facts,
         initiatedDays: content.initiatedDays, noInitiatedOnHolidays: content.noInitiatedOnHolidays });
       if (next !== null) return next;
     }
   }
   return (now + 3_600_000) as Instant;
 }
+
+/** The platform's outer window, the one aiIsaGateFacts clamps to (R-ISA-10; the pack's ceiling). */
+const ISA_WINDOW_FLOOR = { startSec: 8 * 3600, endSec: 20 * 3600 } as const;
 
 /** Set an AI ISA message back to `scheduled` (a deferrable refusal: quiet hours, the cap, the gap, the offsets). */
 export async function deferMessageInTx(tx: Tx, messageId: string, until: Instant, reason: string): Promise<void> {
@@ -125,7 +140,7 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
      WHERE aa.tenant_id = app.tenant_id() AND aa.id = ${m.assistantActionId}`.execute(tx);
   const r = row.rows[0];
   const a = r?.assignment_id ? await assignmentById(tx, r.assignment_id) : null;
-  const sec = (s: string | null, d: number) => { if (!s) return d; const [h, mi] = s.split(':').map(Number); return h! * 3600 + mi! * 60; };
+  const sec = (s: string | null, d: number) => { if (!s) return d; const [h, mi, ss] = s.split(':').map(Number); return h! * 3600 + mi! * 60 + (ss ?? 0); };
   const empty: AiIsaGateFacts = {
     chainFailures: ['NO_ASSIGNMENT'], paused: true, pinnedSeqCurrent: false, epochCurrent: false, conversationPauseReason: r?.conv_reason ?? null, boundRecipientHmac: null,
     allowedChannels: [], hasMedia: r?.media ?? false, consentMissing: ['evidence'], zones: [], windowStartSec: 9 * 3600, windowEndSec: 20 * 3600, initiated: true,
@@ -172,8 +187,8 @@ export async function aiIsaGateFacts(tx: Tx, deps: IsaDeps, m: IsaMessageRef, re
       consentMissing: consent.missing,
       zones,
       // R-ISA-34 (E1002): a message composed before a narrower version was approved is sent inside the narrower window too
-      windowStartSec: Math.max(sec(r.ws, ctx.content.window.startSec), ctx.content.window.startSec, 8 * 3600),
-      windowEndSec: Math.min(sec(r.we, ctx.content.window.endSec), ctx.content.window.endSec, 20 * 3600),
+      windowStartSec: Math.max(sec(r.ws, ctx.content.window.startSec), ctx.content.window.startSec, ISA_WINDOW_FLOOR.startSec),
+      windowEndSec: Math.min(sec(r.we, ctx.content.window.endSec), ctx.content.window.endSec, ISA_WINDOW_FLOOR.endSec),
       initiated,
       initiatedDays: ctx.content.initiatedDays,
       holidays: ctx.content.noInitiatedOnHolidays ? holidaysAround(now) : [],

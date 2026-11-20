@@ -246,10 +246,11 @@ export async function startCare(agent: TestClient, contactId: string, body: Reco
 
 /** A worker over the comms, assistant and AI ISA handlers on the harness database and fakes. A `hold` kind's job is put
  *  back, a day out, without running (a worker that is behind). */
-export function isaWorker(h: ApiHarness, o: { hold?: readonly string[] } = {}) {
+export function isaWorker(h: ApiHarness, o: { hold?: readonly string[]; /** told of every job a handler is about to run (kind and payload): a test's count of real runs */ onRun?: (kind: string, payload: unknown) => void } = {}) {
   const deps = depsFromPlatform(h.app.platform);
   const all = [...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never, dispatchStaleHandler() as never];
-  const handlers = all.map((x) => (o.hold?.includes(x.kind) ? { ...x, run: async (ctx: { now: Instant }) => ({ retryAt: (ctx.now + 86_400_000) as Instant }) } : x)) as typeof all;
+  const tapped = all.map((x) => (o.onRun ? { ...x, run: async (ctx: never, p: never) => { o.onRun!(x.kind, p); return (x.run as (c: never, q: never) => Promise<unknown>)(ctx, p); } } : x)) as typeof all;
+  const handlers = tapped.map((x) => (o.hold?.includes(x.kind) ? { ...x, run: async (ctx: { now: Instant }) => ({ retryAt: (ctx.now + 86_400_000) as Instant }) } : x)) as typeof all;
   const registry = new HandlerRegistry().registerAll(handlers);
   return createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime', 'default'], concurrency: 1, worker: `isa-test-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger });
 }
