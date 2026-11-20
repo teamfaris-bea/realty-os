@@ -5,18 +5,17 @@
 //   constant until the server serves one; allowed while counsel review is pending, Q8: nothing sends and Start is
 //   refused). An Admin turns it off only. Off ends AI care for everyone, with a handoff each (E522).
 // - The daily cap: 0–1000; raising it is the Owner's, with its own confirmation and the password.
-// - The team policy, read-only, in words, each value marked VERIFY WITH COUNSEL (Q5: editing and approving it in the
-//   app is not built), with the fields that changed since the previous version (no claim about pausing, V11).
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseAiIsaContent, type AiIsaContent } from '@realty/core/isa';
+// - The team policy: TeamPolicy.tsx (R-ISA-33, R-ISA-34): create, edit as a draft, approve, revoke, each state said
+//   honestly and each control offered only when the server would accept it.
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Dialog, Notice, announce } from '../../design/index.js';
 import { type ApiError, useApi, useRequestReauth } from '../../shell/index.js';
-import type { Playbook } from '../admin/lib/types.js';
-import { type AdminPutBody, type AdminView, useAdmin, useIsaVisible, useMe } from './api.js';
+import { type AdminPutBody, type AdminView, useAdmin, useIsaVisible } from './api.js';
 import { useViewer } from './AiCareControls.js';
-import { CAPABILITY_WORDS, CAP_PAGE_MESSAGES, TEAM_PAGE_MESSAGES, isaMessage } from './words.js';
+import { TeamPolicy } from './TeamPolicy.js';
+import { CAP_PAGE_MESSAGES, TEAM_PAGE_MESSAGES, isaMessage } from './words.js';
 
 /** Q2: what the Owner confirms (sent verbatim as the attestation; the server hashes it into the audit). */
 export const ON_ATTESTATION = 'I turn on the AI assistant for my team. Its consent, quiet-hours and frequency limits are engineering defaults that counsel has not reviewed, and I accept responsibility for that.';
@@ -208,86 +207,5 @@ function Team({ v }: { v: AdminView }) {
         </Dialog>
       ) : null}
     </div>
-  );
-}
-
-// ---- the team policy, read-only -------------------------------------------------------------------------------------
-
-const DAY = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const hhmm = (sec: number) => {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${ampm}`;
-};
-
-export function contentOf(steps: unknown): AiIsaContent | null {
-  const inner = steps && typeof steps === 'object' && !Array.isArray(steps) && 'aiIsa' in (steps as Record<string, unknown>) ? (steps as { aiIsa: unknown }).aiIsa : steps;
-  try {
-    return parseAiIsaContent(inner);
-  } catch {
-    return null;
-  }
-}
-
-export function policyLines(c: AiIsaContent): { key: keyof AiIsaContent; text: string }[] {
-  return [
-    { key: 'capabilities', text: `What it may do: ${c.capabilities.map((x) => CAPABILITY_WORDS[x] ?? 'another capability').join('; ')}.` },
-    { key: 'channels', text: `Channels: ${c.channels.map((x) => (x === 'sms' ? 'texts' : 'email')).join(' and ')}.` },
-    { key: 'window', text: `Sends only between ${hhmm(c.window.startSec)} and ${hhmm(c.window.endSec)} in the person's time.` },
-    { key: 'initiatedDays', text: `Follow-ups it starts only on ${c.initiatedDays.map((d) => DAY[d]).join(', ') || 'no day'}.` },
-    { key: 'noInitiatedOnHolidays', text: c.noInitiatedOnHolidays ? 'No follow-ups it starts on US federal holidays.' : 'Follow-ups it starts may go on holidays.' },
-    { key: 'caps', text: `Limits: ${c.caps.ai24h} AI messages per person in 24 hours, ${c.caps.initiated24h} follow-ups in 24 hours and ${c.caps.initiated7d} in 7 days, at least ${Math.round(c.caps.minGapSeconds / 60)} minutes apart.` },
-    { key: 'cadence', text: `Follows up every ${c.cadence.replace('d', ' days').replace(/^1 days$/, '1 day')} when they don't answer.` },
-    { key: 'limits', text: `At most ${c.limits.maxMessagesPerAssignment} messages and ${c.limits.maxDays} days per person; slower after ${c.limits.slowAfterUnanswered} unanswered, stops after ${c.limits.dormantAfterUnanswered}.` },
-  ];
-}
-
-export function changedFields(prev: AiIsaContent, next: AiIsaContent): (keyof AiIsaContent)[] {
-  return (Object.keys(next) as (keyof AiIsaContent)[]).filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]));
-}
-
-const FIELD_WORDS: Partial<Record<keyof AiIsaContent, string>> = {
-  capabilities: 'what it may do', channels: 'channels', window: 'sending hours', initiatedDays: 'follow-up days', noInitiatedOnHolidays: 'holidays', caps: 'limits',
-  cadence: 'follow-up pace', limits: 'message and day limits', readiness: 'readiness', booking: 'booking', holdingLines: 'holding lines', tone: 'tone',
-};
-
-function TeamPolicy() {
-  const api = useApi();
-  const me = useMe();
-  const pb = useQuery<{ playbooks: Playbook[] }, ApiError>({ queryKey: ['playbooks'], queryFn: ({ signal }) => api.get('/playbooks', { signal }) });
-  const isa = pb.data?.playbooks.find((p) => p.kind === 'ai_isa') ?? null;
-  const versionId = me.data?.policy?.versionId ?? isa?.approvedVersionId ?? null;
-  const versions = [...(isa?.versions ?? [])].sort((a, b) => b.versionNo - a.versionNo);
-  const approved = versions.find((v) => v.id === versionId) ?? null;
-  const prev = approved ? versions.find((v) => v.versionNo < approved.versionNo && v.status !== 'draft') ?? null : null;
-  const content = approved ? contentOf(approved.steps) : null;
-  const prevContent = prev ? contentOf(prev.steps) : null;
-  return (
-    <Card className="flex flex-col gap-2" aria-labelledby="ai-policy">
-      <h2 id="ai-policy" className="text-[19px] font-semibold">
-        Team policy
-      </h2>
-      {!me.data || pb.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : !me.data.policy ? <p className="text-[15px]">Your team has no approved AI assistant policy yet.</p> : !content ? (
-        <p className="text-[15px]">This policy can't be shown here.</p>
-      ) : (
-        <>
-          <p className="text-[15px]">Approved version {approved?.versionNo}. Engineering defaults: VERIFY WITH COUNSEL.</p>
-          <ul className="flex flex-col gap-1 text-[15px]">
-            {policyLines(content).map((l) => (
-              <li key={l.key}>
-                {l.text} <span className="text-[13px] text-ink-muted">VERIFY WITH COUNSEL</span>
-              </li>
-            ))}
-          </ul>
-          {prevContent ? (
-            <p className="text-[15px]">
-              Changed since version {prev!.versionNo}: {changedFields(prevContent, content).map((k) => FIELD_WORDS[k] ?? 'another field').join(', ') || 'nothing'}.
-            </p>
-          ) : null}
-        </>
-      )}
-      <p className="text-[14px] text-ink-muted">Editing and approving the team policy is not built yet.</p>
-    </Card>
   );
 }

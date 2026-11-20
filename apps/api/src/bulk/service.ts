@@ -12,6 +12,7 @@
 //   cancel            the creator or Owner/Admin: pending items are canceled, queued messages too (R-PAR-42).
 //
 // Job payloads hold only the action id (R-TEN-7). Counts and audits hold codes and numbers only.
+import { isNeverEnrolledPlaybookKind } from '@realty/core/assistant';
 import type { IdGenerator, UserActor } from '@realty/core/foundation';
 import { noAutomatedContact } from '../leads/automatedContact.js';
 import { type BulkKind, type BulkKindFacts, bulkActionPreflight, bulkPreflight, isSendKind, isStage, tally } from '@realty/core/parity/bulk';
@@ -198,7 +199,7 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
     let approved = false;
     if (input.kind === 'enroll') {
       playbook = await P.playbookById(tx, params['playbookId']!);
-      if (!playbook || playbook.status !== 'active' || playbook.kind === 'new_lead_response' || playbook.kind === 'trigger' || playbook.kind === 'voice_answering') throw new AppError('NOT_FOUND');
+      if (!playbook || playbook.status !== 'active' || isNeverEnrolledPlaybookKind(playbook.kind)) throw new AppError('NOT_FOUND'); // R-ISA-37: the team AI policy among them
       approved = (await P.approvedVersionOf(tx, playbook.id)) !== null;
     }
     const ctx = isSendKind(input.kind) ? await sendContext(tx, input.kind, actor.userId) : null;

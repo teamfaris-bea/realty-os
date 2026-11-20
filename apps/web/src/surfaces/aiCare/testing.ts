@@ -10,11 +10,13 @@ import { type Schema, violations } from '../../test/contract.js';
 import { AGENT_SURFACES, IDS, fullContact, iso } from '../feed/lib/testing.js';
 import { surface as settingsSurface } from '../settings/index.js';
 import { surface as bulkSurface } from '../bulk/index.js';
-import type { AdminView, HandoffView, ListRow, MeView, PanelResponse, TurnRow } from './api.js';
+import { AI_ISA_POLICY_FIELDS, AI_ISA_POLICY_TEXT_VERSION, type AiIsaContent, DEFAULT_AI_ISA_CONTENT, aiIsaPolicyApprovalText, aiIsaPolicyRevokeText, policyDiff, policySections } from '@realty/core/isa';
+import type { AdminView, HandoffView, ListRow, MeView, PanelResponse, PolicyDraft, PolicyVersion, PolicyView, SellerPanelView, TurnRow } from './api.js';
 import { surface as aiCareSurface } from './index.js';
 import { resetUndoStore } from './undoStore.js';
 
 export { FakeFetch, IDS, fullContact, iso };
+export { DEFAULT_AI_ISA_CONTENT };
 
 export const ISA_IDS = {
   assignment: '01900000-0000-7000-8000-0000000a5501',
@@ -171,13 +173,73 @@ export const SHA = 'a'.repeat(64);
 export function meView(over: Partial<MeView> = {}): MeView {
   return {
     optIn: null,
-    policy: { versionId: ISA_IDS.version, versionSha: SHA, capabilities: ['converse', 'share_listings', 'book_appointments'], channels: ['sms', 'email'] },
+    policy: { versionId: ISA_IDS.version, versionSha: SHA, capabilities: ['converse', 'share_listings', 'book_appointments'], channels: ['sms', 'email'], versionNo: 1, sections: policySections(DEFAULT_AI_ISA_CONTENT) },
+    policyChange: null,
     attestationText: `I opt in to the team's AI assistant policy version ${SHA}. I'm responsible for leads I put in AI care.`,
     needsReattest: false,
     calendarLive: false,
     builtCapabilities: ['converse', 'share_listings', 'propose_saved_search', 'seller_competition', 'seller_sold_comps', 'book_appointments'],
     underCare: 0,
     sentence: 'You have not opted in. Nothing is sent for your leads.',
+    ...over,
+  };
+}
+
+// ---- the seller side of the panel (R-ISA-35) ----
+export const SELLER_IDS = { address: '01900000-0000-7000-8000-0000000d0001', record: '01900000-0000-7000-8000-0000000d0002', near: '01900000-0000-7000-8000-0000000d0003' } as const;
+const NO = (reason: string) => ({ available: false, reason });
+/** An unconfirmed home of a seller lead, as its owner sees it: Confirm is the one action offered. */
+export function sellerPanel(over: Partial<SellerPanelView> = {}): SellerPanelView {
+  return {
+    actions: { confirmSubject: { available: true, reason: null }, subjectDisputed: NO('The owner has not confirmed the home yet.'), nearMatchDifferent: { ...NO('No live listing may be this home.'), listingIds: [] }, resumeComps: NO('Recent sales are not paused.') },
+    contactId: IDS.jane, assignmentId: ISA_IDS.assignment, side: 'seller',
+    subject: { state: 'ok', code: null, sentence: 'The home’s MLS record was found.', nextStep: null, contactAddressId: SELLER_IDS.address, addressLine: '12 Sample Ct, Oakland, CA 94110', recordListingId: SELLER_IDS.record, recordDate: iso(-86_400_000 * 400),
+      facts: { type: 'single_family', beds: 3, baths_x10: 20, sqft: 1500 }, factsSha256: SHA, confirmed: false, confirmedAt: null, disputed: false, clearedReason: null, codes: ['SUBJECT_UNCONFIRMED'] },
+    blockers: [], lastCompsCheck: null,
+    capabilities: { comps: { available: false, sentence: 'Can share recent sales: no — SUBJECT_UNCONFIRMED.' }, competition: { available: false, sentence: 'Can share competing listings: no — confirm the home first.' } },
+    link: { effect: 'ok', code: null, sentence: 'No live listing at this home.', listingIds: [] },
+    suspension: { suspended: false, sentence: null }, watch: { lastRunAt: null, sentence: 'Competition updates are not sent yet (not built yet).' }, counts: null, factsSent: [],
+    ...over,
+  };
+}
+
+// ---- the team AI policy (R-ISA-33, R-ISA-34): built with core's own words, as the server builds it ----
+export const POLICY_IDS = { v1: '01900000-0000-7000-8000-0000000c0001', v2: '01900000-0000-7000-8000-0000000c0002' } as const;
+const fieldsView = (): PolicyView['fields'] => AI_ISA_POLICY_FIELDS.map((f) => ({ ...f, path: [...f.path], ...(f.options ? { options: [...f.options] } : {}), ...(f.locked ? { locked: [...f.locked] } : {}) })) as PolicyView['fields'];
+export function policyVersion(content: AiIsaContent, over: Partial<PolicyVersion> = {}): PolicyVersion {
+  return { versionId: POLICY_IDS.v1, versionNo: 1, contentSha256: SHA, content: content as unknown as Record<string, unknown>, sections: policySections(content), decidedAt: iso(-86_400_000), decidedBy: 'Olive Owner', decidedByRole: 'Owner', ...over };
+}
+/** The wider banner as the server writes it (apps/api/src/isa/policy.ts widerBanner): what is added, what is changed, what approving does. */
+function widerBanner(d: { adds: string[]; changes: string[] }): string {
+  const joined = (xs: readonly string[]) => (xs.length === 1 ? xs[0]! : `${xs.slice(0, -1).join('; ')}; and ${xs.at(-1)!}`);
+  const more = d.adds.length === 0 ? null : `This version lets the assistant do more than the approved one: it ${joined(d.adds)}.`.replace(/: it may /, ': it may now ');
+  const rules = d.changes.length === 1 ? 'a rule' : 'rules';
+  const changed = d.changes.length === 0 ? null : more === null ? `This version changes ${rules} each agent must agree to again: it ${joined(d.changes)}.` : `It also changes ${rules} each agent must agree to again: it ${joined(d.changes)}.`;
+  return [more ?? (changed === null ? 'This version lets the assistant do more than the approved one.' : null), changed, 'Approving it pauses AI care for every lead until each agent re-confirms.'].filter((x) => x !== null).join(' ');
+}
+/** A draft against `approved` (null: nothing approved): the diff, the effect and the texts are core's. */
+export function policyDraft(content: AiIsaContent, approved: AiIsaContent | null, over: Partial<PolicyDraft> = {}): PolicyDraft {
+  const diff = approved ? policyDiff(approved, content) : null;
+  const effect = over.effect !== undefined ? over.effect : approved === null ? 'first' : diff!.wider ? 'wider' : 'narrower';
+  const versionNo = over.versionNo ?? (approved ? 2 : 1);
+  const sha = over.contentSha256 ?? 'b'.repeat(64);
+  return {
+    versionId: approved ? POLICY_IDS.v2 : POLICY_IDS.v1, versionNo, contentSha256: sha, content: content as unknown as Record<string, unknown>, sections: policySections(content), savedAt: iso(-3_600_000), savedBy: 'Olive Owner', issues: [],
+    effect,
+    effectSentence: effect === 'wider' ? widerBanner(diff ?? { adds: [], changes: [] })
+      : effect === 'narrower' ? 'This version lets the assistant do no more than the approved one. AI care continues under it at once.'
+      : effect === 'first' ? 'Nothing is approved yet, so approving this pauses nothing. Agents can opt in once it is approved.'
+      : effect === 'after_revoke' ? 'The last approved version was revoked. AI care stays paused for every lead until each agent re-confirms on this version.' : 'This draft cannot be approved until the marked values are fixed.',
+    diff, approvalText: effect === null ? null : aiIsaPolicyApprovalText({ versionNo, contentSha256: sha, effect }),
+    ...over,
+  };
+}
+export function policyView(over: Partial<PolicyView> = {}): PolicyView {
+  const approved = over.approved === undefined ? policyVersion(DEFAULT_AI_ISA_CONTENT) : over.approved;
+  return {
+    state: 'approved', sentence: 'Version 1 is approved and in use.', fields: fieldsView(), textVersion: AI_ISA_POLICY_TEXT_VERSION, underCare: 2, optedIn: 3, approved, revoked: null, draft: null,
+    revokeText: approved ? aiIsaPolicyRevokeText({ versionNo: approved.versionNo, contentSha256: approved.contentSha256 }) : null,
+    can: { create: false, saveDraft: true, approve: false, revoke: approved !== null }, approveOwnerOnly: false,
     ...over,
   };
 }

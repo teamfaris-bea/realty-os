@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { ERROR_STATUS, type ErrorCode } from '../errors.js';
 import * as S from '../isa/schemas.js';
+import * as SellerS from '../isa/seller/schemas.js';
 import { zodInputKeys } from '../rbac.js';
 import { HandoffView } from './routes.js';
 
@@ -25,6 +26,11 @@ interface RouteSpec {
 export const ISA_CONTRACT_ROUTES: Readonly<Record<string, RouteSpec>> = {
   'GET /admin/ai-isa': { response: S.AdminView },
   'PUT /admin/ai-isa': { body: S.AdminPutBody, response: S.AdminView },
+  'GET /admin/ai-isa/policy': { response: S.PolicyView },
+  'POST /admin/ai-isa/policy': { body: S.EmptyBody, response: S.PolicyCreateResult },
+  'PUT /admin/ai-isa/policy/draft': { body: S.PolicyDraftBody, response: S.PolicyView },
+  'POST /admin/ai-isa/policy/approve': { body: S.PolicyDecisionBody, response: S.PolicyApproveResult },
+  'POST /admin/ai-isa/policy/revoke': { body: S.PolicyDecisionBody, response: S.PolicyRevokeResult },
   'GET /me/ai-isa': { response: S.MeView },
   'PUT /me/ai-isa/opt-in': { body: S.OptInBody, response: S.OptInResult },
   'POST /me/ai-isa/opt-in/revoke': { body: S.EmptyBody, response: S.RevokeResult },
@@ -44,6 +50,11 @@ export const ISA_CONTRACT_ROUTES: Readonly<Record<string, RouteSpec>> = {
   'POST /ai-isa/handoffs/:id/ack': { body: S.EmptyBody, response: S.AckResult },
   'POST /ai-isa/escalations/:id/resolve': { body: S.ResolveBody, response: S.ResolveResult },
   'GET /ai-isa/handoffs/:id': { response: HandoffView },
+  'GET /contacts/:id/ai-isa/seller': { response: SellerS.SellerPanel },
+  'POST /contacts/:id/ai-isa/confirm-subject': { body: SellerS.ConfirmSubjectBody, response: SellerS.SellerResult },
+  'POST /contacts/:id/ai-isa/seller/subject-disputed': { body: S.EmptyBody, response: SellerS.SellerResult },
+  'POST /contacts/:id/ai-isa/seller/near-match-different': { body: SellerS.NearMatchBody, response: SellerS.SellerResult },
+  'POST /contacts/:id/ai-isa/seller/resume-comps': { body: S.EmptyBody, response: SellerS.SellerResult },
 };
 
 /** The module-75 codes (errors.ts, between its "module 75" header and the next header or the registry marker), plus the shell codes the surface meets. */

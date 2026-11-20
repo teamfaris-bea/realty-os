@@ -27,7 +27,10 @@ export const SubjectView = z.object({
   codes: z.array(z.string()),
 });
 
+const SellerAction = z.object({ available: z.boolean(), /** why not, in words (null when available) */ reason: z.string().nullable() });
 export const SellerPanel = z.object({
+  /** R-ISA-35: what THIS viewer may do from the panel now; a control the server would refuse is never offered */
+  actions: z.object({ confirmSubject: SellerAction, subjectDisputed: SellerAction, nearMatchDifferent: SellerAction.extend({ listingIds: z.array(z.string()) }), resumeComps: SellerAction }),
   contactId: z.uuid(),
   assignmentId: z.uuid().nullable(),
   side: z.string().nullable(),

@@ -16,6 +16,7 @@ import type { ContactFullView, TimelineResponse } from '../feed/lib/types.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { type PanelHandoff, type PanelResponse, type Side, type StartResult, isaKeys, useHandoff, useIsaAction, useIsaVisible, useMe, usePanel } from './api.js';
 import { AiCareControls, HoldBanner, Section, type ViewerInfo, cap, stateOfPanel, targetOfPanel, useHold, useViewer, UndoToastHost } from './AiCareControls.js';
+import { SellerHome } from './SellerHome.js';
 import { capsWords, localDate, localTime, PAUSE_EXPIRY_MS, scheduledWords, zonesWords } from './time.js';
 import {
   EFFECT_WORDS,
@@ -189,6 +190,8 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
       {live || pendingAfterHandoff(p) ? <HoldBanner hold={hold} first={first} viewer={viewer} /> : null}
       {a && a.pausedAt && !a.endedAt ? <PausedLines p={p} viewer={viewer} contact={contact} /> : null}
       {p.block ? <BlockLines block={p.block} viewer={viewer} contactId={contact.id} /> : null}
+      {/* R-ISA-35: the seller's home and its actions, also while care is paused (a possible listing pauses it) */}
+      {a && !a.endedAt && a.side !== 'buyer' ? <SellerHome contactId={contact.id} isOwner={viewer.isOwner} ownerFirst={viewer.ownerFirst} /> : null}
       {a && live ? (
         <>
           <Section title="What it may do">

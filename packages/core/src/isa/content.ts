@@ -3,7 +3,9 @@
 // `contentSha256`. A strict Zod schema; every value is validated against the `platform:ai_isa` pack ceilings at
 // approval AND again at send (`validateAiIsaContent`). The AI disclosure and sign-off are NOT team content: they
 // are platform constants (./lines.ts). `narrowsPrevious` is computed at approval and stored as
-// `playbook_versions.narrows_previous` (kind ai_isa only): narrowing-only successors keep assignments running.
+// `playbook_versions.narrows_previous` (kind ai_isa only): narrowing-only successors keep assignments running. It is
+// one rule per field (AI_ISA_FIELD_WIDENS, keyed by the content type's own leaves): a field with no rule does not
+// compile and, at run time, compares as wider (R-ISA-38).
 import { z } from 'zod';
 import { contentGuard, type IdentityFacts, storedContent } from '../assistant/index.js';
 import { DEFAULT_FAIR_HOUSING_PACK, type FairHousingPack, guardAssistantOutput } from '../fairhousing/index.js';
@@ -172,40 +174,134 @@ export function parseAiIsaContent(raw: unknown, opts: { identity?: IdentityFacts
   return AiIsaContentInner.parse(stored !== null && stored.kind === 'ai_isa' ? stored.aiIsa : raw);
 }
 
-function subset<T>(a: readonly T[], b: readonly T[]): boolean {
-  return a.every((x) => b.includes(x));
+// ---- wider or narrower: one rule per field (R-ISA-38; E1011; docs/AI_ISA.md §3.2) -------------------------------------
+
+/** Every leaf of a content type as a dotted path; an array is one leaf, an optional value counts as present. */
+type LeafKey<T, P extends string = ''> = T extends readonly unknown[]
+  ? P
+  : T extends object
+    ? { [K in keyof T & string]-?: LeafKey<NonNullable<T[K]>, P extends '' ? K : `${P}.${K}`> }[keyof T & string]
+    : P;
+
+/** One key per value of `AiIsaContent`: the id a form field, a validator issue, a diff line and a comparison rule share. */
+export type AiIsaFieldKey = LeafKey<AiIsaContent>;
+
+/**
+ * What makes a change of one field WIDER (the assistant may do more, so care pauses until each agent re-confirms):
+ * - adding: a choice that was not there before; - higher / lower: a larger / smaller number; - off: turning the rule off;
+ * - faster: a shorter interval; - any: every change, in either direction, because nothing here can rank it.
+ */
+export type PolicyWidening = 'adding' | 'higher' | 'lower' | 'off' | 'faster' | 'any';
+
+/**
+ * The comparison rule of every field. The type is a map over `AiIsaFieldKey`, so a value added to the schema with no
+ * rule here does not compile; at run time a key with no rule is WIDER (policyFieldChange), never ignored.
+ * `any` (fail closed):
+ * - readiness.timelineDays: fewer days hands FEWER people back and keeps writing to the rest, more days hands back
+ *   sooner; which of the two is "more" is the Owner's to rule (Q-ISA-46), so both re-confirm;
+ * - booking.durationMinutes: a longer or shorter appointment is a different thing booked on an agent's calendar;
+ * - holdingLines.* and tone: words, with nothing to rank them by.
+ * VERIFY WITH COUNSEL (engineering defaults).
+ */
+export const AI_ISA_FIELD_WIDENS: { readonly [K in AiIsaFieldKey]: PolicyWidening } = Object.freeze({
+  capabilities: 'adding',
+  channels: 'adding',
+  'window.startSec': 'lower',
+  'window.endSec': 'higher',
+  initiatedDays: 'adding',
+  noInitiatedOnHolidays: 'off',
+  'caps.ai24h': 'higher',
+  'caps.automated24h': 'higher',
+  'caps.initiated24h': 'higher',
+  'caps.initiated7d': 'higher',
+  'caps.minGapSeconds': 'lower',
+  cadence: 'faster',
+  'limits.maxMessagesPerAssignment': 'higher',
+  'limits.maxDays': 'higher',
+  'limits.slowAfterUnanswered': 'higher',
+  'limits.dormantAfterUnanswered': 'higher',
+  'readiness.timelineDays': 'any',
+  'booking.kinds.buyer': 'adding',
+  'booking.kinds.seller': 'adding',
+  'booking.minNoticeHours': 'lower',
+  'booking.horizonDays': 'higher',
+  'booking.bufferMinutes': 'lower',
+  'booking.durationMinutes': 'any',
+  'holdingLines.pricing_negotiation': 'any',
+  'holdingLines.financial': 'any',
+  'holdingLines.data_unavailable': 'any',
+  'holdingLines.booking_unavailable': 'any',
+  tone: 'any',
+} as const);
+
+/** The field keys in the order a diff reads them. */
+export const AI_ISA_FIELD_KEYS: readonly AiIsaFieldKey[] = Object.freeze(Object.keys(AI_ISA_FIELD_WIDENS) as AiIsaFieldKey[]);
+
+export type PolicyFieldChange = 'same' | 'narrower' | 'wider';
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isList = (v: unknown): v is readonly (string | number)[] => Array.isArray(v) && v.every((x) => typeof x === 'string' || typeof x === 'number');
+const ranked = (a: unknown, b: unknown, widerWhenHigher: boolean): PolicyFieldChange => (!isNum(a) || !isNum(b) ? 'wider' : a === b ? 'same' : b > a === widerWhenHigher ? 'wider' : 'narrower');
+
+const WIDENING: { readonly [K in PolicyWidening]: (prev: unknown, next: unknown) => PolicyFieldChange } = {
+  adding: (a, b) => (!isList(a) || !isList(b) ? 'wider' : !b.every((x) => a.includes(x)) ? 'wider' : a.every((x) => b.includes(x)) ? 'same' : 'narrower'),
+  higher: (a, b) => ranked(a, b, true),
+  lower: (a, b) => ranked(a, b, false),
+  off: (a, b) => (typeof a !== 'boolean' || typeof b !== 'boolean' ? 'wider' : a === b ? 'same' : b ? 'narrower' : 'wider'),
+  faster: (a, b) => {
+    const [x, y] = [CADENCE_MS[a as keyof typeof CADENCE_MS], CADENCE_MS[b as keyof typeof CADENCE_MS]];
+    return typeof a !== 'string' || typeof b !== 'string' || !Object.hasOwn(CADENCE_MS, a) || !Object.hasOwn(CADENCE_MS, b) ? 'wider' : ranked(y, x, true);
+  },
+  // an absent optional value and undefined are the same; anything else that differs is wider
+  any: (a, b) => ((a === undefined || typeof a === 'string' || isNum(a)) && a === b ? 'same' : 'wider'),
+};
+
+/**
+ * How one field changed from `prev` to `next`. A key with no rule (a field this code does not know) is WIDER whatever
+ * its values, and so is a value of the wrong type: the comparison never calls a change it cannot read "narrower".
+ */
+export function policyFieldChange(key: string, prev: unknown, next: unknown): PolicyFieldChange {
+  if (!Object.hasOwn(AI_ISA_FIELD_WIDENS, key)) return 'wider';
+  return WIDENING[AI_ISA_FIELD_WIDENS[key as AiIsaFieldKey]](prev, next);
+}
+
+/** Every leaf path a stored value actually holds (an array is one leaf; an undefined value is absent). */
+function leafKeys(o: unknown, at: string[] = []): string[] {
+  if (o === undefined) return [];
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) return [at.join('.')];
+  return Object.entries(o as Record<string, unknown>).flatMap(([k, v]) => leafKeys(v, [...at, k]));
+}
+
+function valueAt(o: unknown, key: string): unknown {
+  let at: unknown = o;
+  for (const k of key.split('.')) at = at === null || typeof at !== 'object' || Array.isArray(at) ? undefined : Object.hasOwn(at, k) ? (at as Record<string, unknown>)[k] : undefined;
+  return at;
 }
 
 /**
- * §3.2: whether `next` only narrows `prev` (fewer or equal capabilities and channels, a narrower or equal window
- * and initiated days, holidays kept, lower or equal caps and limits, an equal or larger gap, a slower or equal
- * cadence, stricter or equal readiness, booking kinds a subset with equal or stricter notice, horizon, buffer and
- * duration). Line and tone wording may change (both pass the guards at approval). Both must be valid.
+ * Every field that differs between two contents, in diff order: the known fields by their rule, then any leaf either
+ * side holds that the table does not know (`known: false`, always wider).
+ */
+export function policyFieldChanges(prev: unknown, next: unknown): { key: string; change: 'narrower' | 'wider'; known: boolean }[] {
+  const out: { key: string; change: 'narrower' | 'wider'; known: boolean }[] = [];
+  for (const key of AI_ISA_FIELD_KEYS) {
+    const change = policyFieldChange(key, valueAt(prev, key), valueAt(next, key));
+    if (change !== 'same') out.push({ key, change, known: true });
+  }
+  const unknown = [...new Set([...leafKeys(prev), ...leafKeys(next)])].filter((k) => !Object.hasOwn(AI_ISA_FIELD_WIDENS, k)).sort();
+  for (const key of unknown) out.push({ key, change: 'wider', known: false });
+  return out;
+}
+
+/**
+ * §3.2: whether `next` only narrows `prev`: no field changed in its widening direction (AI_ISA_FIELD_WIDENS: fewer or
+ * equal capabilities, channels, days and booking kinds; a later start and an earlier end; holidays kept; lower or equal
+ * caps, limits and horizon; an equal or larger gap, notice and buffer; a slower or equal cadence), and no field changed
+ * that the table ranks `any` or does not know. Both should be valid content; anything else compares as wider.
  */
 export function narrowsPrevious(prev: AiIsaContent, next: AiIsaContent): boolean {
-  const caps = (['ai24h', 'automated24h', 'initiated24h', 'initiated7d'] as const).every((k) => next.caps[k] <= prev.caps[k]);
-  return (
-    subset(next.capabilities, prev.capabilities) &&
-    subset(next.channels, prev.channels) &&
-    next.window.startSec >= prev.window.startSec &&
-    next.window.endSec <= prev.window.endSec &&
-    subset(next.initiatedDays, prev.initiatedDays) &&
-    (next.noInitiatedOnHolidays || !prev.noInitiatedOnHolidays) &&
-    caps &&
-    next.caps.minGapSeconds >= prev.caps.minGapSeconds &&
-    CADENCE_MS[next.cadence] >= CADENCE_MS[prev.cadence] &&
-    next.limits.maxMessagesPerAssignment <= prev.limits.maxMessagesPerAssignment &&
-    next.limits.maxDays <= prev.limits.maxDays &&
-    next.limits.slowAfterUnanswered <= prev.limits.slowAfterUnanswered &&
-    next.limits.dormantAfterUnanswered <= prev.limits.dormantAfterUnanswered &&
-    next.readiness.timelineDays <= prev.readiness.timelineDays &&
-    subset(next.booking.kinds.buyer, prev.booking.kinds.buyer) &&
-    subset(next.booking.kinds.seller, prev.booking.kinds.seller) &&
-    next.booking.minNoticeHours >= prev.booking.minNoticeHours &&
-    next.booking.horizonDays <= prev.booking.horizonDays &&
-    next.booking.bufferMinutes >= prev.booking.bufferMinutes &&
-    next.booking.durationMinutes === prev.booking.durationMinutes
-  );
+  if (prev === null || typeof prev !== 'object' || next === null || typeof next !== 'object') return false;
+  return policyFieldChanges(prev, next).every((c) => c.change !== 'wider');
 }
 
 /** The capabilities in effect: the policy's ∩ the agent's opt-in, minus anything reserved. */

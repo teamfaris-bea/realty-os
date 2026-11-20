@@ -18,6 +18,7 @@ export * from './sendPolicy.js';
 export * from './guard.js';
 export * from './output.js';
 export * from './content.js';
+export * from './policy.js';
 export * from './facts.js';
 export * from './market.js';
 export * from './prompt.js';

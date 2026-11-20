@@ -159,7 +159,14 @@ export function PlaybookPage() {
       </Link>
       <StatusLine text={status} />
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
-      {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
+      {/* R-ISA-36 (E1009): the server never returns the team AI policy on this read; its refusal says where the policy lives */}
+      {q.isError && q.error.code === 'AI_ISA_POLICY_USE_ITS_ROUTES' ? (
+        <>
+          <Notice tone="info">{ISA_POLICY_ELSEWHERE}</Notice>
+          <AiPolicyNotice />
+        </>
+      ) : null}
+      {q.isError && q.error.code !== 'AI_ISA_POLICY_USE_ITS_ROUTES' ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
       {p && isElsewherePlaybook(p) ? (
         <>
           <Notice tone="info">{ISA_POLICY_ELSEWHERE}</Notice>

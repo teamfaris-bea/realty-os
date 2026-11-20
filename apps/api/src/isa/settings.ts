@@ -11,7 +11,9 @@ import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import { continueCare, currentPolicy, systemEndInTx } from './controls.js';
 import { sha256, type IsaDeps } from './effects.js';
-import { assignmentById, lockForTurn, tenantIsaFacts } from './repo.js';
+import { parseAiIsaContent } from './coreSeam.js';
+import { policyForAgent } from './policy.js';
+import { assignmentById, lockForTurn, tenantIsaFacts, versionState } from './repo.js';
 import { ISA_BUILT_CAPABILITIES } from './sentences.js';
 
 export const NOTICE_SENTENCE = 'The AI assistant (ISA) uses engineering defaults for consent evidence, quiet hours and frequency limits on its own messages. These are not legal advice and have not been reviewed by counsel.';
@@ -82,16 +84,22 @@ export async function meView(tx: Tx, actor: UserActor) {
     AND status IN ('connected','degraded') AND revoked_at IS NULL) AS ok`.execute(tx);
   const n = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ai_isa_assignments WHERE tenant_id = app.tenant_id() AND owner_user_id = ${actor.userId} AND ended_at IS NULL`.execute(tx);
   const opt = o.rows[0];
-  const content = pol?.steps as { capabilities?: string[]; channels?: string[] } | undefined;
+  // R-ISA-33: the stored content is read by the validator's parser (either stored shape), never by a cast
+  const content = pol ? parseAiIsaContent(pol.steps) : null;
+  // R-ISA-34: link 4's own answer for the version this agent confirmed. A narrower successor keeps their care running
+  // (no re-confirmation is asked for); a wider one or a revoke pauses it until they confirm the current version.
+  const mine = opt && (pol === null || opt.v !== pol.versionId) ? await versionState(tx, opt.v) : null;
+  const forAgent = await policyForAgent(tx, pol, opt?.v ?? null, mine);
   return {
     optIn: opt ? { id: opt.id, versionId: opt.v, capabilities: opt.capabilities, channels: opt.channels, timezone: opt.timezone, availability: opt.availability as never, bookingKinds: opt.booking.kinds ?? [], createdAt: opt.created_at.toISOString() } : null,
-    policy: pol ? { versionId: pol.versionId, versionSha: pol.sha, capabilities: content?.capabilities ?? ['converse'], channels: content?.channels ?? ['sms', 'email'] } : null,
+    policy: pol ? { versionId: pol.versionId, versionSha: pol.sha, capabilities: content?.capabilities ?? ['converse'], channels: content?.channels ?? ['sms', 'email'], versionNo: forAgent.versionNo, sections: forAgent.sections } : null,
+    policyChange: forAgent.change,
     attestationText: pol ? attestationText(pol.sha) : null,
-    needsReattest: opt !== undefined && pol !== null && opt.v !== pol.versionId,
+    needsReattest: opt !== undefined && pol !== null && opt.v !== pol.versionId && mine !== 'narrowed',
     calendarLive: cal.rows[0]!.ok,
     builtCapabilities: [...ISA_BUILT_CAPABILITIES],
     underCare: n.rows[0]!.n,
-    sentence: pol === null ? 'Your team has no approved AI assistant policy yet.' : opt ? 'You are opted in.' : 'You have not opted in. Nothing is sent for your leads.',
+    sentence: pol === null ? 'Your team has no approved AI assistant policy yet.' : opt ? (forAgent.change?.sentence ?? 'You are opted in.') : 'You have not opted in. Nothing is sent for your leads.',
   };
 }
 

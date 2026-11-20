@@ -53,7 +53,9 @@ export interface OptInBody {
 }
 export interface MeView {
   optIn: { id: string; versionId: string; capabilities: string[]; channels: string[]; timezone: string; availability: AvailabilityWindow[]; bookingKinds: string[]; createdAt: string } | null;
-  policy: { versionId: string; versionSha: string; capabilities: string[]; channels: string[] } | null;
+  policy: { versionId: string; versionSha: string; capabilities: string[]; channels: string[]; versionNo: number | null; sections: PolicySection[] } | null;
+  /** R-ISA-34: what changed since the version this agent confirmed, and what it did to their care (null: nothing did) */
+  policyChange: { state: 'narrowed' | 'widened' | 'revoked'; fromVersionNo: number | null; diff: PolicyDiffWords | null; sentence: string } | null;
   attestationText: string | null;
   needsReattest: boolean;
   calendarLive: boolean;
@@ -61,6 +63,126 @@ export interface MeView {
   builtCapabilities: string[];
   underCare: number;
   sentence: string;
+}
+// ---- the seller side of the panel (R-ISA-35; apps/api/src/isa/seller/schemas.ts SellerPanel) ----
+export interface SellerAction {
+  available: boolean;
+  reason: string | null;
+}
+export interface SellerPanelView {
+  actions: { confirmSubject: SellerAction; subjectDisputed: SellerAction; nearMatchDifferent: SellerAction & { listingIds: string[] }; resumeComps: SellerAction };
+  contactId: string;
+  assignmentId: string | null;
+  side: string | null;
+  subject: {
+    state: string; code: string | null; sentence: string; nextStep: string | null; contactAddressId: string | null; addressLine: string | null; recordListingId: string | null; recordDate: string | null;
+    facts: { type: string; beds: number; baths_x10: number | null; sqft: number } | null; factsSha256: string | null; confirmed: boolean; confirmedAt: string | null; disputed: boolean; clearedReason: string | null; codes: string[];
+  };
+  blockers: { code: string; sentence: string }[];
+  lastCompsCheck: { codes: string[]; checkedAt: string } | null;
+  capabilities: { comps: { available: boolean; sentence: string }; competition: { available: boolean; sentence: string } };
+  link: { effect: 'ok' | 'pause' | 'end'; code: string | null; sentence: string; listingIds: string[] };
+  suspension: { suspended: boolean; sentence: string | null };
+  watch: { lastRunAt: string | null; sentence: string };
+  counts: { active: number; comingSoon: number; pending: number; sentence: string } | null;
+  factsSent: { factKind: string; listingId: string | null; sentAt: string }[];
+}
+export interface SellerResult {
+  ok: true;
+  sentence: string;
+}
+
+// ---- the team AI policy (R-ISA-33, R-ISA-34; apps/api/src/isa/schemas.ts PolicyView) ----
+export interface PolicySection {
+  key: string;
+  title: string;
+  may: string[];
+  mayNot: string[];
+}
+export interface PolicyDiffWords {
+  adds: string[];
+  removes: string[];
+  /** changes nothing can rank as more or less (R-ISA-38): each makes the version wider, so agents re-confirm */
+  changes: string[];
+  wider: boolean;
+}
+export interface PolicyFieldView {
+  key: string;
+  path: string[];
+  section: string;
+  kind: 'options' | 'choice' | 'toggle' | 'int' | 'time' | 'text';
+  label: string;
+  help?: string;
+  options?: { value: string | number; label: string }[];
+  locked?: (string | number | boolean)[];
+  min?: number;
+  max?: number;
+  unit?: string;
+  maxLength?: number;
+}
+export interface PolicyIssue {
+  code: string;
+  field: string | null;
+  sentence: string;
+}
+export type PolicyEffect = 'first' | 'narrower' | 'wider' | 'after_revoke';
+export interface PolicyVersion {
+  versionId: string;
+  versionNo: number;
+  contentSha256: string;
+  content: Record<string, unknown> | null;
+  sections: PolicySection[];
+  decidedAt: string | null;
+  decidedBy: string | null;
+  decidedByRole: string | null;
+}
+export interface PolicyDraft {
+  versionId: string;
+  versionNo: number;
+  contentSha256: string;
+  content: Record<string, unknown>;
+  sections: PolicySection[];
+  savedAt: string;
+  savedBy: string;
+  issues: PolicyIssue[];
+  effect: PolicyEffect | null;
+  effectSentence: string;
+  diff: PolicyDiffWords | null;
+  approvalText: string | null;
+}
+export interface PolicyView {
+  state: 'none' | 'draft_only' | 'approved' | 'approved_with_draft' | 'revoked' | 'revoked_with_draft';
+  sentence: string;
+  fields: PolicyFieldView[];
+  textVersion: string;
+  underCare: number;
+  optedIn: number;
+  approved: PolicyVersion | null;
+  revoked: PolicyVersion | null;
+  draft: PolicyDraft | null;
+  revokeText: string | null;
+  can: { create: boolean; saveDraft: boolean; approve: boolean; revoke: boolean };
+  approveOwnerOnly: boolean;
+}
+export interface PolicyDecisionBody {
+  versionId: string;
+  contentSha256: string;
+  attestation: string;
+}
+export interface PolicyApproveResult {
+  effect: PolicyEffect;
+  careContinues: boolean;
+  pausedCare: number;
+  agentsToReconfirm: number;
+  sentence: string;
+  replayed: boolean;
+  policy: PolicyView;
+}
+export interface PolicyRevokeResult {
+  pausedCare: number;
+  sentence: string;
+  replayed: boolean;
+  policy: PolicyView;
 }
 export interface OptInResult {
   optInId: string;
@@ -276,6 +398,8 @@ export const isaKeys = {
   turns: (contactId: string) => ['ai-isa', 'turns', contactId] as const,
   me: () => ['ai-isa', 'me'] as const,
   admin: () => ['ai-isa', 'admin'] as const,
+  policy: () => ['ai-isa', 'policy'] as const,
+  seller: (contactId: string) => ['ai-isa', 'seller', contactId] as const,
   handoff: (id: string) => ['ai-isa', 'handoff', id] as const,
 };
 
@@ -355,6 +479,25 @@ export function useMe(enabled = true) {
 export function useAdmin(enabled = true) {
   const api = useApi();
   return useQuery<AdminView, ApiError>({ queryKey: isaKeys.admin(), queryFn: ({ signal }) => api.get<AdminView>('/admin/ai-isa', { signal }), enabled, retry: quiet });
+}
+
+/** The seller side of a person's AI care panel (asked only for seller-side care; a 403/404 renders nothing). */
+export function useSellerPanel(contactId: string, enabled = true) {
+  const api = useApi();
+  const visible = useIsaVisible();
+  return useQuery<SellerPanelView, ApiError>({
+    queryKey: isaKeys.seller(contactId),
+    queryFn: ({ signal }) => api.get<SellerPanelView>(`/contacts/${contactId}/ai-isa/seller`, { signal }),
+    enabled: visible && enabled && contactId !== '',
+    staleTime: 15_000,
+    retry: quiet,
+  });
+}
+
+/** The team AI policy (Owner and Admin; a 403/404 renders nothing). */
+export function usePolicy(enabled = true) {
+  const api = useApi();
+  return useQuery<PolicyView, ApiError>({ queryKey: isaKeys.policy(), queryFn: ({ signal }) => api.get<PolicyView>('/admin/ai-isa/policy', { signal }), enabled, retry: quiet });
 }
 
 export function useHandoff(id: string | null | undefined) {

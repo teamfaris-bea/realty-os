@@ -22,9 +22,9 @@ import { markAcceptingInTx, reconcileOfferRowsInTx } from './booking/rows.js';
 import type { BuyerBundle } from './buyer/bundle.js';
 import { pauseAiSearchesAtHandoffInTx } from './buyer/handoffSearches.js';
 import { insertPendingFactsInTx, type PlannedFacts, planFactsMessageInTx } from './buyer/facts.js';
-import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
+import { type AssignmentRow, type ChainEnv, effectivePolicy, saveMachine } from './repo.js';
 import { onEscalationInTx, renderSellerFactsInTx, writeSellerFactsInTx } from './seller/index.js';
-import { sourcePauseNote } from './sentences.js';
+import { ACTIVITY_ANSWERING, ACTIVITY_WAITING_BUDGET, BUDGET_HOLD_OUTREACH, sourcePauseNote } from './sentences.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
 
@@ -50,7 +50,8 @@ export interface IsaContext {
 
 /** The facts one transition needs, read in `tx` (the policy content, the identity, the zones, the thread's team texts). */
 export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promise<IsaContext> {
-  const v = await sql<{ steps: unknown; sha: string }>`SELECT steps, content_sha256 AS sha FROM playbook_versions WHERE tenant_id = app.tenant_id() AND id = ${a.playbookVersionId}`.execute(tx);
+  // R-ISA-34 (E1002): the content in effect, which is a narrower successor's from the moment it is approved
+  const v = { rows: [await effectivePolicy(tx, a.playbookVersionId)] };
   const content = parseAiIsaContent(v.rows[0]?.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
   const id = await sql<{ first: string | null; team: string | null; brokerage: string; postal: string | null; tz: string; ctz: string | null; csrc: string | null }>`
     SELECT split_part(COALESCE(u.display_name, ''), ' ', 1) AS first, s.team_name AS team, s.brokerage_legal_name AS brokerage, s.brokerage_postal_address AS postal,
@@ -299,6 +300,27 @@ export async function pauseCardInTx(env: Pick<ApplyEnv, 'tx' | 'deps' | 'ctx' | 
     await notifyUser(tx, deps.ids, { userId, kind: 'ai_isa_paused', priority: ctx.a.machine.inboundUnanswered ? 'high' : 'normal',
       title: `AI care paused: ${label}`.slice(0, 120), body: sourcePauseNote(reason), subjectType: 'contact', subjectId: ctx.a.contactId, dedupeKey: `ai_isa_paused:${ctx.a.id}:${ctx.a.epoch}:${reason}` }, now);
   }
+}
+
+/**
+ * E905 (R-ISA-20): a start or a follow-up held at a daily model-call budget. Nobody wrote, so there is no unanswered
+ * reply to pin; the owner is told by the pause card's mechanism (a notification on the person), once per assignment
+ * and budget day, that AI care waits for tomorrow's budget and that they can reach out themselves.
+ */
+export async function budgetHoldNoticeInTx(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, reset: Date, now: Instant): Promise<void> {
+  const label = (await contactLabel(tx, a.contactId)) ?? 'A lead';
+  for (const userId of await owners(tx, a)) {
+    await notifyUser(tx, deps.ids, { userId, kind: 'ai_isa_paused', priority: 'normal', title: `AI care is waiting: ${label}`.slice(0, 120), body: BUDGET_HOLD_OUTREACH,
+      subjectType: 'contact', subjectId: a.contactId, dedupeKey: `ai_isa_budget_hold:${a.id}:${reset.getTime()}` }, now);
+  }
+}
+
+/** E905: the activity card of a reply (ingest.ts writes it) says what is true now: answering, or waiting for tomorrow's budget. */
+export async function activityCardInTx(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, waiting: boolean): Promise<void> {
+  await upsertFeedItem(tx, deps.ids, {
+    userId: a.ownerUserId, itemType: 'ai_isa_activity', band: 'scored', contactId: a.contactId, subjectType: 'ai_isa_assignment', subjectId: a.id, assistantActionId: null,
+    score: 30, reasons: [waiting ? ACTIVITY_WAITING_BUDGET : ACTIVITY_ANSWERING], dedupeKey: `ai_isa_activity:${a.id}`,
+  });
 }
 
 async function escalationCardInTx(env: ApplyEnv, cls: string, type: string, priority: string): Promise<void> {

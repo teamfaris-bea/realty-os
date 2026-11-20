@@ -1,7 +1,8 @@
 // Test fixtures for module 75 (fakes only: FakeIsaAi / HostileIsaAi, the fake telephony and email adapters, the fake
 // DNC provider; no real model, send, call or vendor). Every application step goes through the API routes or the
-// worker; the superuser pool only clears the counsel pack, seeds the approved ai_isa policy (the policy editor is the
-// web lane's) and moves stored instants (there is no fake clock).
+// worker, the team's AI policy included (approvePolicyAsOwner: created and approved by the Owner through isa/policy.ts);
+// the superuser pool only records counsel's review of the pack (never application code's to write) and moves stored
+// instants and the calendar day (there is no fake clock).
 import { randomUUID } from 'node:crypto';
 import type { Instant } from '@realty/core/foundation';
 import type { AiProvider } from '../providers/types.js';
@@ -59,29 +60,44 @@ export interface IsaWorld extends CommsWorld {
   ai: FakeIsaAi;
 }
 
-/** A tenant with the AI ISA fully authorized on fakes: pack cleared, switch on, an approved policy, agent 0 opted in. */
-export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[] } = {}): Promise<IsaWorld> {
-  const w = await commsWorld(h, { agents: 2, teamLead: true });
-  const pb = randomUUID();
-  const versionId = randomUUID();
-  const versionSha = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
-  const content = { ...DEFAULT_AI_ISA_CONTENT, ...(o.capabilities ? { capabilities: o.capabilities } : {}) };
-  await h.su.query(`SET session_replication_role = replica`);
-  try {
-    await h.su.query(`INSERT INTO playbooks (tenant_id, id, kind, scope, name, status) VALUES ($1, $2, 'ai_isa', 'team', 'AI assistant', 'active')`, [w.tenantId, pb]);
-    await h.su.query(`INSERT INTO playbook_versions (tenant_id, id, playbook_id, version_no, steps, tone, content_sha256, status, created_by_user_id)
-      VALUES ($1, $2, $3, 1, $4::jsonb, '{}'::jsonb, $5, 'approved', $6)`, [w.tenantId, versionId, pb, JSON.stringify(content), versionSha, w.owner.userId]);
-    await h.su.query(`INSERT INTO playbook_approvals (tenant_id, id, playbook_version_id, decision, decided_by_user_id, decided_by_role, content_sha256, attestation, decided_at)
-      VALUES ($1, gen_random_uuid(), $2, 'approve', $3, 'owner', $4, 'approved', now())`, [w.tenantId, versionId, w.owner.userId, versionSha]);
-  } finally {
-    await h.su.query(`SET session_replication_role = origin`);
+interface PolicyDraftView { versionId: string; contentSha256: string; approvalText: string | null; issues: { field: string | null; sentence: string }[] }
+
+/**
+ * The team's AI policy, created and approved by the Owner through the policy routes (isa/policy.ts; R-ISA-33,
+ * R-ISA-34): POST create (a draft of the shipped default), PUT draft when the content differs, POST approve with the
+ * served text. No playbook, version or approval row is written by the superuser pool. Returns the approved version.
+ */
+export async function approvePolicyAsOwner(h: ApiHarness, owner: TestClient, content: Record<string, unknown> | null = null): Promise<{ versionId: string; versionSha: string }> {
+  await freshReauth(h, owner);
+  const made = await call<{ policy: { draft: PolicyDraftView | null } }>(owner, 'POST', '/admin/ai-isa/policy', {});
+  if (made.status !== 201 && made.status !== 200) throw new Error(`policy create: ${made.status} ${JSON.stringify(made.body)}`);
+  let draft = made.body.policy.draft;
+  if (content !== null) {
+    const saved = await call<{ draft: PolicyDraftView | null }>(owner, 'PUT', '/admin/ai-isa/policy/draft', { content });
+    if (saved.status !== 200) throw new Error(`policy draft: ${saved.status} ${JSON.stringify(saved.body)}`);
+    draft = saved.body.draft;
   }
+  if (!draft || draft.approvalText === null) throw new Error(`policy draft cannot be approved: ${JSON.stringify(draft?.issues ?? null)}`);
+  const ok = await call(owner, 'POST', '/admin/ai-isa/policy/approve', { versionId: draft.versionId, contentSha256: draft.contentSha256, attestation: draft.approvalText });
+  if (ok.status !== 200) throw new Error(`policy approve: ${ok.status} ${JSON.stringify(ok.body)}`);
+  return { versionId: draft.versionId, versionSha: draft.contentSha256 };
+}
+
+/**
+ * A tenant with the AI ISA fully authorized on fakes: pack cleared, switch on, an approved policy, agent 0 opted in.
+ * The policy is created and approved by the Owner through the API (approvePolicyAsOwner), so the consent chain's link 4
+ * reads rows the application wrote. The superuser pool records counsel's review of the pack (never application code's
+ * to write) and turns the team's AI features on.
+ */
+export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[]; /** false: the team has no policy yet (nobody is opted in; versionId is '') */ policy?: boolean } = {}): Promise<IsaWorld> {
+  const w = await commsWorld(h, { agents: 2, teamLead: true });
+  const { versionId, versionSha } = o.policy === false ? { versionId: '', versionSha: '' } : await approvePolicyAsOwner(h, w.owner, o.capabilities ? { ...DEFAULT_AI_ISA_CONTENT, capabilities: o.capabilities } : null);
   if (o.clear ?? true) await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:ai_isa'`);
   await h.su.query(`UPDATE tenant_settings SET ai_enabled = true WHERE tenant_id = $1`, [w.tenantId]);
   await freshReauth(h, w.owner);
   const on = await call(w.owner, 'PUT', '/admin/ai-isa', { enabled: true, dailyCap: 100, attestation: 'I turn on the AI assistant for my team and accept the engineering defaults.' });
   if (on.status !== 200) throw new Error(`switch: ${on.status} ${JSON.stringify(on.body)}`);
-  if (o.optIn ?? true) await optInAgent(h, w.agents[0]!, versionId);
+  if (o.policy !== false && (o.optIn ?? true)) await optInAgent(h, w.agents[0]!, versionId);
   const ai = new FakeIsaAi();
   (h.providers as { ai: AiProvider }).ai = ai;
   await forceRefusedToday(h);
@@ -230,10 +246,11 @@ export async function startCare(agent: TestClient, contactId: string, body: Reco
 
 /** A worker over the comms, assistant and AI ISA handlers on the harness database and fakes. A `hold` kind's job is put
  *  back, a day out, without running (a worker that is behind). */
-export function isaWorker(h: ApiHarness, o: { hold?: readonly string[] } = {}) {
+export function isaWorker(h: ApiHarness, o: { hold?: readonly string[]; /** told of every job a handler is about to run (kind and payload): a test's count of real runs */ onRun?: (kind: string, payload: unknown) => void } = {}) {
   const deps = depsFromPlatform(h.app.platform);
   const all = [...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never, dispatchStaleHandler() as never];
-  const handlers = all.map((x) => (o.hold?.includes(x.kind) ? { ...x, run: async (ctx: { now: Instant }) => ({ retryAt: (ctx.now + 86_400_000) as Instant }) } : x)) as typeof all;
+  const tapped = all.map((x) => (o.onRun ? { ...x, run: async (ctx: never, p: never) => { o.onRun!(x.kind, p); return (x.run as (c: never, q: never) => Promise<unknown>)(ctx, p); } } : x)) as typeof all;
+  const handlers = tapped.map((x) => (o.hold?.includes(x.kind) ? { ...x, run: async (ctx: { now: Instant }) => ({ retryAt: (ctx.now + 86_400_000) as Instant }) } : x)) as typeof all;
   const registry = new HandlerRegistry().registerAll(handlers);
   return createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime', 'default'], concurrency: 1, worker: `isa-test-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger });
 }

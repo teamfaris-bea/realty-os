@@ -4,7 +4,8 @@
 //   - ISA jobs drain only through '/isa-run' (runIsa: the ISA handlers bound to this harness, isa/testing.ts:92-107),
 //     never through the stack's /jobs while ISA jobs are pending (its registry leaves isaHandlers on commsRuntime());
 //   - the deadline sweep runs from '/isa-sla' (slaSweepInTx as the system; runIsa skips ai_isa.sla).
-// The superuser pool only clears the counsel pack, moves stored instants and reads back, as isa/testing.ts does.
+// The superuser pool only clears the counsel pack, moves stored instants and reads back, as isa/testing.ts does; the
+// world's AI policy is created and approved by the Owner through the policy routes (isa/testing.ts approvePolicyAsOwner).
 import AxeBuilder from '@axe-core/playwright';
 import { type Locator, type Page, expect } from 'playwright/test';
 import { isPhone, signIn } from '../journeys/helpers.js';
@@ -15,14 +16,16 @@ export const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const IMPORTS = String.raw`
 import { isaWorld, isaLead, runIsa, closedZone, openZone } from './src/isa/testing.ts';
 import { slaSweepInTx } from './src/isa/handoff.ts';
+import { sellerWorld, sellerLead, asSystem as sellerAsSystem } from './src/isa/seller/testing.ts';
+import { onEscalationInTx } from './src/isa/seller/index.ts';
 import { withTenantTx } from '@realty/db';
 import { systemActor } from './src/worker/systemActor.ts';
 `;
 
 const ROUTES = String.raw`
-  /** { optIn=true, clear=true } an AI ISA tenant on fakes (isa/testing.ts isaWorld); clients i.owner, i.agent0, i.agent1, i.lead */
+  /** { optIn=true, clear=true, policy=true } an AI ISA tenant on fakes; policy=false: the team has no AI policy yet (a8-policy creates and approves it on screen); (isa/testing.ts isaWorld); clients i.owner, i.agent0, i.agent1, i.lead */
   async '/isa-world'(b) {
-    const w = await isaWorld(h, { optIn: b.optIn ?? true, clear: b.clear ?? true });
+    const w = await isaWorld(h, { optIn: b.optIn ?? true, clear: b.clear ?? true, policy: b.policy ?? true });
     worlds.set('i', w);
     clients.set('i.owner', w.owner);
     w.agents.forEach((a, i) => clients.set('i.agent' + i, a));
@@ -55,6 +58,23 @@ const ROUTES = String.raw`
   async '/isa-sms-in'(b) { const r = await inboundSms(h, b.from, world('i').mainNumber, b.body); return { status: r.statusCode }; },
   /** an Admin of the ISA world (invited and accepted through the API, with TOTP) */
   async '/isa-admin'() { const a = await h.invite(world('i').owner, 'admin', { mfa: true }); clients.set('i.admin', a); return who(a); },
+  /** a second tenant under SELLER-side AI care on fakes (isa/seller/testing.ts sellerWorld and sellerLead: a property
+   *  address, the home's own MLS record, the owner opted in to the seller capabilities, care started by hand through
+   *  the API); clients s.owner, s.agent0. Returns the agent and the lead. */
+  async '/isa-seller'() {
+    const w = await sellerWorld(h);
+    worlds.set('s', w);
+    clients.set('s.owner', w.owner);
+    clients.set('s.agent0', w.agents[0]);
+    const l = await sellerLead(h, w);
+    worlds.set('s.lead', l);
+    return { tenantId: w.tenantId, agent: who(w.agents[0]), lead: { id: l.id, line1: l.line1 } };
+  },
+  /** the lead of '/isa-seller' asked about price: the system suspends recent sales (seller/index.ts onEscalationInTx) */
+  async '/isa-seller-price-question'() {
+    await sellerAsSystem(h, world('s'), world('s.lead'), (tx, a, actor) => onEscalationInTx(tx, a, 'pricing_negotiation', actor));
+    return { ok: true };
+  },
   /** { as } a fresh re-auth for API setup steps */
   async '/isa-reauth'(b) { await freshReauth(h, client(b.as)); return { ok: true }; },
 `;
@@ -79,7 +99,7 @@ export interface IsaLeadInfo {
   zone: string;
 }
 
-export const isaWorldOf = (s: JourneyStack, o: { optIn?: boolean; clear?: boolean; switchOff?: boolean } = {}) => s.fixture<IsaWorldInfo>('/isa-world', o);
+export const isaWorldOf = (s: JourneyStack, o: { optIn?: boolean; clear?: boolean; switchOff?: boolean; policy?: boolean } = {}) => s.fixture<IsaWorldInfo>('/isa-world', o);
 export const isaLeadOf = (s: JourneyStack, o: { as?: string; closed?: boolean; firstTouchPending?: boolean } = {}) => s.fixture<IsaLeadInfo>('/isa-lead', o);
 export const runIsa = (s: JourneyStack, rounds = 4) => s.fixture('/isa-run', { rounds });
 

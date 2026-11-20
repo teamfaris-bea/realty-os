@@ -16,6 +16,7 @@
 // new-lead-response playbook (DB CHECK, refused here first); never a retired one. Audited as
 // settings.changed on the playbook. Setting a stage enrolls nobody by itself: only a later stage entry
 // does, and only from an approved version.
+import { isNeverEnrolledPlaybookKind } from '@realty/core/assistant';
 import { STAGES } from '@realty/core/parity/people';
 import { type Instant, type ResourceFacts, type UserActor, can } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
@@ -123,7 +124,7 @@ async function register(app: FastifyInstance): Promise<void> {
         const p = await R.playbookSetting(t, req.params.id, { lock: true });
         if (!p) throw new AppError('NOT_FOUND');
         const stage = req.body.stage;
-        if (stage !== null && (p.kind === 'new_lead_response' || p.kind === 'trigger' || p.kind === 'voice_answering')) throw new AppError('AUTO_ENROLL_NOT_ALLOWED');
+        if (stage !== null && isNeverEnrolledPlaybookKind(p.kind)) throw new AppError('AUTO_ENROLL_NOT_ALLOWED'); // R-ISA-37: the team AI policy among them
         if (stage !== null && p.status !== 'active') throw new AppError('PLAYBOOK_RETIRED');
         if (stage !== p.autoEnrollStage) {
           if (stage !== null) {

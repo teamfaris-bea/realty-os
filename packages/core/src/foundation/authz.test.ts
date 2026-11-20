@@ -444,6 +444,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     PHASE_2_3.push('ads.view', 'ads.cap_set', 'ads.shift_decide', 'ads.campaign_manage'); // module 52: DATA_MODEL §8 ads rows, tested in apps/api/src/ads/adversarial.test.ts (role × action vs can()) and the ads route tests
     PHASE_2_3.push('settings.ai_isa', 'ai_isa.optin', 'ai_isa.view', 'ai_isa.start', 'ai_isa.pause', 'ai_isa.resume', 'ai_isa.control', 'ai_isa.handoff'); // module 75 (D12 proposed): docs/AI_ISA.md §3.5, tested in apps/api/src/isa/authz.test.ts (role × action vs can())
     PHASE_2_3.push('ai_isa.seller_facts', 'ai_isa.subject_confirm'); // module 75 seller part (ISA-3): docs/AI_ISA.md §6.3, tested in apps/api/src/isa/seller/authz.test.ts
+    PHASE_2_3.push('ai_isa.policy_draft', 'ai_isa.policy_approve', 'ai_isa.policy_revoke'); // module 75, the team AI policy (R-ISA-33, R-ISA-34): docs/AI_ISA.md §3.5, tested in apps/api/src/isa/authz.test.ts and policy.test.ts
     PHASE_2_3.push('lead_source.ai_care'); // b18 item f: tested in apps/api/src/isa/sourceNoAiCare.test.ts (Owner only; Admin and agent 404; DB guard)
     const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);

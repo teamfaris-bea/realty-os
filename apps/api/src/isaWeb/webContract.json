@@ -195,6 +195,2408 @@
         "additionalProperties": false
       }
     },
+    "GET /admin/ai-isa/policy": {
+      "inputKeys": [],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "draft_only",
+              "approved",
+              "approved_with_draft",
+              "revoked",
+              "revoked_with_draft"
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "section": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "options",
+                    "choice",
+                    "toggle",
+                    "int",
+                    "time",
+                    "text"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "help": {
+                  "type": "string"
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": [
+                          "string",
+                          "number"
+                        ]
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "locked": {
+                  "type": "array",
+                  "items": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "maxLength": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "key",
+                "path",
+                "section",
+                "kind",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "textVersion": {
+            "type": "string"
+          },
+          "underCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "optedIn": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "approved": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "versionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "versionNo": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "contentSha256": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema2"
+                    }
+                  },
+                  "savedAt": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "savedBy": {
+                    "type": "string"
+                  },
+                  "issues": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "field": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sentence": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "field",
+                        "sentence"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "effect": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "first",
+                          "narrower",
+                          "wider",
+                          "after_revoke"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "effectSentence": {
+                    "type": "string"
+                  },
+                  "diff": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "adds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "removes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "changes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "wider": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "adds",
+                          "removes",
+                          "changes",
+                          "wider"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "approvalText": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "versionId",
+                  "versionNo",
+                  "contentSha256",
+                  "content",
+                  "sections",
+                  "savedAt",
+                  "savedBy",
+                  "issues",
+                  "effect",
+                  "effectSentence",
+                  "diff",
+                  "approvalText"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokeText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "can": {
+            "type": "object",
+            "properties": {
+              "create": {
+                "type": "boolean"
+              },
+              "saveDraft": {
+                "type": "boolean"
+              },
+              "approve": {
+                "type": "boolean"
+              },
+              "revoke": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "create",
+              "saveDraft",
+              "approve",
+              "revoke"
+            ],
+            "additionalProperties": false
+          },
+          "approveOwnerOnly": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "sentence",
+          "fields",
+          "textVersion",
+          "underCare",
+          "optedIn",
+          "approved",
+          "revoked",
+          "draft",
+          "revokeText",
+          "can",
+          "approveOwnerOnly"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "versionNo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "contentSha256": {
+                "type": "string"
+              },
+              "content": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedByRole": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "versionId",
+              "versionNo",
+              "contentSha256",
+              "content",
+              "sections",
+              "decidedAt",
+              "decidedBy",
+              "decidedByRole"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "may": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mayNot": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "key",
+              "title",
+              "may",
+              "mayNot"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /admin/ai-isa/policy": {
+      "inputKeys": [],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "policy": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "draft_only",
+                  "approved",
+                  "approved_with_draft",
+                  "revoked",
+                  "revoked_with_draft"
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "section": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "options",
+                        "choice",
+                        "toggle",
+                        "int",
+                        "time",
+                        "text"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "help": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": [
+                              "string",
+                              "number"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "locked": {
+                      "type": "array",
+                      "items": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
+                      }
+                    },
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "maxLength": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "path",
+                    "section",
+                    "kind",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "textVersion": {
+                "type": "string"
+              },
+              "underCare": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "optedIn": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "approved": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "draft": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "versionId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "versionNo": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "contentSha256": {
+                        "type": "string"
+                      },
+                      "content": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "sections": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/__schema2"
+                        }
+                      },
+                      "savedAt": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "savedBy": {
+                        "type": "string"
+                      },
+                      "issues": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "sentence": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "field",
+                            "sentence"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "effect": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "first",
+                              "narrower",
+                              "wider",
+                              "after_revoke"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "effectSentence": {
+                        "type": "string"
+                      },
+                      "diff": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "adds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "removes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "changes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "wider": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "adds",
+                              "removes",
+                              "changes",
+                              "wider"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "approvalText": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "versionId",
+                      "versionNo",
+                      "contentSha256",
+                      "content",
+                      "sections",
+                      "savedAt",
+                      "savedBy",
+                      "issues",
+                      "effect",
+                      "effectSentence",
+                      "diff",
+                      "approvalText"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokeText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "can": {
+                "type": "object",
+                "properties": {
+                  "create": {
+                    "type": "boolean"
+                  },
+                  "saveDraft": {
+                    "type": "boolean"
+                  },
+                  "approve": {
+                    "type": "boolean"
+                  },
+                  "revoke": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "create",
+                  "saveDraft",
+                  "approve",
+                  "revoke"
+                ],
+                "additionalProperties": false
+              },
+              "approveOwnerOnly": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "state",
+              "sentence",
+              "fields",
+              "textVersion",
+              "underCare",
+              "optedIn",
+              "approved",
+              "revoked",
+              "draft",
+              "revokeText",
+              "can",
+              "approveOwnerOnly"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "created",
+          "policy"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "versionNo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "contentSha256": {
+                "type": "string"
+              },
+              "content": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedByRole": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "versionId",
+              "versionNo",
+              "contentSha256",
+              "content",
+              "sections",
+              "decidedAt",
+              "decidedBy",
+              "decidedByRole"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "may": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mayNot": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "key",
+              "title",
+              "may",
+              "mayNot"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "PUT /admin/ai-isa/policy/draft": {
+      "inputKeys": [
+        "content",
+        "content.*"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "draft_only",
+              "approved",
+              "approved_with_draft",
+              "revoked",
+              "revoked_with_draft"
+            ]
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "section": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "options",
+                    "choice",
+                    "toggle",
+                    "int",
+                    "time",
+                    "text"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "help": {
+                  "type": "string"
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": [
+                          "string",
+                          "number"
+                        ]
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "locked": {
+                  "type": "array",
+                  "items": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "maxLength": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "key",
+                "path",
+                "section",
+                "kind",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "textVersion": {
+            "type": "string"
+          },
+          "underCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "optedIn": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "approved": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "versionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "versionNo": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "contentSha256": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema2"
+                    }
+                  },
+                  "savedAt": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "savedBy": {
+                    "type": "string"
+                  },
+                  "issues": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "field": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sentence": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "field",
+                        "sentence"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "effect": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "first",
+                          "narrower",
+                          "wider",
+                          "after_revoke"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "effectSentence": {
+                    "type": "string"
+                  },
+                  "diff": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "adds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "removes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "changes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "wider": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "adds",
+                          "removes",
+                          "changes",
+                          "wider"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "approvalText": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "versionId",
+                  "versionNo",
+                  "contentSha256",
+                  "content",
+                  "sections",
+                  "savedAt",
+                  "savedBy",
+                  "issues",
+                  "effect",
+                  "effectSentence",
+                  "diff",
+                  "approvalText"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokeText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "can": {
+            "type": "object",
+            "properties": {
+              "create": {
+                "type": "boolean"
+              },
+              "saveDraft": {
+                "type": "boolean"
+              },
+              "approve": {
+                "type": "boolean"
+              },
+              "revoke": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "create",
+              "saveDraft",
+              "approve",
+              "revoke"
+            ],
+            "additionalProperties": false
+          },
+          "approveOwnerOnly": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "sentence",
+          "fields",
+          "textVersion",
+          "underCare",
+          "optedIn",
+          "approved",
+          "revoked",
+          "draft",
+          "revokeText",
+          "can",
+          "approveOwnerOnly"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "versionNo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "contentSha256": {
+                "type": "string"
+              },
+              "content": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedByRole": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "versionId",
+              "versionNo",
+              "contentSha256",
+              "content",
+              "sections",
+              "decidedAt",
+              "decidedBy",
+              "decidedByRole"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "may": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mayNot": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "key",
+              "title",
+              "may",
+              "mayNot"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /admin/ai-isa/policy/approve": {
+      "inputKeys": [
+        "attestation",
+        "contentSha256",
+        "versionId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "versionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "contentSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "attestation": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 600
+          }
+        },
+        "required": [
+          "versionId",
+          "contentSha256",
+          "attestation"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "effect": {
+            "type": "string",
+            "enum": [
+              "first",
+              "narrower",
+              "wider",
+              "after_revoke"
+            ]
+          },
+          "careContinues": {
+            "type": "boolean"
+          },
+          "pausedCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "agentsToReconfirm": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "policy": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "draft_only",
+                  "approved",
+                  "approved_with_draft",
+                  "revoked",
+                  "revoked_with_draft"
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "section": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "options",
+                        "choice",
+                        "toggle",
+                        "int",
+                        "time",
+                        "text"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "help": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": [
+                              "string",
+                              "number"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "locked": {
+                      "type": "array",
+                      "items": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
+                      }
+                    },
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "maxLength": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "path",
+                    "section",
+                    "kind",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "textVersion": {
+                "type": "string"
+              },
+              "underCare": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "optedIn": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "approved": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "draft": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "versionId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "versionNo": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "contentSha256": {
+                        "type": "string"
+                      },
+                      "content": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "sections": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/__schema2"
+                        }
+                      },
+                      "savedAt": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "savedBy": {
+                        "type": "string"
+                      },
+                      "issues": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "sentence": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "field",
+                            "sentence"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "effect": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "first",
+                              "narrower",
+                              "wider",
+                              "after_revoke"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "effectSentence": {
+                        "type": "string"
+                      },
+                      "diff": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "adds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "removes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "changes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "wider": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "adds",
+                              "removes",
+                              "changes",
+                              "wider"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "approvalText": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "versionId",
+                      "versionNo",
+                      "contentSha256",
+                      "content",
+                      "sections",
+                      "savedAt",
+                      "savedBy",
+                      "issues",
+                      "effect",
+                      "effectSentence",
+                      "diff",
+                      "approvalText"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokeText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "can": {
+                "type": "object",
+                "properties": {
+                  "create": {
+                    "type": "boolean"
+                  },
+                  "saveDraft": {
+                    "type": "boolean"
+                  },
+                  "approve": {
+                    "type": "boolean"
+                  },
+                  "revoke": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "create",
+                  "saveDraft",
+                  "approve",
+                  "revoke"
+                ],
+                "additionalProperties": false
+              },
+              "approveOwnerOnly": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "state",
+              "sentence",
+              "fields",
+              "textVersion",
+              "underCare",
+              "optedIn",
+              "approved",
+              "revoked",
+              "draft",
+              "revokeText",
+              "can",
+              "approveOwnerOnly"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "effect",
+          "careContinues",
+          "pausedCare",
+          "agentsToReconfirm",
+          "sentence",
+          "replayed",
+          "policy"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "versionNo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "contentSha256": {
+                "type": "string"
+              },
+              "content": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedByRole": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "versionId",
+              "versionNo",
+              "contentSha256",
+              "content",
+              "sections",
+              "decidedAt",
+              "decidedBy",
+              "decidedByRole"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "may": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mayNot": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "key",
+              "title",
+              "may",
+              "mayNot"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /admin/ai-isa/policy/revoke": {
+      "inputKeys": [
+        "attestation",
+        "contentSha256",
+        "versionId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "versionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "contentSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "attestation": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 600
+          }
+        },
+        "required": [
+          "versionId",
+          "contentSha256",
+          "attestation"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "pausedCare": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "policy": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "draft_only",
+                  "approved",
+                  "approved_with_draft",
+                  "revoked",
+                  "revoked_with_draft"
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "section": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "options",
+                        "choice",
+                        "toggle",
+                        "int",
+                        "time",
+                        "text"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "help": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": [
+                              "string",
+                              "number"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "locked": {
+                      "type": "array",
+                      "items": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
+                      }
+                    },
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "maxLength": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "path",
+                    "section",
+                    "kind",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "textVersion": {
+                "type": "string"
+              },
+              "underCare": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "optedIn": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "approved": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "draft": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "versionId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "versionNo": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "contentSha256": {
+                        "type": "string"
+                      },
+                      "content": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "sections": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/__schema2"
+                        }
+                      },
+                      "savedAt": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "savedBy": {
+                        "type": "string"
+                      },
+                      "issues": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "sentence": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "field",
+                            "sentence"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "effect": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "first",
+                              "narrower",
+                              "wider",
+                              "after_revoke"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "effectSentence": {
+                        "type": "string"
+                      },
+                      "diff": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "adds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "removes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "changes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "wider": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "adds",
+                              "removes",
+                              "changes",
+                              "wider"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "approvalText": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "versionId",
+                      "versionNo",
+                      "contentSha256",
+                      "content",
+                      "sections",
+                      "savedAt",
+                      "savedBy",
+                      "issues",
+                      "effect",
+                      "effectSentence",
+                      "diff",
+                      "approvalText"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokeText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "can": {
+                "type": "object",
+                "properties": {
+                  "create": {
+                    "type": "boolean"
+                  },
+                  "saveDraft": {
+                    "type": "boolean"
+                  },
+                  "approve": {
+                    "type": "boolean"
+                  },
+                  "revoke": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "create",
+                  "saveDraft",
+                  "approve",
+                  "revoke"
+                ],
+                "additionalProperties": false
+              },
+              "approveOwnerOnly": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "state",
+              "sentence",
+              "fields",
+              "textVersion",
+              "underCare",
+              "optedIn",
+              "approved",
+              "revoked",
+              "draft",
+              "revokeText",
+              "can",
+              "approveOwnerOnly"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "pausedCare",
+          "sentence",
+          "replayed",
+          "policy"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "versionNo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "contentSha256": {
+                "type": "string"
+              },
+              "content": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedByRole": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "versionId",
+              "versionNo",
+              "contentSha256",
+              "content",
+              "sections",
+              "decidedAt",
+              "decidedBy",
+              "decidedByRole"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "may": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mayNot": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "key",
+              "title",
+              "may",
+              "mayNot"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "GET /me/ai-isa": {
       "inputKeys": [],
       "body": null,
@@ -310,13 +2712,142 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "versionNo": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "may": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "mayNot": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "title",
+                        "may",
+                        "mayNot"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
                   "versionId",
                   "versionSha",
                   "capabilities",
-                  "channels"
+                  "channels",
+                  "versionNo",
+                  "sections"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policyChange": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "narrowed",
+                      "widened",
+                      "revoked"
+                    ]
+                  },
+                  "fromVersionNo": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "diff": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "adds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "removes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "changes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "wider": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "adds",
+                          "removes",
+                          "changes",
+                          "wider"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "state",
+                  "fromVersionNo",
+                  "diff",
+                  "sentence"
                 ],
                 "additionalProperties": false
               },
@@ -355,6 +2886,7 @@
         "required": [
           "optIn",
           "policy",
+          "policyChange",
           "attestationText",
           "needsReattest",
           "calendarLive",
@@ -3214,6 +5746,644 @@
           }
         }
       }
+    },
+    "GET /contacts/:id/ai-isa/seller": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "object",
+            "properties": {
+              "confirmSubject": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "subjectDisputed": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "nearMatchDifferent": {
+                "type": "object",
+                "properties": {
+                  "available": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listingIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "available",
+                  "reason",
+                  "listingIds"
+                ],
+                "additionalProperties": false
+              },
+              "resumeComps": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "confirmSubject",
+              "subjectDisputed",
+              "nearMatchDifferent",
+              "resumeComps"
+            ],
+            "additionalProperties": false
+          },
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "assignmentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "side": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string"
+              },
+              "code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              },
+              "nextStep": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "contactAddressId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "addressLine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recordListingId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recordDate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "facts": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      },
+                      "beds": {
+                        "type": "number"
+                      },
+                      "baths_x10": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "sqft": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "beds",
+                      "baths_x10",
+                      "sqft"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "factsSha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "confirmedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "disputed": {
+                "type": "boolean"
+              },
+              "clearedReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "codes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "state",
+              "code",
+              "sentence",
+              "nextStep",
+              "contactAddressId",
+              "addressLine",
+              "recordListingId",
+              "recordDate",
+              "facts",
+              "factsSha256",
+              "confirmed",
+              "confirmedAt",
+              "disputed",
+              "clearedReason",
+              "codes"
+            ],
+            "additionalProperties": false
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "sentence": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "sentence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "lastCompsCheck": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "checkedAt": {
+                    "$ref": "#/$defs/__schema3"
+                  }
+                },
+                "required": [
+                  "codes",
+                  "checkedAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "comps": {
+                "type": "object",
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "available",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              },
+              "competition": {
+                "type": "object",
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "available",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "comps",
+              "competition"
+            ],
+            "additionalProperties": false
+          },
+          "link": {
+            "type": "object",
+            "properties": {
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "pause",
+                  "end"
+                ]
+              },
+              "code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              },
+              "listingIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "effect",
+              "code",
+              "sentence",
+              "listingIds"
+            ],
+            "additionalProperties": false
+          },
+          "suspension": {
+            "type": "object",
+            "properties": {
+              "suspended": {
+                "type": "boolean"
+              },
+              "sentence": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "suspended",
+              "sentence"
+            ],
+            "additionalProperties": false
+          },
+          "watch": {
+            "type": "object",
+            "properties": {
+              "lastRunAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sentence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "lastRunAt",
+              "sentence"
+            ],
+            "additionalProperties": false
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "type": "number"
+                  },
+                  "comingSoon": {
+                    "type": "number"
+                  },
+                  "pending": {
+                    "type": "number"
+                  },
+                  "sentence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "active",
+                  "comingSoon",
+                  "pending",
+                  "sentence"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "factsSent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "factKind": {
+                  "type": "string"
+                },
+                "listingId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sentAt": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              },
+              "required": [
+                "factKind",
+                "listingId",
+                "sentAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "actions",
+          "contactId",
+          "assignmentId",
+          "side",
+          "subject",
+          "blockers",
+          "lastCompsCheck",
+          "capabilities",
+          "link",
+          "suspension",
+          "watch",
+          "counts",
+          "factsSent"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "reason": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            "required": [
+              "available",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "boolean"
+          },
+          "__schema2": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "__schema3": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /contacts/:id/ai-isa/confirm-subject": {
+      "inputKeys": [
+        "contactAddressId",
+        "factsSha256",
+        "id",
+        "recordListingId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "contactAddressId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "recordListingId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "factsSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "contactAddressId",
+          "recordListingId",
+          "factsSha256"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "sentence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /contacts/:id/ai-isa/seller/subject-disputed": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "sentence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /contacts/:id/ai-isa/seller/near-match-different": {
+      "inputKeys": [
+        "id",
+        "listingIds"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "listingIds": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          }
+        },
+        "required": [
+          "listingIds"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "sentence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /contacts/:id/ai-isa/seller/resume-comps": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "sentence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "sentence"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "errors": {
@@ -3248,6 +6418,11 @@
     "AI_ISA_ATTESTATION_REQUIRED": 422,
     "AI_ISA_ROLE_NOT_ELIGIBLE": 403,
     "AI_ISA_BLOCK_NOT_LIFTABLE": 409,
+    "AI_ISA_POLICY_MISSING": 409,
+    "AI_ISA_POLICY_INVALID": 422,
+    "AI_ISA_POLICY_ATTESTATION_MISMATCH": 409,
+    "AI_ISA_POLICY_HASH_STALE": 409,
+    "AI_ISA_POLICY_USE_ITS_ROUTES": 404,
     "AI_ISA_HANDOFF_USE_ACK": 409,
     "SUBJECT_UNCONFIRMED": 409,
     "CAPABILITY_NOT_AVAILABLE": 422

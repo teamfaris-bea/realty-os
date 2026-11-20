@@ -22,7 +22,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+// RULE_COVERAGE_ROOT: another tree to report on (the script's own test runs it against a fixture)
+const root = resolve(process.env.RULE_COVERAGE_ROOT ?? fileURLToPath(new URL('..', import.meta.url)));
 const args = new Set(process.argv.slice(2));
 const useResults = args.has('--results');
 const asJson = args.has('--json');
@@ -67,7 +68,8 @@ const ruleIds = allRuleIds.filter((id) => !retired.has(id));
 const edgeIds = allEdgeIds.filter((id) => !retired.has(id));
 const known = new Set([...p1.rules, ...p1.edges, ...p2.rules, ...p2.edges, ...p3.rules, ...p3.edges].map((e) => e.id));
 
-const ID_RE = /\b(R-[A-Z]+-\d+|E\d{1,3})\b/g;
+// an edge-case id has any number of digits (E1000 and up since batch 19); \b keeps a longer id from being read as a shorter one
+const ID_RE = /\b(R-[A-Z]+-\d+|E\d+)\b/g;
 
 // ---------- collect test titles ----------
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.git', '.stryker-tmp', 'reports', 'playwright-report', 'test-results']);

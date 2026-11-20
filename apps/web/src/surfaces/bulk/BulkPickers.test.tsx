@@ -243,6 +243,11 @@ describe('R-PAR-16 R-PAR-35 bulk Start plan: the plan picker', () => {
     ];
     expect(planChoices(list, ME).map((p) => p.id)).toEqual(['c']);
   });
+
+  it('b19 review F6 (R-ISA-37): Start plan never offers the team AI policy, by the list the API refuses with', () => {
+    const base = { scope: 'team' as const, ownerUserId: null, approvedVersionId: 'v1' };
+    expect(planChoices([{ ...base, id: 'p', name: 'AI assistant policy', kind: 'ai_isa' }, { ...base, id: 'c', name: 'Stay', kind: 'nurture' }], ME).map((p) => p.id)).toEqual(['c']);
+  });
 });
 
 describe('DATA_MODEL §12 the roles the bulk bar offers Assign and Start plan to are core\'s', () => {

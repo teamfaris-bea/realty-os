@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Dialog, Notice, announce } from '../../design/index.js';
+import { DiffLines, PolicySections } from './TeamPolicy.js';
 import { type AvailabilityWindow, type Channel, type MeView, type OptInBody, type OptInResult, type ReattestResult, useIsaAction, useIsaList, useMe } from './api.js';
 import { HoldBanner, useHold } from './AiCareControls.js';
 import { EMAIL_SENDER_CHECKS } from './built.js';
@@ -57,6 +58,7 @@ function Mine({ me }: { me: MeView }) {
         <p className="text-[15px] text-ink">Nothing is sent for your leads.</p>
       ) : (
         <>
+          <MyPolicy me={me} />
           {me.needsReattest ? <Reattest me={me} /> : null}
           {!me.needsReattest ? <OptInForm me={me} /> : null}
           {me.optIn ? <MyLeadsControls me={me} /> : null}
@@ -248,6 +250,37 @@ function Attestation({ text, agree, setAgree }: { text: string | null; agree: bo
         <span>I have read this and agree</span>
       </label>
     </div>
+  );
+}
+
+/**
+ * R-ISA-33, R-ISA-34: the approved team policy, read-only, in the server's words by section, and what changed since the
+ * version this agent confirmed (the server's diff and its sentence: whether their care continues or is paused).
+ */
+function MyPolicy({ me }: { me: MeView }) {
+  const policy = me.policy!;
+  const change = me.policyChange;
+  return (
+    <Card className="flex flex-col gap-3" aria-labelledby="my-policy-title">
+      <h2 id="my-policy-title" className="text-[19px] font-semibold">
+        Team policy
+      </h2>
+      <div className="flex flex-col gap-3" data-testid="my-policy">
+        <p className="text-[15px]">{policy.versionNo !== null ? `Approved version ${policy.versionNo} of your team’s AI rules.` : 'The approved version of your team’s AI rules.'}</p>
+        {change ? (
+          <div data-testid="my-policy-change">
+            <Notice tone={change.state === 'narrowed' ? 'info' : 'warn'} title={change.fromVersionNo !== null ? `Changed since version ${change.fromVersionNo}, which you confirmed` : 'Changed since the version you confirmed'}>
+              <div className="flex flex-col gap-2">
+                {change.diff ? <DiffLines diff={change.diff} /> : null}
+                <p>{change.sentence}</p>
+              </div>
+            </Notice>
+          </div>
+        ) : null}
+        {policy.sections.length > 0 ? <PolicySections sections={policy.sections} /> : <p className="text-[15px]">This version can't be shown here.</p>}
+        <p className="text-[13px] text-ink-muted">Engineering defaults. VERIFY WITH COUNSEL. Only the account owner approves a change.</p>
+      </div>
+    </Card>
   );
 }
 

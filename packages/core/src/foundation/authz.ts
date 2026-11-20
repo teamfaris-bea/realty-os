@@ -181,6 +181,9 @@ export const ACTIONS = [
   'gbp.reply', // module 53: draft, post or discard a public reply to a Google review (Owner/Admin; always a tap, R-GBP-1)
   'ai_isa.seller_facts', // module 75 seller part (ISA-3): the assistant builds and re-checks seller facts (system 'assistant' only; never a user; R-ISA-18)
   'ai_isa.subject_confirm', // module 75 seller part (ISA-3): confirm the seller's home, mark a near match a different home, resume comps (the lead's owner, as themselves; DB guard)
+  'ai_isa.policy_draft', // module 75 (R-ISA-33): create the team AI policy or save a change as a draft version (Owner, Admin; 🔒 always; a draft authorizes nothing)
+  'ai_isa.policy_approve', // module 75 (R-ISA-34): approve a draft version of the team AI policy (Owner only; 🔒 always; the DB guard admits Owner/Admin, the app is stricter)
+  'ai_isa.policy_revoke', // module 75 (R-ISA-34): revoke the approved team AI policy version (Owner, Admin; stopping needs no re-authentication, as turning the team switch off)
   'cma.share', // module 71 (D9 V2-A): share a CMA, preview it, download its report (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; creator only for share and preview; R-CMA-9)
   'portal.view', // module 45: a deal's or listing's portal state, a grant's client-view preview, an item preview (DATA_MODEL §8 split row)
   'portal.manage', // module 45: invite, publish, retract, revoke, disable, change the login point (Owner, Admin, TL T, agent own)
@@ -286,8 +289,9 @@ export const AUDIT_ACTIONS = [
   'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
   'session.revoked_all', // api/platform: "log out of all sessions" revoked every live session of the user
   'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
-  'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); dispatch still checks it
+  'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); written in dispatch TX1 when the re-tap goes on to the send-time gate, which still decides it
   'message.held_cancel', // api/comms: the sender canceled a scheduled or held message
+  'message.held_send_refused', // api/comms (b19 F8, E909): the sender tapped Send on a held message and dispatch refused it and canceled the email, nothing was sent (R-CMA-7: a held CMA share whose CMA is no longer client-ready); the reason is the cancel code
   'deal.contact_removed', // lane rule-coverage: the Owner removed a person from a deal before erasure (E59)
   'assistant.output_blocked', // lane prompt-injection: a model output was discarded (wiring details, oversized, not the contract); codes only
   'assistant.output_flagged', // lane prompt-injection: a model draft needs a check (human claim, unsourced link/phone/email, hidden characters); codes only
@@ -413,6 +417,10 @@ export const AUDIT_ACTIONS = [
   'ai_isa.comps_resumed', // module 75 seller part (ISA-3): recent sales resumed: the owner's resume-comps, or the system after the owner's CMA or a share that reached the lead (reason code only; b13 review B13-MRG-4)
   'ai_isa.comps_suspended', // module 75 seller part (b13 review B13-MRG-4): the system suspended recent sales on a pricing hold or carried a continued-from suspension (reason code only)
   'ai_isa.near_match_dismissed', // module 75 seller part (ISA-3): the owner said a live listing is a different home (listing ids only)
+  'ai_isa.policy_created', // module 75 (R-ISA-33): the team AI policy was created as a draft of the shipped default (ids only)
+  'ai_isa.policy_draft_saved', // module 75 (R-ISA-33): a change to the team AI policy was saved as a draft (the version id and a hash prefix; never the content)
+  'ai_isa.policy_approved', // module 75 (R-ISA-34): a version was approved (first, narrower, wider or after_revoke; the version ids and a hash prefix)
+  'ai_isa.policy_revoked', // module 75 (R-ISA-34): the approved version was revoked (the version id and a hash prefix)
   'cma.shared', // module 71 (D9 V2-A): a CMA was shared by email (message, recipient and connection ids, soft term ids, method version; R-CMA-9)
   'cma.report_downloaded', // module 71 (D9 V2-A): a shared CMA's report PDF was downloaded (cma id and the PDF's sha256; R-CMA-9)
   'portal.invited', // module 45: a person invited a client to the portal (account created or reused; ids only)
@@ -778,6 +786,12 @@ const MATRIX: Record<Action, ActionRule> = {
   // the lead's owner only, as themselves (ai_isa_seller_watch_guard is the backstop).
   'ai_isa.seller_facts': { roles: {}, system: ['assistant'] },
   'ai_isa.subject_confirm': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
+  // Module 75, the team AI policy (R-ISA-33, R-ISA-34; docs/AI_ISA.md §3.2, §3.5). A draft authorizes nothing, so an Admin
+  // may write one; only the Owner approves (stricter than playbook.approve, where an Admin approves team playbooks; the
+  // DB guard playbook_approvals_guard still admits both). Revoking only stops things: Owner or Admin, no re-auth.
+  'ai_isa.policy_draft': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  'ai_isa.policy_approve': { roles: { owner: ALL_REAUTH } },
+  'ai_isa.policy_revoke': { roles: { owner: ALL, admin: ALL } },
   // Module 71 (D9 V2-A, DATA_MODEL §8 "Share a CMA, preview it, download its report"): ✅ | ✅ | T | O | — | — | —; the share
   // and its preview are the creator's only (api/cma share.ts, owner question g). A person only, never the system.
   'cma.share': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
