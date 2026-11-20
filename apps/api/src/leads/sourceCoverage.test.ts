@@ -1,5 +1,5 @@
 // Source coverage through the real server as app_user (b19 team-queue lane, step 2; DATA_MODEL R-TEAMQ-10,
-// R-TEAMQ-11, E833 to E837): a named owner, a named backup, a "high intent" mark and the "covered" switch of a lead
+// R-TEAMQ-11, E933 to E937): a named owner, a named backup, a "high intent" mark and the "covered" switch of a lead
 // source, read with its computed warnings and changed by Owner and Admin only, every change audited. Names are made up.
 import { randomUUID } from 'node:crypto';
 import { type Role, ROLES, can } from '@realty/core/foundation';
@@ -48,7 +48,7 @@ const audits = async (sourceId: string) =>
 const stored = async (sourceId: string) => (await h.su.query<{ o: string | null; b: string | null; c: boolean; hi: boolean }>('SELECT owner_user_id AS o, backup_user_id AS b, covered AS c, high_intent AS hi FROM lead_sources WHERE id = $1', [sourceId])).rows[0]!;
 
 describe('R-TEAMQ-10 the coverage of a lead source: read and change', () => {
-  it('R-TEAMQ-10 E833: a source starts not covered, said in words with its warnings; the overview and the per-source read agree', async () => {
+  it('R-TEAMQ-10 E933: a source starts not covered, said in words with its warnings; the overview and the per-source read agree', async () => {
     const r = await read();
     expect(r.status).toBe(200);
     expect(r.body.coverage).toMatchObject({ owner: null, backup: null, highIntent: false, covered: false, setting: false, sentence: 'Not covered: no owner and no backup are named.', changedAt: null });
@@ -88,7 +88,7 @@ describe('R-TEAMQ-10 the coverage of a lead source: read and change', () => {
     expect(Object.keys(log2[1]!.changes)).toEqual(['high_intent']);
   });
 
-  it('R-TEAMQ-10 E833: covered is refused without both people, and nothing is written; a strict body refuses an extra field or a tenant id', async () => {
+  it('R-TEAMQ-10 E933: covered is refused without both people, and nothing is written; a strict body refuses an extra field or a tenant id', async () => {
     const id = await newSource('Open house sign-in (coverage test)');
     const a = w.agents[0]!;
     for (const body of [
@@ -116,13 +116,13 @@ describe('R-TEAMQ-10 the coverage of a lead source: read and change', () => {
     expect(await stored(id)).toEqual({ o: null, b: null, c: false, hi: false });
   });
 
-  it('R-TEAMQ-11 E835 E836: the same person twice, no rule naming the source and a shared fallback pond are warnings, each a code and a sentence', async () => {
+  it('R-TEAMQ-11 E935 E936: the same person twice, no rule naming the source and a shared fallback pond are warnings, each a code and a sentence', async () => {
     const id = await newSource('Website form (coverage test)');
     const a = w.agents[0]!;
     const r = await put({ ownerUserId: a.userId, backupUserId: a.userId, highIntent: false, covered: true }, id);
     expect(r.status).toBe(200);
     expect(r.body.coverage.covered).toBe(true);
-    // R-TEAMQ-21 E881 (review fix M2): this agent is in the rule's rotation, so as the backup they also receive these leads: said too
+    // R-TEAMQ-21 E981 (review fix M2): this agent is in the rule's rotation, so as the backup they also receive these leads: said too
     expect(codesOf(r.body.coverage)).toEqual(['SAME_PERSON', 'BACKUP_IN_ROTATION', 'NO_ROUTING_RULE', 'SHARED_FALLBACK_POND']);
     const byCode = new Map(r.body.coverage.warnings.map((x) => [x.code, x.sentence]));
     expect(byCode.get('BACKUP_IN_ROTATION')).toBe('The backup also receives these leads. When a lead is with them, their team lead is alerted instead.');
@@ -131,7 +131,7 @@ describe('R-TEAMQ-10 the coverage of a lead source: read and change', () => {
     expect(byCode.get('SHARED_FALLBACK_POND')).toMatch(/^Its fallback pond, ".+", is also the fallback pond of /);
   });
 
-  it('R-TEAMQ-11 E836: with no routing rule its leads go straight to the default pond, said so; a rule that names the source, with its own fallback pond, clears both warnings', async () => {
+  it('R-TEAMQ-11 E936: with no routing rule its leads go straight to the default pond, said so; a rule that names the source, with its own fallback pond, clears both warnings', async () => {
     const w3 = await leadsWorld(h, { agents: 2, rule: false });
     const [a, b] = w3.agents as [TestClient, TestClient];
     const first = await put({ ownerUserId: a.userId, backupUserId: b.userId, highIntent: false, covered: true }, w3.sourceId, w3.owner);
@@ -153,7 +153,7 @@ describe('R-TEAMQ-10 the coverage of a lead source: read and change', () => {
 });
 
 describe('R-TEAMQ-11 a named member is suspended or deactivated', () => {
-  it('R-TEAMQ-11 E834: suspending the backup does not fail: the source is flagged and reads as not covered, nobody is put in their place, and reactivating them covers it again', async () => {
+  it('R-TEAMQ-11 E934: suspending the backup does not fail: the source is flagged and reads as not covered, nobody is put in their place, and reactivating them covers it again', async () => {
     const id = await newSource('Portal B (coverage test)');
     const [a, , c] = w.agents as [TestClient, TestClient, TestClient];
     expect((await put({ ownerUserId: a.userId, backupUserId: c.userId, highIntent: false, covered: true }, id)).body.coverage.covered).toBe(true);
@@ -181,7 +181,7 @@ describe('R-TEAMQ-11 a named member is suspended or deactivated', () => {
     expect((await read(id)).body.coverage.covered).toBe(true);
   });
 
-  it('R-TEAMQ-11 E834: deactivating the owner of a source runs to the end: the source keeps naming them, is flagged and not covered', async () => {
+  it('R-TEAMQ-11 E934: deactivating the owner of a source runs to the end: the source keeps naming them, is flagged and not covered', async () => {
     const id = await newSource('Portal D (coverage test)');
     const w2 = w.agents[1]!;
     const [a] = w.agents as [TestClient];
@@ -200,7 +200,7 @@ describe('R-TEAMQ-11 a named member is suspended or deactivated', () => {
 });
 
 describe('R-TEAMQ-10 who may read and change coverage', () => {
-  it('R-TEAMQ-10 E837 R-PERM-1 R-PERM-5: the role matrix: Owner and Admin read and change it; a Team Lead, an Agent, an ISA and a TC get 404 on both and change nothing', async () => {
+  it('R-TEAMQ-10 E937 R-PERM-1 R-PERM-5: the role matrix: Owner and Admin read and change it; a Team Lead, an Agent, an ISA and a TC get 404 on both and change nothing', async () => {
     const id = await newSource('Role matrix source (coverage test)');
     const got: Record<string, string> = {};
     const want: Record<string, string> = {};
@@ -221,7 +221,7 @@ describe('R-TEAMQ-10 who may read and change coverage', () => {
     expect((await h.client().request('GET', `/api/lead-sources/${id}/coverage`)).statusCode).toBe(401);
   });
 
-  it('R-TEAMQ-10 E837 R-TEN-1: tenant isolation: another team\'s source is 404 to read and to change, another team\'s member cannot be named, and the overview never lists it', async () => {
+  it('R-TEAMQ-10 E937 R-TEN-1: tenant isolation: another team\'s source is 404 to read and to change, another team\'s member cannot be named, and the overview never lists it', async () => {
     const a = w.agents[0]!;
     expect((await read(other.sourceId)).status).toBe(404);
     expect((await put({ ownerUserId: a.userId, backupUserId: a.userId, highIntent: true, covered: true }, other.sourceId)).status).toBe(404);

@@ -1,5 +1,5 @@
 // The 30-minute auto-release does not fire for a covered source (b19 team-queue lane, step 2; owner decision 3,
-// 2026-11-19; DATA_MODEL R-TEAMQ-13, E843 to E845). Tested where it is decided: the `auto_release` timer command.
+// 2026-11-19; DATA_MODEL R-TEAMQ-13, E943 to E945). Tested where it is decided: the `auto_release` timer command.
 import { describe, expect, it } from 'vitest';
 import { type Instant, plusMs } from '../foundation/index.js';
 import { decide } from './decide.js';
@@ -12,7 +12,7 @@ const releaseFence = (l: ReturnType<typeof ownedLead>) => ({ periodSeq: l.p.peri
 const breachFence = (l: ReturnType<typeof ownedLead>) => ({ periodSeq: l.p.periodSeq as number, dueAt: l.p.firstTouchDueAt as Instant });
 
 describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
-  it('R-TEAMQ-13 E843: covered: the timer fires and nothing is released: the lead stays with its owner, the release deadline is cleared by a ledgered `sla_waived` event, and nobody is notified about a pond', () => {
+  it('R-TEAMQ-13 E943: covered: the timer fires and nothing is released: the lead stays with its owner, the release deadline is cleared by a ledgered `sla_waived` event, and nobody is notified about a pond', () => {
     const l = ownedLead(U.a);
     const fence = releaseFence(l);
     const before = l.p;
@@ -26,7 +26,7 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
     expect(notifies(d)).toEqual([]);
   });
 
-  it('R-TEAMQ-13 E843: the existing breach alert still fires for a covered lead, before or after the waived release', () => {
+  it('R-TEAMQ-13 E943: the existing breach alert still fires for a covered lead, before or after the waived release', () => {
     // breach first (the usual order: 15 minutes, then 30)
     const a = ownedLead(U.a);
     const rel = releaseFence(a);
@@ -45,7 +45,7 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
     expect(notifies(late).map((n) => n.userId)).toEqual([U.b, U.tl]);
   });
 
-  it('R-TEAMQ-13 E844: not covered, or unknown: the tenant setting decides exactly as before (released to the default pond)', () => {
+  it('R-TEAMQ-13 E944: not covered, or unknown: the tenant setting decides exactly as before (released to the default pond)', () => {
     for (const autoReleaseWaived of [false, undefined]) {
       const l = ownedLead(U.a);
       const fence = releaseFence(l);
@@ -56,7 +56,7 @@ describe('R-TEAMQ-13 the auto-release of a lead from a covered source', () => {
     expect(SETTINGS.firstTouchReleaseSeconds).toBe(1800);
   });
 
-  it('R-TEAMQ-13 E845: the waived timer delivered again, or the sweeper asking again, is a no-op: the cleared deadline no longer matches any fence', () => {
+  it('R-TEAMQ-13 E945: the waived timer delivered again, or the sweeper asking again, is a no-op: the cleared deadline no longer matches any fence', () => {
     const l = ownedLead(U.a);
     const fence = releaseFence(l);
     l.run({ kind: 'timer', deadline: 'auto_release', fence }, { now: fence.dueAt, actor: systemActor('timer'), autoReleaseWaived: true });

@@ -82,7 +82,7 @@ describe('R-ACC-5 momentum', () => {
 describe('R-TEAMQ-23 a first touch made by the backup is not the owner\'s response (review fix M5)', () => {
   const row = (o: Partial<SpeedRow>): SpeedRow => ({ userId: 'u' as never, contactId: 'c' as never, ownedSeq: 1, ownedAt: 0 as never, firstTouchDueAt: 900_000 as never, firstTouchAt: null, ...o });
 
-  it('R-TEAMQ-23 E885: a period first touched by the backup is counted apart: not in the owner\'s "within", "responded" or median, not held against them either; the owner\'s own first touches are unchanged', () => {
+  it('R-TEAMQ-23 E985: a period first touched by the backup is counted apart: not in the owner\'s "within", "responded" or median, not held against them either; the owner\'s own first touches are unchanged', () => {
     const own = row({ ownedSeq: 1, firstTouchAt: 120_000 as never });
     const byBackup = row({ ownedSeq: 2, firstTouchAt: 240_000 as never, firstTouchByBackup: true });
     const before = speedToLeadSummary([own, row({ ownedSeq: 2 })], { now: 300_000 as never });

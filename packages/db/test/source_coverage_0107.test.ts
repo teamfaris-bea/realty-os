@@ -47,7 +47,7 @@ describe('R-TEAMQ-10 (0107): lead source coverage in the database', () => {
     expect(await row(w.leadSourceId)).toEqual({ o: null, b: null, c: false, hi: false });
   });
 
-  it('R-TEAMQ-10 E833: covered is refused without both an owner and a backup; with both it is stored', async () => {
+  it('R-TEAMQ-10 E933: covered is refused without both an owner and a backup; with both it is stored', async () => {
     const [a, b] = w.agents as [Member, Member, Member];
     await expect(cover(w.owner.actor, w.leadSourceId, { owner: a.id, backup: null, covered: true })).rejects.toThrow(/lead_sources_covered_needs_both/);
     await expect(cover(w.owner.actor, w.leadSourceId, { owner: null, backup: b.id, covered: true })).rejects.toThrow(/lead_sources_covered_needs_both/);
@@ -91,7 +91,7 @@ describe('R-TEAMQ-10 (0107): lead source coverage in the database', () => {
     expect(await row(w.leadSourceId)).toEqual(before);
   });
 
-  it('R-TEAMQ-11 E834: suspending or removing a named member does not fail and does not clear the source: the row still names them', async () => {
+  it('R-TEAMQ-11 E934: suspending or removing a named member does not fail and does not clear the source: the row still names them', async () => {
     const [a, b] = w.agents as [Member, Member, Member];
     await cover(w.owner.actor, w.leadSourceId, { owner: a.id, backup: b.id, covered: true });
     await as(w.owner.actor, (tx) => sql`UPDATE memberships SET status = 'suspended' WHERE tenant_id = app.tenant_id() AND user_id = ${b.id}`.execute(tx));

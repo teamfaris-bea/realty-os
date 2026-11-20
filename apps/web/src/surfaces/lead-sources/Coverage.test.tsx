@@ -56,7 +56,7 @@ describe('R-TEAMQ-10 coverage on the lead sources list', () => {
 });
 
 describe('R-TEAMQ-10 R-TEAMQ-11 the Coverage card of one source', () => {
-  it('R-TEAMQ-10 E833: says "Not covered" with the reason and every warning as a sentence; the switch cannot be turned on until an owner and a backup are picked', async () => {
+  it('R-TEAMQ-10 E933: says "Not covered" with the reason and every warning as a sentence; the switch cannot be turned on until an owner and a backup are picked', async () => {
     const fake = fakeWith(NOT_COVERED);
     sourcesApp(fake, page, 'owner');
     const c = await card();
@@ -119,7 +119,7 @@ describe('R-TEAMQ-10 R-TEAMQ-11 the Coverage card of one source', () => {
     expect(fake.callsTo(`PUT /lead-sources/${S1}/coverage`)[0]!.body).toEqual({ ownerUserId: ID.ava, backupUserId: null, highIntent: true, covered: false });
   });
 
-  it('R-TEAMQ-11 E834: a suspended backup stays named and selected, labelled as suspended; the card says "Not covered" and why, and that nobody was put in their place', async () => {
+  it('R-TEAMQ-11 E934: a suspended backup stays named and selected, labelled as suspended; the card says "Not covered" and why, and that nobody was put in their place', async () => {
     const flagged = coverage({
       owner: { userId: ID.ava, name: 'Jordan P.', status: 'active' },
       backup: { userId: gone.userId, name: 'Gale S.', status: 'suspended' },
@@ -140,7 +140,7 @@ describe('R-TEAMQ-10 R-TEAMQ-11 the Coverage card of one source', () => {
     expect(c.getByRole('checkbox', { name: 'Covered' })).toBeChecked();
   });
 
-  it('R-TEAMQ-24 E888 E889 (review fix L3): "What happens now" shows the server\'s own lines: who the backup alert goes to and the team\'s own time before a lead returns to the pond; a server that sends none shows no such list', async () => {
+  it('R-TEAMQ-24 E988 E989 (review fix L3): "What happens now" shows the server\'s own lines: who the backup alert goes to and the team\'s own time before a lead returns to the pond; a server that sends none shows no such list', async () => {
     const effects = [
       'The backup alert still fires: a new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, Sam T.',
       'A lead with no first contact goes back to the pond after 45 minutes again, as on any source that is not covered.',

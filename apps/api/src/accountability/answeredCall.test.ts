@@ -1,4 +1,4 @@
-// A person ANSWERED the lead's own call (b19 team-queue lane, review fix M4; DATA_MODEL R-TEAMQ-22, E882 to E884),
+// A person ANSWERED the lead's own call (b19 team-queue lane, review fix M4; DATA_MODEL R-TEAMQ-22, E982 to E984),
 // end to end over real Postgres: the call comes in through the real telephony webhooks (the fake provider's
 // signature), rings the agent, and a person presses 1. The queue and the report must say so: never "nobody has
 // called, texted or emailed yet", never a human attempt. The call that itself creates a call-in inquiry (a tracked
@@ -112,7 +112,7 @@ afterAll(async () => {
 });
 
 describe('R-TEAMQ-22 a person answered the lead\'s own call (review fix M4)', () => {
-  it('R-TEAMQ-22 E882 E883 E884: a new caller on a tracked number whose call a person answers: the inquiry\'s OWN call counts (it started before the inquiry reached the team): the queue says a person answered, the report shows "answered call" (not an attempt, not waiting), and the backup is not alerted', async () => {
+  it('R-TEAMQ-22 E982 E983 E984: a new caller on a tracked number whose call a person answers: the inquiry\'s OWN call counts (it started before the inquiry reached the team): the queue says a person answered, the report shows "answered call" (not an attempt, not waiting), and the backup is not alerted', async () => {
     const from = randomPhone();
     const callSid = await calledAndAnswered(from, tracking.e164);
     const k = await callRow(callSid);
@@ -150,7 +150,7 @@ describe('R-TEAMQ-22 a person answered the lead\'s own call (review fix M4)', ()
     expect(await alertRows(inq!.id)).toEqual([{ outcome: 'answered_call', alerted_user_id: null }]);
   });
 
-  it('R-TEAMQ-22 E882: a web lead who then calls the team and is answered: the same true words; the agent\'s call back is the human attempt that takes it out of the queue, and the report keeps both facts', async () => {
+  it('R-TEAMQ-22 E982: a web lead who then calls the team and is answered: the same true words; the agent\'s call back is the human attempt that takes it out of the queue, and the report keeps both facts', async () => {
     const phone = randomPhone();
     const r = await postIntake(h, web.token, { inquiryType: 'buy', fullName: 'Dana Rivera', phones: [phone] });
     expect(r.statusCode).toBe(201);

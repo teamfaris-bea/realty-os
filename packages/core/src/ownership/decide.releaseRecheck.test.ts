@@ -1,5 +1,5 @@
 // The waiver of the auto-release is RE-EVALUATED, not one-shot (b19 team-queue lane, review fix M1; DATA_MODEL
-// R-TEAMQ-20, E874 to E878). A waived release (R-TEAMQ-13) comes back when its reason is gone: the source is no longer
+// R-TEAMQ-20, E974 to E978). A waived release (R-TEAMQ-13) comes back when its reason is gone: the source is no longer
 // covered now, or the lead's own owner is no longer an active member. Decided by the `release_recheck` command (the
 // system's, issued by apps/api leads/releaseRecheck.ts when coverage or a member's status changes): it writes a
 // ledgered `sla_restored` event that stores a NEW release deadline, the tenant's release window counted from that
@@ -25,7 +25,7 @@ function waivedLead() {
 }
 
 describe('R-TEAMQ-20 covered now, and when a lead\'s auto-release is waived', () => {
-  it('R-TEAMQ-20 E874: covered now needs the switch on and BOTH named members active; the waiver also needs the LEAD\'s own owner to be an active member', () => {
+  it('R-TEAMQ-20 E974: covered now needs the switch on and BOTH named members active; the waiver also needs the LEAD\'s own owner to be an active member', () => {
     expect(coveredNow({ setting: true, ownerStatus: 'active', backupStatus: 'active' })).toBe(true);
     expect(coveredNow({ setting: false, ownerStatus: 'active', backupStatus: 'active' })).toBe(false);
     for (const out of ['suspended', 'deactivating', 'removed', 'invited', null] as const) {
@@ -40,7 +40,7 @@ describe('R-TEAMQ-20 covered now, and when a lead\'s auto-release is waived', ()
 });
 
 describe('R-TEAMQ-20 release_recheck: a waived release comes back when its reason is gone', () => {
-  it('R-TEAMQ-20 E875: the waiver still holds (covered now, owner active): nothing is written', () => {
+  it('R-TEAMQ-20 E975: the waiver still holds (covered now, owner active): nothing is written', () => {
     const { l, waivedAt } = waivedLead();
     const seq = l.p.seq;
     const d = l.run({ kind: 'release_recheck' }, { now: plusMs(waivedAt, 3_600_000), actor: systemActor('worker'), autoReleaseWaived: true, releaseWaivedInPeriod: true });
@@ -48,7 +48,7 @@ describe('R-TEAMQ-20 release_recheck: a waived release comes back when its reaso
     expect(l.p.seq).toBe(seq);
   });
 
-  it('R-TEAMQ-20 E876: the waiver no longer holds: a ledgered `sla_restored` stores a new release deadline, the tenant\'s release window of staffed time from that moment, with its timer; the owner is unchanged and nobody is notified by the re-arming', () => {
+  it('R-TEAMQ-20 E976: the waiver no longer holds: a ledgered `sla_restored` stores a new release deadline, the tenant\'s release window of staffed time from that moment, with its timer; the owner is unchanged and nobody is notified by the re-arming', () => {
     const { l, waivedAt } = waivedLead();
     const now = plusMs(waivedAt, 3_600_000);
     const before = l.p;
@@ -65,7 +65,7 @@ describe('R-TEAMQ-20 release_recheck: a waived release comes back when its reaso
     expect(again).toMatchObject({ ok: true, events: [], effects: [] });
   });
 
-  it('R-TEAMQ-20 E876 E877: at the restored deadline the ordinary timer decides again: still not waived, the lead is released to the default pond and the team leads hear of the pond arrival; covered again by then, it is waived again', () => {
+  it('R-TEAMQ-20 E976 E977: at the restored deadline the ordinary timer decides again: still not waived, the lead is released to the default pond and the team leads hear of the pond arrival; covered again by then, it is waived again', () => {
     const released = waivedLead();
     const now = plusMs(released.waivedAt, 60_000);
     released.l.run({ kind: 'release_recheck' }, { now, actor: systemActor('worker'), autoReleaseWaived: false, releaseWaivedInPeriod: true });
@@ -82,7 +82,7 @@ describe('R-TEAMQ-20 release_recheck: a waived release comes back when its reaso
     expect(kept.l.p).toMatchObject({ state: 'owned', ownerUserId: U.a, releaseDueAt: null });
   });
 
-  it('R-TEAMQ-20 E878: nothing to restore: a release that was never waived, a lead already touched, a lead no longer owned, a tenant with the auto-release turned off, unknown facts; and only the system may ask', () => {
+  it('R-TEAMQ-20 E978: nothing to restore: a release that was never waived, a lead already touched, a lead no longer owned, a tenant with the auto-release turned off, unknown facts; and only the system may ask', () => {
     // never waived in this period (its deadline is simply still ahead, or the tenant has none)
     const fresh = ownedLead(U.a);
     expect(fresh.run({ kind: 'release_recheck' }, { now: plusMs(fresh.p.ownedAt as Instant, 1000), actor: systemActor('worker'), autoReleaseWaived: false, releaseWaivedInPeriod: false })).toMatchObject({ ok: true, events: [] });

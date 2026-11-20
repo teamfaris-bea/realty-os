@@ -46,7 +46,7 @@ describe('Scoreboard', () => {
     }
   });
 
-  it('R-TEAMQ-23 E885: periods first touched by the backup are a line of their own with their denominator, never inside "within the first-touch window"; with none, no such line', () => {
+  it('R-TEAMQ-23 E985: periods first touched by the backup are a line of their own with their denominator, never inside "within the first-touch window"; with none, no such line', () => {
     const lines = scoreboardLines(board({ speedToLead: { medianSeconds: 240, withinSla: 12, total: 14, responded: 13, pending: 1, byBackup: 2 } }));
     expect(lines[0]).toMatchObject({ label: 'Speed to lead (first attempt)', text: '12 of 14 within the first-touch window' });
     expect(lines[1]).toMatchObject({ label: 'First touch by the backup', text: '2 of 16 first touched by the backup' });

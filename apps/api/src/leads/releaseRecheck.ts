@@ -1,5 +1,5 @@
 // The waiver of a covered source's auto-release is RE-EVALUATED, not one-shot (b19 team-queue lane, review fix M1;
-// DATA_MODEL R-TEAMQ-20, E874 to E878).
+// DATA_MODEL R-TEAMQ-20, E974 to E978).
 //
 //   job `leads.release_recheck` { changeId }   queue default, as the system actor (via worker), one transaction per lead
 //

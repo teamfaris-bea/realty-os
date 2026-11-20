@@ -1,5 +1,5 @@
 // A pond arrival alerts the team leads (b19 team-queue lane, step 2; owner decision 4, 2026-11-19; DATA_MODEL
-// R-TEAMQ-12, E838 to E842). Decided in core with the move itself, so the alert and the move commit together.
+// R-TEAMQ-12, E938 to E942). Decided in core with the move itself, so the alert and the move commit together.
 import { describe, expect, it } from 'vitest';
 import { HOUR_MS, MINUTE_MS, type UserId, plusMs } from '../foundation/index.js';
 import { decide } from './decide.js';
@@ -15,7 +15,7 @@ const PEOPLE: PeopleFacts = { admins: [U.admin, U.owner], teamLeads: [U.tl, TL2]
 const routing = (over: Parameters<typeof rule>[0] | null, candidates = [candidate(U.a)]) => ({ rule: over === null ? null : rule(over), candidates, cursor: {}, alreadyOffered: [] as UserId[] });
 
 describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
-  it('R-TEAMQ-12 E838: routed there by a rule: every team lead gets one pond_new at high priority, keyed on the ledger event that put the lead in the pond', () => {
+  it('R-TEAMQ-12 E938: routed there by a rule: every team lead gets one pond_new at high priority, keyed on the ledger event that put the lead in the pond', () => {
     const l = new Lead();
     const d = l.run({ kind: 'create', via: 'intake' }, { actor: systemActor('provider'), people: PEOPLE, routing: routing({ strategy: 'pond', targetPondId: OTHER_POND }, []) });
     const arrival = eventsOf(d).at(-1)!;
@@ -29,14 +29,14 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
     expect(d.effects.map((e) => e.kind).filter((k) => k !== 'notify')).toEqual([]);
   });
 
-  it('R-TEAMQ-12 E838: no rule matched: the same alert, with its own reason', () => {
+  it('R-TEAMQ-12 E938: no rule matched: the same alert, with its own reason', () => {
     const l = new Lead();
     const d = l.run({ kind: 'create', via: 'intake' }, { actor: systemActor('provider'), people: PEOPLE, routing: routing(null, []) });
     expect(eventsOf(d).at(-1)).toMatchObject({ type: 'sent_to_pond', reasonCode: 'NO_RULE_MATCH', pondId: DEFAULT_POND });
     expect(pondNew(d).map((e) => [e.userId, e.notification.reasonCode])).toEqual([[U.tl, 'POND_NEW_NO_RULE_MATCH'], [TL2, 'POND_NEW_NO_RULE_MATCH']]);
   });
 
-  it('R-TEAMQ-12 E838: every offer expired: the expiry that sends it to the pond alerts once; the earlier expiries, which re-offer, alert nobody about a pond', () => {
+  it('R-TEAMQ-12 E938: every offer expired: the expiry that sends it to the pond alerts once; the earlier expiries, which re-offer, alert nobody about a pond', () => {
     const l = new Lead();
     const snap = (already: UserId[]) => ({ rule: rule({ maxOffers: 2, fallbackPondId: FALLBACK_POND }), candidates: [candidate(U.a), candidate(U.b)], cursor: {}, alreadyOffered: already });
     l.run({ kind: 'create', via: 'intake' }, { actor: systemActor('provider'), people: PEOPLE, routing: snap([]) });
@@ -52,7 +52,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
     ]);
   });
 
-  it('R-TEAMQ-12 E838: released by its owner: the team leads are alerted, never the person who released it', () => {
+  it('R-TEAMQ-12 E938: released by its owner: the team leads are alerted, never the person who released it', () => {
     const l = ownedLead(U.a);
     const d = l.run({ kind: 'release', reason: 'not_a_fit' }, { actor: userActor(U.a), people: PEOPLE, now: plusMs(T0, HOUR_MS) });
     expect(eventsOf(d).at(-1)).toMatchObject({ type: 'released', toState: 'in_pond' });
@@ -63,7 +63,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
     expect(pondNew(mine).map((e) => e.userId)).toEqual([TL2]);
   });
 
-  it('R-TEAMQ-12 E839: replaying the command alerts nobody again, and a second arrival is its own alert (a new key)', () => {
+  it('R-TEAMQ-12 E939: replaying the command alerts nobody again, and a second arrival is its own alert (a new key)', () => {
     const l = new Lead();
     const c = ctx({ actor: systemActor('provider'), people: PEOPLE, routing: routing(null, []) });
     const d = decide(null, { kind: 'create', via: 'intake' }, c);
@@ -80,13 +80,13 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
     expect(pondNew(back)[0]!.notification.dedupeKey).not.toBe(pondNew(d)[0]!.notification.dedupeKey);
   });
 
-  it('R-TEAMQ-12 E840: a tenant with no team lead alerts its Owners and Admins instead', () => {
+  it('R-TEAMQ-12 E940: a tenant with no team lead alerts its Owners and Admins instead', () => {
     const l = new Lead();
     const d = l.run({ kind: 'create', via: 'intake' }, { actor: systemActor('provider'), people: { admins: [U.admin, U.owner], teamLeads: [], teamLeadsOf: {} }, routing: routing(null, []) });
     expect(pondNew(d).map((e) => [e.userId, e.notification.priority])).toEqual([[U.owner, 'high'], [U.admin, 'high']]);
   });
 
-  it('R-TEAMQ-12 E841: nobody is alerted twice for one arrival: a team lead or Admin who already gets the "nobody was available" alert gets no pond_new on top; the others do', () => {
+  it('R-TEAMQ-12 E941: nobody is alerted twice for one arrival: a team lead or Admin who already gets the "nobody was available" alert gets no pond_new on top; the others do', () => {
     const l = new Lead();
     const d = l.run({ kind: 'create', via: 'intake' }, { actor: systemActor('provider'), people: PEOPLE, routing: routing({ fallbackPondId: FALLBACK_POND }, [candidate(U.a, { acceptingLeads: false })]) });
     expect(eventsOf(d).at(-1)).toMatchObject({ type: 'sent_to_pond', reasonCode: 'NO_ELIGIBLE_AGENT' });
@@ -99,7 +99,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
     expect([...perUser.values()].every((n) => n === 1)).toBe(true);
   });
 
-  it('R-TEAMQ-12 E842: an import never alerts: not a person imported into a pond, and not a re-run', () => {
+  it('R-TEAMQ-12 E942: an import never alerts: not a person imported into a pond, and not a re-run', () => {
     const l = new Lead();
     const d = l.run({ kind: 'import_assign', target: { pondId: DEFAULT_POND } }, { actor: systemActor('import'), people: PEOPLE });
     expect(l.p.state).toBe('in_pond');
@@ -109,21 +109,21 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads, once', () => {
     expect(notifies(again)).toEqual([]);
   });
 
-  it('R-TEAMQ-12 E842: staying in the pond is not an arrival: a re-inquiry that leaves the lead where it is alerts nobody', () => {
+  it('R-TEAMQ-12 E942: staying in the pond is not an arrival: a re-inquiry that leaves the lead where it is alerts nobody', () => {
     const l = pondLead();
     const d = l.run({ kind: 'reinquiry', inquiryId: 'inq-2' }, { actor: systemActor('provider'), people: PEOPLE, pond: pond({ reinquiry: 'stay' }) });
     expect(eventsOf(d)[0]).toMatchObject({ type: 'reinquiry', reasonCode: 'REINQUIRY_STAY', toState: 'in_pond' });
     expect(pondNew(d)).toEqual([]);
   });
 
-  it('R-TEAMQ-12 E842: a deactivation that moves a member\'s leads to the pond is the Owner\'s own bulk move: no pond alert per lead', () => {
+  it('R-TEAMQ-12 E942: a deactivation that moves a member\'s leads to the pond is the Owner\'s own bulk move: no pond alert per lead', () => {
     const l = ownedLead(U.a);
     const d = l.run({ kind: 'deactivate_owner', destination: 'default_pond', deactivationId: 'd0000000-0000-7000-8000-00000000dea1' }, { actor: systemActor('worker'), people: PEOPLE, deactivation: { userId: U.a, teamLeadUserId: U.tl, fallbackUserId: U.owner } });
     expect(eventsOf(d).at(-1)).toMatchObject({ type: 'sent_to_pond', reasonCode: 'OWNER_DEACTIVATED' });
     expect(pondNew(d)).toEqual([]);
   });
 
-  it('R-TEAMQ-12 E841: the 30-minute auto-release: the owner\'s team lead already hears it went back to the pond; the other team leads get the pond alert', () => {
+  it('R-TEAMQ-12 E941: the 30-minute auto-release: the owner\'s team lead already hears it went back to the pond; the other team leads get the pond alert', () => {
     const l = ownedLead(U.a);
     const due = l.p.releaseDueAt!;
     const d = l.run({ kind: 'timer', deadline: 'auto_release', fence: { periodSeq: l.p.periodSeq as number, dueAt: due } }, { actor: systemActor('timer'), people: PEOPLE, now: due });

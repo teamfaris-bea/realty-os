@@ -1,5 +1,5 @@
 // The minute-three backup alert over real Postgres (b19 team-queue lane, step 2; owner decisions 1 and 2,
-// 2026-11-19; DATA_MODEL R-TEAMQ-14 to R-TEAMQ-18, E846 to E856). Leads arrive through the real intake, the job is
+// 2026-11-19; DATA_MODEL R-TEAMQ-14 to R-TEAMQ-18, E946 to E956). Leads arrive through the real intake, the job is
 // the real `leads.backup_alert` handler run by a real worker, attempts go through the real send and dial paths (fake
 // providers), the automatic reply comes from the real first-response job. The superuser pool only reads state back
 // and moves clocks (an inquiry that arrived four minutes ago, a job that is due). Invented people and sources only.
@@ -155,7 +155,7 @@ afterAll(async () => {
 });
 
 describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
-  it('R-TEAMQ-14 R-TEAMQ-15 E847: an inquiry from a covered source queues ONE job due three staffed minutes after arrival; with no human attempt it alerts the source\'s backup by push and by text to their alert phone, names the lead, the source, the wait and who it is with, records one row, and changes nothing about who has the lead', async () => {
+  it('R-TEAMQ-14 R-TEAMQ-15 E947: an inquiry from a covered source queues ONE job due three staffed minutes after arrival; with no human attempt it alerts the source\'s backup by push and by text to their alert phone, names the lead, the source, the wait and who it is with, records one row, and changes nothing about who has the lead', async () => {
     const src = await source('Website form (alert test)');
     const lead = await arrive(src);
     const before = await holding(lead.contactId);
@@ -193,7 +193,7 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     expect((await alertJobs(w.tenantId, lead.inquiryId)).map((j) => j.status)).toEqual(['succeeded']);
   });
 
-  it('R-TEAMQ-14 E848: an automated reply does not cancel it: the first-response message went out, and the backup is still alerted', async () => {
+  it('R-TEAMQ-14 E948: an automated reply does not cancel it: the first-response message went out, and the backup is still alerted', async () => {
     await approvedPlaybook(w.owner, { templateKey: 'new_lead_response' });
     const src = await source('Open house sign-in (alert test)');
     const lead = await arrive(src);
@@ -208,7 +208,7 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     expect(await toClient(lead.contactId)).toEqual([{ kind: 'message', initiator: 'assistant' }]);
   });
 
-  it('R-TEAMQ-14 E848: a human text, a human call or a human email, by anyone, cancels it: nobody is alerted and the row says why', async () => {
+  it('R-TEAMQ-14 E948: a human text, a human call or a human email, by anyone, cancels it: nobody is alerted and the row says why', async () => {
     const src = await source('Yard sign calls (alert test)');
     // a text by the owner
     const texted = await arrive(src);
@@ -239,7 +239,7 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     }
   });
 
-  it('R-TEAMQ-14 E846: an off-hours arrival is due three staffed minutes after opening; woken before that, the job waits and alerts nobody', async () => {
+  it('R-TEAMQ-14 E946: an off-hours arrival is due three staffed minutes after opening; woken before that, the job waits and alerts nobody', async () => {
     const world = (await assistantWorld(h, { agents: 1, teamLead: true })) as CommsWorld;
     const b = await h.invite(world.owner, 'agent');
     const src = await source('Night form (alert test)', { world, backupUser: b });
@@ -265,7 +265,7 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     expect(Math.abs(after.run_at.getTime() - expected)).toBeLessThan(2_000);
   });
 
-  it('R-TEAMQ-14 E854: never queued for an uncovered source, for a source whose coverage is not complete, or for an import; and a source that stopped being covered in between alerts nobody', async () => {
+  it('R-TEAMQ-14 E954: never queued for an uncovered source, for a source whose coverage is not complete, or for an import; and a source that stopped being covered in between alerts nobody', async () => {
     const plain = await source('Uncovered portal (alert test)', { covered: false });
     const a = await arrive(plain);
     expect(await alertJobs(w.tenantId, a.inquiryId)).toEqual([]);
@@ -309,7 +309,7 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     expect(await alertNotes(closed.inquiryId)).toEqual([]);
   });
 
-  it('R-TEAMQ-14 E855: a "No automated contact" source: its CLIENT gets nothing, and the staff alert still fires', async () => {
+  it('R-TEAMQ-14 E955: a "No automated contact" source: its CLIENT gets nothing, and the staff alert still fires', async () => {
     const src = await source('Partner referrals (alert test)', { noAutomatedContact: true });
     const lead = await arrive(src);
     await accept(lead);
@@ -323,7 +323,7 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
 });
 
 describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
-  it('R-TEAMQ-15 E849: the named backup is suspended: the Team Lead of whoever has the lead is alerted instead, with no new access; the row says it was the fallback', async () => {
+  it('R-TEAMQ-15 E949: the named backup is suspended: the Team Lead of whoever has the lead is alerted instead, with no new access; the row says it was the fallback', async () => {
     const world = (await assistantWorld(h, { agents: 1, teamLead: true })) as CommsWorld;
     await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
     const b = await h.invite(world.owner, 'agent');
@@ -349,7 +349,7 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
     expect(cov.body.coverage.warnings.map((x) => x.code)).toContain('BACKUP_UNAVAILABLE');
   });
 
-  it('R-TEAMQ-15 R-TEAMQ-21 E849 E880: the backup is suspended and whoever has the lead has no Team Lead (a pond): the team\'s Owners and Admins are alerted, never nobody (review fix M2: this case used to end as "no recipient")', async () => {
+  it('R-TEAMQ-15 R-TEAMQ-21 E949 E980: the backup is suspended and whoever has the lead has no Team Lead (a pond): the team\'s Owners and Admins are alerted, never nobody (review fix M2: this case used to end as "no recipient")', async () => {
     const world = await leadsWorld(h, { agents: 1, rule: false });
     await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
     const b = await h.invite(world.owner, 'agent');
@@ -374,7 +374,7 @@ describe('R-TEAMQ-15 who is alerted (owner decision 2)', () => {
 });
 
 describe('R-TEAMQ-27 a send the provider reported as failed (review fix L6)', () => {
-  it('R-TEAMQ-27 E892 E893: the owner\'s text FAILED at the carrier: the lead stays in the queue with "tried … but the text failed", the backup is alerted and told a text was tried, and the report still shows it as the attempt (the scoreboard\'s definition), marked failed', async () => {
+  it('R-TEAMQ-27 E992 E993: the owner\'s text FAILED at the carrier: the lead stays in the queue with "tried … but the text failed", the backup is alerted and told a text was tried, and the report still shows it as the attempt (the scoreboard\'s definition), marked failed', async () => {
     const src = await source('Carrier failure (alert test)');
     const lead = await arrive(src);
     const owner = await accept(lead);
@@ -418,7 +418,7 @@ describe('R-TEAMQ-27 a send the provider reported as failed (review fix L6)', ()
 });
 
 describe('R-TEAMQ-24 one definition of "covered now" (review fix L3)', () => {
-  it('R-TEAMQ-24 E888 E889: the source\'s OWNER is suspended: the card says "Not covered" and, in words, that the backup alert still goes to the backup and that the automatic return to the pond is back on, with the TEAM\'s own time (45 minutes here, never a hard-coded 30); the job does exactly what the card says', async () => {
+  it('R-TEAMQ-24 E988 E989: the source\'s OWNER is suspended: the card says "Not covered" and, in words, that the backup alert still goes to the backup and that the automatic return to the pond is back on, with the TEAM\'s own time (45 minutes here, never a hard-coded 30); the job does exactly what the card says', async () => {
     const world = (await assistantWorld(h, { agents: 1, teamLead: true })) as CommsWorld;
     await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
     const sourceOwner = await h.invite(world.owner, 'agent');
@@ -477,7 +477,7 @@ describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)',
     return r.body.coverage;
   };
 
-  it('R-TEAMQ-21 E879 E881: a lead ON OFFER to, then OWNED by, the source\'s backup: only their Team Lead is alerted ("… who is also the backup for this source"), recorded as team_lead; the holder gets no alert and nobody gets new access; the source says the backup is in its rotation', async () => {
+  it('R-TEAMQ-21 E979 E981: a lead ON OFFER to, then OWNED by, the source\'s backup: only their Team Lead is alerted ("… who is also the backup for this source"), recorded as team_lead; the holder gets no alert and nobody gets new access; the source says the backup is in its rotation', async () => {
     const src = await source('Rotation test');
     // on offer to the backup
     const offered = await arrive(src);
@@ -515,7 +515,7 @@ describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)',
     expect(row.backupAlert!.line).toMatch(/^The backup has this lead: their team lead, \S+ \S\., was alerted at \d{1,2}:\d\d [AP]M\.$/);
   });
 
-  it('R-TEAMQ-21 E880: the backup holds the lead and has NO team lead: the Owner and the Admin are both alerted, recorded as admins with their number; the holder is not', async () => {
+  it('R-TEAMQ-21 E980: the backup holds the lead and has NO team lead: the Owner and the Admin are both alerted, recorded as admins with their number; the holder is not', async () => {
     const world = (await assistantWorld(h, { agents: 1, others: ['admin'] })) as CommsWorld & { others: TestClient[] };
     await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
     const admin = world.others[0]!;
@@ -557,7 +557,7 @@ describe('R-TEAMQ-21 the backup is the person holding the lead (review fix M2)',
 });
 
 describe('R-TEAMQ-16 the backup\'s access', () => {
-  it('R-TEAMQ-16 E851 E852: on an OWNED lead the backup can open the person and place a call with the fake provider; the first touch is credited to the backup and the owner is unchanged; the owner\'s own attempt then ends the backup\'s access', async () => {
+  it('R-TEAMQ-16 E951 E952: on an OWNED lead the backup can open the person and place a call with the fake provider; the first touch is credited to the backup and the owner is unchanged; the owner\'s own attempt then ends the backup\'s access', async () => {
     const src = await source('Accepted then silent (alert test)');
     const lead = await arrive(src);
     const owner = await accept(lead);
@@ -603,7 +603,7 @@ describe('R-TEAMQ-16 the backup\'s access', () => {
     expect((await call(backup, 'POST', `/contacts/${lead.contactId}/calls`, {})).status).toBe(404);
   });
 
-  it('R-TEAMQ-23 E885 E886 (review fix M5): the backup makes the FIRST call on an owned lead: the owner\'s speed to lead does not improve (not "within", not "responded", no median), the period is shown as "first touch by the backup", and the speed-to-lead view says so; the owner\'s own first call on another lead still counts as theirs', async () => {
+  it('R-TEAMQ-23 E985 E986 (review fix M5): the backup makes the FIRST call on an owned lead: the owner\'s speed to lead does not improve (not "within", not "responded", no median), the period is shown as "first touch by the backup", and the speed-to-lead view says so; the owner\'s own first call on another lead still counts as theirs', async () => {
     interface Board {
       userId: string;
       speedToLead: { medianSeconds: number | null; withinSla: number; total: number; responded: number; pending: number; byBackup: number };
@@ -655,7 +655,7 @@ describe('R-TEAMQ-16 the backup\'s access', () => {
     expect(ownView).toEqual([{ first_touch_by_backup: false, within_sla: true, first_touch_user_id: mineOwner.userId }]);
   });
 
-  it('R-TEAMQ-16 E851: on a lead still ON OFFER the backup can open the person and call; the offer stands, no first touch is written to the ledger (nobody owns it yet), and the access ends on its own after 24 hours', async () => {
+  it('R-TEAMQ-16 E951: on a lead still ON OFFER the backup can open the person and call; the offer stands, no first touch is written to the ledger (nobody owns it yet), and the access ends on its own after 24 hours', async () => {
     const src = await source('Still on offer (alert test)');
     const lead = await arrive(src);
     const before = await holding(lead.contactId);
@@ -692,7 +692,7 @@ describe('R-TEAMQ-16 the backup\'s access', () => {
 });
 
 describe('R-TEAMQ-26 a merge carries the waiting inquiry and the backup\'s grant to the surviving record (review fix L5)', () => {
-  it('R-TEAMQ-26 E891: the alerted lead is merged INTO another record of the same person: the waiting inquiry is the survivor\'s (it stays in the queue, with its alert line, and in the report), the backup can open the survivor until the same expiry and no longer holds a live grant on the merged-away record; the merge moved no owner beyond its own rule and sent the client nothing', async () => {
+  it('R-TEAMQ-26 E991: the alerted lead is merged INTO another record of the same person: the waiting inquiry is the survivor\'s (it stays in the queue, with its alert line, and in the report), the backup can open the survivor until the same expiry and no longer holds a live grant on the merged-away record; the merge moved no owner beyond its own rule and sent the client nothing', async () => {
     const src = await source('Merged away (alert test)');
     const lead = await arrive(src);
     const owner = await accept(lead);
@@ -736,7 +736,7 @@ describe('R-TEAMQ-26 a merge carries the waiting inquiry and the backup\'s grant
     expect(await toClient(survivor)).toEqual([{ kind: 'call', initiator: 'human' }]);
   });
 
-  it('R-TEAMQ-26 E891: an EXPIRED grant, or a member\'s other access on the survivor, is not touched by the merge: nothing is revived and nothing is replaced', async () => {
+  it('R-TEAMQ-26 E991: an EXPIRED grant, or a member\'s other access on the survivor, is not touched by the merge: nothing is revived and nothing is replaced', async () => {
     const src = await source('Merged, expired (alert test)');
     const lead = await arrive(src);
     const owner = await accept(lead);
@@ -764,7 +764,7 @@ describe('R-TEAMQ-26 a merge carries the waiting inquiry and the backup\'s grant
 });
 
 describe('R-TEAMQ-17 once per inquiry', () => {
-  it('R-TEAMQ-17 E853: idempotent on replay: the job run twice and the intake replayed leave one alert row, one notification, one job, and the same owner', async () => {
+  it('R-TEAMQ-17 E953: idempotent on replay: the job run twice and the intake replayed leave one alert row, one notification, one job, and the same owner', async () => {
     const src = await source('Replayed (alert test)');
     const body = { inquiryType: 'buy', fullName: 'Robin Vale', phones: [randomPhone()], externalId: `ext-${randomUUID()}` };
     const first = await postIntake(h, src.token, body);
@@ -797,7 +797,7 @@ describe('R-TEAMQ-17 once per inquiry', () => {
     expect((await holding(lead.contactId)).owner).toBe(owner.userId);
   });
 
-  it('R-TEAMQ-17 E887 (review fix L2): two runs decide the same inquiry in OVERLAPPING transactions: one alerts; the loser commits nothing at all: the backup\'s grant keeps the winner\'s expiry, one audit row, one notification', async () => {
+  it('R-TEAMQ-17 E987 (review fix L2): two runs decide the same inquiry in OVERLAPPING transactions: one alerts; the loser commits nothing at all: the backup\'s grant keeps the winner\'s expiry, one audit row, one notification', async () => {
     const src = await source('Overlapping runs (alert test)');
     const lead = await arrive(src);
     const owner = await accept(lead);
@@ -835,7 +835,7 @@ describe('R-TEAMQ-17 once per inquiry', () => {
     expect((await holding(lead.contactId)).owner).toBe(owner.userId);
   });
 
-  it('R-TEAMQ-17 E856: a second inquiry from the same person is its own arrival: its own job, its own row, its own alert', async () => {
+  it('R-TEAMQ-17 E956: a second inquiry from the same person is its own arrival: its own job, its own row, its own alert', async () => {
     const src = await source('Asked twice (alert test)');
     const first = await arrive(src);
     await accept(first);
@@ -866,7 +866,7 @@ describe('R-TEAMQ-17 once per inquiry', () => {
 describe('R-TEAMQ-28 smaller fixes of the review (L7)', () => {
   const sweep = () => withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => sweepLostBackupAlerts(tx, now as Instant), { db: h.database });
 
-  it('R-TEAMQ-28 E894: a LOST alert job is re-issued by the sweep, once: the inquiry is decided and its backup alerted; an inquiry not yet due, one already decided, one with its job alive and one of an uncovered source get nothing new', async () => {
+  it('R-TEAMQ-28 E994: a LOST alert job is re-issued by the sweep, once: the inquiry is decided and its backup alerted; an inquiry not yet due, one already decided, one with its job alive and one of an uncovered source get nothing new', async () => {
     const src = await source('Lost job (alert test)');
     const lost = await arrive(src);
     const alive = await arrive(src);
@@ -900,7 +900,7 @@ describe('R-TEAMQ-28 smaller fixes of the review (L7)', () => {
     expect(leadsHandlers.find((x) => x.kind === BACKUP_ALERT_SWEEP_JOB.kind)).toMatchObject({ every: { ms: 5 * 60_000 } });
   });
 
-  it('R-TEAMQ-28 E895: the backup\'s grant ends when the lead changes owner: a reassignment by the Owner, and the owner\'s own release to the pond', async () => {
+  it('R-TEAMQ-28 E995: the backup\'s grant ends when the lead changes owner: a reassignment by the Owner, and the owner\'s own release to the pond', async () => {
     const src = await source('Owner changes (alert test)');
     const a = await arrive(src);
     const ownerA = await accept(a);
@@ -923,7 +923,7 @@ describe('R-TEAMQ-28 smaller fixes of the review (L7)', () => {
     expect((await holding(b.contactId)).state).toBe('in_pond');
   });
 
-  it('R-TEAMQ-28 E896: a backup grant is always time-boxed (the database refuses a `backup` row with no expiry); a manual share of that member is an explicit, audited change to the role the sharer chose, never a silent permanent "backup"', async () => {
+  it('R-TEAMQ-28 E996: a backup grant is always time-boxed (the database refuses a `backup` row with no expiry); a manual share of that member is an explicit, audited change to the role the sharer chose, never a silent permanent "backup"', async () => {
     const src = await source('Shared by hand (alert test)');
     const lead = await arrive(src);
     const owner = await accept(lead);
@@ -1002,7 +1002,7 @@ describe('R-TEAMQ-18 the team work queue and the response report show the backup
   }
   const reportOf = async (c: TestClient): Promise<Report> => (await call<Report>(c, 'GET', '/team/lead-response?range=7d')).body;
 
-  it('R-TEAMQ-18 E857 E858: a waiting new lead whose backup was alerted carries a "Backup alerted at …" line naming who; the group counts alerted rows over all its rows; the report counts "backup alerted" over the source\'s inquiries and "by the backup" over those alerted', async () => {
+  it('R-TEAMQ-18 E957 E958: a waiting new lead whose backup was alerted carries a "Backup alerted at …" line naming who; the group counts alerted rows over all its rows; the report counts "backup alerted" over the source\'s inquiries and "by the backup" over those alerted', async () => {
     const src = await source('Queue and report (alert test)');
     // three arrivals: one alerted and still waiting, one alerted and then called by the backup, one answered by its owner in time
     const waiting = await arrive(src);
@@ -1053,7 +1053,7 @@ describe('R-TEAMQ-18 the team work queue and the response report show the backup
     expect(row.backupAlert!.line).not.toMatch(/Rivera|\d{3}[-.\s]\d{4}/);
   });
 
-  it('R-TEAMQ-25 E890 (review fix L4): an alert that went to a TEAM LEAD is never counted or worded as "the backup": the queue counts it apart, the report counts "team lead alerted" and labels the team lead\'s attempt team_lead', async () => {
+  it('R-TEAMQ-25 E990 (review fix L4): an alert that went to a TEAM LEAD is never counted or worded as "the backup": the queue counts it apart, the report counts "team lead alerted" and labels the team lead\'s attempt team_lead', async () => {
     const world = (await assistantWorld(h, { agents: 1, teamLead: true })) as CommsWorld;
     await suFixture(h, [{ text: `UPDATE tenant_settings SET routing_hours_start = '00:00', routing_hours_end = '24:00' WHERE tenant_id = $1`, values: [world.tenantId] }]);
     const b = await h.invite(world.owner, 'agent');

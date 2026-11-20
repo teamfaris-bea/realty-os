@@ -52,7 +52,7 @@ afterAll(async () => {
 });
 
 describe('R-TEAMQ-17 (0108): the record of a backup alert', () => {
-  it('R-TEAMQ-17 E853: the system writes one row per inquiry; a second row for the same inquiry is refused; nobody else writes one', async () => {
+  it('R-TEAMQ-17 E953: the system writes one row per inquiry; a second row for the same inquiry is refused; nobody else writes one', async () => {
     await alertRow(w.system('timer'), w, inquiryId);
     await expect(alertRow(w.system('timer'), w, inquiryId)).rejects.toThrow(/lead_backup_alerts_inquiry_once/);
     const second = await inquiryOf((await intakeLead(h.app, w, BUY)).contactId);
@@ -129,7 +129,7 @@ describe('R-TEAMQ-16 (0108): the `backup` collaborator role', () => {
   const sees = (m: Member, contactId: string) => as(m.actor, async (tx) => (await sql`SELECT 1 FROM contacts WHERE id = ${contactId}`.execute(tx)).rows.length === 1);
   const detail = (m: Member, contactId: string) => as(m.actor, async (tx) => (await sql<{ v: boolean }>`SELECT COALESCE(app.contact_detail_visible(app.tenant_id(), ${contactId}::uuid), false) AS v`.execute(tx)).rows[0]!.v);
 
-  it('R-TEAMQ-16 E851 E852: a time-boxed backup grant on a lead still ON OFFER gives that one member sight of that one lead and its detail; it gives nobody else anything, and nothing once it has expired', async () => {
+  it('R-TEAMQ-16 E951 E952: a time-boxed backup grant on a lead still ON OFFER gives that one member sight of that one lead and its detail; it gives nobody else anything, and nothing once it has expired', async () => {
     const offeree = (await suRows<{ u: string }>(h.su, 'SELECT offered_to_user_id AS u FROM contacts WHERE id = $1', [lead]))[0]!.u;
     const backup = w.agents.find((m) => m.id !== offeree)!;
     const bystander = w.agents.find((m) => m.id !== offeree && m.id !== backup.id)!;

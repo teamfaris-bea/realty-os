@@ -1,5 +1,5 @@
 // The backup's time-boxed access ends when the lead's OWNER makes a human attempt (b19 team-queue lane, step 2;
-// DATA_MODEL R-TEAMQ-16, E852). Decided with the touch itself, so it commits with it.
+// DATA_MODEL R-TEAMQ-16, E952). Decided with the touch itself, so it commits with it.
 import { describe, expect, it } from 'vitest';
 import { type Instant, MINUTE_MS, plusMs } from '../foundation/index.js';
 import { effectPlacement } from './decide.js';
@@ -11,7 +11,7 @@ const touchAt = plusMs(T0, 5 * MINUTE_MS);
 const touch = { kind: 'touch' as const, via: 'call' as const, refId: 'call-1', at: touchAt };
 
 describe('R-TEAMQ-16 the backup\'s access and the owner\'s own attempt', () => {
-  it('R-TEAMQ-16 E852: the owner\'s touch ends a live backup grant, in the owner\'s own transaction (inline)', () => {
+  it('R-TEAMQ-16 E952: the owner\'s touch ends a live backup grant, in the owner\'s own transaction (inline)', () => {
     const l = ownedLead(U.a);
     const d = l.run(touch, { actor: userActor(U.a), now: touchAt, backupAccessLive: true });
     expect(eventsOf(d)[0]).toMatchObject({ type: 'first_touch_recorded', actorUserId: U.a });
@@ -31,7 +31,7 @@ describe('R-TEAMQ-16 the backup\'s access and the owner\'s own attempt', () => {
     expect(kinds(off)).not.toContain('endBackupAccess');
   });
 
-  it('R-TEAMQ-16 E851: the backup\'s own attempt, as a collaborator, is the first touch and is credited to the backup; it does not end their own access', () => {
+  it('R-TEAMQ-16 E951: the backup\'s own attempt, as a collaborator, is the first touch and is credited to the backup; it does not end their own access', () => {
     const l = ownedLead(U.a);
     const d = l.run(touch, { actor: userActor(U.b), now: touchAt, actorIsCollaborator: true, backupAccessLive: true });
     expect(eventsOf(d)[0]).toMatchObject({ type: 'first_touch_recorded', actorKind: 'user', actorUserId: U.b, ownerUserId: U.a });
@@ -51,7 +51,7 @@ describe('R-TEAMQ-16 the backup\'s access and the owner\'s own attempt', () => {
 describe('R-TEAMQ-28 the backup\'s access ends when the lead leaves its owner (review fix L7)', () => {
   const fence = (l: ReturnType<typeof ownedLead>) => ({ periodSeq: l.p.periodSeq as number, dueAt: l.p.releaseDueAt as Instant });
 
-  it('R-TEAMQ-28 E895: a release by the owner, a reassignment and the auto-release each end a live grant; an agent\'s own release does it in the follow-up (they no longer own the lead), an Owner\'s reassignment and the timer inline', () => {
+  it('R-TEAMQ-28 E995: a release by the owner, a reassignment and the auto-release each end a live grant; an agent\'s own release does it in the follow-up (they no longer own the lead), an Owner\'s reassignment and the timer inline', () => {
     const released = ownedLead(U.a).run({ kind: 'release', reason: 'not_a_fit' }, { actor: userActor(U.a), now: touchAt, backupAccessLive: true });
     const end = released.effects.find((e) => e.kind === 'endBackupAccess')!;
     expect(end).toEqual({ kind: 'endBackupAccess', ownerChanged: true });

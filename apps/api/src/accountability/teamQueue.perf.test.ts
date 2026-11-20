@@ -73,7 +73,7 @@ const planOf = async (c: TestClient, q: RawBuilder<unknown>): Promise<PlanNode> 
   withTenantTx(c.actor(), async (tx) => (await sql<{ 'QUERY PLAN': [{ Plan: PlanNode }] }>`EXPLAIN (FORMAT JSON) ${q}`.execute(tx)).rows[0]!['QUERY PLAN'][0].Plan, { db: h.database });
 
 describe(`R-TEAMQ-29 the waiting-inquiries read with ${INQUIRIES} inquiries of one source in the window`, () => {
-  it('R-TEAMQ-29 E898: ranges on the arrival through lead_inquiries_source_arrival_idx, never a sequential scan of lead_inquiries, and stops inside each source at the cap', async () => {
+  it('R-TEAMQ-29 E998: ranges on the arrival through lead_inquiries_source_arrival_idx, never a sequential scan of lead_inquiries, and stops inside each source at the cap', async () => {
     const now = instant(Date.now());
     const plan = await planOf(w.owner, waitingInquiriesSql(instant(now - 14 * DAY), now, QUEUE_READ_CAP));
     const nodes = walk(plan);
@@ -100,7 +100,7 @@ describe(`R-TEAMQ-29 the waiting-inquiries read with ${INQUIRIES} inquiries of o
 });
 
 describe(`R-TEAMQ-29 the waiting-inbound read for a Team Lead with ${OUTSIDE_PEOPLE} recently active people of another team`, () => {
-  it('R-TEAMQ-29 E899: starts from the Team Lead\'s own members by the owner and offeree indexes: no sequential scan of contacts, and the tenant-wide activity index is not what finds the team\'s people', async () => {
+  it('R-TEAMQ-29 E999: starts from the Team Lead\'s own members by the owner and offeree indexes: no sequential scan of contacts, and the tenant-wide activity index is not what finds the team\'s people', async () => {
     const now = instant(Date.now());
     const members = [w.teamLead!.userId!, ...w.agents.map((a) => a.userId!)];
     const plan = await planOf(w.teamLead!, waitingInboundPeopleSql(instant(now - 14 * DAY), QUEUE_READ_CAP, { wide: false, members }));

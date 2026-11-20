@@ -238,7 +238,7 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
     expect(r.totals.inquiries).toBe(r.sources.reduce((n, x) => n + x.inquiries, 0));
   });
 
-  it('R-TEAMQ-28 E897 (review fix L7): the inquiry of a person since DELETED is left out of the measure and counted in its own "left out" number, never dropped without a word; a closed person\'s is counted as closed, as before', async () => {
+  it('R-TEAMQ-28 E997 (review fix L7): the inquiry of a person since DELETED is left out of the measure and counted in its own "left out" number, never dropped without a word; a closed person\'s is counted as closed, as before', async () => {
     const src = await source('Juniper Row portal (test)');
     const kept = await acceptedFrom(src, { fullName: 'Kit Kept' });
     const deleted = await acceptedFrom(src, { fullName: 'Del Deleted' });

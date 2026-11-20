@@ -68,7 +68,7 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
     ]);
   });
 
-  it('R-TEAMQ-22 E882 (review fix M4): a person ANSWERED the lead\'s own call: the row says so, in the owner\'s words, and never "nobody has called, texted or emailed yet"; it stays in the group until a person calls back, texts or emails', () => {
+  it('R-TEAMQ-22 E982 (review fix M4): a person ANSWERED the lead\'s own call: the row says so, in the owner\'s words, and never "nobody has called, texted or emailed yet"; it stays in the group until a person calls back, texts or emails', () => {
     // NOW is 10:00 AM: arrived 6 minutes ago, the call was answered at 9:56
     const answered = inq({ arrivedAt: t(-min(6)), holder: { kind: 'owner', userId: user(2), name: 'Jordan P.' }, answeredCallAt: t(-min(4)) });
     const g = group(inputs({ inquiries: [answered] }), 'new_lead');
@@ -97,7 +97,7 @@ describe('R-TEAMQ-2 a new lead with no human attempt', () => {
     expect(buildTeamQueue(inputs()).groups.filter((x) => x.key !== 'new_lead').map((x) => x.answeredCalls)).toEqual([null, null, null, null]);
   });
 
-  it('R-TEAMQ-27 E892 (review fix L6): a text a person sent that the carrier reported as FAILED does not clear the row: it says who tried, when, and that it failed, never "nobody has called, texted or emailed yet" and never nothing', () => {
+  it('R-TEAMQ-27 E992 (review fix L6): a text a person sent that the carrier reported as FAILED does not clear the row: it says who tried, when, and that it failed, never "nobody has called, texted or emailed yet" and never nothing', () => {
     const failed = inq({ arrivedAt: t(-min(12)), holder: { kind: 'owner', userId: user(2), name: 'Jordan P.' }, failedAttempt: { at: t(-min(9)), kind: 'text', name: 'Jordan Park' } });
     expect(whys(inputs({ inquiries: [failed] }), 'new_lead')).toEqual([
       'Arrived 12 min ago from Website form. Owned by Jordan P. Jordan P. tried at 9:51 AM, but the text failed. Nobody else has called, texted or emailed. No automatic reply has gone out.',
@@ -294,7 +294,7 @@ describe('who has the lead', () => {
 });
 
 describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
-  it('R-TEAMQ-18 E857: a row whose backup was alerted says so on its own line, with the time in the team\'s zone and who was alerted; the why line is unchanged', () => {
+  it('R-TEAMQ-18 E957: a row whose backup was alerted says so on its own line, with the time in the team\'s zone and who was alerted; the why line is unchanged', () => {
     const plain = group(inputs({ inquiries: [inq()] }), 'new_lead').rows[0]!;
     const g = group(inputs({ inquiries: [inq({ backupAlert: { at: t(-min(9)), outcome: 'alerted', name: 'Sam Torres', recipient: 'backup' } })] }), 'new_lead');
     expect(g.rows[0]!.backupAlert).toEqual({ at: t(-min(9)), alerted: true, recipient: 'backup', line: 'Backup alerted at 9:51 AM: Sam T.' });
@@ -303,7 +303,7 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     expect([g.backupAlerted, g.total]).toEqual([1, 1]);
   });
 
-  it('R-TEAMQ-18 E857: the fallback and "nobody could be alerted" are said in words; an alert on another day says how long ago', () => {
+  it('R-TEAMQ-18 E957: the fallback and "nobody could be alerted" are said in words; an alert on another day says how long ago', () => {
     const line = (o: NonNullable<QueueInquiryFacts['backupAlert']>, arrivedAt = t(-min(12))) => group(inputs({ inquiries: [inq({ arrivedAt, backupAlert: o })] }), 'new_lead').rows[0]!.backupAlert;
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: 'Taylor Lane', recipient: 'team_lead' })).toEqual({ at: t(-min(9)), alerted: true, recipient: 'team_lead', line: 'The source\'s backup is unavailable: the team lead, Taylor L., was alerted at 9:51 AM.' });
     // R-TEAMQ-21 (review fix M2): "nobody" now only when there is nobody but the person holding the lead; a lead with no team lead on its side tells the Owners and Admins
@@ -315,7 +315,7 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     expect(line({ at: t(-min(9)), outcome: 'alerted', name: null, recipient: 'backup' })!.line).toBe('Backup alerted at 9:51 AM: a member.');
   });
 
-  it('R-TEAMQ-18 E858: the group counts the rows whose backup was alerted over every waiting row (its denominator), also beyond the rows shown; a person who asked twice shows the latest alert', () => {
+  it('R-TEAMQ-18 E958: the group counts the rows whose backup was alerted over every waiting row (its denominator), also beyond the rows shown; a person who asked twice shows the latest alert', () => {
     const many = Array.from({ length: TEAM_QUEUE_GROUP_CAP + 3 }, (_, n) =>
       inq({ inquiryId: inquiry(n + 1), contactId: contact(n + 1), arrivedAt: t(-min(n + 5)), ...(n % 2 === 0 ? { backupAlert: { at: t(-min(n + 2)), outcome: 'alerted' as const, name: 'Sam Torres', recipient: 'backup' as const } } : {}) }),
     );
@@ -324,7 +324,7 @@ describe('R-TEAMQ-18 the backup alert on a new-lead row (b19 step 2)', () => {
     // "nobody could be alerted" is not counted as alerted
     const none = group(inputs({ inquiries: [inq({ backupAlert: { at: t(-min(9)), outcome: 'no_recipient', name: null, recipient: null } })] }), 'new_lead');
     expect([none.backupAlerted, none.total]).toEqual([0, 1]);
-    // R-TEAMQ-25 E890 (review fix L4): an alert that went to a team lead, or to the Owners and Admins, is not "the backup alerted": counted apart
+    // R-TEAMQ-25 E990 (review fix L4): an alert that went to a team lead, or to the Owners and Admins, is not "the backup alerted": counted apart
     const mixed = group(
       inputs({
         inquiries: [

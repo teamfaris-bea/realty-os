@@ -1,4 +1,4 @@
-// Source coverage (b19 team-queue lane, step 2; DATA_MODEL R-TEAMQ-10, R-TEAMQ-11, E833 to E836): the pure rules
+// Source coverage (b19 team-queue lane, step 2; DATA_MODEL R-TEAMQ-10, R-TEAMQ-11, E933 to E936): the pure rules
 // behind "covered" and its warnings. Names here are made up.
 import { describe, expect, it } from 'vitest';
 import type { LeadSourceId, PondId, RuleId, UserId } from '../foundation/index.js';
@@ -46,7 +46,7 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
     expect(c).toEqual({ covered: true, setting: true, sentence: 'Covered: Jordan P. owns this source and Sam T. is the backup.', warnings: [], effects: expect.any(Array) });
   });
 
-  it('R-TEAMQ-10 E833: not covered says why in words: nobody named, no owner, no backup, or coverage turned off', () => {
+  it('R-TEAMQ-10 E933: not covered says why in words: nobody named, no owner, no backup, or coverage turned off', () => {
     expect(sourceCoverage(facts({ owner: null, backup: null, coveredSetting: false }))).toMatchObject({ covered: false, sentence: 'Not covered: no owner and no backup are named.' });
     expect(sourceCoverage(facts({ owner: null, coveredSetting: false }))).toMatchObject({ covered: false, sentence: 'Not covered: no owner is named.' });
     expect(sourceCoverage(facts({ backup: null, coveredSetting: false }))).toMatchObject({ covered: false, sentence: 'Not covered: no backup is named.' });
@@ -56,7 +56,7 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
     expect(sourceCoverage(facts({ backup: null, coveredSetting: true })).covered).toBe(false);
   });
 
-  it('R-TEAMQ-11 E834: a suspended or deactivated owner or backup flags the source and it reads as not covered; the person stays named (nothing is reassigned)', () => {
+  it('R-TEAMQ-11 E934: a suspended or deactivated owner or backup flags the source and it reads as not covered; the person stays named (nothing is reassigned)', () => {
     const suspendedBackup = sourceCoverage(facts({ backup: { userId: BACKUP, name: 'Sam T.', status: 'suspended' } }));
     expect(suspendedBackup).toMatchObject({ covered: false, setting: true });
     expect(suspendedBackup.sentence).toBe('Not covered: the backup, Sam T., is suspended.');
@@ -71,12 +71,12 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
     expect(sourceCoverage(facts({ owner: { userId: OWNER, name: null, status: 'suspended' } })).sentence).toBe('Not covered: the owner, a member with no name, is suspended.');
   });
 
-  it('R-TEAMQ-11 E835: the same person as owner and backup is said, not hidden', () => {
+  it('R-TEAMQ-11 E935: the same person as owner and backup is said, not hidden', () => {
     const c = sourceCoverage(facts({ backup: { userId: OWNER, name: 'Jordan P.', status: 'active' } }));
     expect(c.warnings).toEqual([{ code: 'SAME_PERSON', sentence: 'The owner and the backup are the same person, Jordan P.: nobody else is alerted when they do not respond.' }]);
   });
 
-  it('R-TEAMQ-21 E881: the backup is in the source\'s routing rotation: said, with what then happens (their team lead is alerted instead); never when they are not in it', () => {
+  it('R-TEAMQ-21 E981: the backup is in the source\'s routing rotation: said, with what then happens (their team lead is alerted instead); never when they are not in it', () => {
     const inRotation = sourceCoverage(facts({ rotation: [OWNER, BACKUP] }));
     expect(inRotation.warnings).toEqual([{ code: 'BACKUP_IN_ROTATION', sentence: 'The backup also receives these leads. When a lead is with them, their team lead is alerted instead.' }]);
     expect(inRotation.covered).toBe(true);
@@ -86,7 +86,7 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
     expect(COVERAGE_WARNING_CODES).toContain('BACKUP_IN_ROTATION');
   });
 
-  it('R-TEAMQ-11 E836: no rule names the source, and a shared fallback pond, each a code and a sentence', () => {
+  it('R-TEAMQ-11 E936: no rule names the source, and a shared fallback pond, each a code and a sentence', () => {
     const viaCatchAll = sourceCoverage(facts({ routing: { named: false, ruleId: null, ruleName: 'Everyone', pondId: DEFAULT }, fallbackPondName: 'Main pond' }));
     expect(viaCatchAll.warnings).toEqual([{ code: 'NO_ROUTING_RULE', sentence: 'No routing rule names this source: its leads follow the rule "Everyone", which is not specific to it.' }]);
     const toPond = sourceCoverage(facts({ routing: { named: false, ruleId: null, ruleName: null, pondId: DEFAULT }, fallbackPondName: 'Main pond' }));
@@ -104,7 +104,7 @@ describe('R-TEAMQ-10 sourceCoverage: covered only with an owner and a backup who
 });
 
 describe('R-TEAMQ-24 covered now: ONE definition for the card, the auto-release and the minute-three alert (review fix L3)', () => {
-  it('R-TEAMQ-24 E888: coverageNow is the table all three read: covered, who the minute-three alert goes to, and whether the auto-release is waived', () => {
+  it('R-TEAMQ-24 E988: coverageNow is the table all three read: covered, who the minute-three alert goes to, and whether the auto-release is waived', () => {
     const t = (setting: boolean, ownerStatus: 'active' | 'suspended' | null, backupStatus: 'active' | 'suspended' | null) => coverageNow({ setting, ownerStatus, backupStatus });
     expect(t(true, 'active', 'active')).toEqual({ covered: true, alert: 'backup', autoRelease: 'waived' });
     // the source's OWNER is unavailable: not covered, the release is back on, and the alert still goes to the backup
@@ -117,7 +117,7 @@ describe('R-TEAMQ-24 covered now: ONE definition for the card, the auto-release 
     expect(t(false, null, null)).toEqual({ covered: false, alert: 'off', autoRelease: 'on' });
   });
 
-  it('R-TEAMQ-24 E888 E889: the card says in words what happens now, from the same table, with the TEAM\'s own release time (never a hard-coded 30 minutes)', () => {
+  it('R-TEAMQ-24 E988 E989: the card says in words what happens now, from the same table, with the TEAM\'s own release time (never a hard-coded 30 minutes)', () => {
     const covered = sourceCoverage(facts({ releaseSeconds: 1800 }));
     expect(covered.effects).toEqual([
       'A new lead nobody has called, texted or emailed after 3 minutes of staffed time alerts the backup, Sam T.',
@@ -163,13 +163,13 @@ describe('R-TEAMQ-11 sourceRouting: the rule a source\'s leads follow and the po
     expect(sourceRouting(rules, S1, DEFAULT)).toEqual({ named: true, ruleId: '00000000-0000-7000-8000-0000000000c2', ruleName: 'Website leads', pondId: OVERFLOW });
   });
 
-  it('R-TEAMQ-11 E836: a source no enabled rule names follows the first rule that names no source (its fallback pond, else the default pond); with no such rule, the default pond', () => {
+  it('R-TEAMQ-11 E936: a source no enabled rule names follows the first rule that names no source (its fallback pond, else the default pond); with no such rule, the default pond', () => {
     expect(sourceRouting(rules, S2, DEFAULT)).toEqual({ named: false, ruleId: '00000000-0000-7000-8000-0000000000c1', ruleName: 'Everyone', pondId: DEFAULT });
     expect(sourceRouting([rules[1]!], S2, DEFAULT)).toEqual({ named: false, ruleId: null, ruleName: null, pondId: DEFAULT });
     expect(sourceRouting([], S2, DEFAULT)).toEqual({ named: false, ruleId: null, ruleName: null, pondId: DEFAULT });
   });
 
-  it('R-TEAMQ-11 E836: a rule that names the source AFTER a rule with no condition is never reached: the source is not named in effect', () => {
+  it('R-TEAMQ-11 E936: a rule that names the source AFTER a rule with no condition is never reached: the source is not named in effect', () => {
     const everyoneFirst = [
       rule({ id: '00000000-0000-7000-8000-0000000000c1', position: 1, name: 'Everyone' }),
       rule({ id: '00000000-0000-7000-8000-0000000000c2', position: 2, name: 'Website leads', match: { sources: [S1] }, fallbackPondId: OVERFLOW }),

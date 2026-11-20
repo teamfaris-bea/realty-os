@@ -1,5 +1,5 @@
 // The minute-three backup alert's pure rules (b19 team-queue lane, step 2; DATA_MODEL R-TEAMQ-14, R-TEAMQ-15,
-// E846, E850): when it is due (three minutes of STAFFED time after the arrival) and the words of the alert, which
+// E946, E950): when it is due (three minutes of STAFFED time after the arrival) and the words of the alert, which
 // must fit a notification title (120 characters: what a push and the alert text carry). Names are made up.
 import { describe, expect, it } from 'vitest';
 import { at, businessCalendar, instant } from '../foundation/index.js';
@@ -14,14 +14,14 @@ describe('R-TEAMQ-14 backupAlertDueAt: three minutes of staffed time after the a
     expect(backupAlertDueAt(arrived, arrived, CAL)).toBe(at('2026-11-10T10:03:00-05:00'));
   });
 
-  it('R-TEAMQ-14 E846: an off-hours arrival counts from opening: 02:00 is due at 08:03, and 20:59 crosses the night', () => {
+  it('R-TEAMQ-14 E946: an off-hours arrival counts from opening: 02:00 is due at 08:03, and 20:59 crosses the night', () => {
     const night = at('2026-11-10T02:00:00-05:00');
     expect(backupAlertDueAt(night, night, CAL)).toBe(at('2026-11-10T08:03:00-05:00'));
     const late = at('2026-11-10T20:59:00-05:00');
     expect(backupAlertDueAt(late, late, CAL)).toBe(at('2026-11-11T08:02:00-05:00'));
   });
 
-  it('R-TEAMQ-14 R-TEAMQ-19 E846 E871: a source that back-dates its arrival still gives people three staffed minutes from when the lead reached the team; one dated AHEAD (a fast clock) does too: a lead cannot arrive after the team has it (review fix M3: this line used to wait for the claimed time, 10:05)', () => {
+  it('R-TEAMQ-14 R-TEAMQ-19 E946 E971: a source that back-dates its arrival still gives people three staffed minutes from when the lead reached the team; one dated AHEAD (a fast clock) does too: a lead cannot arrive after the team has it (review fix M3: this line used to wait for the claimed time, 10:05)', () => {
     const reached = at('2026-11-10T10:00:00-05:00');
     expect(backupAlertDueAt(at('2026-11-09T15:00:00-05:00'), reached, CAL)).toBe(at('2026-11-10T10:03:00-05:00'));
     expect(backupAlertDueAt(at('2026-11-10T10:02:00-05:00'), reached, CAL)).toBe(at('2026-11-10T10:03:00-05:00'));
@@ -35,7 +35,7 @@ describe('R-TEAMQ-14 backupAlertDueAt: three minutes of staffed time after the a
 describe('R-TEAMQ-15 backupAlertText: who, from where, how long, who it is with', () => {
   const base = { person: 'Dana R.', sourceName: 'Website form', waitedSeconds: 185, staffedSeconds: 185, recipient: 'backup' as const };
 
-  it('R-TEAMQ-15 E850: the owner\'s example, word for word across the title and the body', () => {
+  it('R-TEAMQ-15 E950: the owner\'s example, word for word across the title and the body', () => {
     const t = backupAlertText({ ...base, holder: { kind: 'on_offer', name: 'Jordan Park' } });
     expect(t.title).toBe('New lead waiting 3 min: Dana R. from Website form. With Jordan P. (on offer). You are the backup.');
     expect(t.body).toBe('Nobody has called, texted or emailed. You can open this lead and call or text for the next 24 hours.');
@@ -50,19 +50,19 @@ describe('R-TEAMQ-15 backupAlertText: who, from where, how long, who it is with'
     expect(backupAlertText({ ...base, person: null, holder: { kind: 'unassigned' } }).title).toBe('New lead waiting 3 min from Website form. Not assigned to anyone. You are the backup.');
   });
 
-  it('R-TEAMQ-15 E846: an off-hours arrival says the real wait and the staffed part apart', () => {
+  it('R-TEAMQ-15 E946: an off-hours arrival says the real wait and the staffed part apart', () => {
     const t = backupAlertText({ ...base, waitedSeconds: 6 * 3600 + 185, staffedSeconds: 185, holder: { kind: 'owner', name: 'Jordan Park' } });
     expect(t.title).toBe('New lead waiting 6 h 3 min: Dana R. from Website form. With Jordan P. You are the backup.');
     expect(t.body).toBe('It arrived outside staffed hours: 3 min of staffed time have passed. Nobody has called, texted or emailed. You can open this lead and call or text for the next 24 hours.');
   });
 
-  it('R-TEAMQ-15 E849: the fallback says why the team lead is hearing it, and promises no new access', () => {
+  it('R-TEAMQ-15 E949: the fallback says why the team lead is hearing it, and promises no new access', () => {
     const t = backupAlertText({ ...base, recipient: 'team_lead', holder: { kind: 'owner', name: 'Jordan Park' } });
     expect(t.title).toBe("New lead waiting 3 min: Dana R. from Website form. With Jordan P. The source's backup is unavailable.");
     expect(t.body).toBe('Nobody has called, texted or emailed. You are alerted as the team lead of whoever has this lead, because the backup named on its source cannot be reached.');
   });
 
-  it('R-TEAMQ-21 E879: the backup IS the person holding the lead: their team lead hears who has it and that they are also the backup (the owner\'s example, word for word across the title and the body)', () => {
+  it('R-TEAMQ-21 E979: the backup IS the person holding the lead: their team lead hears who has it and that they are also the backup (the owner\'s example, word for word across the title and the body)', () => {
     const t = backupAlertText({ ...base, recipient: 'team_lead', why: 'backup_is_holder', holder: { kind: 'owner', name: 'Jordan Park' } });
     expect(t.title).toBe('New lead waiting 3 min: Dana R. from Website form. With Jordan P., who is also the backup for this source.');
     expect(`${t.title} ${t.body}`).toMatch(/^New lead waiting 3 min: Dana R\. from Website form\. With Jordan P\., who is also the backup for this source\. Nobody has called, texted or emailed\./);
@@ -73,7 +73,7 @@ describe('R-TEAMQ-15 backupAlertText: who, from where, how long, who it is with'
     );
   });
 
-  it('R-TEAMQ-21 E880: nobody on the lead\'s side to alert (no team lead): the Owners and Admins hear it, and why they do', () => {
+  it('R-TEAMQ-21 E980: nobody on the lead\'s side to alert (no team lead): the Owners and Admins hear it, and why they do', () => {
     const gone = backupAlertText({ ...base, recipient: 'admins', why: 'backup_unavailable', holder: { kind: 'pond', name: 'Main pond' } });
     expect(gone.title).toBe("New lead waiting 3 min: Dana R. from Website form. In the pond Main pond. The source's backup is unavailable.");
     expect(gone.body).toBe('Nobody has called, texted or emailed. You are alerted as an Owner or Admin, because the backup named on its source cannot be reached and whoever has this lead has no team lead.');
@@ -87,7 +87,7 @@ describe('R-TEAMQ-15 backupAlertText: who, from where, how long, who it is with'
     expect(long.title.endsWith('who is also the backup for this source.')).toBe(true);
   });
 
-  it('R-TEAMQ-27 E892 (review fix L6): a text that was tried and failed is said in the alert: the body never claims nobody tried', () => {
+  it('R-TEAMQ-27 E992 (review fix L6): a text that was tried and failed is said in the alert: the body never claims nobody tried', () => {
     const t = backupAlertText({ ...base, holder: { kind: 'owner', name: 'Jordan Park' }, failedAttempt: 'text' });
     expect(t.title).toBe('New lead waiting 3 min: Dana R. from Website form. With Jordan P. You are the backup.');
     expect(t.body).toBe('A text was tried, but it failed. Nobody else has called, texted or emailed. You can open this lead and call or text for the next 24 hours.');
@@ -95,7 +95,7 @@ describe('R-TEAMQ-15 backupAlertText: who, from where, how long, who it is with'
     expect(t.body.length).toBeLessThanOrEqual(240);
   });
 
-  it('R-TEAMQ-15 E850: the title always fits 120 characters and the body 240: a long source name, then a long holder name, is cut with an ellipsis, never the meaning', () => {
+  it('R-TEAMQ-15 E950: the title always fits 120 characters and the body 240: a long source name, then a long holder name, is cut with an ellipsis, never the meaning', () => {
     const t = backupAlertText({ ...base, person: 'Maximiliana Q.', sourceName: 'The Riverside Collection open house weekend registration form (autumn)', holder: { kind: 'on_offer', name: 'Bartholomew Featherstonehaugh' } });
     expect(t.title.length).toBeLessThanOrEqual(120);
     expect(t.title).toMatch(/^New lead waiting 3 min: Maximiliana Q\. from The Riverside.*… With Bartholomew F\. \(on offer\)\. You are the backup\.$/);
@@ -130,7 +130,7 @@ describe('R-TEAMQ-21 backupAlertRecipients: a waiting covered lead always tells 
     expect(backupAlertRecipients({ ...base, holderUserId: null, holderTeamLeads: [] })).toEqual({ recipient: 'backup', userIds: [B], why: null });
   });
 
-  it('R-TEAMQ-21 E879: the backup IS the holder: their team lead, never themself; with no team lead, the Owners and Admins', () => {
+  it('R-TEAMQ-21 E979: the backup IS the holder: their team lead, never themself; with no team lead, the Owners and Admins', () => {
     expect(backupAlertRecipients({ ...base, holderUserId: B })).toEqual({ recipient: 'team_lead', userIds: ['lead-1'], why: 'backup_is_holder' });
     // the holder leads their own team: the next lead, or the Owners and Admins
     expect(backupAlertRecipients({ ...base, holderUserId: B, holderTeamLeads: [B, 'lead-2'] })).toEqual({ recipient: 'team_lead', userIds: ['lead-2'], why: 'backup_is_holder' });
@@ -138,7 +138,7 @@ describe('R-TEAMQ-21 backupAlertRecipients: a waiting covered lead always tells 
     expect(backupAlertRecipients({ ...base, holderUserId: B, holderTeamLeads: [] })).toEqual({ recipient: 'admins', userIds: ['admin', 'owner'], why: 'backup_is_holder' });
   });
 
-  it('R-TEAMQ-15 R-TEAMQ-21 E880: the backup is unavailable: the holder\'s team lead; with no team lead (a pond, an agent on no team), the Owners and Admins, never nobody', () => {
+  it('R-TEAMQ-15 R-TEAMQ-21 E980: the backup is unavailable: the holder\'s team lead; with no team lead (a pond, an agent on no team), the Owners and Admins, never nobody', () => {
     expect(backupAlertRecipients({ ...base, backupActive: false })).toEqual({ recipient: 'team_lead', userIds: ['lead-1'], why: 'backup_unavailable' });
     expect(backupAlertRecipients({ ...base, backupActive: false, holderUserId: null, holderTeamLeads: [] })).toEqual({ recipient: 'admins', userIds: ['admin', 'owner'], why: 'backup_unavailable' });
     expect(backupAlertRecipients({ ...base, backupActive: false, holderTeamLeads: [] })).toEqual({ recipient: 'admins', userIds: ['admin', 'owner'], why: 'backup_unavailable' });

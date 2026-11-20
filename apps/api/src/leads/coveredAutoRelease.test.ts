@@ -1,5 +1,5 @@
 // The 30-minute auto-release and a covered source, on the timer path (b19 team-queue lane, step 2; owner decision 3,
-// 2026-11-19; DATA_MODEL R-TEAMQ-13, E843 to E845): the real `ownership.auto_release` and
+// 2026-11-19; DATA_MODEL R-TEAMQ-13, E943 to E945): the real `ownership.auto_release` and
 // `ownership.first_touch_breach` jobs, run by a real worker against Postgres, with the deadlines moved by the clock
 // fixtures of testing.ts. The tenant setting is unchanged and still decides for every uncovered source.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -43,7 +43,7 @@ const notesOf = async (contactId: string) =>
   (await h.su.query<{ user_id: string; kind: string; priority: string }>('SELECT user_id, kind, priority FROM notifications WHERE tenant_id = $1 AND subject_id = $2 ORDER BY kind, user_id', [w.tenantId, contactId])).rows;
 
 describe('R-TEAMQ-13 auto-release and a covered source (the timer path)', () => {
-  it('R-TEAMQ-13 E843: a lead of a COVERED source is not released at the release deadline: it stays with its owner, the release deadline is cleared in the ledger, the breach alert still reaches the owner and the Team Lead, and nobody hears about a pond', async () => {
+  it('R-TEAMQ-13 E943: a lead of a COVERED source is not released at the release deadline: it stays with its owner, the release deadline is cleared in the ledger, the breach alert still reaches the owner and the Team Lead, and nobody hears about a pond', async () => {
     const [a, b] = w.agents as [TestClient, TestClient];
     expect((await cover(w.sourceId, { owner: a.userId, backup: b.userId, covered: true })).status).toBe(200);
     const { contactId, owner } = await ownedLead();
@@ -75,7 +75,7 @@ describe('R-TEAMQ-13 auto-release and a covered source (the timer path)', () => 
     expect((await h.su.query<{ t: Date | null }>('SELECT first_touch_at AS t FROM contacts WHERE id = $1', [contactId])).rows[0]!.t).toBeNull();
   });
 
-  it('R-TEAMQ-13 E844: the tenant setting is unchanged for an uncovered source: its untouched lead is released to the pond as before', async () => {
+  it('R-TEAMQ-13 E944: the tenant setting is unchanged for an uncovered source: its untouched lead is released to the pond as before', async () => {
     const settings = (await call<{ settings: { firstTouchReleaseSeconds: number | null } }>(w.owner, 'GET', '/settings')).body.settings;
     expect(settings.firstTouchReleaseSeconds).toBe(1800);
     const { contactId, owner } = await ownedLead(otherSource.token);
@@ -87,7 +87,7 @@ describe('R-TEAMQ-13 auto-release and a covered source (the timer path)', () => 
     expect((await notesOf(contactId)).some((n) => n.user_id === owner.userId && n.kind === 'reassigned_away')).toBe(true);
   });
 
-  it('R-TEAMQ-13 E844: a source whose coverage is switched off, or whose backup is suspended, is not covered when the timer fires: the lead is released as before', async () => {
+  it('R-TEAMQ-13 E944: a source whose coverage is switched off, or whose backup is suspended, is not covered when the timer fires: the lead is released as before', async () => {
     const [a, b] = w.agents as [TestClient, TestClient];
     // switched off after the lead was accepted
     expect((await cover(w.sourceId, { owner: a.userId, backup: b.userId, covered: true })).status).toBe(200);
@@ -169,7 +169,7 @@ describe('R-TEAMQ-20 the waiver needs the LEAD\'s owner to be active, and is re-
     ]);
   }
 
-  it('R-TEAMQ-20 E874: the lead\'s owner is SUSPENDED before the release time: the source is covered, but the release is not waived: the lead goes to the default pond as on an uncovered source, and the team lead is told', async () => {
+  it('R-TEAMQ-20 E974: the lead\'s owner is SUSPENDED before the release time: the source is covered, but the release is not waived: the lead goes to the default pond as on an uncovered source, and the team lead is told', async () => {
     const x = await coveredSource('Covered, owner suspended before (M1 test)');
     const w = x.world;
     const lead = await leadOf(x);
@@ -189,7 +189,7 @@ describe('R-TEAMQ-20 the waiver needs the LEAD\'s owner to be active, and is re-
     expect(told).toContainEqual({ user_id: w.teamLead!.userId, kind: 'first_touch_escalation', priority: 'high' });
   });
 
-  it('R-TEAMQ-20 E874: an owner with NO team lead, suspended: the lead is released and the pond arrival tells the Owner (a team with no Team Lead alerts its Owners and Admins), never nobody', async () => {
+  it('R-TEAMQ-20 E974: an owner with NO team lead, suspended: the lead is released and the pond arrival tells the Owner (a team with no Team Lead alerts its Owners and Admins), never nobody', async () => {
     const x = await coveredSource('Covered, no team lead (M1 test)', { agents: 1, teamLead: false });
     const solo = x.world;
     const lead = await leadOf(x);
@@ -202,7 +202,7 @@ describe('R-TEAMQ-20 the waiver needs the LEAD\'s owner to be active, and is re-
     expect(told).toEqual([{ user_id: solo.owner.userId, kind: 'pond_new', priority: 'high' }]);
   });
 
-  it('R-TEAMQ-20 E876: the owner is suspended AFTER a waiver: the release applies again from that moment (a ledgered `sla_restored` with a new deadline and its timer); the sweeper re-issues a lost timer from the stored deadline; at the deadline the lead goes to the pond', async () => {
+  it('R-TEAMQ-20 E976: the owner is suspended AFTER a waiver: the release applies again from that moment (a ledgered `sla_restored` with a new deadline and its timer); the sweeper re-issues a lost timer from the stored deadline; at the deadline the lead goes to the pond', async () => {
     const x = await coveredSource('Covered, owner suspended after (M1 test)');
     const w = x.world;
     const lead = await waived(x);
@@ -242,7 +242,7 @@ describe('R-TEAMQ-20 the waiver needs the LEAD\'s owner to be active, and is re-
     }
   });
 
-  it('R-TEAMQ-20 E877: coverage is switched OFF after a waiver: the release applies again from that moment and releases the lead at its new deadline; switched back on before then, it is waived again', async () => {
+  it('R-TEAMQ-20 E977: coverage is switched OFF after a waiver: the release applies again from that moment and releases the lead at its new deadline; switched back on before then, it is waived again', async () => {
     const x = await coveredSource('Covered, switched off after (M1 test)');
     const w = x.world;
     const named = x.people;

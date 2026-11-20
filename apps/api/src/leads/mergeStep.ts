@@ -1,5 +1,5 @@
 // What a merge does to a person's inquiries and to a backup's time-boxed access (b19 team-queue lane, review fix L5;
-// DATA_MODEL R-TEAMQ-26, E891). A merge step (packages/db ownership/merge.ts MergeStep, listed in ../mergeSteps.ts):
+// DATA_MODEL R-TEAMQ-26, E991). A merge step (packages/db ownership/merge.ts MergeStep, listed in ../mergeSteps.ts):
 // it runs in the merge's move transaction, after the communication move, as the same tenant-wide actor (inline for
 // the system, an Owner or an Admin; in the ownership.followup for a Team Lead), like the messages and calls it
 // follows (R-OWN-24).

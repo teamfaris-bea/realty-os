@@ -1,5 +1,5 @@
 // ONE arrival instant everywhere, over real Postgres (b19 team-queue lane, review fix M3; DATA_MODEL R-TEAMQ-19,
-// E871 to E873). The reviewer's two reproductions, exactly:
+// E971 to E973). The reviewer's two reproductions, exactly:
 //   (a) the source's clock runs 4 minutes AHEAD: the owner texted one second after the lead reached the team; the
 //       queue said nobody had tried, the report showed no attempt, and the backup was alerted and given access;
 //   (b) a BACK-DATED second inquiry: an earlier text was credited to the new inquiry as "within 5 minutes" and no
@@ -109,7 +109,7 @@ afterAll(async () => {
 });
 
 describe('R-TEAMQ-19 one arrival instant: the job, the queue and the report agree on when a lead arrived', () => {
-  it('R-TEAMQ-19 E871 (a): the source\'s clock runs 4 minutes ahead and the owner texts seconds after the lead reached the team: the queue does not list it, the report credits the owner within 5 minutes, and the backup is neither alerted nor given access', async () => {
+  it('R-TEAMQ-19 E971 (a): the source\'s clock runs 4 minutes ahead and the owner texts seconds after the lead reached the team: the queue does not list it, the report credits the owner within 5 minutes, and the backup is neither alerted nor given access', async () => {
     const src = await coveredSource('Fast clock form (arrival test)');
     const lead = await arrive(src, { phones: [randomPhone()], receivedAt: new Date(Date.now() + 4 * 60_000).toISOString() });
     const stored = await inquiry(lead.inquiryId);
@@ -142,7 +142,7 @@ describe('R-TEAMQ-19 one arrival instant: the job, the queue and the report agre
     expect(await grants(lead.contactId)).toEqual([]);
   });
 
-  it('R-TEAMQ-19 E872 (b): a back-dated second inquiry: the text sent before it reached the team is not a response to it: the queue lists it, the report shows it waiting (not "within 5 minutes"), and the backup is alerted', async () => {
+  it('R-TEAMQ-19 E972 (b): a back-dated second inquiry: the text sent before it reached the team is not a response to it: the queue lists it, the report shows it waiting (not "within 5 minutes"), and the backup is alerted', async () => {
     const src = await coveredSource('Back-dating portal (arrival test)');
     const phone = randomPhone();
     const first = await arrive(src, { phones: [phone] });
@@ -179,7 +179,7 @@ describe('R-TEAMQ-19 one arrival instant: the job, the queue and the report agre
     expect((await alertNotes(second.inquiryId)).map((n) => n.user_id)).toEqual([backup.userId]);
   });
 
-  it('R-TEAMQ-19 E871 E872 E873: the SQL every read uses and the core definition agree, for a claim in the future, in the past and equal to the reach', async () => {
+  it('R-TEAMQ-19 E971 E972 E973: the SQL every read uses and the core definition agree, for a claim in the future, in the past and equal to the reach', async () => {
     const src = await coveredSource('Three clocks (arrival test)');
     const future = await arrive(src, { phones: [randomPhone()], receivedAt: new Date(Date.now() + 4 * 60_000).toISOString() });
     const past = await arrive(src, { phones: [randomPhone()], receivedAt: new Date(Date.now() - 26 * 3_600_000).toISOString() });

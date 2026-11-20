@@ -1,5 +1,5 @@
 // A pond arrival alerts the team leads (b19 team-queue lane, step 2; owner decision 4, 2026-11-19; DATA_MODEL
-// R-TEAMQ-12, E838 to E842), through the real intake, the real timers, the real release command and the real
+// R-TEAMQ-12, E938 to E942), through the real intake, the real timers, the real release command and the real
 // ownership engine against Postgres as app_user. The alert is the existing `pond_new` notification at high priority,
 // written in the same transaction as the move, once per arrival. Nothing here is a message to the client.
 import { randomUUID } from 'node:crypto';
@@ -42,7 +42,7 @@ const toClients = async (tenantId: string) =>
 const seqOf = async (contactId: string) => Number((await contactState(h, contactId)).ownership_seq);
 
 describe('R-TEAMQ-12 a pond arrival alerts the team leads', () => {
-  it('R-TEAMQ-12 E838 E839: no rule matched: the Team Lead gets exactly one pond_new at high priority with its in-app and push delivery, committed with the move; a replayed delivery of the same inquiry alerts nobody again; nothing goes to the client', async () => {
+  it('R-TEAMQ-12 E938 E939: no rule matched: the Team Lead gets exactly one pond_new at high priority with its in-app and push delivery, committed with the move; a replayed delivery of the same inquiry alerts nobody again; nothing goes to the client', async () => {
     const w = await leadsWorld(h, { agents: 2, teamLead: true, rule: false });
     const body = { inquiryType: 'buy', fullName: 'Dana Example', phones: [randomPhone()], externalId: `ext-${randomUUID()}` };
     const first = await postIntake(h, w.token, body);
@@ -64,7 +64,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads', () => {
     expect(await toClients(w.tenantId)).toEqual({ messages: 0, calls: 0, sends: 0 });
   });
 
-  it('R-TEAMQ-12 E838: routed there by a rule: one alert, with that reason', async () => {
+  it('R-TEAMQ-12 E938: routed there by a rule: one alert, with that reason', async () => {
     const w = await leadsWorld(h, { agents: 1, teamLead: true, rule: false });
     await freshReauth(h, w.owner);
     const rule = await call(w.owner, 'POST', '/routing-rules', { name: 'Straight to the pond', strategy: 'pond', targetPondId: w.defaultPondId });
@@ -75,7 +75,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads', () => {
     expect(notes.map((n) => [n.user_id, n.priority, n.title])).toEqual([[w.teamLead!.userId, 'high', 'New lead in the pond: a routing rule sends leads like this there']]);
   });
 
-  it('R-TEAMQ-12 E838: every offer expired: no pond alert while it is on offer; the expiry that sends it to the pond alerts the Team Lead once, and a second delivery of that timer alerts nobody again', async () => {
+  it('R-TEAMQ-12 E938: every offer expired: no pond alert while it is on offer; the expiry that sends it to the pond alerts the Team Lead once, and a second delivery of that timer alerts nobody again', async () => {
     const w = await leadsWorld(h, { agents: 2, teamLead: true });
     await freshReauth(h, w.owner);
     const rules = await call<{ rules: { id: string; version: number }[] }>(w.owner, 'GET', '/routing-rules');
@@ -97,7 +97,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads', () => {
     expect(await seqOf(r.contactId)).toBe(seq);
   });
 
-  it('R-TEAMQ-12 E838: released by its owner: the Team Lead is alerted in the release\'s own transaction (the push follows from the system), the releasing agent is not', async () => {
+  it('R-TEAMQ-12 E938: released by its owner: the Team Lead is alerted in the release\'s own transaction (the push follows from the system), the releasing agent is not', async () => {
     const w = await leadsWorld(h, { agents: 1, teamLead: true });
     const agent = w.agents[0]!;
     const made = await call<{ contact: { id: string; ownership: { seq: number } } }>(agent, 'POST', '/contacts', { commandId: randomUUID(), displayName: 'Robin Example', phones: [randomPhone()] });
@@ -113,7 +113,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads', () => {
     expect(await pondNotes(w.tenantId, id)).toHaveLength(1);
   });
 
-  it('R-TEAMQ-12 E840: a tenant with no Team Lead alerts its Owner and Admins', async () => {
+  it('R-TEAMQ-12 E940: a tenant with no Team Lead alerts its Owner and Admins', async () => {
     const w = await leadsWorld(h, { agents: 1, rule: false, others: ['admin'] });
     const r = await intake(h, w);
     const notes = await pondNotes(w.tenantId, r.contactId);
@@ -121,7 +121,7 @@ describe('R-TEAMQ-12 a pond arrival alerts the team leads', () => {
     expect(new Set(notes.map((n) => n.priority))).toEqual(new Set(['high']));
   });
 
-  it('R-TEAMQ-12 E842: an import never alerts: a person an import puts in a pond raises no notification at all', async () => {
+  it('R-TEAMQ-12 E942: an import never alerts: a person an import puts in a pond raises no notification at all', async () => {
     const w = await leadsWorld(h, { agents: 1, teamLead: true, rule: false });
     const actor = systemActor(w.tenantId, 'import');
     const contactId = h.app.platform.ids.next<'ContactId'>() as ContactId;

@@ -57,7 +57,7 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
     expect([m.within5, m.within15, m.automatedReplyAt]).toEqual([false, false, t(-min(29))]);
   });
 
-  it('R-TEAMQ-22 E883 (review fix M4): a person answered the lead\'s own call: its own state, never a human attempt and never "no attempt": not waiting, not within 5 minutes', () => {
+  it('R-TEAMQ-22 E983 (review fix M4): a person answered the lead\'s own call: its own state, never a human attempt and never "no attempt": not waiting, not within 5 minutes', () => {
     const m = measureInquiry(inq({ arrivedAt: t(-min(30)), answeredCall: { at: t(-min(29)), byUserId: user(2) } }), NOW, CAL);
     expect(m.attempt).toBeNull();
     expect(m.waiting).toBeNull();
@@ -73,7 +73,7 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
     expect(measureInquiry(tried(10), NOW, CAL)).toMatchObject({ state: 'attempted', answeredCall: null });
   });
 
-  it('R-TEAMQ-22 E883: the roll-up counts answered calls apart: attempted + answered calls + waiting = inquiries; they are listed after the ones still waiting', () => {
+  it('R-TEAMQ-22 E983: the roll-up counts answered calls apart: attempted + answered calls + waiting = inquiries; they are listed after the ones still waiting', () => {
     const list = [
       tried(100, { inquiryId: inquiry(901) }),
       inq({ inquiryId: inquiry(902), arrivedAt: t(-min(50)), answeredCall: { at: t(-min(49)), byUserId: user(2) } }),
@@ -87,7 +87,7 @@ describe('R-TEAMQ-7 one inquiry, measured from arrival', () => {
     expect(r.sources[0]!.notWithin5.map((m) => [m.inquiryId, m.state])).toEqual([[inquiry(903), 'waiting'], [inquiry(902), 'answered_call'], [inquiry(904), 'attempted']]);
   });
 
-  it('R-TEAMQ-27 E893 (review fix L6): a failed send is still the attempt (the scoreboard\'s definition), and is marked as failed; the roll-up says how many attempts failed', () => {
+  it('R-TEAMQ-27 E993 (review fix L6): a failed send is still the attempt (the scoreboard\'s definition), and is marked as failed; the roll-up says how many attempts failed', () => {
     const failed = tried(120, {}, { kind: 'text', failed: true });
     const m = measureInquiry(failed, NOW, CAL);
     expect([m.state, m.within5, m.attempt?.failed]).toEqual(['attempted', true, true]);
@@ -195,7 +195,7 @@ describe('R-TEAMQ-8 the roll-up by source', () => {
 describe('R-TEAMQ-18 the backup in the roll-up (b19 step 2)', () => {
   const alerted = (o: Partial<ResponseInquiryFacts> = {}) => ({ backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(7), recipient: 'backup' as const }, ...o });
 
-  it('R-TEAMQ-18 E858: "backup alerted" is counted over the inquiries, and "first attempt by the backup" over the inquiries whose backup was alerted', () => {
+  it('R-TEAMQ-18 E958: "backup alerted" is counted over the inquiries, and "first attempt by the backup" over the inquiries whose backup was alerted', () => {
     const list = [
       tried(600, alerted(), { byUserId: user(7), role: 'backup' }), // alerted, and the backup made the first attempt
       tried(700, alerted(), { byUserId: user(1), role: 'owner' }), // alerted, but the owner got there first
@@ -212,7 +212,7 @@ describe('R-TEAMQ-18 the backup in the roll-up (b19 step 2)', () => {
     expect(measureInquiry(list[3]!, NOW, CAL).backupAlert).toBeNull();
   });
 
-  it('R-TEAMQ-18 R-TEAMQ-25 E890 (review fix L4): with no alert anywhere every count is zero, never missing; a TEAM LEAD alerted in the backup\'s place is counted as a team lead alerted, and their attempt as the team lead\'s: never as "the backup" (this line used to say backupAlerted 1, byBackup 1)', () => {
+  it('R-TEAMQ-18 R-TEAMQ-25 E990 (review fix L4): with no alert anywhere every count is zero, never missing; a TEAM LEAD alerted in the backup\'s place is counted as a team lead alerted, and their attempt as the team lead\'s: never as "the backup" (this line used to say backupAlerted 1, byBackup 1)', () => {
     expect(rollUpResponses([tried(60), inq()], NOW, CAL).totals).toMatchObject({ backupAlerted: 0, byBackup: 0, teamLeadAlerted: 0, byTeamLead: 0, adminsAlerted: 0 });
     const fallback = tried(500, { backupAlert: { at: t(-hours(2) + min(3)), byUserId: user(9), recipient: 'team_lead' } }, { byUserId: user(9), role: 'team_lead' });
     expect(rollUpResponses([fallback], NOW, CAL).totals).toMatchObject({ inquiries: 1, backupAlerted: 0, byBackup: 0, teamLeadAlerted: 1, byTeamLead: 1, adminsAlerted: 0 });

@@ -116,7 +116,7 @@ describe('Lead response report', () => {
     expect(within(web).getByText('4 not within 5 minutes. 2 more are not listed.')).toBeInTheDocument();
   });
 
-  it('R-TEAMQ-27 E893 (review fix L6): a first attempt whose text failed is still shown as the attempt, and says "Tried, but the text failed"; the source counts failed attempts of its attempts', async () => {
+  it('R-TEAMQ-27 E993 (review fix L6): a first attempt whose text failed is still shown as the attempt, and says "Tried, but the text failed"; the source counts failed attempts of its attempts', async () => {
     const failed = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000eb', attempt: { at: '2026-11-09T18:09:00.000Z', kind: 'text', by: { userId: ID.ben, name: 'Ben Agent' }, role: 'owner', failed: true, wallSeconds: 540, staffedSeconds: 540 }, waiting: null, automatedReplyAt: null });
     const r = report();
     r.sources[0] = { ...r.sources[0]!, failedAttempts: 1, notWithin5: [failed], notWithin5More: 0 };
@@ -129,7 +129,7 @@ describe('Lead response report', () => {
     expect(within(web).getByText(`1 of the ${r.sources[0]!.attempted} with an attempt`)).toBeInTheDocument();
   });
 
-  it('R-TEAMQ-22 E883: an inquiry whose own call a person answered is its own state: never "no person has tried", never an attempt; the source counts it apart with its denominator', async () => {
+  it('R-TEAMQ-22 E983: an inquiry whose own call a person answered is its own state: never "no person has tried", never an attempt; the source counts it apart with its denominator', async () => {
     const answered = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000e8', state: 'answered_call', waiting: null, automatedReplyAt: null, answeredCall: { at: '2026-11-09T18:02:00.000Z', by: { userId: ID.ben, name: 'Ben Agent' }, wallSeconds: 120, staffedSeconds: 120 } });
     const r = report();
     r.sources[0] = { ...r.sources[0]!, answeredCalls: 1, waiting: 1, notWithin5: [answered], notWithin5More: 0 };
@@ -159,7 +159,7 @@ describe('Lead response report', () => {
     expect(row).toHaveTextContent('First tried after 6 min: a call by Ben Agent, the backup, after the backup alert. No automatic reply went out.');
   });
 
-  it('R-TEAMQ-18 E858: each source says how many inquiries had their backup alerted, of its inquiries, and how many of those the backup tried first; a source with no alert says so without a second count', async () => {
+  it('R-TEAMQ-18 E958: each source says how many inquiries had their backup alerted, of its inquiries, and how many of those the backup tried first; a source with no alert says so without a second count', async () => {
     const withAlerts = report({
       totals: rollup({ inquiries: 12, backupAlerted: 3, byBackup: 2 }),
       sources: [
@@ -177,7 +177,7 @@ describe('Lead response report', () => {
     expect(within(sign).queryByText('First attempt by the backup')).toBeNull();
   });
 
-  it('R-TEAMQ-25 E890 (review fix L4): an alert that went to a team lead is its own line with its own denominator, and that team lead\'s attempt is said as the team lead\'s: never "backup alerted", never "the backup"', async () => {
+  it('R-TEAMQ-25 E990 (review fix L4): an alert that went to a team lead is its own line with its own denominator, and that team lead\'s attempt is said as the team lead\'s: never "backup alerted", never "the backup"', async () => {
     const byLead = inquiry({ contact: { id: P.nia, name: 'Nia Night' }, inquiryId: '01900000-0000-7000-8000-0000000000ea', attempt: { at: '2026-11-09T18:09:00.000Z', kind: 'text', by: { userId: ID.ava, name: 'Ava Agent' }, role: 'team_lead', wallSeconds: 540, staffedSeconds: 540 }, waiting: null, automatedReplyAt: null, backupAlert: { at: '2026-11-09T18:03:00.000Z', to: { userId: ID.ava, name: 'Ava Agent' }, recipient: 'team_lead' } });
     const r = report();
     r.sources[0] = { ...r.sources[0]!, backupAlerted: 0, byBackup: 0, teamLeadAlerted: 1, byTeamLead: 1, adminsAlerted: 3, notWithin5: [byLead], notWithin5More: 0 };
@@ -196,7 +196,7 @@ describe('Lead response report', () => {
     expect(rowEl).not.toHaveTextContent(/the backup, after the backup alert/);
   });
 
-  it('R-TEAMQ-18 E857: an inquiry whose backup was alerted says who was alerted and how long after it arrived, the fallback in its own words', async () => {
+  it('R-TEAMQ-18 E957: an inquiry whose backup was alerted says who was alerted and how long after it arrived, the fallback in its own words', async () => {
     const alerted = inquiry({ backupAlert: { at: '2026-11-09T18:03:00.000Z', to: { userId: ID.ben, name: 'Ben Agent' }, recipient: 'backup' } });
     const fallback = inquiry({ inquiryId: '01900000-0000-7000-8000-0000000000e9', contact: { id: P.nia, name: 'Nia Night' }, backupAlert: { at: '2026-11-09T18:04:00.000Z', to: { userId: ID.ava, name: 'Ava Agent' }, recipient: 'team_lead' } });
     leadAdminApp(fake(report({ sources: [{ sourceId: SRC.web, sourceName: 'Website form', ...rollup(), notWithin5: [alerted, fallback], notWithin5More: 0 }] })), '/team/scoreboard', 'team_lead');
@@ -216,7 +216,7 @@ describe('Lead response report', () => {
     expect(within(region).queryByText(/newest/)).toBeNull();
   });
 
-  it('R-TEAMQ-28 E897: inquiries of people since deleted are said as left out, with their number; with none, no such line', async () => {
+  it('R-TEAMQ-28 E997: inquiries of people since deleted are said as left out, with their number; with none, no such line', async () => {
     leadAdminApp(fake(report({ deletedExcluded: 2 })), '/team/scoreboard', 'team_lead');
     const region = await section();
     expect(await within(region).findByText('2 inquiries from people since deleted are left out.')).toBeInTheDocument();
