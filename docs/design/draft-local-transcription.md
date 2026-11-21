@@ -44,7 +44,7 @@ large-v3-turbo fp16: 10 minutes of audio in 11.3 s (51x realtime), 1.0% word err
 GPU memory. Details are in `tools/transcriber/README.md`. One GPU covers far more call volume than a team makes. Real
 phone audio will have a higher error rate than TTS.
 
-## OPEN DECISIONS (owner: Hamza; VERIFY WITH COUNSEL where marked)
+## OPEN DECISIONS (the owner decides; VERIFY WITH COUNSEL where marked)
 
 - **T1 Recording consent and disclosure (VERIFY WITH COUNSEL).** South Carolina is generally described as a one-party
   consent state, but a call to or from a client in an all-party state (for example a military client already in
