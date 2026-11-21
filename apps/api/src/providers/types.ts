@@ -186,6 +186,8 @@ export interface TranscriptionProvider {
    * true for an adapter that really transcribes (in this build only the test fake)
    */
   readonly configured: boolean;
+  /** stored in transcripts.provider; absent means the test fake ('fake') */
+  readonly name?: string;
   transcribe(r: { audio: Uint8Array; contentType: string; durationMs?: number; languageHint?: string }): Promise<{ segments: TranscriptSegment[]; language: string }>;
 }
 

@@ -47,6 +47,7 @@ import { FakeVoiceAgent } from '../voice/fake.js';
 import { UnconfiguredVoiceAgent, type VoiceAgentProvider } from '../voice/provider.js';
 import { type GbpProvider, UnconfiguredGbp } from '../gbp/provider.js';
 import { FakeGbp } from '../gbp/testing.js';
+import { LocalWhisperTranscription } from './transcription/localWhisper.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, FAKE_TIMING_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -54,6 +55,7 @@ export { ollamaAi } from './ollama.js';
 export { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, FAKE_MLS_LISTINGS, UnconfiguredTranscription } from './fake/data.js';
 export { FakeAccountMailer, FakeEmail } from './fake/email.js';
 export { FakeTelephony, type FakeFailure } from './fake/telephony.js';
+export { LocalWhisperTranscription, TranscriberConfigError, checkTranscriberUrl, isLoopbackHost, isPrivateTranscriberHost } from './transcription/localWhisper.js';
 export { LocalFsStorage, MemoryStorage, StorageKeyError, assertStorageKey } from './storage.js';
 export { S3Storage } from './s3/s3.js';
 export { SmtpAccountMailer, SmtpEmail } from './email/smtp.js';
@@ -237,6 +239,13 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const gbp: GbpProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGbp() : fakes.gbp;
   // b18 item h: no transcription vendor is procured; production never stores the fake's invented transcript (the call
   // summary and call reviews would read it as the call's words), so it gets none unless fakes are allowed
-  const transcription: TranscriptionProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTranscription() : fakes.transcription;
+  // local call transcription (draft lane): TRANSCRIPTION_PROVIDER=local_whisper posts audio to the team's own GPU
+  // machine on a loopback or private address, in any environment; there is no cloud transcriber
+  const transcription: TranscriptionProvider =
+    config.transcription.provider === 'local_whisper' && config.transcription.localUrl
+      ? new LocalWhisperTranscription({ baseUrl: config.transcription.localUrl, ...(config.transcription.localToken ? { token: config.transcription.localToken } : {}) })
+      : config.env === 'production' && !config.allowFakeProviders
+        ? new UnconfiguredTranscription()
+        : fakes.transcription;
   return { ...fakes, telephony, carrier, email, accountMail, ai, timingAi, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent, gbp, transcription };
 }
