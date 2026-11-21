@@ -36,6 +36,7 @@
 // re-decides visibility at send time); the system actor for assistant and system messages. When the
 // human can no longer see the message (lost the lead), a system TX1 blocks it with
 // SENDER_NOT_AUTHORIZED and offers the text to the new owner as a draft (E15).
+import { heldCmaShareRefusalAtSend } from '../cma/heldShareAtSend.js';
 import { aiIsaGateFacts, deferMessageInTx, deferralFor, emitSendResultInTx, isAiIsaMessage, isaFromName, isaGuardRefusal } from '../isa/send.js';
 import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator, type Purpose, classifyHumanPurpose } from '@realty/core/compliance';
 import { INTENT_RULES, type PlaybookStep, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate, storedTriggerStep, triggerStepAsPlaybookStep } from '@realty/core/assistant';
@@ -174,10 +175,10 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   // R-CMA-7, R-CMA-9 (E612; ARCHITECTURE §21.48 VERIFY 9): the re-tap of a held message that is a CMA share asks module
   // 71 whether the CMA is still client-ready, here under the contact's lock and the message's row lock, before the
   // send-time gate below (which still decides a ready one). A failing CMA cancels the email with the compliance
-  // sweep's reason, and nothing is sent. Loaded here, not at the top: module 71 imports this file (cma/deps.ts).
+  // sweep's reason, and nothing is sent. The check is loaded at call time (cma/heldShareAtSend.ts): cma/deps.ts
+  // re-exports this file, and this file cannot use a dynamic import (R-PUSH-13, E1242).
   if (human && c.opts.retap) {
-    const { heldCmaShareRefusalInTx } = await import('../cma/retap.js');
-    const refusal = await heldCmaShareRefusalInTx(tx, now, m.id);
+    const refusal = await heldCmaShareRefusalAtSend(tx, now, m.id);
     if (refusal !== null) {
       await msgs.markCanceled(tx, m.id, refusal.reason, null);
       // E909: the tap is audited as what it was: refused and canceled, nothing sent (codes only)
