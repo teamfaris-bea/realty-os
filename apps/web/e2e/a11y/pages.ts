@@ -133,6 +133,21 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/client-portal/:grantId', roles: ['owner', 'admin', 'team_lead', 'agent', 'tc'], url: at('/client-portal/00000000-0000-7000-8000-000000000000') },
 ];
 
+/**
+ * How many pages one sweep test opens. A role's pages are walked in consecutive slices of this many, each its own
+ * test with its own time budget (owner and admin can open ~70 pages: 140 axe runs in one test sat at the edge of
+ * the 5-minute budget). The slices together are exactly the role's pages, in registry order (a11yCoverage.test.ts).
+ */
+export const SWEEP_SLICE = 12;
+
+/** The pages `role` can open, in registry order, cut into consecutive slices of at most `size`. */
+export function sweepSlices(role: Role, size = SWEEP_SLICE): SweepPage[][] {
+  const mine = SWEEP_PAGES.filter((p) => p.roles.includes(role));
+  const out: SweepPage[][] = [];
+  for (let i = 0; i < mine.length; i += size) out.push(mine.slice(i, i + size));
+  return out;
+}
+
 /** Screens outside the app frame (signed out). */
 export const SIGNED_OUT_PAGES: readonly { url: string; h1: string; widget?: 'closed' | 'open' }[] = [
   { url: '/login', h1: 'Sign in' },
