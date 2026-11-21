@@ -1459,7 +1459,7 @@ Follow-up by people, not more automation. Today says, for each person an agent i
 - **R-TODAY-20** **A log the route accepted is shown at once.** (L17.) The log route accepts an activity dated up to 5 minutes ahead (a fast clock). Such a log is the last touch and a contact from the moment it is saved (core `LOGGED_AHEAD_MS`, held equal to `ACTIVITY_MAX_AHEAD_MS` by a test); nothing else dated ahead of now is ever a contact. [core, api]
 - **R-TODAY-21** **Words that cannot mislead.** (L16.) A promise card is headed "You promised this" and its Due line says only when ("10 min overdue"); a teammate's call, text or note names the teammate, or says "by a teammate" when the viewer cannot see the name, and never reads as the viewer's own; a toast that says several results names what its Undo takes back ("Undo stage change"); after a one-pass sheet closes, the row it was opened from is scrolled clear of the toast. [web]
 
-### Timing cues (batch 20; migration `0111_b20_timing_cues`)
+### Timing cues (batch 20; migration `0123_b20_timing_cues`)
 
 When a person said they plan to buy, sell or move, in their own words in a note, is read nightly by a model on the team's own machine and turned into a window of dates; each morning the Owner sees, per agent, who to call today. Nothing here sends a message, writes a task, assigns, changes a stage or scores anyone. Notes only in this version; call transcripts and form answers are later sources of the same row.
 

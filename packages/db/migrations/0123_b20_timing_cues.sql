@@ -1,5 +1,5 @@
 -- Batch 20, timing-cue lane: what the nightly scan read in each note about WHEN a person plans to buy, sell or move.
--- DATA_MODEL R-TCUE-1 to R-TCUE-8. Security notes: docs/ARCHITECTURE.md §21.79.
+-- DATA_MODEL R-TCUE-1 to R-TCUE-8. Security notes: docs/ARCHITECTURE.md §21.91.
 --
 --   * timing_cues: ONE row per note the scan has read (timing_cues_note_once is what makes the job idempotent on the
 --     note), written by the system actor of the tenant only:
@@ -82,16 +82,16 @@ GRANT SELECT, INSERT, UPDATE ON timing_cues TO app_user;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.timing_cues'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
-    RAISE EXCEPTION '0111: timing_cues must force row-level security';
+    RAISE EXCEPTION '0123: timing_cues must force row-level security';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.timing_cues'::regclass AND polname = 'tenant_isolation' AND NOT polpermissive) THEN
-    RAISE EXCEPTION '0111: timing_cues needs the restrictive tenant policy';
+    RAISE EXCEPTION '0123: timing_cues needs the restrictive tenant policy';
   END IF;
   IF (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.timing_cues'::regclass AND polname LIKE 'support_read_only_%' AND NOT polpermissive) <> 3
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.timing_cues'::regclass AND tgname = 'support_read_only' AND tgenabled <> 'D') THEN
-    RAISE EXCEPTION '0111: timing_cues needs the support read-only policies and trigger';
+    RAISE EXCEPTION '0123: timing_cues needs the support read-only policies and trigger';
   END IF;
   IF has_table_privilege('app_user', 'public.timing_cues', 'DELETE') OR has_table_privilege('app_user', 'public.timing_cues', 'TRUNCATE') THEN
-    RAISE EXCEPTION '0111: app_user must not delete timing_cues rows';
+    RAISE EXCEPTION '0123: app_user must not delete timing_cues rows';
   END IF;
 END $$;
