@@ -3,6 +3,7 @@
 // their details (name, phone, email, address, message text, source detail) reaches the lock screen by default.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEAD_ALERT_KINDS, LEAD_ALERT_TITLE, leadAlertLockScreen } from './lockScreen.js';
+import { LOCK_SCREEN_TITLE } from './lockScreenWords.js';
 import { lockScreenPayload } from './notifications.js';
 import { NOTIFICATION_KINDS } from './schemas.js';
 
@@ -119,10 +120,15 @@ describe('lead lock-screen alerts (pure builder)', () => {
     expect(b.url).toBe(`/contacts/${CONTACT_ID}?team=inlet`);
   });
 
-  it('R-PUSH-5 E1226: any other kind is exactly the existing lockScreenPayload (no behaviour change)', () => {
+  it('R-PUSH-5 R-PUSH-14 E1226: any other kind keeps exactly lockScreenPayload\'s body, url and tag, and its title is the kind\'s allowlisted generic words, never the stored title (slice 2e: fail closed)', () => {
     for (const kind of NOTIFICATION_KINDS.filter((k) => !(LEAD_ALERT_KINDS as readonly string[]).includes(k))) {
-      const n = base(kind, { title: 'A task is due' });
-      expect(leadAlertLockScreen(n, { showName: true })).toEqual(lockScreenPayload(n));
+      for (const title of ['A task is due', RICH_TITLE]) {
+        const n = base(kind, { title });
+        const p = leadAlertLockScreen(n, { showName: true });
+        expect(p).toEqual({ ...lockScreenPayload(n), title: LOCK_SCREEN_TITLE[kind] });
+        expect(leaks(JSON.stringify(p))).toEqual([]);
+        expect(p.title).not.toContain('Test');
+      }
     }
   });
 

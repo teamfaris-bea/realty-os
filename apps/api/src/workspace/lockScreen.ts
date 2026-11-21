@@ -9,8 +9,9 @@
 //     minimization already produced (comms/repos/notify.ts `contactLabel`: first name and last initial, or null
 //     when the tenant's notification_detail is 'none'). A label that is not shaped like that is dropped, never
 //     masked into the title.
-// No I/O, no clock, no randomness. Every other kind is returned exactly as `lockScreenPayload` builds it.
-import { LEAD_ALERT_KINDS, LEAD_ALERT_TITLE, type LeadAlertKind, isLeadAlertKind, leadAlertTitle } from './lockScreenWords.js';
+// No I/O, no clock, no randomness. Every other kind gets its allowlisted generic title (lockScreenWords.ts, slice 2e);
+// body, url and tag are exactly what `lockScreenPayload` builds.
+import { LEAD_ALERT_KINDS, LEAD_ALERT_TITLE, type LeadAlertKind, leadAlertTitle } from './lockScreenWords.js';
 import { lockScreenPayload } from './notifications.js';
 
 // the words live in the leaf module (no imports), so notifications.ts and comms/dispatch.ts can use them too
@@ -25,6 +26,6 @@ export type LockScreenInput = Parameters<typeof lockScreenPayload>[0];
  */
 export function leadAlertLockScreen(n: LockScreenInput & { person?: string | null }, opts: { showName?: boolean } = {}): LockScreenPayload {
   const { person, ...rest } = n;
-  if (!isLeadAlertKind(rest.kind)) return lockScreenPayload(rest);
+  // slice 2e (R-PUSH-14): every kind fails closed to its allowlisted generic words; the name opt-in is for lead kinds only
   return lockScreenPayload({ ...rest, title: leadAlertTitle(rest.kind, rest.title, { person: person ?? null, showName: opts.showName === true }) });
 }
