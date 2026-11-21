@@ -25,7 +25,7 @@ const SNAP = 'd'.repeat(64);
 const BID = '01900000-0000-7000-8000-0000000b0028';
 const MARKED = { id: '01900000-0000-7000-8000-00000000528a', name: 'Northgate Referrals', noAiCare: true };
 const OPEN = { id: '01900000-0000-7000-8000-00000000528b', name: 'Open houses' };
-const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6 };
+const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6, deals: 7, appointments: 8 };
 const NOW = () => new Date().toISOString();
 
 function stage(category: ImportCategory, status: string, over: Partial<ImportStage> = {}): ImportStage {

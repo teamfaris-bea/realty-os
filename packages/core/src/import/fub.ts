@@ -16,20 +16,29 @@
 // - consent indicators: only through the consent stage (`mapImportedConsent` caps every grant);
 // - assignment: only through the ownership stage, with a complete user mapping (R-IMPORT-8).
 import { z } from 'zod';
-import { type Instant, instantFromIso } from '../foundation/index.js';
+import { type Instant, type UserId, instantFromIso } from '../foundation/index.js';
 import type { Channel } from '../compliance/index.js';
 import { collectEmails, collectPhones, collectTags, finish, mapStage, putImportedField } from './csv.js';
 import { cleanBody, lineField, sourceLabel } from './text.js';
 import type {
+  AppointmentKind,
+  AppointmentOutcome,
+  AppointmentStatus,
   Category,
+  DealSide,
+  DealStage,
   FubConsentFields,
   ImportTarget,
   ImportedAddressConsent,
   Issue,
   NormalizedAddress,
+  NormalizedAppointment,
   NormalizedCall,
   NormalizedConsent,
   NormalizedContact,
+  NormalizedDeal,
+  NormalizedDealDate,
+  NormalizedDealFinancials,
   NormalizedMessage,
   NormalizedNote,
   NormalizedOwnership,
@@ -127,6 +136,67 @@ export const FubCallSchema = z.looseObject({
   recordingUrl: Str,
 });
 
+/** Public FUB appointment (GET /v1/appointments). Unknown keys pass through. */
+const FubInvitee = z.looseObject({
+  userId: Id.nullish(),
+  personId: Id.nullish(),
+  name: Str,
+  email: Str,
+});
+export const FubAppointmentSchema = z.looseObject({
+  id: Id,
+  created: Str,
+  updated: Str,
+  createdById: Id.nullish(),
+  updatedById: Id.nullish(),
+  title: Str,
+  description: Str,
+  start: z.string(),
+  end: Str,
+  allDay: Flag,
+  location: Str,
+  invitees: z.array(FubInvitee).nullish(),
+  type: Str,
+  outcome: Str,
+});
+
+/**
+ * Public FUB deal (GET/POST /v1/deals). `price`, `commissionValue`, `agentCommission` and
+ * `teamCommission` are the int32 dollar amounts the public write API documents (no cents unit).
+ * Custom fields arrive as extra keys and are not stored: deals have no display-only bag.
+ */
+const FubDealPerson = z.looseObject({ id: Id, name: Str });
+const FubDealUser = z.looseObject({ id: Id, name: Str });
+export const FubDealSchema = z.looseObject({
+  id: Id,
+  name: Str,
+  status: Str,
+  description: Str,
+  price: z.union([z.number(), z.string()]).nullish(),
+  createdAt: Str,
+  enteredStageAt: Str,
+  projectedCloseDate: Str,
+  closedAt: Str,
+  closeDate: Str,
+  closedDate: Str,
+  stageId: Id.nullish(),
+  stageName: Str,
+  pipelineId: Id.nullish(),
+  pipelineName: Str,
+  people: z.array(FubDealPerson).nullish(),
+  peopleIds: z.array(Id).nullish(),
+  users: z.array(FubDealUser).nullish(),
+  userIds: z.array(Id).nullish(),
+  commissionValue: z.union([z.number(), z.string()]).nullish(),
+  agentCommission: z.union([z.number(), z.string()]).nullish(),
+  teamCommission: z.union([z.number(), z.string()]).nullish(),
+  earnestMoneyDueDate: Str,
+  mutualAcceptanceDate: Str,
+  dueDiligenceDate: Str,
+  finalWalkThroughDate: Str,
+  possessionDate: Str,
+});
+
 // ---- helpers ----------------------------------------------------------------------------------------
 
 function truthy(v: unknown): boolean {
@@ -143,7 +213,7 @@ function rejected<T>(sourceRef: string, issues: Issue[]): RecordOutcome<T> {
 const outcome = finish;
 
 /** Source refs (import_records.source_ref, UQ per stage): the FUB collection and id. */
-export function fubSourceRef(collection: 'people' | 'notes' | 'textMessages' | 'emails' | 'calls', id: string): string {
+export function fubSourceRef(collection: 'people' | 'notes' | 'textMessages' | 'emails' | 'calls' | 'appointments' | 'deals', id: string): string {
   return `fub:${collection}/${id}`;
 }
 
@@ -520,11 +590,317 @@ function mapCall(raw: unknown, users: UserMapping): RecordOutcome<NormalizedCall
   }, issues);
 }
 
+// ---- deals and appointments (B7 reversed 2026-11-21; tasks stay out) --------------------------------
+
+/** Admin labels (exact, trimmed) plus the built-in vocabulary. A label that matches neither stays unmapped. */
+export interface FubMapContext {
+  /** When the appointment ended, relative to this instant: past is history, future stays scheduled. */
+  now?: Instant;
+  /** FUB deal stage label → Realty OS deal stage. Checked before the built-in names. */
+  dealStageMap?: Readonly<Record<string, DealStage>>;
+}
+
+const DEAL_STAGES: readonly DealStage[] = ['prospect', 'agreement_signed', 'active', 'under_contract', 'closed', 'lost'];
+
+function foldKey(s: string): string {
+  return s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+const DEAL_STAGE_WORDS: Record<string, DealStage> = {
+  prospect: 'prospect',
+  lead: 'prospect',
+  new: 'prospect',
+  newlead: 'prospect',
+  appointmentset: 'prospect',
+  met: 'prospect',
+  showing: 'prospect',
+  nurture: 'prospect',
+  agreement: 'agreement_signed',
+  agreementsigned: 'agreement_signed',
+  signed: 'agreement_signed',
+  buyeragreement: 'agreement_signed',
+  listingagreement: 'agreement_signed',
+  underagreement: 'agreement_signed',
+  active: 'active',
+  listed: 'active',
+  onmarket: 'active',
+  undercontract: 'under_contract',
+  pending: 'under_contract',
+  contingent: 'under_contract',
+  escrow: 'under_contract',
+  closed: 'closed',
+  sold: 'closed',
+  closedwon: 'closed',
+  lost: 'lost',
+  dead: 'lost',
+  cancelled: 'lost',
+  canceled: 'lost',
+  fellthrough: 'lost',
+  closedlost: 'lost',
+};
+
+const DEAL_SIDE_WORDS: Record<string, DealSide> = {
+  buy: 'buy',
+  buyer: 'buy',
+  buyers: 'buy',
+  purchase: 'buy',
+  sell: 'sell',
+  seller: 'sell',
+  sellers: 'sell',
+  listing: 'sell',
+  listings: 'sell',
+  dual: 'dual',
+  both: 'dual',
+  lease: 'lease',
+  rental: 'lease',
+  rent: 'lease',
+  tenant: 'lease',
+};
+
+/** The Realty OS deal stage for a FUB stage label, or null when nobody (map or vocabulary) can place it. */
+export function mapDealStage(label: string | null | undefined, map: Readonly<Record<string, DealStage>> = {}): DealStage | null {
+  if (label === null || label === undefined) return null;
+  const trimmed = label.trim();
+  if (trimmed === '') return null;
+  if (Object.hasOwn(map, trimmed)) {
+    const chosen = map[trimmed];
+    return chosen !== undefined && (DEAL_STAGES as readonly string[]).includes(chosen) ? chosen : null;
+  }
+  return DEAL_STAGE_WORDS[foldKey(trimmed)] ?? null;
+}
+
+function mapDealSide(pipeline: string | null | undefined): DealSide | null {
+  if (pipeline === null || pipeline === undefined || pipeline.trim() === '') return null;
+  return DEAL_SIDE_WORDS[foldKey(pipeline)] ?? null;
+}
+
+/** FUB's public deal amounts are whole dollars (int32). Stored here as cents. Unreadable or negative is null. */
+export function fubDollarsToCents(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.replace(/[$,\s]/g, '')) : Number.NaN;
+  if (!Number.isFinite(n) || n < 0) return null;
+  const cents = Math.round(n * 100);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+function bpsOf(part: number, whole: number): number | null {
+  if (whole <= 0 || part < 0) return null;
+  const b = Math.round((part / whole) * 10_000);
+  return b >= 0 && b <= 10_000 ? b : null;
+}
+
+function dateOnly(s: string | null | undefined): string | null {
+  if (s === null || s === undefined) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+/** An ISO timestamp, or a date-only value read as midnight UTC. Optional fields use info, not a rejection. */
+function flexibleTime(s: string | null | undefined, field: string, issues: Issue[], required: boolean): Instant | null {
+  if (s === null || s === undefined || s.trim() === '') {
+    if (required) issues.push({ code: 'TIMESTAMP_INVALID', severity: 'error', field });
+    return null;
+  }
+  const t = s.trim();
+  const iso = instantFromIso(t);
+  if (iso !== null) return iso;
+  const day = dateOnly(t);
+  if (day !== null) return instantFromIso(`${day}T00:00:00Z`);
+  issues.push({ code: 'TIMESTAMP_INVALID', severity: required ? 'error' : 'info', field });
+  return null;
+}
+
+function mappedUser(id: string | null | undefined, users: UserMapping): UserId | null {
+  const t = userFor(id, users);
+  return t;
+}
+
+function uniqueIds(ids: readonly (string | null | undefined)[]): string[] {
+  const out: string[] = [];
+  for (const id of ids) {
+    if (id === null || id === undefined || id === '' || out.includes(id)) continue;
+    out.push(id);
+  }
+  return out;
+}
+
+function mapDeal(raw: unknown, users: UserMapping, ctx: FubMapContext): RecordOutcome<NormalizedDeal> {
+  const p = FubDealSchema.safeParse(raw);
+  if (!p.success) return rejected(fubSourceRef('deals', rawId(raw)), [{ code: 'RECORD_MALFORMED', severity: 'error' }]);
+  const d = p.data;
+  const sourceRef = fubSourceRef('deals', d.id);
+  const issues: Issue[] = [];
+  const name = lineField(d.name, 'name', 300, issues) ?? `Deal ${d.id}`;
+  const stageLabel = lineField(d.stageName, 'stageName', 200, issues);
+  const pipelineLabel = lineField(d.pipelineName, 'pipelineName', 200, issues);
+  const stage = mapDealStage(stageLabel, ctx.dealStageMap ?? {});
+  if (stageLabel !== null && stage === null) issues.push({ code: 'STAGE_UNMAPPED', severity: 'review', field: 'stageName' });
+  if (stageLabel === null && stage === null) issues.push({ code: 'STAGE_UNMAPPED', severity: 'review', field: 'stageName' });
+  const side = mapDealSide(pipelineLabel);
+  if (side === null) issues.push({ code: 'SIDE_UNMAPPED', severity: 'review', field: 'pipelineName' });
+
+  const personRefs = uniqueIds([...(d.people ?? []).map((x) => x.id), ...(d.peopleIds ?? [])]);
+  const people = personRefs.map((personRef, i) => ({
+    personRef,
+    role: (i === 0 ? (side === 'sell' ? 'seller' : side === 'buy' || side === 'dual' ? 'buyer' : 'other') : side === 'sell' ? 'co_seller' : side === 'buy' || side === 'dual' ? 'co_buyer' : 'other') as NormalizedDeal['people'][number]['role'],
+  }));
+  const fubUserIds = uniqueIds([...(d.users ?? []).map((x) => x.id), ...(d.userIds ?? [])]);
+  const unmappedUserIds = fubUserIds.filter((id) => mappedUser(id, users) === null);
+  const mappedUsers = fubUserIds.map((id) => mappedUser(id, users)).filter((id): id is UserId => id !== null);
+  if (unmappedUserIds.length > 0) issues.push({ code: 'ASSIGNEE_UNMAPPED', severity: mappedUsers.length > 0 ? 'info' : 'review', field: 'users' });
+
+  const priceCents = fubDollarsToCents(d.price);
+  if (d.price !== null && d.price !== undefined && priceCents === null) issues.push({ code: 'VALUE_TRUNCATED', severity: 'info', field: 'price' });
+  const gross = fubDollarsToCents(d.commissionValue);
+  const agent = fubDollarsToCents(d.agentCommission);
+  const team = fubDollarsToCents(d.teamCommission);
+  let agentSplit = gross !== null && agent !== null ? bpsOf(agent, gross) : null;
+  let teamSplit = gross !== null && team !== null ? bpsOf(team, gross) : null;
+  if (agentSplit !== null && teamSplit !== null && agentSplit + teamSplit > 10_000) {
+    const over = agentSplit + teamSplit - 10_000;
+    if (agentSplit >= teamSplit) agentSplit -= over;
+    else teamSplit -= over;
+  }
+  const rate = gross !== null && priceCents !== null ? bpsOf(gross, priceCents) : null;
+  const financials: NormalizedDealFinancials | null =
+    gross === null && agent === null && team === null
+      ? null
+      : { grossCommissionCents: gross, commissionRateBps: rate, teamSplitBps: teamSplit, agentSplitBps: agentSplit, referralFeeCents: null };
+
+  const dates: NormalizedDealDate[] = [];
+  const pushDate = (rawDate: string | null | undefined, kind: NormalizedDealDate['kind'], label: string | null) => {
+    const due = dateOnly(rawDate);
+    if (rawDate !== null && rawDate !== undefined && rawDate.trim() !== '' && due === null) issues.push({ code: 'TIMESTAMP_INVALID', severity: 'info', field: kind });
+    if (due !== null) dates.push({ kind, label, dueOn: due });
+  };
+  pushDate(d.mutualAcceptanceDate, 'acceptance', null);
+  pushDate(d.projectedCloseDate, 'closing', null);
+  pushDate(d.possessionDate, 'possession', null);
+  pushDate(d.earnestMoneyDueDate, 'custom', 'Earnest money');
+  pushDate(d.dueDiligenceDate, 'custom', 'Due diligence');
+  pushDate(d.finalWalkThroughDate, 'custom', 'Final walk-through');
+
+  const entered = flexibleTime(d.enteredStageAt ?? d.createdAt, 'enteredStageAt', issues, false);
+  const acceptance = flexibleTime(d.mutualAcceptanceDate, 'mutualAcceptanceDate', issues, false);
+  const closeRaw = d.closedAt ?? d.closeDate ?? d.closedDate ?? (stage === 'closed' ? d.projectedCloseDate : null);
+  const closedAt = stage === 'closed' ? flexibleTime(closeRaw ?? d.enteredStageAt ?? d.createdAt, 'closedAt', issues, true) : flexibleTime(closeRaw, 'closedAt', issues, false);
+  const lostReason =
+    stage === 'lost'
+      ? /delet/i.test(d.status ?? '')
+        ? 'Deleted in Follow Up Boss'
+        : /archiv/i.test(d.status ?? '')
+          ? 'Archived in Follow Up Boss'
+          : 'Imported from Follow Up Boss'
+      : null;
+
+  return outcome(sourceRef, {
+    category: 'deals',
+    sourceRef,
+    externalId: d.id,
+    name,
+    side,
+    stage,
+    stageLabel,
+    pipelineLabel,
+    stageEnteredAt: entered,
+    primaryPersonRef: people[0]?.personRef ?? null,
+    people,
+    ownerUserId: mappedUsers[0] ?? null,
+    unmappedUserIds,
+    memberUserIds: mappedUsers.slice(1),
+    priceCents,
+    expectedCloseDate: dateOnly(d.projectedCloseDate),
+    agreementSignedAt: acceptance,
+    underContractAt: stage === 'under_contract' || stage === 'closed' ? acceptance : null,
+    closedAt: stage === 'closed' ? closedAt : null,
+    lostReason,
+    dates,
+    financials,
+  }, issues);
+}
+
+const APPT_KIND: [RegExp, AppointmentKind][] = [
+  [/buyer/, 'buyer_consult'],
+  [/listing|seller/, 'listing_appointment'],
+  [/consult|meeting/, 'consult'],
+];
+
+function appointmentKind(type: string | null): AppointmentKind {
+  const t = (type ?? '').toLowerCase();
+  for (const [re, kind] of APPT_KIND) if (re.test(t)) return kind;
+  return 'other';
+}
+
+function appointmentOutcome(label: string): AppointmentOutcome | null {
+  const o = foldKey(label);
+  if (/agreement|signed|hired|undercontract/.test(o)) return 'agreement_signed';
+  if (/follow/.test(o)) return 'follow_up';
+  if (/notafit|nofit|lost|dead/.test(o)) return 'not_a_fit';
+  if (/nodecision|undecided|thinking/.test(o)) return 'no_decision';
+  return null;
+}
+
+function mapAppointment(raw: unknown, users: UserMapping, ctx: FubMapContext): RecordOutcome<NormalizedAppointment> {
+  const p = FubAppointmentSchema.safeParse(raw);
+  if (!p.success) return rejected(fubSourceRef('appointments', rawId(raw)), [{ code: 'RECORD_MALFORMED', severity: 'error' }]);
+  const a = p.data;
+  const sourceRef = fubSourceRef('appointments', a.id);
+  const issues: Issue[] = [];
+  const startsAt = flexibleTime(a.start, 'start', issues, true);
+  if (startsAt === null) return rejected(sourceRef, issues);
+  let endsAt = flexibleTime(a.end, 'end', issues, false);
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  if (endsAt === null || endsAt <= startsAt) endsAt = ((startsAt as number) + (truthy(a.allDay) ? day : hour)) as Instant;
+  const typeLabel = lineField(a.type, 'type', 200, issues);
+  const kind = appointmentKind(typeLabel);
+  if (typeLabel !== null && kind === 'other' && !/other/.test(typeLabel.toLowerCase())) issues.push({ code: 'TYPE_UNMAPPED', severity: 'info', field: 'type' });
+  const outcomeLabel = lineField(a.outcome, 'outcome', 200, issues) ?? '';
+  const canceled = /cancel/.test(outcomeLabel.toLowerCase());
+  const noShow = /no[\s_-]*show/.test(outcomeLabel.toLowerCase());
+  const past = ctx.now !== undefined && endsAt <= ctx.now;
+  const status: AppointmentStatus = canceled ? 'canceled' : noShow ? 'no_show' : past ? 'held' : 'scheduled';
+  const outcomeValue = appointmentOutcome(outcomeLabel);
+  const title = a.title ? cleanBody(a.title) : '';
+  const description = a.description ? cleanBody(a.description) : '';
+  const noteParts = [title, description, outcomeValue === null && outcomeLabel !== '' ? `FUB outcome: ${outcomeLabel}` : ''].filter((s) => s !== '');
+  const personRef = (a.invitees ?? []).map((i) => i.personId).find((id): id is string => id !== null && id !== undefined) ?? null;
+  const inviteeUsers = uniqueIds((a.invitees ?? []).map((i) => i.userId));
+  const organizerCandidates = uniqueIds([a.createdById, ...inviteeUsers]);
+  const unmappedUserIds = organizerCandidates.filter((id) => mappedUser(id, users) === null);
+  const organizerUserId = organizerCandidates.map((id) => mappedUser(id, users)).find((id): id is UserId => id !== null) ?? null;
+  if (unmappedUserIds.length > 0) issues.push({ code: 'ASSIGNEE_UNMAPPED', severity: organizerUserId !== null ? 'info' : 'review', field: 'createdById' });
+  const location = lineField(a.location, 'location', 500, issues);
+  return outcome(sourceRef, {
+    category: 'appointments',
+    sourceRef,
+    externalId: a.id,
+    personRef,
+    organizerUserId,
+    unmappedUserIds,
+    kind,
+    startsAt,
+    endsAt,
+    location: location === '' ? null : location,
+    status,
+    outcome: outcomeValue,
+    outcomeNote: noteParts.length > 0 ? noteParts.join('\n\n').slice(0, 4_000) : null,
+    remindersEnabled: false,
+  }, issues);
+}
+
 /**
  * Normalizes one raw FUB object for a stage. `contacts`, `ownership` and `consent` read a person;
- * `notes` a note; `messages` a text message or an email; `call_recordings` a call. Never throws.
+ * `notes` a note; `messages` a text message or an email; `call_recordings` a call; `deals` a deal;
+ * `appointments` an appointment. Never throws. `ctx.now` decides whether an appointment is history.
  */
-export function mapFub(category: Category, raw: unknown, users: UserMapping): RecordOutcome<NormalizedRecord> {
+export function mapFub(category: Category, raw: unknown, users: UserMapping, ctx: FubMapContext = {}): RecordOutcome<NormalizedRecord> {
   switch (category) {
     case 'contacts':
     case 'ownership':
@@ -539,6 +915,10 @@ export function mapFub(category: Category, raw: unknown, users: UserMapping): Re
       return mapMessage(raw, users);
     case 'call_recordings':
       return mapCall(raw, users);
+    case 'deals':
+      return mapDeal(raw, users, ctx);
+    case 'appointments':
+      return mapAppointment(raw, users, ctx);
   }
 }
 
@@ -563,15 +943,15 @@ export function userMappingGaps(people: readonly unknown[], mapping: UserMapping
   return { users: [...users].sort(), ponds: [...ponds].sort() };
 }
 
-export type FubCollection = 'people' | 'notes' | 'textMessages' | 'emails' | 'calls' | 'users';
+export type FubCollection = 'people' | 'notes' | 'textMessages' | 'emails' | 'calls' | 'users' | 'appointments' | 'deals';
 
 /**
- * Owner decision B7 (2026-11-11, E233): FUB collections the import COUNTS ONLY and never reads or imports
- * (Realty OS does not bring tasks or appointments over). The endpoint names follow FUB's public v1 API and are
- * VERIFY against a real account (the HTTP adapter's paths are configurable: FUB_TASKS_PATH, FUB_APPOINTMENTS_PATH).
+ * Owner decision B7 (2026-11-11, E233), amended 2026-11-21: tasks are counted and never imported.
+ * Appointments and deals are read and imported. The tasks endpoint name follows FUB's public v1 API and is
+ * VERIFY against a real account (FUB_TASKS_PATH).
  */
-export type FubCountOnlyCollection = 'tasks' | 'appointments';
-export const FUB_COUNT_ONLY_COLLECTIONS: readonly FubCountOnlyCollection[] = ['tasks', 'appointments'];
+export type FubCountOnlyCollection = 'tasks';
+export const FUB_COUNT_ONLY_COLLECTIONS: readonly FubCountOnlyCollection[] = ['tasks'];
 
 const Metadata = z.looseObject({ _metadata: z.looseObject({ total: z.number().int().nonnegative() }) });
 
@@ -597,6 +977,8 @@ export function fubConnectionCounts(pages: Partial<Record<FubCollection, unknown
     emails: total('emails'),
     calls: total('calls'),
     users: total('users'),
+    appointments: total('appointments'),
+    deals: total('deals'),
   };
   const sum = (a: number | null, b: number | null): number | null => (a === null || b === null ? null : a + b);
   return {
@@ -608,18 +990,17 @@ export function fubConnectionCounts(pages: Partial<Record<FubCollection, unknown
       messages: sum(collections.textMessages, collections.emails),
       call_recordings: collections.calls,
       consent: collections.people,
+      deals: collections.deals,
+      appointments: collections.appointments,
     },
   };
 }
 
 /**
- * E233: the count-only collections, the same way (`_metadata.total` of a one-record page; no record content is
- * read). A count that could not be read is null, never guessed; it never blocks anything.
+ * E233, amended 2026-11-21: tasks only, the same way (`_metadata.total` of a one-record page; no record content
+ * is read). A count that could not be read is null, never guessed; it never blocks anything.
  */
 export function fubNotImportedCounts(pages: Partial<Record<FubCountOnlyCollection, unknown>>): NotImportedCounts {
-  const total = (c: FubCountOnlyCollection): number | null => {
-    const p = Metadata.safeParse(pages[c]);
-    return p.success ? p.data._metadata.total : null;
-  };
-  return { tasks: total('tasks'), appointments: total('appointments') };
+  const p = Metadata.safeParse(pages.tasks);
+  return { tasks: p.success ? p.data._metadata.total : null };
 }

@@ -386,8 +386,8 @@ export interface Playbook {
 
 // ---- imports ------------------------------------------------------------------------------------
 
-export type ImportCategory = 'contacts' | 'ownership' | 'notes' | 'messages' | 'call_recordings' | 'consent';
-export const IMPORT_CATEGORIES: readonly ImportCategory[] = ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent'];
+export type ImportCategory = 'contacts' | 'ownership' | 'notes' | 'messages' | 'call_recordings' | 'consent' | 'deals' | 'appointments';
+export const IMPORT_CATEGORIES: readonly ImportCategory[] = ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals', 'appointments'];
 
 export interface ImportIssue {
   code: string;

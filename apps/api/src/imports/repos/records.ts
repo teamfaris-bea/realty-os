@@ -239,6 +239,8 @@ export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & 
                WHEN 'calls' THEN EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = r.tenant_id AND k.id = r.target_id AND k.import_record_id = r.id)
                WHEN 'consent_events' THEN EXISTS (SELECT 1 FROM consent_events ce WHERE ce.tenant_id = r.tenant_id AND ce.id = r.target_id AND ce.import_record_id = r.id)
                WHEN 'suppressions' THEN EXISTS (SELECT 1 FROM suppressions s WHERE s.tenant_id = r.tenant_id AND s.id = r.target_id AND s.import_record_id = r.id)
+               WHEN 'deals' THEN EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = r.tenant_id AND d.id = r.target_id)
+               WHEN 'appointments' THEN EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = r.tenant_id AND a.id = r.target_id AND a.created_by_kind = 'import')
                ELSE false END))::int AS imported,
            count(*) FILTER (WHERE outcome = 'needs_review' AND dry_run_outcome IS NOT NULL)::int AS needs_review,
            count(*) FILTER (WHERE outcome = 'rejected' AND dry_run_outcome IS NOT NULL)::int AS rejected,
