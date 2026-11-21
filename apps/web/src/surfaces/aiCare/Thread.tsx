@@ -82,7 +82,7 @@ function WhyButton({ turn }: { turn: TurnRow }) {
   const id = useId();
   return (
     <span className="flex flex-col items-end px-1">
-      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)} className="inline-flex min-h-tap items-center text-[13px] font-medium text-accent">
+      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)} className="inline-flex min-h-tap min-w-tap items-center justify-center px-4 text-[13px] font-medium text-accent">
         Why
       </button>
       {open ? (
