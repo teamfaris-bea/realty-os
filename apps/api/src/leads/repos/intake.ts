@@ -150,8 +150,8 @@ export interface InquiryInsert {
   outcome: 'new_contact' | 'attached' | 'reinquiry' | 'duplicate_ignored';
   /** b18 review B18S-2 (0097): 'portal_signin_token' when a quoted sign-in token was removed before the row was stored */
   contentRedacted: 'portal_signin_token' | null;
-  /** lead email (module 22): 'parsed' with each field's source span (R-INBOX-9); default 'structured' */
-  parseStatus?: 'structured' | 'parsed';
+  /** lead email (module 22): 'parsed' or 'needs_review' with each field's source span (R-INBOX-9); default 'structured' */
+  parseStatus?: 'structured' | 'parsed' | 'needs_review';
   parseEvidence?: Record<string, unknown>;
 }
 

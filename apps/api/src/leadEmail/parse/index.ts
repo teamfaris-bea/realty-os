@@ -11,12 +11,14 @@ import { type LeadMetadata, metadataPrefix, scanLeadMetadata } from './leadmetad
 import { BODY_CONTROLS, cleanField, findZip, isPlausibleName, isValidEmail, phoneDigits } from './fields.js';
 import { cutAt, htmlToText } from './html.js';
 import { GENERIC_LABELS, SUBJECT_PROPERTY_RE, VENDOR_TYPE_KEYWORDS, VENDORS, type VendorFormat } from './labels.js';
+import { agentdashFlags, fallbackLead, isNonLeadMail } from './fallback.js';
 import { MAX_INPUT_CHARS, MAX_MESSAGE, MAX_NAME, MAX_PHONE, MAX_PROPERTY, MAX_SUBJECT } from './limits.js';
 import type { Field, LeadFormat, ParsedLead, ParseInput, ParseResult } from './types.js';
 
 export type { Field, LeadFormat, LeadType, ParsedLead, ParseFailure, ParseInput, ParseResult, Span } from './types.js';
 export { MAX_INPUT_CHARS } from './limits.js';
-export { PORTAL_DOMAINS } from './labels.js';
+export { PORTAL_DOMAINS, SOURCE_LABEL, detectedSource, wantsReferralReminder } from './labels.js';
+export { agentdashFlags, fallbackLead, isNonLeadMail };
 export { cleanField } from './fields.js';
 export { htmlToText } from './html.js';
 export { LEAD_META_NAMES, LEAD_META_VERSION, scanLeadMetadata } from './leadmetadata.js';

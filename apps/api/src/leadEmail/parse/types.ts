@@ -1,7 +1,12 @@
 // Types of the lead-email parser (re-exported by ./index.ts).
 
-/** 'leadmetadata': the leadmetadata.org <meta name="lead_*"> convention (./leadmetadata.ts), for any sender */
-export type LeadFormat = 'zillow' | 'realtor' | 'generic' | 'leadmetadata';
+/**
+ * 'leadmetadata': the leadmetadata.org <meta name="lead_*"> convention (./leadmetadata.ts), for any sender.
+ * 'agentdash' | 'homes' | 'opcity': vendor templates (synthetic; VERIFY against a real sample).
+ * 'fallback': a trusted email no template read, with a phone or email found in the prose. The lead is created
+ * and flagged for review (parse_status needs_review); nothing is sent until a person checks it.
+ */
+export type LeadFormat = 'zillow' | 'realtor' | 'opcity' | 'homes' | 'agentdash' | 'generic' | 'leadmetadata' | 'fallback';
 export type LeadType = 'buy' | 'sell' | 'rent' | 'value' | 'general';
 /** UTF-16 offsets into ParseInput.text AFTER normalizeBody (i.e. into the `text` the result returns) */
 export interface Span {

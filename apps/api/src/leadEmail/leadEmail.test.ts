@@ -484,6 +484,7 @@ describe('R-LEM-7 R-LEM-9 R-LEM-10 the portal catalog and lead metadata', () => 
       { portal: 'homes', domain: 'homesnap.com', label: 'Homes.com', preTicked: false },
       { portal: 'trulia', domain: 'trulia.com', label: 'Trulia', preTicked: false },
       { portal: 'opcity', domain: 'opcity.com', label: 'Opcity', preTicked: false },
+      { portal: 'agentdash', domain: 'vu.com', label: 'Veterans United', preTicked: false },
     ]);
     expect(JSON.stringify(inbox)).not.toMatch(/VERIFY/);
   });

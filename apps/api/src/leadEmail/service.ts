@@ -10,11 +10,15 @@
 //   4 trusted AND parsed AND at least one valid phone or email ⇒ the existing intake (ingestInquiryInTx): dedupe by
 //     address, inquiry with the lead source, routing through the ownership engine (offer, SLA timers, feed card),
 //     and the 60-second first response job (to the LEAD's own points: the portal's From address is never a
-//     contact point; opted-out addresses are never auto-messaged, D1, decided at send time by the gate)
-//     anything else ⇒ held in "Needs review" with the reason; nothing is created, routed or sent (E153). A held
-//     email keeps the tenant-HMACs of the addresses it names (point_hmacs, keyed as intake keys a contact's
-//     points; never an address): erasing a person purges every held email naming one of their addresses, and the
-//     retention sweep expires held content after 30 days (batch 5 review F2, migration 0041, R-DATA-4, R-DATA-3).
+//     contact point; opted-out addresses are never auto-messaged, D1, decided at send time by the gate).
+//     A trusted email no template could read, but which names a phone or email in the prose, still becomes a lead
+//     (parser fallback): the raw body is the message, the inquiry is flagged needs_review, and there is no
+//     autonomous first response. Invoice, closing-document, and newsletter mail is not a lead.
+//     Anything else (untrusted, or no phone and no email) ⇒ held in "Needs review" with the reason; nothing is
+//     created, routed or sent (E153). A held email keeps the tenant-HMACs of the addresses it names (point_hmacs,
+//     keyed as intake keys a contact's points; never an address): erasing a person purges every held email naming
+//     one of their addresses, and the retention sweep expires held content after 30 days (batch 5 review F2,
+//     migration 0041, R-DATA-4, R-DATA-3).
 // acceptReview / discardReview: an Owner/Admin/Team Lead (role re-read under the system actor) decides a held email.
 // Accepting goes through the same intake, audited, WITHOUT an autonomous first response (R-INBOX-9).
 //
@@ -36,7 +40,7 @@ import { AppError } from '../errors.js';
 import { type IngestResult, identifiersOf, ingestInquiryInTx } from '../leads/intake.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type LeadEmailInbound, inboundAddress, keyFromRecipients } from './formats.js';
-import { type ParseInput, type ParseResult, type ParsedLead, normalizeBody, parseLeadEmail } from './parse/index.js';
+import { type ParseInput, type ParseResult, type ParsedLead, agentdashFlags, detectedSource, fallbackLead, isNonLeadMail, normalizeBody, parseLeadEmail, wantsReferralReminder } from './parse/index.js';
 import * as repo from './repos/leadEmail.js';
 import { type PortalId, PORTAL_CATALOG, SUGGESTED_SENDER_DOMAINS, decideTrust, holdSentence, ignoredSenderDomains, isForwardingConfirmation, normalizeDomain, senderDomainProblem } from './trust.js';
 
@@ -97,7 +101,25 @@ function evidenceOf(lead: ParsedLead): Record<string, unknown> {
   };
 }
 
-function inquiryOf(lead: ParsedLead, points: { phones: string[]; emails: string[] }, leadSourceId: string, externalId: string, overrides: AcceptOverrides = {}) {
+function sourceDetailOf(lead: ParsedLead, subject: string, text: string, review: boolean): Record<string, string | number | boolean> {
+  const detail: Record<string, string | number | boolean> = {
+    channel: 'lead_email',
+    format: lead.format,
+    detected_source: detectedSource(lead.format, subject, text).slice(0, 200),
+  };
+  if (lead.listingId) detail.listing_id = lead.listingId.value.slice(0, 64);
+  if (wantsReferralReminder(lead.format, subject, text)) detail.referral_update = true;
+  if (review) detail.needs_review = true;
+  if (lead.format === 'agentdash') {
+    const flags = agentdashFlags(text);
+    if (flags.military) detail.military_status = flags.military.slice(0, 200);
+    if (flags.lender) detail.lender = flags.lender.slice(0, 200);
+    if (flags.loanType) detail.loan_type = flags.loanType.slice(0, 200);
+  }
+  return detail;
+}
+
+function inquiryOf(lead: ParsedLead, points: { phones: string[]; emails: string[] }, leadSourceId: string, externalId: string, subject: string, text: string, review: boolean, overrides: AcceptOverrides = {}) {
   const fullName = (overrides.name ?? lead.name?.value ?? '').trim().slice(0, 120);
   return {
     leadSourceId,
@@ -109,8 +131,18 @@ function inquiryOf(lead: ParsedLead, points: { phones: string[]; emails: string[
     ...(lead.message ? { message: lead.message.value.slice(0, 4000) } : {}),
     ...(lead.property ? { propertyText: lead.property.value.slice(0, 500) } : {}),
     ...(lead.postalCode && /^[0-9]{5}$/.test(lead.postalCode) ? { postalCode: lead.postalCode } : {}),
-    sourceDetail: { channel: 'lead_email', format: lead.format, ...(lead.listingId ? { listing_id: lead.listingId.value.slice(0, 64) } : {}) },
+    sourceDetail: sourceDetailOf(lead, subject, text, review),
   };
+}
+
+/** The timeline line for one received lead email (the inquiry keeps the same words). */
+function timelineBody(lead: ParsedLead, subject: string, text: string, review: boolean): string {
+  const label = detectedSource(lead.format, subject, text);
+  const lines = [`Lead email · ${label}${review ? ' — review the fields' : ''}`];
+  if (lead.property) lines.push(`Property: ${lead.property.value}`);
+  if (lead.message) lines.push(lead.message.value);
+  const body = lines.join('\n').slice(0, 20_000).trim();
+  return body === '' ? `Lead email · ${label}` : body;
 }
 
 const emptyLead = (): ParsedLead => ({ format: 'generic', name: null, phones: [], emails: [], message: null, property: null, listingId: null, postalCode: null, leadType: 'general' });
@@ -134,33 +166,66 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
   const input: ParseInput = { subject: n.subject, text: n.text, html: n.html, senderDomain: trust.fromDomain, ...(!trust.trusted && trust.code === 'PERSONAL_MAILBOX' ? { forwardedOnly: true } : {}) };
   const parsed: ParseResult = confirmation ? { ok: false, text: normalizeBody(input), reason: 'UNKNOWN_FORMAT', partial: null } : parseLeadEmail(input);
   const parsedLead = parsed.ok ? parsed.lead : parsed.partial;
-  const lead = parsedLead ? await withoutTeamPoints(tx, deps, actor.tenantId, parsedLead, n.from) : null;
-  const points = contactPointsOf(lead);
-  const hold = confirmation ? 'FORWARDING_CONFIRMATION' : !trust.trusted ? trust.code : !parsed.ok ? parsed.reason : points.phones.length + points.emails.length === 0 ? 'NO_CONTACT_POINT' : null;
+  let lead = parsedLead ? await withoutTeamPoints(tx, deps, actor.tenantId, parsedLead, n.from) : null;
+  let points = contactPointsOf(lead);
+  const strictHold = confirmation ? 'FORWARDING_CONFIRMATION' : !trust.trusted ? trust.code : !parsed.ok ? parsed.reason : points.phones.length + points.emails.length === 0 ? 'NO_CONTACT_POINT' : null;
+  // A trusted email no template could read, with a phone or email sitting in the prose, still becomes a lead.
+  // It is flagged (parse_status needs_review) and gets no autonomous first response. Invoice and newsletter mail
+  // is not a lead. Untrusted mail is never created from (a forged email stays in Needs review).
+  let review = false;
+  if (
+    strictHold !== null &&
+    trust.trusted &&
+    !confirmation &&
+    !parsed.ok &&
+    (parsed.reason === 'UNKNOWN_FORMAT' || parsed.reason === 'PARTIAL_FORMAT') &&
+    points.phones.length + points.emails.length === 0 &&
+    !isNonLeadMail(n.subject, parsed.text)
+  ) {
+    const loose = fallbackLead(parsed.text, trust.fromDomain ?? '');
+    if (loose) {
+      const stripped = await withoutTeamPoints(tx, deps, actor.tenantId, loose, n.from);
+      const pts = contactPointsOf(stripped);
+      if (pts.phones.length + pts.emails.length > 0) {
+        lead = stripped;
+        points = pts;
+        review = true;
+      }
+    }
+  }
   const id = deps.ids.next<'LeadEmailMessageId'>();
+  const subject = n.subject ?? '';
   const base = {
     id,
     connectionId: inbox.id,
     leadSourceId: inbox.lead_source_id,
     messageKey: key,
     providerFormat: n.format,
-    parserKind: lead && (parsed.ok || parsed.partial) ? lead.format : null,
+    parserKind: review ? (lead?.format ?? null) : lead && (parsed.ok || parsed.partial) ? lead.format : null,
     senderDomain: trust.fromDomain,
     dkimPassDomains: [...new Set(n.dkim.filter((v) => v.result === 'pass').map((v) => v.domain))].slice(0, 10),
   };
 
-  if (hold === null && parsed.ok && lead) {
-    const res: IngestResult = await ingestInquiryInTx(tx, actor, inquiryOf(lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`), now, { envelope: deps.envelope, ids: deps.ids }, { parse: { status: 'parsed', evidence: evidenceOf(lead) } });
+  if ((strictHold === null || review) && lead) {
+    const res: IngestResult = await ingestInquiryInTx(
+      tx,
+      actor,
+      inquiryOf(lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`, subject, parsed.text, review),
+      now,
+      { envelope: deps.envelope, ids: deps.ids },
+      { firstResponse: !review, parse: { status: review ? 'needs_review' : 'parsed', evidence: evidenceOf(lead) } },
+    );
+    await repo.insertLeadNote(tx, deps.ids.next<'NoteId'>(), res.contactId, timelineBody(lead, subject, parsed.text, review));
     await repo.claimMessage(tx, { ...base, status: 'lead_created', holdCode: null, parserKind: lead.format, contentEnc: null, parsedEnc: null, pointHmacs: [], contactId: res.contactId, inquiryId: res.inquiryId });
     return { outcome: 'lead_created', contactId: res.contactId };
   }
 
   const env = deps.envelope.inTx(tx, actor.tenantId);
-  const content = { subject: (n.subject ?? '').slice(0, 998), text: parsed.text.slice(0, STORED_TEXT_CHARS) };
+  const content = { subject: subject.slice(0, 998), text: parsed.text.slice(0, STORED_TEXT_CHARS) };
   const contentEnc = await env.encrypt(actor.tenantId, { table: 'lead_email_messages', column: 'content_enc', rowId: id }, Buffer.from(JSON.stringify(content)));
   const parsedEnc = lead ? await env.encrypt(actor.tenantId, { table: 'lead_email_messages', column: 'parsed_enc', rowId: id }, Buffer.from(JSON.stringify(lead))) : null;
   const pointHmacs = await addressKeys(tx, deps.envelope, actor.tenantId, points);
-  await repo.claimMessage(tx, { ...base, status: 'needs_review', holdCode: hold ?? 'UNKNOWN_FORMAT', contentEnc, parsedEnc, pointHmacs, contactId: null, inquiryId: null });
+  await repo.claimMessage(tx, { ...base, status: 'needs_review', holdCode: strictHold ?? 'UNKNOWN_FORMAT', contentEnc, parsedEnc, pointHmacs, contactId: null, inquiryId: null });
   return { outcome: 'needs_review', contactId: null };
 }
 
@@ -427,15 +492,19 @@ export async function acceptReview(deps: LeadEmailDeps, actor: UserActor, id: st
     const extra = { phones: overrides.phone ? [{ value: overrides.phone, span: { start: 0, end: 0 } }] : [], emails: overrides.email ? [{ value: overrides.email, span: { start: 0, end: 0 } }] : [] };
     const points = contactPointsOf({ phones: [...extra.phones, ...lead.phones], emails: [...extra.emails, ...lead.emails] });
     if (points.phones.length + points.emails.length === 0) throw new AppError('LEAD_EMAIL_NO_CONTACT_POINT');
+    const storedText = m.content_enc
+      ? (JSON.parse(Buffer.from(await env.decrypt(sys.tenantId, { table: 'lead_email_messages', column: 'content_enc', rowId: m.id }, m.content_enc)).toString('utf8')) as { subject?: string; text?: string })
+      : null;
     const res = await ingestInquiryInTx(
       tx,
       sys,
-      inquiryOf(lead, points, m.lead_source_id, `lead-email:${m.id}`, overrides),
+      inquiryOf(lead, points, m.lead_source_id, `lead-email:${m.id}`, storedText?.subject ?? '', storedText?.text ?? '', false, overrides),
       now,
       { envelope: deps.envelope, ids: deps.ids },
       // R-INBOX-9: an email that was not verified never gets an autonomous reply, even once a person accepted it
       { firstResponse: false, ...(parsedLead ? { parse: { status: 'parsed' as const, evidence: { ...evidenceOf(parsedLead), reviewed_by_user_id: actor.userId } } } : {}) },
     );
+    await repo.insertLeadNote(tx, deps.ids.next<'NoteId'>(), res.contactId, timelineBody(lead, storedText?.subject ?? '', storedText?.text ?? '', false));
     await repo.decide(tx, m.id, { status: 'accepted', userId: actor.userId, contactId: res.contactId, inquiryId: res.inquiryId });
     await audit(tx, sys, {
       action: 'lead_email.review_accepted',

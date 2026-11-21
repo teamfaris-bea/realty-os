@@ -18,7 +18,7 @@ export interface Inbox {
 }
 
 export interface PortalCatalogEntry {
-  portal: 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity';
+  portal: 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity' | 'agentdash';
   domain: string;
   label: string;
   preTicked: boolean;
