@@ -7,6 +7,7 @@ import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
 import { databaseTlsProblems, databaseUrlShapeProblem } from '@realty/db';
 import { z } from 'zod';
+import { checkTranscriberUrl } from './providers/transcription/localWhisper.js';
 
 const base64Key = (name: string) =>
   z
@@ -214,6 +215,17 @@ export const ConfigSchema = z.object({
    */
   telephonyLiveRequests: z.boolean(),
   /**
+   * Call transcription (TRANSCRIPTION_PROVIDER: none | local_whisper; default none). There is no cloud option: local_whisper
+   * posts call audio to the team's own GPU machine (tools/transcriber/server.py) at TRANSCRIPTION_LOCAL_URL, which must be
+   * a loopback or private address (providers/transcription/localWhisper.ts checkTranscriberUrl). TRANSCRIPTION_LOCAL_TOKEN
+   * (24+ characters) is required unless the transcriber is on loopback.
+   */
+  transcription: z.object({
+    provider: z.enum(['none', 'local_whisper']),
+    localUrl: z.string().min(1).optional(),
+    localToken: z.string().min(24).optional(),
+  }),
+  /**
    * AI ISA live sends (AI_ISA_LIVE_SENDS; docs/AI_ISA.md §5.5, R-ISA-25; D12 proposed). false, the default in every
    * environment, production included: an AI ISA message on a non-fake SMS or email adapter is failed before the
    * provider call ("AI assistant sending is off on this deployment"), and the AI ISA treats it as a hold. The email
@@ -339,6 +351,29 @@ const PUBLIC_RECORDS_DEFAULT_HOSTS = ['gis.beaufortcountysc.gov'];
  * against the allow-list when the connector is built (providers/publicRecords/http.ts checkCountyBaseUrl), which
  * refuses start-up. Problems are pushed by key, never value. No setting here is ever a credential.
  */
+/**
+ * TRANSCRIPTION_PROVIDER (none | local_whisper), TRANSCRIPTION_LOCAL_URL and TRANSCRIPTION_LOCAL_TOKEN. The URL rules
+ * (loopback or private address only, token unless loopback) are checked here so a bad value fails at boot, not on the
+ * first call. Messages name keys, never values.
+ */
+function transcriptionSettings(env: NodeJS.ProcessEnv, invalid: string[]): Config['transcription'] {
+  const provider = pick('TRANSCRIPTION_PROVIDER', env.TRANSCRIPTION_PROVIDER, ['none', 'local_whisper'] as const, 'none');
+  const localUrl = (env.TRANSCRIPTION_LOCAL_URL ?? '').trim();
+  const localToken = (env.TRANSCRIPTION_LOCAL_TOKEN ?? '').trim();
+  if (provider === 'none') return { provider };
+  if (!localUrl) {
+    invalid.push('TRANSCRIPTION_PROVIDER=local_whisper needs TRANSCRIPTION_LOCAL_URL');
+    return { provider: 'none' };
+  }
+  try {
+    checkTranscriberUrl(localUrl, localToken || undefined);
+  } catch (e) {
+    invalid.push(e instanceof Error ? e.message : 'TRANSCRIPTION_LOCAL_URL is invalid');
+    return { provider: 'none' };
+  }
+  return { provider, localUrl, ...(localToken ? { localToken } : {}) };
+}
+
 function publicRecordsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
   const provider = pick('PUBLIC_RECORDS_PROVIDER', env.PUBLIC_RECORDS_PROVIDER, ['fake', 'county'] as const, 'fake');
   const live = (env.PUBLIC_RECORDS_LIVE_CALLS ?? '').trim().toLowerCase();
@@ -458,6 +493,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const fub = fubSettings(env, missing, invalid);
   const mls = mlsSettings(env, invalid);
   const publicRecords = publicRecordsSettings(env, invalid);
+  const transcription = transcriptionSettings(env, invalid);
   // R-TWL-1: the telephony kill switch, like MLS_LIVE_CALLS: false unless set to exactly true
   const telLive = (env.TELEPHONY_LIVE_REQUESTS ?? '').trim().toLowerCase();
   if (telLive !== '' && telLive !== 'true' && telLive !== 'false') invalid.push('TELEPHONY_LIVE_REQUESTS must be true or false');
@@ -539,6 +575,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     mls,
     publicRecords,
+    transcription,
     telephonyLiveRequests: telLive === 'true',
     aiIsaLiveSends: isaLive === 'true',
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
@@ -584,5 +621,6 @@ export function redactConfig(c: Config): Record<string, unknown> {
     aiIsaLiveSends: c.aiIsaLiveSends,
     mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
     publicRecords: { provider: c.publicRecords.provider, liveCalls: c.publicRecords.liveCalls, allowedHosts: c.publicRecords.allowedHosts },
+    transcription: { provider: c.transcription.provider },
   };
 }
