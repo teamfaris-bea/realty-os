@@ -183,7 +183,7 @@ const PLAIN_RE =
  * Entities whose `name` is a configuration label (team, pond, routing rule, ...). Everywhere else a
  * `name` is PII: a deal or saved-search name usually carries the client's name or address.
  */
-const LABEL_NAME_ENTITIES = new Set(['tenant', 'team', 'pond', 'routing_rule', 'lead_source', 'playbook']);
+const LABEL_NAME_ENTITIES = new Set(['tenant', 'team', 'pond', 'routing_rule', 'lead_source', 'playbook', 'crm_read_token']);
 
 /**
  * Classifies a field (column) name. Unknown names are PII (fail closed). `entity` (the audited
