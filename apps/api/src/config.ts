@@ -220,6 +220,16 @@ export const ConfigSchema = z.object({
    * adapter has no kill switch of its own; fakes are unaffected. Stays false until a written pilot approval.
    */
   aiIsaLiveSends: z.boolean(),
+  /**
+   * The timing-cue scan's model (b20; DATA_MODEL R-TCUE-1): a LOCAL model only, never AI_PROVIDER's vendor. 'ollama'
+   * calls an Ollama server at a loopback or private-network address (TIMING_AI_OLLAMA_URL, default
+   * http://127.0.0.1:11434) with TIMING_AI_MODEL (default qwen2.5:14b); 'fake' is the deterministic test model; 'off'
+   * reads nothing. Default: 'off' in production (unless fakes are allowed), else 'fake'. Optional so a Config built
+   * by hand (tests) still type-checks: absent means off.
+   */
+  timingAi: z
+    .object({ provider: z.enum(['off', 'fake', 'ollama']), baseUrl: z.string().nullable(), model: z.string().min(1).max(80) })
+    .optional(),
   /** General per-session/IP request budget (in-memory, per process). Auth routes add DB-backed limits. */
   globalRateLimitPerMinute: z.coerce.number().int().min(10).default(600),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -350,6 +360,50 @@ function publicRecordsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
   return { provider, liveCalls, allowedHosts };
 }
 
+/** The model server named for the timing scan must be on the team's own machines (R-TCUE-1). */
+const LOOPBACK_OR_PRIVATE_V4 = /^(?:127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+)$/;
+
+/**
+ * R-TCUE-1: is this URL a model server on the team's own machines? http or https, no credentials, query or fragment,
+ * and a host that is loopback (localhost, 127/8, ::1), a private IPv4 or IPv6 address (10/8, 172.16/12, 192.168/16,
+ * the 100.64/10 shared range a private overlay network uses, fc00::/7), a single-label name (a compose service
+ * such as `ollama`) or a name under .internal, .local, .lan, .home.arpa or .ts.net. A public host name or address is
+ * refused: note text never goes to a cloud model. Exported for the adapter, which checks again.
+ */
+export function localModelUrlProblem(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return 'TIMING_AI_OLLAMA_URL must be a URL';
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'TIMING_AI_OLLAMA_URL must be http or https';
+  if (u.username || u.password || u.search || u.hash || (u.pathname !== '/' && u.pathname !== '')) return 'TIMING_AI_OLLAMA_URL must be a bare origin (no credentials, path, query or fragment)';
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const local =
+    host === 'localhost' ||
+    LOOPBACK_OR_PRIVATE_V4.test(host) ||
+    host === '::1' ||
+    (isIP(host) === 6 && /^f[cd][0-9a-f]{2}:/.test(host)) ||
+    (isIP(host) === 0 && !host.includes('.') && /^[a-z0-9-]+$/.test(host)) ||
+    /\.(?:internal|local|lan|home\.arpa|ts\.net)$/.test(host);
+  return local ? null : 'TIMING_AI_OLLAMA_URL must name a loopback or private-network host: note text never goes to a cloud model';
+}
+
+function timingAiSettings(env: NodeJS.ProcessEnv, prod: boolean, allowFakeProviders: boolean, invalid: string[]) {
+  const provider = pick('TIMING_AI_PROVIDER', env.TIMING_AI_PROVIDER, ['off', 'fake', 'ollama'] as const, prod && !allowFakeProviders ? 'off' : 'fake');
+  if (provider === 'fake' && prod && !allowFakeProviders) invalid.push('TIMING_AI_PROVIDER must be ollama or off in production');
+  const model = (env.TIMING_AI_MODEL ?? '').trim() || 'qwen2.5:14b';
+  if (model.length > 80) invalid.push('TIMING_AI_MODEL must be at most 80 characters');
+  let baseUrl: string | null = null;
+  if (provider === 'ollama') {
+    baseUrl = (env.TIMING_AI_OLLAMA_URL ?? '').trim() || 'http://127.0.0.1:11434';
+    const p = localModelUrlProblem(baseUrl);
+    if (p) invalid.push(p);
+  }
+  return { provider, baseUrl, model };
+}
+
 /**
  * Builds the Config from an environment map (default: process.env). Throws ConfigError, whose message names
  * the offending variables and never their values. Choosing a real vendor adapter without its credentials
@@ -458,6 +512,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const fub = fubSettings(env, missing, invalid);
   const mls = mlsSettings(env, invalid);
   const publicRecords = publicRecordsSettings(env, invalid);
+  const timingAi = timingAiSettings(env, prod, allowFakeProviders, invalid);
   // R-TWL-1: the telephony kill switch, like MLS_LIVE_CALLS: false unless set to exactly true
   const telLive = (env.TELEPHONY_LIVE_REQUESTS ?? '').trim().toLowerCase();
   if (telLive !== '' && telLive !== 'true' && telLive !== 'false') invalid.push('TELEPHONY_LIVE_REQUESTS must be true or false');
@@ -541,6 +596,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     publicRecords,
     telephonyLiveRequests: telLive === 'true',
     aiIsaLiveSends: isaLive === 'true',
+    timingAi,
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     databasePoolMax: env.DB_POOL_MAX || undefined,
     logLevel: env.LOG_LEVEL || undefined,
@@ -582,6 +638,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
     s3Endpoint: c.s3?.endpoint,
     telephonyLiveRequests: c.telephonyLiveRequests,
     aiIsaLiveSends: c.aiIsaLiveSends,
+    timingAi: c.timingAi ? { provider: c.timingAi.provider, baseUrl: c.timingAi.baseUrl, model: c.timingAi.model } : { provider: 'off' },
     mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
     publicRecords: { provider: c.publicRecords.provider, liveCalls: c.publicRecords.liveCalls, allowedHosts: c.publicRecords.allowedHosts },
   };

@@ -183,6 +183,7 @@ Database URLs carry **no query string or fragment** in production (E484: `?user=
 | Variable | Required | Meaning |
 |---|---|---|
 | `AI_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `AI_MODEL` | yes | real assistant. A tenant can still switch AI off (`ai_enabled`). |
+| `TIMING_AI_PROVIDER` (`off` default, or `ollama`), `TIMING_AI_OLLAMA_URL` (default `http://127.0.0.1:11434`; loopback or private network only), `TIMING_AI_MODEL` (default `qwen2.5:14b`) | no | the nightly timing-cue scan's LOCAL model (DATA_MODEL R-TCUE-1). Never a cloud model; `fake` is refused in production. Off means the scan reads nothing. |
 | `PUSH_PROVIDER=webpush`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | yes | lead offers and alerts to agents' devices |
 
 **Telephony** (`TELEPHONY_PROVIDER=twilio`)

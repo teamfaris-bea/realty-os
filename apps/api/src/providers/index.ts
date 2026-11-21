@@ -13,6 +13,7 @@ import type { Clock } from '@realty/core/foundation';
 import type { Config } from '../config.js';
 import { anthropicAi } from './anthropic.js';
 import { FakeAi } from './fake/ai.js';
+import { ollamaAi } from './ollama.js';
 import { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, UnconfiguredTranscription } from './fake/data.js';
 import { FakeAccountMailer, FakeEmail } from './fake/email.js';
 import { FakeTelephony } from './fake/telephony.js';
@@ -48,7 +49,8 @@ import { type GbpProvider, UnconfiguredGbp } from '../gbp/provider.js';
 import { FakeGbp } from '../gbp/testing.js';
 
 export * from './types.js';
-export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
+export { FakeAi, FAKE_BAD_QUOTE, FAKE_TIMING_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
+export { ollamaAi } from './ollama.js';
 export { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, FAKE_MLS_LISTINGS, UnconfiguredTranscription } from './fake/data.js';
 export { FakeAccountMailer, FakeEmail } from './fake/email.js';
 export { FakeTelephony, type FakeFailure } from './fake/telephony.js';
@@ -62,6 +64,11 @@ export interface Providers {
   telephony: TelephonyProvider;
   email: EmailProvider;
   ai: AiProvider;
+  /**
+   * b20 (R-TCUE-1): the timing-cue scan's model, a LOCAL one only (Ollama on a loopback or private address, or the
+   * fake). Never the `ai` vendor. Absent or null: the scan reads nothing.
+   */
+  timingAi?: AiProvider | null;
   transcription: TranscriptionProvider;
   storage: ObjectStorage;
   mls: MlsFeed;
@@ -97,6 +104,7 @@ export interface FakeProviders extends Providers {
   telephony: FakeTelephony;
   email: FakeEmail;
   ai: FakeAi;
+  timingAi: FakeAi;
   transcription: FakeTranscription;
   storage: MemoryStorage;
   mls: FakeMls;
@@ -122,6 +130,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     telephony: new FakeTelephony(),
     email: new FakeEmail(),
     ai: new FakeAi(),
+    timingAi: new FakeAi(),
     transcription: new FakeTranscription(),
     storage: new MemoryStorage(),
     mls: new FakeMls(),
@@ -182,6 +191,10 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
     if (!config.anthropicApiKey) throw new ProviderConfigError('AI_PROVIDER=anthropic needs ANTHROPIC_API_KEY');
     ai = anthropicAi({ apiKey: config.anthropicApiKey, model: config.aiModel });
   }
+  // b20 (R-TCUE-1): the timing scan gets a local model or nothing; it never falls back to `ai` (Anthropic in production)
+  const t = config.timingAi;
+  const timingAi: AiProvider | null =
+    t?.provider === 'ollama' && t.baseUrl ? ollamaAi({ baseUrl: t.baseUrl, model: t.model, ...(opts.fetch ? { fetch: opts.fetch } : {}) }) : t?.provider === 'fake' ? fakes.timingAi : null;
   let push: PushProvider = fakes.push;
   if (config.providers.push === 'real') {
     if (!config.vapid) throw new ProviderConfigError('PUSH_PROVIDER=webpush needs VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY');
@@ -225,5 +238,5 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   // b18 item h: no transcription vendor is procured; production never stores the fake's invented transcript (the call
   // summary and call reviews would read it as the call's words), so it gets none unless fakes are allowed
   const transcription: TranscriptionProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTranscription() : fakes.transcription;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent, gbp, transcription };
+  return { ...fakes, telephony, carrier, email, accountMail, ai, timingAi, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent, gbp, transcription };
 }

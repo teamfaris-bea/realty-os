@@ -2846,6 +2846,31 @@ export interface TenantsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.timing_cues (table) */
+export interface TimingCuesTable {
+  tenant_id: string;
+  id: string;
+  note_id: string;
+  note_updated_at: Timestamp;
+  written_at: Timestamp;
+  scanned_at: Timestamp;
+  outcome: string;
+  evidence: string | null;
+  intent: string | null;
+  timeframe: string | null;
+  cue_snippet: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  window_precision: string | null;
+  window_basis: string | null;
+  window_label: string | null;
+  confidence: Numeric | null;
+  model: string | null;
+  prompt_version: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.transcripts (table) */
 export interface TranscriptsTable {
   tenant_id: string;
@@ -3203,6 +3228,7 @@ export interface DB {
   tenant_keys: TenantKeysTable;
   tenant_settings: TenantSettingsTable;
   tenants: TenantsTable;
+  timing_cues: TimingCuesTable;
   transcripts: TranscriptsTable;
   user_calendar_links: UserCalendarLinksTable;
   user_mail_links: UserMailLinksTable;
@@ -3383,6 +3409,7 @@ export const TABLE_NAMES = [
   'tenant_keys',
   'tenant_settings',
   'tenants',
+  'timing_cues',
   'transcripts',
   'user_calendar_links',
   'user_mail_links',

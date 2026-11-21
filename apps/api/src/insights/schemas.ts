@@ -146,6 +146,39 @@ export const PlanResponse = z.object({
 });
 export const AcceptPlanBody = z.strictObject({ itemIndexes: z.array(z.number().int().min(0).max(4)).min(1).max(5) });
 
+// ---- b20 timing cues (R-TCUE-6, R-TCUE-7): today's internal call list per agent. First names only; no confidence. ----
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const NudgeItem = z.object({
+  contactId: Id,
+  firstName: z.string().nullable(),
+  intent: z.enum(['buy', 'sell', 'both', 'unknown']),
+  evidence: z.enum(['client_stated', 'form', 'agent_logged']),
+  snippet: z.string(),
+  window: z.object({ start: Day, end: Day, label: z.string(), inWindowNow: z.boolean() }),
+  writtenOn: Day,
+  sourceId: Id,
+  lastHumanTouchAt: z.string().nullable(),
+  stage: z.string(),
+  ask: z.enum(['call_today', 'check_in', 'none']),
+});
+export const TimingNudgesResponse = z.object({
+  asOf: z.string(),
+  zone: z.string(),
+  today: Day,
+  horizonEnd: Day,
+  method: z.string(),
+  counts: z.object({
+    people: Count,
+    live: Count,
+    pastWindow: Count,
+    stale: Count,
+    later: Count,
+    expired: Count,
+    dropped: z.object({ closed: Count, lost: Count, under_contract: Count, do_not_contact: Count }),
+  }),
+  agents: z.array(z.object({ ownerUserId: Id.nullable(), ownerName: z.string().nullable(), live: z.array(NudgeItem), pastWindow: z.array(NudgeItem), stale: z.array(NudgeItem) })),
+});
+
 /** Response schemas, for the R-OWNER-4 / R-AST-13 / R-TEN-3 snapshot test. */
 export const INSIGHTS_RESPONSE_SCHEMAS = {
   SourcesResponse,
@@ -156,4 +189,5 @@ export const INSIGHTS_RESPONSE_SCHEMAS = {
   GoalsResponse,
   GoalResponse,
   PlanResponse,
+  TimingNudgesResponse,
 };

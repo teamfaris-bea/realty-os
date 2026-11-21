@@ -9,6 +9,7 @@
 //   POST   /goals                          create                                         goal.manage
 //   PATCH  /goals/:id                      change the target                              goal.manage
 //   DELETE /goals/:id                      remove                                         goal.manage
+//   GET    /owner/timing-nudges            today's timing-cue call list per agent (b20)    owner_view.view
 //   GET    /me/weekly-plans/current        this week's plan                               self
 //   GET    /me/weekly-plans/:week          one week's plan (items dropped at render)      self
 //   POST   /me/weekly-plans/:week/accept   add chosen items to my tasks (one tap)         self
@@ -25,6 +26,7 @@ import { addMonthsYm, insightsTx, mondayOfIsoWeek, monthOf, monthsBetween, platf
 import { PACE_METHOD, createGoal, deleteGoal, goalMembers, goalOwner, goalRelation, goalsWithPace, updateGoal } from './goals.js';
 import { costMonthState, forecastView, listCosts, putCost, sources, velocity } from './owner.js';
 import { acceptPlan, currentWeek, getPlan } from './plan.js';
+import { TIMING_NUDGE_METHOD, timingNudges } from './timing.js';
 import {
   AcceptPlanBody,
   CostsResponse,
@@ -39,6 +41,7 @@ import {
   PutCostBody,
   PutCostResponse,
   SourcesResponse,
+  TimingNudgesResponse,
   UpdateGoalBody,
   VelocityResponse,
   Week,
@@ -101,6 +104,10 @@ async function register(app: FastifyInstance): Promise<void> {
   });
   r.get('/owner/velocity', { ...ownerView, schema: { response: { 200: VelocityResponse } } }, async (req) => insightsTx(req, (tx) => velocity(tx)));
   r.get('/owner/forecast', { ...ownerView, schema: { response: { 200: ForecastResponse } } }, async (req) => insightsTx(req, (tx, now) => forecastView(tx, now)));
+  // b20 (R-TCUE-6, R-TCUE-7): internal only; nothing is sent, assigned or changed by reading it
+  r.get('/owner/timing-nudges', { ...ownerView, schema: { response: { 200: TimingNudgesResponse } } }, async (req) =>
+    insightsTx(req, async (tx, now) => ({ ...(await timingNudges(tx, now, await tenantZone(tx))), method: TIMING_NUDGE_METHOD })),
+  );
   r.get('/lead-source-costs', { ...ownerView, schema: { querystring: PeriodQuery, response: { 200: CostsResponse } } }, async (req) => {
     const p = await period(req, req.query);
     return insightsTx(req, (tx) => listCosts(tx, p.from, p.to));

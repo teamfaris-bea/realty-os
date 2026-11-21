@@ -82,6 +82,8 @@ export class FakeAi implements AiProvider {
 
   private answer(r: AiRequest): string {
     if (r.templateKey === 'coaching.call_review') return fakeCallReview(r.user);
+    // b20 (R-TCUE-3): the timing-cue scan's deterministic local-model stand-in
+    if (r.templateKey === 'timing_cue.extract') return fakeTimingCues(r.user);
     // module 53 (additive): a deterministic public reply to a Google review that names nobody and nothing
     if (r.templateKey === 'gbp.review_reply') return JSON.stringify({ reply: 'Thank you for taking the time to share this. We appreciate your feedback.' });
     const purpose = r.templateKey.replace(/^assistant\./, '');
@@ -153,4 +155,35 @@ function fakeCallReview(user: string): string {
     return { key, status: 'missed', evidence: [{ source: last.handle, snippet: last.text }] };
   });
   return JSON.stringify({ items });
+}
+
+// ---- b20: timing cues (template timing_cue.extract; DATA_MODEL R-TCUE-3) ------------------------------------------
+// Deterministic: the note is read from the prompt's untrusted block. Each fixture phrase found is returned as a cue
+// whose snippet is the phrase exactly as the note writes it; intent from the note's words (renting → "rent"); a note
+// that says "not sure" gets a low confidence. EVERY answer also carries one cue whose quote is in no note
+// (FAKE_TIMING_BAD_QUOTE, with the highest confidence), so the verbatim check is exercised on every scan.
+export const FAKE_TIMING_BAD_QUOTE = 'closing on the new house next Tuesday';
+const FAKE_TIMING_PHRASES: { re: RegExp; timeframe: string; evidence?: string }[] = [
+  { re: /move timeline:\s*\d+\s*-\s*\d+\s*months/i, timeframe: '0-3mo', evidence: 'form' },
+  { re: /lease ends [A-Z][a-z]+/, timeframe: '0-3mo' },
+  { re: /PCS next summer/i, timeframe: '3-6mo' },
+  { re: /after the holidays/i, timeframe: '0-3mo' },
+  { re: /maybe next year/i, timeframe: '6-12mo' },
+  { re: /(?:sell|buy|move)\w* (?:in|by) [A-Z][a-z]+ 20\d\d/, timeframe: 'unknown' },
+];
+
+function fakeTimingCues(user: string): string {
+  const m = /^<(untrusted_[0-9a-f]+)>\n([\s\S]*)\n<\/\1>$/m.exec(user);
+  const note = m?.[2] ?? '';
+  const sells = /\b(?:sell|selling|list|listing)\b/i.test(note);
+  const buys = /\b(?:buy|buying|purchase|looking for a home)\b/i.test(note);
+  const rents = /\brent(?:ing)?\s+(?:it|the\s+house)\s+out\b|\blooking\s+to\s+rent\b/i.test(note);
+  const intent = rents ? 'rent' : sells && buys ? 'both' : sells ? 'sell' : buys ? 'buy' : 'unknown';
+  const confidence = /not sure/i.test(note) ? 0.4 : 0.9;
+  const cues: unknown[] = [{ evidence: 'client_stated', snippet: FAKE_TIMING_BAD_QUOTE, intent: 'buy', timeframe: '0-3mo', confidence: 0.95 }];
+  for (const p of FAKE_TIMING_PHRASES) {
+    const hit = p.re.exec(note);
+    if (hit) cues.push({ evidence: p.evidence ?? 'client_stated', snippet: hit[0], intent, timeframe: p.timeframe, confidence });
+  }
+  return JSON.stringify({ cues });
 }

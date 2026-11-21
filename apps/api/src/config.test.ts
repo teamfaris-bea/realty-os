@@ -67,6 +67,13 @@ describe('production configuration', () => {
     ]);
   });
 
+  it('R-TCUE-1: the timing scan model is off by default in production, and the fake is refused there', () => {
+    expect(loadConfig(prodEnv()).timingAi).toMatchObject({ provider: 'off' });
+    expect(createProviders(loadConfig(prodEnv()), { clock }).timingAi).toBeNull();
+    expect(() => loadConfig(prodEnv({ TIMING_AI_PROVIDER: 'fake' }))).toThrow(/TIMING_AI_PROVIDER/);
+    expect(loadConfig(prodEnv({ TIMING_AI_PROVIDER: 'ollama' })).timingAi).toEqual({ provider: 'ollama', baseUrl: 'http://127.0.0.1:11434', model: 'qwen2.5:14b' });
+  });
+
   it('reports every missing secret at once, by name only (no values in the message)', () => {
     let msg = '';
     try {
