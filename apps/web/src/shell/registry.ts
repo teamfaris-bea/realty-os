@@ -57,6 +57,8 @@ import { surface as gbpSurface } from '../surfaces/gbp/index.js';
 import { surface as likelySurface } from '../surfaces/likely/index.js';
 import { surface as coachingTrendsSurface } from '../surfaces/coaching-trends/index.js';
 import { surface as clientPortalSurface } from '../surfaces/client-portal/index.js'; // module 46
+import { surface as pipelineSurface } from '../surfaces/pipeline/index.js';
+import { surface as promisesSurface } from '../surfaces/promises/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -106,5 +108,7 @@ export const surfaces: SurfaceModule[] = [
   likelySurface,
   coachingTrendsSurface,
   clientPortalSurface, // module 46: What {name} sees
+  pipelineSurface,
+  promisesSurface,
   // registry: add new entries above this line
 ];

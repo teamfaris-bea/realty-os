@@ -8,6 +8,7 @@ import {
   encodeCursor,
   LIST_COUNT_CAP,
   LIST_PAGE_SIZE,
+  LIST_STAGES,
   type ListPlan,
   type ListSort,
   type ListViewer,
@@ -131,4 +132,29 @@ export async function runCount(tx: Tx, def: SmartListDefinition): Promise<{ coun
   await limitListStatement(tx);
   const n = await people.countUpTo(tx, plan, LIST_COUNT_CAP, hint);
   return { count: Math.min(n, LIST_COUNT_CAP), capped: n > LIST_COUNT_CAP };
+}
+
+/** The list, plus "owner is this person" when the pipeline board is filtered to one agent. */
+export function andOwner(def: SmartListDefinition, owner: string | undefined): SmartListDefinition {
+  if (!owner) return def;
+  return parseDefinition({ v: 1, all: [...def.all, { kind: 'owner', in: [owner] }], ...(def.any && def.any.length > 0 ? { any: def.any } : {}) }, 'personal');
+}
+
+export interface StageCount {
+  stage: (typeof LIST_STAGES)[number];
+  count: number;
+  capped: boolean;
+}
+
+/** Counts for the eight fixed stages. Each number is exact to LIST_COUNT_CAP, then capped (R-PAR-29). */
+export async function runStageCounts(tx: Tx, def: SmartListDefinition): Promise<StageCount[]> {
+  const plan = await planFor(tx, def);
+  const hint = people.scopeHintFor(await currentRole(tx));
+  await limitListStatement(tx);
+  const rows = await people.stageCounts(tx, plan, hint);
+  const by = new Map(rows.map((r) => [r.stage, r.n]));
+  return LIST_STAGES.map((stage) => {
+    const n = by.get(stage) ?? 0;
+    return { stage, count: Math.min(n, LIST_COUNT_CAP), capped: n > LIST_COUNT_CAP };
+  });
 }

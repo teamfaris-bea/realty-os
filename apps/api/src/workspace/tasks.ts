@@ -98,6 +98,8 @@ export async function listTasks(tx: Tx, actor: UserActor, envelope: EnvelopeServ
        AND (NOT ${mine} OR t.assignee_user_id = ${actor.userId})
        AND (${q.contactId ?? null}::uuid IS NULL OR t.contact_id = ${q.contactId ?? null}::uuid)
        AND (${q.dealId ?? null}::uuid IS NULL OR t.deal_id = ${q.dealId ?? null}::uuid)
+       AND (${q.kind ?? null}::text IS NULL OR t.kind = ${q.kind ?? null})
+       AND (${q.assigneeUserId ?? null}::uuid IS NULL OR t.assignee_user_id = ${q.assigneeUserId ?? null}::uuid)
      ORDER BY (t.status = 'open') DESC, t.due_at NULLS LAST, t.created_at DESC, t.id
      LIMIT ${q.limit ?? 100}`.execute(tx);
   return views(tx, actor, envelope, r.rows);

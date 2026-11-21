@@ -131,6 +131,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   // module 46 (web/portal): What the client sees, for a grant that does not exist (its not-found state); the portal
   // e2e (e2e/portal/a11y.spec.ts) sweeps a real preview, visible and not
   { path: '/client-portal/:grantId', roles: ['owner', 'admin', 'team_lead', 'agent', 'tc'], url: at('/client-portal/00000000-0000-7000-8000-000000000000') },
+  { path: '/pipeline', roles: ALL, url: at('/pipeline') },
+  { path: '/promises', roles: ALL, url: at('/promises') },
 ];
 
 /**

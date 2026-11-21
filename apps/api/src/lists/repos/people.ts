@@ -389,6 +389,20 @@ export function countQuery(plan: ListPlan, cap: number, hint: ScopeHint = null):
   return sql`SELECT count(*)::int AS n FROM (SELECT 1 FROM contacts c WHERE ${whereSql(plan, hint, { driven: true })} LIMIT ${cap + 1}) x`;
 }
 
+/**
+ * How many people of each stage the list holds. One scan, the same WHERE as a page (RLS plus the
+ * inline detail predicate), so a column count matches the cards. The caller caps each number at
+ * LIST_COUNT_CAP the way a list count does.
+ */
+export function stageCountsQuery(plan: ListPlan, hint: ScopeHint = null): Frag {
+  return sql`SELECT c.stage, count(*)::int AS n FROM contacts c WHERE ${whereSql(plan, hint)} GROUP BY c.stage`;
+}
+
+export async function stageCounts(tx: Tx, plan: ListPlan, hint: ScopeHint = null): Promise<{ stage: string; n: number }[]> {
+  const r = await stageCountsQuery(plan, hint).execute(tx);
+  return (r.rows as { stage: string; n: number }[]).map((row) => ({ stage: row.stage, n: Number(row.n) }));
+}
+
 /** Exact count up to `cap`, then cap + 1 (the API says "10,000+"). */
 export async function countUpTo(tx: Tx, plan: ListPlan, cap: number, hint: ScopeHint = null): Promise<number> {
   const r = await countQuery(plan, cap, hint).execute(tx);

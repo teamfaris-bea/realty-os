@@ -24,6 +24,7 @@
 //   GET    /people/count?list=            count, exact to 10,000                                        smart_list.personal
 //   POST   /people/count                  count an unsaved definition                                   smart_list.personal
 //   GET    /people/filter-options         the filter builder's sources and members (names only)          smart_list.personal
+//   GET    /people/stage-counts           counts of the eight stages (optional list and owner)           smart_list.personal
 import { can, type ResourceFacts } from '@realty/core/foundation';
 import { applyFieldDefPatch, CUSTOM_FIELD_LIMIT, validateNewFieldDef } from '@realty/core/parity/fields';
 import { LIST_SORTS, type ListSort } from '@realty/core/parity/lists';
@@ -38,7 +39,7 @@ import type { RouteModule } from '../routes.js';
 import { actorOf, listsTx, platformOf } from './common.js';
 import * as catalog from './repos/catalog.js';
 import * as lists from './repos/smartLists.js';
-import { definitionTagIds, parseDefinition, planFor, resolveSource, runCount, runPage, viewerForTags } from './run.js';
+import { andOwner, definitionTagIds, parseDefinition, planFor, resolveSource, runCount, runPage, runStageCounts, viewerForTags } from './run.js';
 import * as S from './schemas.js';
 import { contactTagView, fieldView, listView, personView, tagView, valueView } from './views.js';
 import { ensureTags, setFieldValue } from './writers.js';
@@ -441,6 +442,18 @@ export async function registerListsRoutes(app: FastifyInstance): Promise<void> {
     '/people/count',
     { config: { auth: 'smart_list.personal' }, preHandler: authorize('smart_list.personal', () => ({})), schema: { body: S.PeopleCountBody, response: { 200: S.PeopleCountResponse } } },
     async (req) => listsTx(req, async (tx) => runCount(tx, (await resolveSource(tx, { definition: req.body.definition })).definition)),
+  );
+
+  // The pipeline board's column counts: one scan, the same people a list run would return, grouped by
+  // the eight fixed stages. `list` narrows to a saved smart list; `owner` narrows to one agent. RLS
+  // still decides who is visible (an agent filtering to someone else sees only the overlap).
+  r.get(
+    '/people/stage-counts',
+    { config: { auth: 'smart_list.personal' }, preHandler: authorize('smart_list.personal', () => ({})), schema: { querystring: S.StageCountsQuery, response: { 200: S.StageCountsResponse } } },
+    async (req) =>
+      listsTx(req, async (tx) => ({
+        counts: await runStageCounts(tx, andOwner((await resolveSource(tx, req.query.list ? { listId: req.query.list } : { all: true })).definition, req.query.owner)),
+      })),
   );
 
   // lane people-filters: the value catalogs of "Source is / is not" and "Owner is / is not". Both tables are

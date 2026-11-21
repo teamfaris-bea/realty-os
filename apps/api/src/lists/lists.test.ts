@@ -152,6 +152,31 @@ describe('saved smart lists (R-PAR-27)', () => {
   });
 });
 
+describe('stage counts (pipeline board)', () => {
+  it('counts the eight stages for people the caller can see, and an owner filter does not widen that', async () => {
+    const id = await createContact(w.agentA, 'Stage Board Person');
+    const moved = await call(w.agentA, 'POST', `/contacts/${id}/stage`, { stage: 'connected' });
+    expect(moved.status).toBe(200);
+    const counts = await call<{ counts: { stage: string; count: number; capped: boolean }[] }>(w.agentA, 'GET', '/people/stage-counts');
+    expect(counts.status).toBe(200);
+    expect(counts.body.counts.map((c) => c.stage)).toEqual(['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost']);
+    const connected = await runAll(w.agentA, { v: 1, all: [{ kind: 'stage', in: ['connected'] }] });
+    expect(counts.body.counts.find((c) => c.stage === 'connected')!.count).toBe(connected.length);
+    expect(connected).toContain(id);
+    const hidden = await call<{ counts: { stage: string; count: number }[] }>(w.agentB, 'GET', '/people/stage-counts');
+    expect(await runAll(w.agentB, { v: 1, all: [{ kind: 'stage', in: ['connected'] }] })).not.toContain(id);
+    const lead = await call<{ counts: { stage: string; count: number }[] }>(w.lead, 'GET', `/people/stage-counts?owner=${w.agentA.userId}`);
+    const leadSees = await runAll(w.lead, { v: 1, all: [{ kind: 'owner', in: [w.agentA.userId!] }, { kind: 'stage', in: ['connected'] }] });
+    expect(lead.body.counts.find((c) => c.stage === 'connected')!.count).toBe(leadSees.length);
+    expect(leadSees).toContain(id);
+    expect(hidden.body.counts.find((c) => c.stage === 'connected')!.count).toBeLessThan(lead.body.counts.find((c) => c.stage === 'connected')!.count);
+    const list = await call<{ list: { id: string } }>(w.agentA, 'POST', '/smart-lists', { scope: 'personal', name: 'Connected board', definition: { v: 1, all: [{ kind: 'stage', in: ['connected'] }] } });
+    const byList = await call<{ counts: { stage: string; count: number }[] }>(w.agentA, 'GET', `/people/stage-counts?list=${list.body.list.id}`);
+    expect(byList.body.counts.find((c) => c.stage === 'connected')!.count).toBe(connected.length);
+    expect(byList.body.counts.filter((c) => c.stage !== 'connected').every((c) => c.count === 0)).toBe(true);
+  });
+});
+
 describe('resolveSelection (PARITY_PLAN §4.2, for module 63)', () => {
   it('R-PAR-28: { contactIds } keeps only live people whose detail the caller sees, in the given order', async () => {
     const ids = [w.bContacts[0]!, w.aContacts[1]!, w.pondContact, randomUUID(), w.aContacts[0]!, w.aContacts[1]!];

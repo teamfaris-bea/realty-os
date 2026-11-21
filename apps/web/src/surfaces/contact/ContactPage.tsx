@@ -32,6 +32,8 @@ import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
 import { INQUIRY_REDACTION_NOTE } from '../thread/redaction.js';
 import { useStageGuide } from '../people/stageGuide.js';
 import { TextSheetProvider, useTextSheet } from '../people-edit/TextSheet.js';
+import { AddTaskButton } from './AddTaskSheet.js';
+import { taskTimelineText } from './taskTimeline.js';
 import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
@@ -243,7 +245,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
         </AiLabelsProvider>
       </Section>
 
-      <Section title="Tasks" id="tasks">
+      <Section title="Tasks" id="tasks" action={<AddTaskButton contactId={contact.id} contactName={contact.displayName} />}>
         <ContactTasks contactId={contact.id} />
       </Section>
 
@@ -315,7 +317,8 @@ function OtherItem({ item }: { item: TimelineItem }) {
   const kind = item.type === 'note' && item.detail?.startsWith('logged_activity:') ? item.detail.slice('logged_activity:'.length) : null;
   const logged = kind === null ? null : `Logged by ${item.actor?.userId && item.actor.userId === session?.user?.id ? 'you' : (item.actor?.displayName ?? 'a teammate')}: ${kind} from outside Realty OS`;
   const stage = item.type === 'stage' && item.detail ? `Stage: ${item.detail.split('>').filter(Boolean).map(labelOf).join(' → ')}` : null;
-  const what = logged ?? stage ?? (item.type === 'ownership' ? (OWNERSHIP_LABEL[item.detail ?? ''] ?? (item.detail ?? '').replace(/_/g, ' ')) : (TIMELINE_LABEL[item.type] ?? item.type));
+  const task = item.type === 'task' ? taskTimelineText(item.detail, item.preview) : null;
+  const what = task ?? logged ?? stage ?? (item.type === 'ownership' ? (OWNERSHIP_LABEL[item.detail ?? ''] ?? (item.detail ?? '').replace(/_/g, ' ')) : (TIMELINE_LABEL[item.type] ?? item.type));
   return (
     <li className="rounded-xl border border-line bg-surface px-3 py-2 text-[15px] text-ink">
       <span className="font-medium">{what}</span>
@@ -334,6 +337,7 @@ function OtherItem({ item }: { item: TimelineItem }) {
 
 function ContactTasks({ contactId }: { contactId: string }) {
   const api = useApi();
+  const now = useNow(60_000);
   const q = useQuery<{ tasks: TaskView[] }, ApiError>({
     queryKey: ['tasks', 'contact', contactId],
     queryFn: ({ signal }) => api.get<{ tasks: TaskView[] }>(`/tasks?contactId=${contactId}&scope=visible&status=open`, { signal }),
@@ -343,14 +347,18 @@ function ContactTasks({ contactId }: { contactId: string }) {
   if (q.data.tasks.length === 0) return <p className="text-[15px] text-ink-muted">No open tasks.</p>;
   return (
     <ul className="flex flex-col gap-1 text-[15px] text-ink">
-      {q.data.tasks.map((t) => (
-        <li key={t.id}>
-          <Link to={`/tasks#task-${t.id}`} className="inline-flex min-h-tap items-center hover:underline">
-            {t.title}
-          </Link>
-          <span className="text-ink-muted"> · {t.dueAt ? formatDateTime(t.dueAt) : t.needsReview ? 'needs a date' : 'no date'}</span>
-        </li>
-      ))}
+      {q.data.tasks.map((t) => {
+        const overdue = t.kind === 'promise' && t.dueAt !== null && Date.parse(t.dueAt) < now;
+        return (
+          <li key={t.id}>
+            <Link to={t.kind === 'promise' ? '/promises' : `/tasks#task-${t.id}`} className={`inline-flex min-h-tap items-center hover:underline ${overdue ? 'font-medium text-danger' : ''}`}>
+              {t.kind === 'promise' ? 'Promise: ' : ''}
+              {t.title}
+            </Link>
+            <span className={overdue ? 'text-danger' : 'text-ink-muted'}> · {overdue ? 'Overdue' : t.dueAt ? formatDateTime(t.dueAt) : t.needsReview ? 'needs a date' : 'no date'}</span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
