@@ -13,8 +13,12 @@ import type { AssignmentRow } from './repo.js';
  * `unanswered_inbound` card (dedupe inbound:{contact}) and an R-AST-9 handback (dedupe handback:ai_isa:{a}:{inbound})
  * are written: at 10 minutes, or at once when care is no longer live. A client's portal sign-in link (a system message
  * they asked for) is never an answer (b14 review B14-PORTAL-R2).
+ *
+ * E905: `immediate` writes them now for live care too, with `explanation` as the handback's words: the reply's turn was
+ * just held at a daily model-call budget, so nobody will answer today unless the owner does (spend.ts holdTurn). The
+ * same dedupe keys as the 10-minute pass, which then writes nothing again.
  */
-export async function backstopInTx(tx: Tx, deps: IsaDeps, a: AssignmentRow, messageId: string | null, now: Instant): Promise<number> {
+export async function backstopInTx(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, messageId: string | null, now: Instant, o: { immediate?: boolean; explanation?: string } = {}): Promise<number> {
   const live = a.endedAt === null && a.pausedAt === null;
   const rows = await sql<{ id: string; created_at: Date; channel: string; body: string }>`SELECT m.id, m.created_at, m.channel, m.body FROM messages m
     WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${a.contactId} AND m.direction = 'inbound' AND m.created_at >= ${new Date(a.startedAt)}
@@ -26,10 +30,10 @@ export async function backstopInTx(tx: Tx, deps: IsaDeps, a: AssignmentRow, mess
     ORDER BY m.created_at`.execute(tx);
   let n = 0;
   for (const m of rows.rows) {
-    if (live && now - m.created_at.getTime() < 10 * 60_000) continue;
+    if (live && !o.immediate && now - m.created_at.getTime() < 10 * 60_000) continue;
     const id = deps.ids.next<'X'>() as string;
     const ins = await auto.insertHandback(tx, {
-      id, contactId: a.contactId, ownerUserId: a.ownerUserId, explanation: 'They replied and the AI assistant did not answer. Reply to them yourself.',
+      id, contactId: a.contactId, ownerUserId: a.ownerUserId, explanation: o.explanation ?? 'They replied and the AI assistant did not answer. Reply to them yourself.',
       payload: { inboundMessageId: m.id, inboundCallId: null, enrollmentId: null, autoReply: false, sentAtSameMoment: [], canceledMessageIds: [], aiIsaAssignmentId: a.id } as never,
       pinnedInboundSeq: a.lastInboundSeq, boundOwnershipSeq: a.boundOwnershipSeq, dedupeKey: `handback:ai_isa:${a.id}:${m.id}`,
       claims: [{ id: deps.ids.next<'X'>() as string, kind: 'client_statement', text: m.body.slice(0, 300), evidence: { id: deps.ids.next<'X'>() as string, sourceType: m.channel === 'email' ? 'email' : 'message', sourceId: m.id, locator: { kind: 'message' }, snippet: m.body.slice(0, 200) } }] as never,

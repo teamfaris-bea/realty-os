@@ -13,7 +13,7 @@ import { type Channel, type NumberFacts, chooseSender, classifyHumanPurpose } fr
 import type { ContactId, IdGenerator, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { at, toIso } from '@realty/core/foundation';
 import { type Tx, lockContact } from '@realty/db';
-import { audit, redactDiff, redactSnapshot } from '../audit.js';
+import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import { COMMS_DISPATCH } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
@@ -293,7 +293,8 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
 /**
  * POST /messages/:id/send: the human re-taps a waiting message of their own (E27: the client replied
  * since it was scheduled). Nothing is ever "confirmed past" the gate: the send-time check runs again and
- * an opt-out blocks it.
+ * an opt-out blocks it. A held CMA share is re-checked for client readiness in dispatch TX1 (R-CMA-7): when its CMA
+ * is no longer ready the email is canceled and this answers CMA_NOT_SHAREABLE with the blockers.
  */
 export async function sendExisting(actor: UserActor, messageId: string, deps: CommsDeps): Promise<ComposeResult> {
   await asUser(deps, actor, async (tx) => {
@@ -302,10 +303,13 @@ export async function sendExisting(actor: UserActor, messageId: string, deps: Co
     if (!(await contactFacts(tx, m.contactId))) throw new AppError('NOT_FOUND');
     if (m.status !== 'queued' && m.status !== 'scheduled') throw new AppError('MESSAGE_NOT_SENDABLE', { status: m.status });
     if (m.bulkActionId === null && m.marketingPieceId === null) await takeoverInTx(tx, deps.ids, actor, m.contactId, Date.now() as Instant); // R-ISA-3
-    // the human tap is the audited decision (R-AUDIT-5); what dispatch then does is on the message itself
-    await audit(tx, actor, { action: 'message.held_send', entity: { type: 'message', id: m.id }, changes: redactSnapshot({ status: m.status, statusReason: m.statusReason }, { entity: 'message' }), reason: m.statusReason ?? 'RETAP' });
+    // the human tap is the audited decision (R-AUDIT-5). It is written by dispatch TX1 (retap), in the transaction
+    // that decides the tap under the contact's lock, as what it is (E909): message.held_send when the re-tap goes on to
+    // the send-time gate, message.held_send_refused when the held CMA share is refused and canceled instead
   });
   const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, actor, retap: true });
+  // R-CMA-7 (E612, VERIFY 9): dispatch canceled a held CMA share whose CMA is no longer client-ready; say why (codes only)
+  if (r.kind === 'noop' && r.refused) throw new AppError(r.refused.code, { blockers: r.refused.blockers });
   return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
 }
 

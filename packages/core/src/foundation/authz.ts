@@ -287,8 +287,9 @@ export const AUDIT_ACTIONS = [
   'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
   'session.revoked_all', // api/platform: "log out of all sessions" revoked every live session of the user
   'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
-  'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); dispatch still checks it
+  'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); written in dispatch TX1 when the re-tap goes on to the send-time gate, which still decides it
   'message.held_cancel', // api/comms: the sender canceled a scheduled or held message
+  'message.held_send_refused', // api/comms (b19 F8, E909): the sender tapped Send on a held message and dispatch refused it and canceled the email, nothing was sent (R-CMA-7: a held CMA share whose CMA is no longer client-ready); the reason is the cancel code
   'deal.contact_removed', // lane rule-coverage: the Owner removed a person from a deal before erasure (E59)
   'assistant.output_blocked', // lane prompt-injection: a model output was discarded (wiring details, oversized, not the contract); codes only
   'assistant.output_flagged', // lane prompt-injection: a model draft needs a check (human claim, unsourced link/phone/email, hidden characters); codes only

@@ -23,13 +23,15 @@ import { emitIsaSendResultsInTx } from './sendResult.js';
 import { type AssignmentRow, assignmentById, lockForTurn } from './repo.js';
 import { HOLD_CODES } from './send.js';
 import { backstopInTx } from './backstop.js';
-import { runTurn, type TurnDeps } from './turn.js';
+import { runTurn, STUCK_TURN_MS, type TurnDeps } from './turn.js';
 
 type DepsFor = (providers: Providers) => CommsDeps;
 const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers });
 
-// `at`: the instant a schedule_timer job was scheduled for (effects.ts); absent on the sweep's timers and on a job queued before it existed
-const TurnPayload = jobPayload({ assignmentId: zId, trigger: z.enum(['start', 'inbound', 'timer', 'control', 'sweep']), timer: z.enum(['follow_up', 'offer_expiry', 'pause_expiry', 'inactivity_warning']).optional(), epoch: z.number().int().min(1), at: zInstant.optional() });
+// `at`: the instant a schedule_timer job was scheduled for (effects.ts); absent on the sweep's timers and on a job queued before it existed.
+// `recover` / `resume`: the sweep's stuck-turn job and the budget-hold resume job (spend.ts).
+const TurnPayload = jobPayload({ assignmentId: zId, trigger: z.enum(['start', 'inbound', 'timer', 'control', 'sweep']), timer: z.enum(['follow_up', 'offer_expiry', 'pause_expiry', 'inactivity_warning']).optional(), epoch: z.number().int().min(1), at: zInstant.optional(),
+  recover: z.boolean().optional(), resume: z.boolean().optional() });
 const SendResultPayload = jobPayload({ messageId: zId, status: z.string().regex(/^[a-z_]{2,20}$/) });
 const SignalPayload = jobPayload({ signalId: zId });
 const AssignmentPayload = jobPayload({ assignmentId: zId, epoch: z.number().int().min(1).optional() });
@@ -40,7 +42,6 @@ const Empty = jobPayload({});
 
 export const AI_ISA_SWEEP_EVERY_MS = 5 * 60_000;
 export const AI_ISA_SLA_EVERY_MS = 60_000;
-export const STUCK_TURN_MS = 8 * 60_000;
 export const PAUSE_EXPIRY_MS = 72 * 3_600_000;
 
 function isaDeps(depsFor: DepsFor, providers: Providers): TurnDeps {
@@ -166,12 +167,19 @@ export async function sweepInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, now: 
     // the link-failure table and the stop-signal backstop run through the turn's TX-A (one table everywhere)
     await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: r.id, trigger: 'sweep', epoch: r.epoch }, dedupeKey: `ai_isa.turn:${r.id}:${r.epoch}:sweep` });
   }
-  // stuck turns: deciding for 8 minutes with no live job holding the turn key
-  const stuck = await sql<{ assignment_id: string; epoch: number }>`SELECT t.assignment_id, t.epoch FROM ai_isa_turns t WHERE t.tenant_id = app.tenant_id()
-    AND t.status = 'deciding' AND t.updated_at < ${new Date(now - STUCK_TURN_MS)}`.execute(tx);
+  // stuck turns (E906): `deciding` and unchanged for 8 minutes. Under live care the pending model call may still be
+  // wanted: a recover job (one live per assignment and epoch) adopts the turn again in its TX-A, under the turn's
+  // locks, or gives it up there; the sweep itself cancels nothing the machine may be awaiting. A care that is paused or
+  // ended awaits no model call (the pause and the end clear it): its stuck turns are canceled here, as before.
+  const stuck = await sql<{ assignment_id: string; epoch: number; live: boolean }>`SELECT DISTINCT t.assignment_id, a.epoch, (a.ended_at IS NULL AND a.paused_at IS NULL) AS live
+      FROM ai_isa_turns t JOIN ai_isa_assignments a ON a.tenant_id = t.tenant_id AND a.id = t.assignment_id
+     WHERE t.tenant_id = app.tenant_id() AND t.status = 'deciding' AND t.updated_at < ${new Date(now - STUCK_TURN_MS)}`.execute(tx);
   for (const t of stuck.rows) {
-    await sql`UPDATE ai_isa_turns SET status = 'canceled' WHERE tenant_id = app.tenant_id() AND assignment_id = ${t.assignment_id} AND status = 'deciding' AND updated_at < ${new Date(now - STUCK_TURN_MS)}`.execute(tx);
-    await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: t.assignment_id, trigger: 'sweep', epoch: t.epoch }, dedupeKey: `ai_isa.turn:${t.assignment_id}:${t.epoch}:recover` });
+    if (t.live) {
+      await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: t.assignment_id, trigger: 'sweep', epoch: t.epoch, recover: true }, dedupeKey: `ai_isa.turn:${t.assignment_id}:${t.epoch}:recover` });
+    } else {
+      await sql`UPDATE ai_isa_turns SET status = 'canceled' WHERE tenant_id = app.tenant_id() AND assignment_id = ${t.assignment_id} AND status = 'deciding' AND updated_at < ${new Date(now - STUCK_TURN_MS)}`.execute(tx);
+    }
   }
   await bookingSweepInTx(tx, deps, now);
   return { checked: rows.rows.length };
@@ -299,4 +307,4 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
 }
 
 export const isaHandlers: JobHandler<unknown>[] = makeIsaHandlers();
-export { NOFACTS, instantFromDate };
+export { NOFACTS, instantFromDate, STUCK_TURN_MS };

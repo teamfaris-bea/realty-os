@@ -34,6 +34,18 @@ export function sourcePauseNote(reason: string): string | null {
   return reason === 'source_no_ai_care' ? SOURCE_NO_AI_CARE_NOTE : reason === 'source_unclassified' ? SOURCE_UNCLASSIFIED_AI_CARE_NOTE : null;
 }
 
+/**
+ * E905 (R-ISA-20; b19 review F4): what the lead's owner is told the moment a turn is held at a daily model-call budget.
+ * Staff words only: nothing about a budget is ever written to the person. The first is the unanswered-reply handback
+ * (after "They replied. "), the second the notification for a start or a follow-up that waits (nobody wrote), the third
+ * the activity card while a reply waits (it never says the assistant is answering while it is not).
+ */
+export const BUDGET_HOLD_REPLY = "AI care is waiting: today's AI budget is used up. It resumes tomorrow. You can reply yourself now.";
+export const BUDGET_HOLD_OUTREACH = "AI care is waiting: today's AI budget is used up. It resumes tomorrow. You can reach out yourself now.";
+export const BUDGET_HOLD_ACTIVITY = "They replied; AI care is waiting for tomorrow's AI budget. You can reply yourself now.";
+export const ACTIVITY_ANSWERING = { code: 'AI_ISA_REPLY_RECEIVED', text: 'They replied; the AI assistant is answering' } as const;
+export const ACTIVITY_WAITING_BUDGET = { code: 'AI_ISA_REPLY_WAITING_BUDGET', text: BUDGET_HOLD_ACTIVITY } as const;
+
 const START_REFUSALS: Record<string, string> = {
   AI_ISA_OFF: 'The AI assistant is off for your team.',
   AI_ISA_NOT_CLEARED: 'Waiting on counsel review (platform:ai_isa). Nothing is sent until counsel clears it.',
