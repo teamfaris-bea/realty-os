@@ -15,6 +15,7 @@ import { HandlerRegistry } from '../worker/registry.js';
 import { createSweeper } from '../worker/sweeper.js';
 import { makeNotificationHandlers } from './handlers.js';
 import { RETRY_SCHEDULE_MS, deliverNotification, lockScreenPayload, quietRemainingMs, retryDelay } from './notifications.js';
+import { GENERIC_FALLBACK_TITLE, LOCK_SCREEN_TITLE } from './lockScreenWords.js';
 import { NOTIFICATION_KINDS } from './schemas.js';
 import { call, deliveryDeps } from './testing.js';
 
@@ -204,6 +205,9 @@ describe('delivery', () => {
     // (UUIDs in url/tag are removed first: a random UUID can hold 10+ consecutive digits)
     const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
     for (const p of h.providers.push.delivered) expect(JSON.stringify(p.payload).replace(uuid, '<id>')).not.toMatch(/\+?1?\d{10}|@/);
+    // R-PUSH-14 (slice 2e): every push this file delivered fails closed to allowlisted generic words, never a stored title
+    const generic = [...Object.values(LOCK_SCREEN_TITLE), GENERIC_FALLBACK_TITLE];
+    for (const p of h.providers.push.delivered) expect(generic).toContain(p.payload.title);
   });
 
   it('email alerts have no staff outbound path in Phase 1: closed honestly as suppressed', async () => {
@@ -236,6 +240,8 @@ describe('delivery', () => {
     const sms = h.providers.telephony.sms.slice(before);
     expect(sms.map((m) => m.to)).toEqual([phone]);
     expect(sms[0]!.body).not.toMatch(/\+?1?\d{10}|@/);
+    // R-PUSH-12 (slice 2d): a lead offer's alert text is the generic sentence, never the stored (in-app) title
+    expect(sms[0]!.body).toBe('New lead. Open the app for details. Reply STOP to stop alert texts.');
     const row = await delivery(deliveryId!);
     expect(row.status).toBe('sent');
     expect(row.gate_decision_id).toBeNull(); // allowed: only a blocked delivery writes a gate decision (0013)

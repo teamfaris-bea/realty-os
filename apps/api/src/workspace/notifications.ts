@@ -37,6 +37,7 @@ import { AppError } from '../errors.js';
 import type { PushTarget } from '../providers/types.js';
 import type { AlertSink } from '../worker/observability.js';
 import { iso, isoOrNull } from './common.js';
+import { leadAlertTitle } from './lockScreenWords.js';
 import { CRITICAL_KINDS, NOTIFICATION_KINDS, type NotificationSchema, type NotificationsQuery, type PreferenceBody, type PreferenceSchema } from './schemas.js';
 
 export type NotificationView = z.infer<typeof NotificationSchema>;
@@ -336,7 +337,7 @@ export async function deliverNotification(deliveryId: string, deps: DeliveryDeps
   const d = plan.d;
   let status: 'sent' | 'gone' | 'failed';
   try {
-    status = (await deps.providers.push.deliverPush(plan.target, lockScreenPayload({ id: d.notification_id, kind: d.kind, title: d.title, subjectType: d.subject_type, subjectId: d.subject_id, tenant: { id: tenantId, slug: d.tenant_slug } }))).status;
+    status = (await deps.providers.push.deliverPush(plan.target, lockScreenPayload({ id: d.notification_id, kind: d.kind, title: leadAlertTitle(d.kind, d.title), subjectType: d.subject_type, subjectId: d.subject_id, tenant: { id: tenantId, slug: d.tenant_slug } }))).status;
   } catch {
     status = 'failed';
   }

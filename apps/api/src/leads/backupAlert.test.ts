@@ -18,6 +18,9 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { type CommsWorld, ownedContact, randomEmail, sendText, telephonyWebhook } from '../comms/testing.js';
 import { marketingReady } from '../bulk/testing.js';
 import { systemActor } from '../worker/systemActor.js';
+import { LEAD_ALERT_TITLE } from '../workspace/lockScreen.js';
+import { deliverNotification } from '../workspace/notifications.js';
+import { deliveryDeps } from '../workspace/testing.js';
 import { BACKUP_ALERT_JOB, BACKUP_ALERT_SWEEP_JOB, decideBackupAlert, sweepLostBackupAlerts } from './backupAlert.js';
 import { leadsHandlers } from './handlers.js';
 import { call, command, contactState, freshReauth, importedUnassigned, jobs, ledger, leadsWorker, leadsWorld, postIntake, randomPhone, registerPush, suFixture } from './testing.js';
@@ -187,6 +190,19 @@ describe('R-TEAMQ-14 when the backup alert is queued and when it runs', () => {
     expect(await channelsOf(notes[0]!.id)).toEqual(['in_app', 'sms', 'web_push']);
     // no full name, number or address of the client in what is pushed and texted
     expect(notes[0]!.title).not.toMatch(/Rivera|\d{3}[-.\s]?\d{4}/);
+    // R-PUSH-11 R-PUSH-12 (slice 2d): delivered, the push lock screen and the alert text carry only the generic
+    // first-touch sentence; the in-app (stored) title above keeps the detail of R-TEAMQ-15
+    const pushedBefore = h.providers.push.delivered.length;
+    const textedBefore = h.providers.telephony.sms.length;
+    const toDeliver = (await h.su.query<{ id: string; channel: string }>("SELECT id, channel FROM notification_deliveries WHERE notification_id = $1 AND channel IN ('sms', 'web_push') ORDER BY channel", [notes[0]!.id])).rows;
+    expect(toDeliver.map((d) => d.channel)).toEqual(['sms', 'web_push']);
+    for (const d of toDeliver) expect(await deliverNotification(d.id, deliveryDeps(h), w.tenantId)).toEqual({ kind: 'sent' });
+    const pushed = h.providers.push.delivered.slice(pushedBefore);
+    expect(pushed.map((p) => p.payload.title)).toEqual([LEAD_ALERT_TITLE.first_touch_due]);
+    expect(JSON.stringify(pushed.map((p) => p.payload))).not.toMatch(/Dana|Website form|alert test|You are the backup/);
+    const texted = h.providers.telephony.sms.slice(textedBefore);
+    expect(texted.map((m) => m.body)).toEqual(['A new lead is waiting for a call. Open the app for details. Reply STOP to stop alert texts.']);
+    expect((await alertNotes(lead.inquiryId))[0]!.title).toBe(notes[0]!.title);
     // alerts only: the same offer to the same person with the same deadline, the same ledger head
     expect(await holding(lead.contactId)).toEqual(before);
     expect(await toClient(lead.contactId)).toEqual([]);

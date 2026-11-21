@@ -49,6 +49,7 @@ import { audit, redactSnapshot } from '../audit.js';
 import { contactLabel, notifyUser } from '../comms/repos/notify.js';
 import { jobPayload, zId } from '../worker/payload.js';
 import type { TxJobHandler } from '../worker/types.js';
+import { backupAlertNotice } from './backupAlertNotice.js';
 import * as repo from './repos/backupAlert.js';
 
 export const BACKUP_ALERT_JOB = {
@@ -173,9 +174,12 @@ export async function decideBackupAlert(tx: Tx, ids: IdGenerator, inquiryId: str
     // R-TEAMQ-27: a send a person made that the provider reported as failed is said, not hidden
     ...(failedAttempt === null ? {} : { failedAttempt }),
   });
-  // a member's notification, never a message to the client: in-app, push, and (critical) a text to their alert phone
+  // a member's notification, never a message to the client: in-app, push, and (critical) a text to their alert phone.
+  // R-PUSH-10: the stored (in-app) title keeps R-TEAMQ-15's detail; the generic push title and alert text are
+  // notice.pushTitle / notice.smsText, for the push and text seams (not wired yet: they still read the stored title).
+  const notice = backupAlertNotice(text);
   for (const userId of to.userIds) {
-    await notifyUser(tx, ids, { userId, kind: 'first_touch_due', priority: 'critical', title: text.title, body: text.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
+    await notifyUser(tx, ids, { userId, kind: 'first_touch_due', priority: 'critical', title: notice.inAppTitle, body: notice.body, subjectType: 'contact', subjectId: person.id, dedupeKey: backupAlertNoteKey(inquiryId) }, now);
   }
   return { outcome: 'alerted', alertedUserId: first };
 }
