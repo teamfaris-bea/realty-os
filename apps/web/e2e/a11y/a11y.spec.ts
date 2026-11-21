@@ -12,8 +12,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AxeBuilder from '@axe-core/playwright';
-import { type Page, expect, test } from 'playwright/test';
-import { ROLES, SIGNED_OUT_PAGES, SWEEP_PAGES, signedOutUrl } from './pages.js';
+import { type Cookie, type Page, expect, test } from 'playwright/test';
+import { ROLES, type Role, SIGNED_OUT_PAGES, signedOutUrl, sweepSlices } from './pages.js';
 import { type A11yStack, type World, startA11yStack } from './stack.js';
 import { obscuredFocus, phoneProblems } from './checks.js';
 import { settle, signIn as signInAs } from './session.js';
@@ -50,27 +50,48 @@ function report(name: string, data: unknown) {
   writeFileSync(resolve(REPORT_DIR, `${name}.json`), JSON.stringify(data, null, 2));
 }
 
-for (const role of ROLES) {
-  test(`${role}: every page they can open passes axe in light and dark, and holds up on a phone`, async ({ page }, info) => {
-    test.setTimeout(300_000);
+// A role signs in through the real sign-in screens once per worker (with MFA where the role has it); later slices put
+// that session's cookies into their own fresh context and must land on Home signed in. Signing in again for every
+// slice would trip the API's MFA limit (5 tries per user in 5 minutes) on owner and admin.
+const sessions = new Map<Role, Cookie[]>();
+async function signedIn(page: Page, role: Role) {
+  const saved = sessions.get(role);
+  if (!saved) {
     await signInAs(page, stack, world, role);
-    const own: string[] = [];
-    const foreign: string[] = [];
-    for (const p of SWEEP_PAGES.filter((x) => x.roles.includes(role))) {
-      const url = p.url(world.ids);
-      for (const scheme of ['light', 'dark'] as const) {
-        await page.emulateMedia({ colorScheme: scheme });
-        await page.goto(`${stack.webUrl}${url}`);
-        await settle(page);
-        const found = (await axe(page)).map((v) => `${scheme} ${p.path}: ${v}`);
-        if (isPhone(page) && scheme === 'light') found.push(...(await phoneProblems(page)).map((v) => `${p.path}: ${v}`));
-        (p.foreignLane ? foreign : own).push(...found);
+    sessions.set(role, await page.context().cookies());
+    return;
+  }
+  await page.context().addCookies(saved);
+  await page.goto(`${stack.webUrl}/`);
+  await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible({ timeout: 15_000 });
+}
+
+// Each role's pages are swept in consecutive slices (pages.ts sweepSlices), one test per slice with its own time budget
+// and a fresh browser context; together the slices open exactly every page the role can open, in the same order.
+for (const role of ROLES) {
+  const slices = sweepSlices(role);
+  slices.forEach((slice, n) => {
+    test(`${role}: pages ${n + 1}/${slices.length} they can open (${slice[0]!.path} … ${slice[slice.length - 1]!.path}) pass axe in light and dark, and hold up on a phone`, async ({ page }, info) => {
+      test.setTimeout(300_000);
+      await signedIn(page, role);
+      const own: string[] = [];
+      const foreign: string[] = [];
+      for (const p of slice) {
+        const url = p.url(world.ids);
+        for (const scheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: scheme });
+          await page.goto(`${stack.webUrl}${url}`);
+          await settle(page);
+          const found = (await axe(page)).map((v) => `${scheme} ${p.path}: ${v}`);
+          if (isPhone(page) && scheme === 'light') found.push(...(await phoneProblems(page)).map((v) => `${p.path}: ${v}`));
+          (p.foreignLane ? foreign : own).push(...found);
+        }
       }
-    }
-    await page.emulateMedia({ colorScheme: 'light' });
-    report(`${info.project.name}-${role}`, { own, foreign });
-    if (foreign.length) info.annotations.push({ type: 'other lane (optout-visibility) a11y findings', description: foreign.join('\n') });
-    expect(own).toEqual([]);
+      await page.emulateMedia({ colorScheme: 'light' });
+      report(`${info.project.name}-${role}-${n + 1}of${slices.length}`, { own, foreign });
+      if (foreign.length) info.annotations.push({ type: 'other lane (optout-visibility) a11y findings', description: foreign.join('\n') });
+      expect(own).toEqual([]);
+    });
   });
 }
 

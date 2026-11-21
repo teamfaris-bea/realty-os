@@ -112,15 +112,20 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-7)', () => {
     await closedDeal(h, w.tenantId, c.id, w.agents[1]!.userId!, closedAt);
     records.put(a, countyRecord(a, ['LEE DOE'], { homeowner: { last_transfer_date: null, last_transfer_price_cents: null } }));
     await refresh(h, w.tenantId, { publicRecords: records });
+    // the closing day is the team's (repos.ts: closed_at AT TIME ZONE the team zone), and the test team's zone is picked so
+    // its local hour is 10-16 when the test runs (zoneWithLocalHour): from about 00:00 to 02:00 UTC that is UTC+9 or
+    // later, where 15:00Z is already the next day. Expect the instant's date in the tenant's zone, as the inquiry test does.
+    const tz = (await h.su.query<{ tz: string }>(`SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = $1`, [w.tenantId])).rows[0]!.tz;
+    const closedOn = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(closedAt);
     const own = (await get(w.owner, c.id)).body.homes[0]!;
     expect(own.outcome).toBe('matched');
     expect(own.rows.find((x) => x.key === 'last_transfer_date')).toMatchObject({ state: 'not_available' });
-    expect(own.yearsOwned).toMatchObject({ since: '2021-03-15', basis: 'team_closing', source: "the team's closed deal in this CRM" });
+    expect(own.yearsOwned).toMatchObject({ since: closedOn, basis: 'team_closing', source: "the team's closed deal in this CRM" });
     expect(own.yearsOwned!.years).toBeGreaterThanOrEqual(5);
     const agent = (await get(w.agents[0]!, c.id)).body.homes[0]!;
     expect(agent.outcome).toBe('matched');
     expect(agent.yearsOwned).toBeNull();
-    expect(JSON.stringify(agent)).not.toContain('2021-03-15');
+    expect(JSON.stringify(agent)).not.toContain(closedOn);
   });
 
   // b11 reconciliation homeowner-7 (owner question 16's default): seller inquiries of any age count, with the date shown

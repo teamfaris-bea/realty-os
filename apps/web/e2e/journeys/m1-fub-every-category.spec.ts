@@ -16,6 +16,9 @@ import { drainUntil, shot, signIn, tap } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
 
 test.describe.configure({ mode: 'serial' });
+// the history rows print each FUB instant in the viewer's zone ("Thu, Jan 15, 4:00 PM · Imported" is 16:00 UTC): the
+// browser sits in UTC whatever the host's clock says, so the times asserted below are the same on every machine
+test.use({ timezoneId: 'UTC' });
 
 let stack: JourneyStack;
 let w: WorldInfo;
