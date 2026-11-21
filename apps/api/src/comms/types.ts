@@ -33,6 +33,25 @@ export interface CommsDeps {
    * the comms worker handlers raise a WORKER_ERROR alert. Codes and ids only in the context, never message content.
    */
   errorReporter?: Pick<ErrorReporter, 'capture'>;
+  /**
+   * Local transcription (draft lane): called once after a transcript is stored, with the decrypted segments in memory
+   * only (comms/transcriptHooks.ts timingCueHook feeds the timing-cue scan). Best effort: a failing hook is reported to
+   * errorReporter with ids only and never fails the transcription job. Absent everywhere until wired.
+   */
+  onTranscriptReady?: (e: TranscriptReady) => Promise<void>;
+}
+
+/** A transcript just stored for one recording. The segments are plaintext: never log or persist them unencrypted. */
+export interface TranscriptReady {
+  tenantId: string;
+  transcriptId: string;
+  recordingId: string;
+  callId: string;
+  contactId: string;
+  /** when the call started (calls.started_at), the timing scan's "now" */
+  callAt: Instant;
+  language: string;
+  segments: readonly { startMs: number; endMs: number; speaker: string | null; text: string }[];
 }
 
 /** What a send-time gate evaluation is about (buildGateInput). Never carries a plaintext address. */

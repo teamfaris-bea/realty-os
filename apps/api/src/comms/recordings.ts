@@ -14,7 +14,7 @@
 // is deleted once ours is stored (provider_copy_deleted_at is set), and also when the recording may not be
 // kept (E47). A failed delete is retried by the job (the copy step is idempotent on the recording ref).
 import type { ContactId, ResourceFacts, SystemActor, TenantId, UserActor } from '@realty/core/foundation';
-import { DAY_MS, plusMs, toIso } from '@realty/core/foundation';
+import { DAY_MS, instantFromDate, plusMs, toIso } from '@realty/core/foundation';
 import { type Tx, enqueueJob, lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
@@ -143,10 +143,11 @@ export async function transcribeRecording(recordingId: string, deps: CommsDeps, 
   // audio is not even read, and the job ends here (no retry until a vendor appears)
   if (!deps.providers.transcription.configured) return 'not_configured';
   const rec = await withTenantTx(actor, async (tx) => {
-    const r = await sql<{ id: string; contact_id: string; status: string; storage_key: string; dek_wrapped: Buffer | null; content_type: string; object_id: string; has: boolean }>`
-      SELECT r.id, r.contact_id, r.status, o.storage_key, o.dek_wrapped, o.content_type, o.id AS object_id,
+    const r = await sql<{ id: string; contact_id: string; call_id: string; call_at: Date | null; status: string; storage_key: string; dek_wrapped: Buffer | null; content_type: string; object_id: string; has: boolean }>`
+      SELECT r.id, r.contact_id, r.call_id, c.started_at AS call_at, r.status, o.storage_key, o.dek_wrapped, o.content_type, o.id AS object_id,
              EXISTS (SELECT 1 FROM transcripts t WHERE t.tenant_id = r.tenant_id AND t.recording_id = r.id) AS has
         FROM recordings r JOIN stored_objects o ON o.tenant_id = r.tenant_id AND o.id = r.object_id
+        LEFT JOIN calls c ON c.tenant_id = r.tenant_id AND c.id = r.call_id
        WHERE r.tenant_id = app.tenant_id() AND r.id = ${recordingId}`.execute(tx);
     const x = r.rows[0];
     if (!x || x.status !== 'stored' || x.has || !x.dek_wrapped) return null;
@@ -155,14 +156,33 @@ export async function transcribeRecording(recordingId: string, deps: CommsDeps, 
   }, { db: deps.db });
   if (!rec) return 'skipped';
   const t = await deps.providers.transcription.transcribe({ audio: rec.audio, contentType: rec.content_type });
-  await withTenantTx(actor, async (tx) => {
+  const providerName = deps.providers.transcription.name ?? 'fake';
+  const stored = await withTenantTx(actor, async (tx) => {
     const id = deps.ids.next<'TranscriptId'>();
     const enc = await deps.envelope.inTx(tx, tenantId).encrypt(tenantId, transcriptAad(id), Buffer.from(JSON.stringify(t.segments)));
-    await sql`
+    const ins = await sql`
       INSERT INTO transcripts (tenant_id, id, recording_id, contact_id, status, language, segments_enc, key_version, provider)
-      VALUES (app.tenant_id(), ${id}, ${recordingId}, ${rec.contact_id}, 'ready', ${t.language}, ${Buffer.from(enc)}, ${ciphertextKeyVersion(enc)}, 'fake')
+      VALUES (app.tenant_id(), ${id}, ${recordingId}, ${rec.contact_id}, 'ready', ${t.language}, ${Buffer.from(enc)}, ${ciphertextKeyVersion(enc)}, ${providerName})
       ON CONFLICT (tenant_id, recording_id) DO NOTHING`.execute(tx);
+    return Number(ins.numAffectedRows ?? 0n) > 0 ? id : null;
   }, { db: deps.db });
+  if (stored && deps.onTranscriptReady) {
+    try {
+      await deps.onTranscriptReady({
+        tenantId,
+        transcriptId: stored,
+        recordingId,
+        callId: rec.call_id,
+        contactId: rec.contact_id,
+        callAt: instantFromDate(rec.call_at ?? new Date(0)),
+        language: t.language,
+        segments: t.segments,
+      });
+    } catch {
+      // ids only: the segments are the call's words
+      deps.errorReporter?.capture(new Error('TRANSCRIPT_HOOK_FAILED'), { code: 'TRANSCRIPT_HOOK_FAILED', jobKind: TRANSCRIBE_JOB.kind, level: 'warning' });
+    }
+  }
   return 'ready';
 }
 
