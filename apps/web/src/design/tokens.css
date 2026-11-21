@@ -146,10 +146,20 @@ body {
 html {
   scroll-padding-bottom: calc(var(--sticky-bottom-h, 0px) + var(--toast-stack-h, 0px) + 8px);
 }
+/* Same insets on a control the thread scrolls to (keyboard focus, find-in-page). scroll-padding
+   insets the document; scroll-margin insets the control. Both match the sticky header (phone) and
+   the compose bar, so a disclosure is not left underneath them. */
+ol[aria-label='Conversation'] :is(button, a[href], summary) {
+  scroll-margin-bottom: calc(var(--sticky-bottom-h, 0px) + var(--toast-stack-h, 0px) + 8px);
+}
 @media (max-width: 767.98px) {
   html {
     scroll-padding-top: calc(52px + env(safe-area-inset-top) + 8px);
     scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--sticky-bottom-h, 0px) + var(--toast-stack-h, 0px) + 8px);
+  }
+  ol[aria-label='Conversation'] :is(button, a[href], summary) {
+    scroll-margin-top: calc(52px + env(safe-area-inset-top) + 8px);
+    scroll-margin-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--sticky-bottom-h, 0px) + var(--toast-stack-h, 0px) + 8px);
   }
 }
 
