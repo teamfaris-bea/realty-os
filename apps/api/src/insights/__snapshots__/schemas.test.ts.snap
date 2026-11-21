@@ -1118,6 +1118,465 @@ exports[`R-OWNER-4 R-AST-13 R-TEN-3 response schemas > R-OWNER-4 R-AST-13 R-TEN-
     ],
     "type": "object",
   },
+  "TimingNudgesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "agents": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "live": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ask": {
+                    "enum": [
+                      "call_today",
+                      "check_in",
+                      "none",
+                    ],
+                    "type": "string",
+                  },
+                  "contactId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "evidence": {
+                    "enum": [
+                      "client_stated",
+                      "form",
+                      "agent_logged",
+                    ],
+                    "type": "string",
+                  },
+                  "firstName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "intent": {
+                    "enum": [
+                      "buy",
+                      "sell",
+                      "both",
+                      "unknown",
+                    ],
+                    "type": "string",
+                  },
+                  "lastHumanTouchAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "snippet": {
+                    "type": "string",
+                  },
+                  "sourceId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "stage": {
+                    "type": "string",
+                  },
+                  "window": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "end": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string",
+                      },
+                      "inWindowNow": {
+                        "type": "boolean",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "start": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "start",
+                      "end",
+                      "label",
+                      "inWindowNow",
+                    ],
+                    "type": "object",
+                  },
+                  "writtenOn": {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "contactId",
+                  "firstName",
+                  "intent",
+                  "evidence",
+                  "snippet",
+                  "window",
+                  "writtenOn",
+                  "sourceId",
+                  "lastHumanTouchAt",
+                  "stage",
+                  "ask",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "ownerName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "ownerUserId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "pastWindow": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ask": {
+                    "enum": [
+                      "call_today",
+                      "check_in",
+                      "none",
+                    ],
+                    "type": "string",
+                  },
+                  "contactId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "evidence": {
+                    "enum": [
+                      "client_stated",
+                      "form",
+                      "agent_logged",
+                    ],
+                    "type": "string",
+                  },
+                  "firstName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "intent": {
+                    "enum": [
+                      "buy",
+                      "sell",
+                      "both",
+                      "unknown",
+                    ],
+                    "type": "string",
+                  },
+                  "lastHumanTouchAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "snippet": {
+                    "type": "string",
+                  },
+                  "sourceId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "stage": {
+                    "type": "string",
+                  },
+                  "window": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "end": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string",
+                      },
+                      "inWindowNow": {
+                        "type": "boolean",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "start": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "start",
+                      "end",
+                      "label",
+                      "inWindowNow",
+                    ],
+                    "type": "object",
+                  },
+                  "writtenOn": {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "contactId",
+                  "firstName",
+                  "intent",
+                  "evidence",
+                  "snippet",
+                  "window",
+                  "writtenOn",
+                  "sourceId",
+                  "lastHumanTouchAt",
+                  "stage",
+                  "ask",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "stale": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ask": {
+                    "enum": [
+                      "call_today",
+                      "check_in",
+                      "none",
+                    ],
+                    "type": "string",
+                  },
+                  "contactId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "evidence": {
+                    "enum": [
+                      "client_stated",
+                      "form",
+                      "agent_logged",
+                    ],
+                    "type": "string",
+                  },
+                  "firstName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "intent": {
+                    "enum": [
+                      "buy",
+                      "sell",
+                      "both",
+                      "unknown",
+                    ],
+                    "type": "string",
+                  },
+                  "lastHumanTouchAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "snippet": {
+                    "type": "string",
+                  },
+                  "sourceId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "stage": {
+                    "type": "string",
+                  },
+                  "window": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "end": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string",
+                      },
+                      "inWindowNow": {
+                        "type": "boolean",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "start": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "start",
+                      "end",
+                      "label",
+                      "inWindowNow",
+                    ],
+                    "type": "object",
+                  },
+                  "writtenOn": {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "contactId",
+                  "firstName",
+                  "intent",
+                  "evidence",
+                  "snippet",
+                  "window",
+                  "writtenOn",
+                  "sourceId",
+                  "lastHumanTouchAt",
+                  "stage",
+                  "ask",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "ownerUserId",
+            "ownerName",
+            "live",
+            "pastWindow",
+            "stale",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "asOf": {
+        "type": "string",
+      },
+      "counts": {
+        "additionalProperties": false,
+        "properties": {
+          "dropped": {
+            "additionalProperties": false,
+            "properties": {
+              "closed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "do_not_contact": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "lost": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "under_contract": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "closed",
+              "lost",
+              "under_contract",
+              "do_not_contact",
+            ],
+            "type": "object",
+          },
+          "expired": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "later": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "live": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "pastWindow": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "people": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "stale": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "people",
+          "live",
+          "pastWindow",
+          "stale",
+          "later",
+          "expired",
+          "dropped",
+        ],
+        "type": "object",
+      },
+      "horizonEnd": {
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "type": "string",
+      },
+      "method": {
+        "type": "string",
+      },
+      "today": {
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "type": "string",
+      },
+      "zone": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "asOf",
+      "zone",
+      "today",
+      "horizonEnd",
+      "method",
+      "counts",
+      "agents",
+    ],
+    "type": "object",
+  },
   "VelocityResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
