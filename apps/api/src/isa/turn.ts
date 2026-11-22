@@ -3,11 +3,17 @@
 //   TX-A (locks 2 → 3 → 4): debounce through retryAt; the link-failure table (a hold defers BEFORE any model call);
 //        the events (turn inbounds from bound points since the last consumed one, timers, start); the deterministic
 //        step(); when the machine awaits the model, a turn row `deciding` with the pinned inbound seq and the epoch.
+//        A turn held at a daily model-call budget (below) is reopened here on its retry, with its prompt rebuilt.
+//   The reservation (spend.ts reserveForTurn; R-ISA-20), before EACH provider call, in a transaction of its own:
+//        the team model-budget lock, the count of today's reserved calls and one ai_runs row. No other lock is held
+//        with it, so it lasts only for that count and insert; a turn that makes no model call never takes it. At a
+//        limit the turn is held `deferred` until the next team-local day, without a provider call.
 //   The provider call, with NO lock held (the TX-A/TX-B pattern of assistant/runs.ts), through the unchanged
-//        AiProvider.complete; tool-less; one repair retry on a schema failure.
+//        AiProvider.complete; tool-less; one repair retry on a schema failure. Its outcome is recorded on the
+//        reserved ai_runs row in a transaction of its own (no lock) before TX-B can discard the decision.
 //   TX-B (locks 2 → 3 → 4): the attempt-guarded UPDATE (zero rows ⇒ a replayed lease: discard everything, E492);
 //        a newer inbound ⇒ stale, re-enqueued (E493); the chain, the pause and the epoch again; parse, decideAction,
-//        step(model_output); the encrypted ai_runs row; the actions through effects.applyActionsInTx.
+//        step(model_output); link the already-recorded ai_runs row; the actions through effects.applyActionsInTx.
 import type { Instant, SystemActor, TenantId } from '@realty/core/foundation';
 import { instantFromDate } from '@realty/core/foundation';
 import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
@@ -19,6 +25,9 @@ import { systemActor } from '../worker/systemActor.js';
 import {
   buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
+import { backstopInTx } from './backstop.js';
+import { ACTIVITY_ANSWERING, ACTIVITY_WAITING_BUDGET } from './sentences.js';
+import { RESUME_OWNER, reserveForTurn, supersedeHeldTurns } from './spend.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps, turnByKey } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
@@ -33,6 +42,10 @@ export const DEBOUNCE_MS = 20_000;
 export const DEBOUNCE_CAP_MS = 120_000;
 export const HOLD_RETRY_MS = 15 * 60_000;
 export const SEND_RESULT_WAIT_MS = 2_000;
+/** A turn `deciding` this long with no change is stuck: the sweep sends a recover job for it (handlers.ts sweepInTx). */
+export const STUCK_TURN_MS = 8 * 60_000;
+/** E906: a stuck turn is adopted again by the recover job only below this many attempts; at it, care is paused for a person to check. */
+export const ISA_TURN_MAX_ATTEMPTS = 8;
 
 export interface TurnPayload {
   assignmentId: string;
@@ -41,6 +54,10 @@ export interface TurnPayload {
   epoch: number;
   /** The instant a schedule_timer job was scheduled for (effects.ts). Absent on a job queued before the payload carried it. */
   at?: number;
+  /** E906: the sweep's job for a turn stuck `deciding` (handlers.ts sweepInTx): it adopts the turn again, or gives it up */
+  recover?: boolean;
+  /** E908: the job queued for the rollover when a sweep-triggered turn is held at a budget (spend.ts holdTurn); it owns that turn */
+  resume?: boolean;
 }
 
 /**
@@ -57,12 +74,14 @@ export function turnTriggerKey(k: { trigger: TurnPayload['trigger']; epoch: numb
 
 export type TurnResult = { kind: 'done'; code: string } | { kind: 'retry'; retryAt: Instant };
 
-/** The worker run, when there is one. A follow-up job queued before its payload carried `at` is identified by its own `run_at`. */
+/** The worker run, when there is one. Its id owns a turn held at a budget (E904). A legacy follow-up is identified by that job's `run_at`. */
 export interface TurnRun {
   jobId?: string;
 }
 
 interface Prepared {
+  /** set when a held repair call resumes: the provider loop starts at the repair call */
+  repair?: boolean;
   a: AssignmentRow;
   ctx: IsaContext;
   turnId: string;
@@ -116,6 +135,7 @@ function actor(tenantId: string): SystemActor {
 /** TX-A. Returns a prepared model call, or the turn's outcome when no model call is needed. */
 async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRun = {}): Promise<Prepared | TurnResult> {
   return withTenantTx(actor(tenantId), async (tx, now) => {
+    const me = p.resume === true ? RESUME_OWNER : run.jobId ?? null;
     const peek = await assignmentById(tx, p.assignmentId);
     if (peek === null || peek.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
     await lockForTurn(tx, peek.contactId, peek.id);
@@ -180,6 +200,66 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRu
       : inbounds.length > 0 ? { type: 'inbound', at: now, messages: inbounds }
       : a.machine.phase === 'starting' ? { type: 'start', at: now }
       : { type: 'timer', at: now, timer: 'follow_up' };
+    // The assignment's one open model turn (E904, E906): the machine awaits the model and a turn row carries that
+    // pending call, either held at a daily budget (`deferred`, R-ISA-20) or `deciding`. A run that finds it, with no
+    // newer inbound to consume, adopts it again when it is its own: attempt + 1 (a TX-B of an earlier attempt then
+    // updates zero rows, E492), the prompt rebuilt, and a fresh reservation after this transaction (runTurn). The inbound
+    // is already consumed and a repair keeps its schema-failure counter. This happens only after the normal chain,
+    // pause and epoch checks above. A newer inbound takes the ordinary path instead and supersedes the held turn.
+    //   held:     the retry of the job that owns it (its trigger_key starts with this job's trigger and epoch, and the
+    //             hold recorded this job's id, so of the jobs parked for one person exactly one resumes);
+    //   deciding: the retry of the job that prepared it (the same job id: a throw or a lost lease between TX-A and
+    //             TX-B), or the sweep's recover job once the turn has not changed for 8 minutes. Never another job of
+    //             the person (a text inside the debounce has its own job, which finds the first job's turn in flight).
+    if (inbounds.length === 0) {
+      const stuckBefore = new Date(now - STUCK_TURN_MS);
+      const open = !a.machine.awaitingModel ? undefined : (await sql<{ id: string; attempt: number; status: string; trigger_key: string; job: string | null; repair: boolean; stuck: boolean }>`
+        SELECT id, attempt, status, trigger_key, decision->>'job' AS job, updated_at < ${stuckBefore} AS stuck,
+               (COALESCE(decision->>'budgetRepair', 'false') = 'true' OR COALESCE(decision->>'repair', 'false') = 'true') AS repair
+          FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND epoch = ${a.epoch}
+           AND (status = 'deciding' OR (status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')))
+         ORDER BY seq DESC LIMIT 1`.execute(tx)).rows[0];
+      // the recover job: any other turn of this care stuck `deciding` has nothing waiting for it (the machine does not
+      // await the model, or a newer turn carries the pending call): it is canceled, as the sweep used to do
+      if (p.recover) {
+        await sql`UPDATE ai_isa_turns SET status = 'canceled', decision = '{"code":"ISA_TURN_STUCK"}'::jsonb WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id}
+          AND status = 'deciding' AND updated_at < ${stuckBefore} AND id IS DISTINCT FROM ${open?.id ?? null}`.execute(tx);
+      }
+      if (open) {
+        const held = open.status === 'deferred';
+        // A follow-up's row is `timer:<epoch>:follow_up:<at>`, including a hand-run with no `at` (it uses next_follow_up_at).
+        const followUpInstant = p.timer !== 'follow_up' ? null : p.at ?? (run.jobId === undefined
+          ? (await sql<{ at: Date | null }>`SELECT next_follow_up_at AS at FROM ai_isa_assignments WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx)).rows[0]?.at?.getTime() ?? null
+          : (await sql<{ at: Date | null }>`SELECT app.job_run_at(${run.jobId}::bigint) AS at`.execute(tx)).rows[0]?.at?.getTime() ?? null);
+        const followUpTimerKey = followUpInstant !== null ? `timer:${a.epoch}:follow_up:${followUpInstant}` : null;
+        const ownTrigger = open.trigger_key.startsWith(`${p.trigger}:${a.epoch}:`) && (p.trigger !== 'timer' || open.trigger_key === (followUpTimerKey ?? `timer:${a.epoch}:${p.timer ?? 'start'}`));
+        // held: the recorded owner decides (a job id, or the resume job: E908, whose turn may carry any trigger, e.g. a
+        // recovered inbound turn). A turn held by a run outside a job, or resumed by one, has no owner to compare
+        // (tests): there the trigger decides, as before. Every worker run has an identity.
+        const adopt = held ? (open.job !== null && me !== null ? open.job === me : ownTrigger)
+          : (me !== null && open.job === me) || (p.recover === true && open.stuck);
+        if (adopt && !held && p.recover === true && open.attempt >= ISA_TURN_MAX_ATTEMPTS) {
+          // E906: recovered too often. The turn is given up and the machine must not be left awaiting it: care is
+          // paused for a person to check (the pause clears awaitingModel, cancels the turn and tells the owner), and
+          // a reply that was waiting is pinned for the owner now.
+          await sql`UPDATE ai_isa_turns SET decision = '{"code":"ISA_TURN_ABANDONED"}'::jsonb WHERE tenant_id = app.tenant_id() AND id = ${open.id} AND status = 'deciding'`.execute(tx);
+          await systemPauseInTx(tx, deps, actor(tenantId), a, 'check_this', now);
+          await backstopInTx(tx, deps, (await assignmentById(tx, a.id))!, null, now);
+          return { kind: 'done', code: 'ABANDONED' } as const;
+        }
+        if (adopt) {
+          const decision = { ...(open.job !== null ? { job: open.job } : {}), ...(me !== null ? { job: me } : {}), ...(open.repair ? { repair: true } : {}) };
+          await sql`UPDATE ai_isa_turns SET status = 'deciding', not_before = NULL, attempt = attempt + 1, decision = ${JSON.stringify(decision)}::jsonb
+            WHERE tenant_id = app.tenant_id() AND id = ${open.id}`.execute(tx);
+          // E905: the reply's activity card said it waits for tomorrow's budget; the assistant is answering again
+          if (held && a.machine.inboundUnanswered) {
+            await sql`UPDATE priority_feed_items SET reasons = ${JSON.stringify([ACTIVITY_ANSWERING])}::jsonb, updated_at = now() WHERE tenant_id = app.tenant_id()
+              AND dedupe_key = ${`ai_isa_activity:${a.id}`} AND state IN ('open','snoozed') AND reasons->0->>'code' = ${ACTIVITY_WAITING_BUDGET.code}`.execute(tx);
+          }
+          return { ...await prepare(tx, ctx, a, open.id, open.attempt + 1, conv.seq, event, now, { repair: open.repair, initiated: !a.machine.inboundUnanswered }), repair: open.repair };
+        }
+      }
+    }
     if (event.type === 'timer' && event.timer === 'follow_up' && p.trigger !== 'timer') return { kind: 'done', code: 'NOTHING_TO_DO' } as const;
     const r = step(a.machine, event, ctx.facts);
     // a follow-up's own instant: the job's `at` (schedule_timer). A job queued before the payload carried `at` is not
@@ -215,6 +295,10 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRu
         WHERE tenant_id = app.tenant_id() AND id = ${turn.id} AND status = 'deciding'`.execute(tx);
       return { kind: 'done', code: applied.ended ? 'ENDED' : 'NO_MODEL' } as const;
     }
+    // E904: this turn now carries the assignment's one pending model call; an older turn still held at a budget is superseded
+    await supersedeHeldTurns(tx, a.id, turn.id);
+    // E906: the job that prepared the turn owns it until TX-B: only its own retry adopts it again
+    if (me !== null) await sql`UPDATE ai_isa_turns SET decision = decision || ${JSON.stringify({ job: me })}::jsonb WHERE tenant_id = app.tenant_id() AND id = ${turn.id} AND status = 'deciding'`.execute(tx);
     const fresh = (await assignmentById(tx, a.id))!;
     return prepare(tx, { ...ctx, a: fresh }, fresh, turn.id, turn.attempt, conv.seq, event, now, awaiting.kind === 'await_model' ? awaiting : null);
   }, { db: deps.db, retries: 2 });
@@ -287,25 +371,52 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
   return { a, ctx, turnId, attempt, pinnedSeq, event, prompt, bundle, decideBase };
 }
 
-/** One full turn (the job body). `run` is optional: the worker passes its job id so a legacy follow-up can be told from its run_at. */
+/** One full turn (the job body). `run` is optional: the worker passes its job id so a legacy follow-up is told by its run_at and a budget hold knows its owner. */
 export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRun = {}): Promise<TurnResult> {
+  // E908: a job with trigger `sweep` runs under a dedupe key every later sweep enqueue shares (…:sweep, :chain, :hold,
+  // :replan, :recover). Parked until the rollover it would make those enqueues no-ops, and the sweep's other duties for
+  // the care would wait with it. So it never parks at a budget: it finishes, and one resume job per care and epoch
+  // (payload `resume`, its own key) owns the held turn. Every other job parks itself, and owns its turn by its job id.
+  const park = p.trigger !== 'sweep' || p.resume === true;
+  const me = p.resume === true ? RESUME_OWNER : run.jobId ?? null;
   const pre = await txA(deps, tenantId, p, run);
   if ('kind' in pre) return pre;
   let note: string | undefined;
-  for (let call = 0; call < 2; call += 1) {
+  for (let call = pre.repair ? 1 : 0; call < 2; call += 1) {
+    // R-ISA-20: every provider call is reserved first, with no turn lock held; at a daily limit the turn is held here
+    const reservation = await reserveForTurn(deps, tenantId, pre.a, { id: pre.turnId, pinnedSeq: pre.pinnedSeq, repair: call > 0, owner: park ? me : RESUME_OWNER, park, inboundUnanswered: pre.a.machine.inboundUnanswered });
+    if ('kind' in reservation) return reservation;
+    const { runId } = reservation;
     const started = Date.now();
     let text = '';
     let model = 'none';
     let failed = false;
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
     try {
-      const res = await deps.providers.ai.complete({ templateKey: pre.prompt.templateKey, system: pre.prompt.system, user: note ? `${pre.prompt.user}\n\nnote: ${note}` : pre.prompt.user, maxOutputTokens: pre.prompt.maxOutputTokens });
+      // E903 (R-ISA-20): one reservation is one provider request; the adapter makes no retry of its own (the turn has its
+      // own repair call, reserved separately, and its own failure handling)
+      const res = await deps.providers.ai.complete({ templateKey: pre.prompt.templateKey, system: pre.prompt.system, user: note ? `${pre.prompt.user}\n\nnote: ${note}` : pre.prompt.user, maxOutputTokens: pre.prompt.maxOutputTokens, singleRequest: true });
       text = res.text;
       model = res.model;
+      inputTokens = res.inputTokens;
+      outputTokens = res.outputTokens;
     } catch {
       failed = true;
     }
     const latency = Math.max(0, Date.now() - started);
-    const r = await txB(deps, tenantId, pre, { text, model, failed, latency, repairAllowed: call === 0 });
+    // Persist every provider outcome before the stale/control guards in TX-B can discard its decision.
+    await withTenantTx(actor(tenantId), async (tx) => {
+      const parsed = failed ? null : parseIsaModelOutput(text);
+      const enc = text === '' ? null : Buffer.from(await deps.envelope.inTx(tx, tenantId as TenantId).encrypt(tenantId as TenantId, aiRunAad(runId as never), Buffer.from(text.slice(0, 64_000), 'utf8')));
+      await sql`UPDATE ai_runs SET model = ${model.slice(0, 100)}, prompt_template_key = ${pre.prompt.templateKey},
+        prompt_version = ${pre.prompt.templateVersion}, output_enc = ${enc}, key_version = ${enc === null ? null : 1},
+        internal_signals = ${JSON.stringify(parsed === null ? { error: 'PROVIDER' } : parsed.ok ? {} : { error: parsed.code })}::jsonb,
+        input_tokens = ${inputTokens}, output_tokens = ${outputTokens}, latency_ms = ${latency},
+        status = ${parsed !== null && parsed.ok ? 'succeeded' : 'failed'}
+        WHERE tenant_id = app.tenant_id() AND id = ${runId}`.execute(tx);
+    }, { db: deps.db, retries: 2 });
+    const r = await txB(deps, tenantId, pre, { runId, text, failed, repairAllowed: call === 0 });
     if (r.kind !== 'repair') return r.result;
     note = r.note;
   }
@@ -314,7 +425,7 @@ export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload, 
 
 type TxBResult = { kind: 'final'; result: TurnResult } | { kind: 'repair'; note: string };
 
-async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: string; model: string; failed: boolean; latency: number; repairAllowed: boolean }): Promise<TxBResult> {
+async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { runId: string; text: string; failed: boolean; repairAllowed: boolean }): Promise<TxBResult> {
   return withTenantTx(actor(tenantId), async (tx, now): Promise<TxBResult> => {
     await lockForTurn(tx, pre.a.contactId, pre.a.id);
     const a = await assignmentById(tx, pre.a.id, 'update');
@@ -335,17 +446,9 @@ async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: s
     }
     const chain = await evaluateChain(tx, a, chainEnvOf(deps));
     if (chain.effect !== 'ok') return fail(chain.effect === 'hold' ? 'deferred' : 'canceled_paused', `CHAIN_${chain.effect.toUpperCase()}:${chain.worst?.code ?? ''}`);
-    // the encrypted run (prompts and outputs stay in ai_runs.output_enc, purged after 30 days)
+    // Usage and encrypted output were persisted before the decision guards above.
     const parsed = m.failed ? null : parseIsaModelOutput(m.text);
-    const runId = deps.ids.next<'AiRunId'>() as string;
-    const enc = m.text === '' ? null : Buffer.from(await deps.envelope.inTx(tx, tenantId as TenantId).encrypt(tenantId as TenantId, aiRunAad(runId as never), Buffer.from(m.text.slice(0, 64_000), 'utf8')));
-    const signals = parsed === null ? { error: 'PROVIDER' } : parsed.ok ? {} : { error: parsed.code };
-    await sql`INSERT INTO ai_runs (tenant_id, id, purpose, model, prompt_template_key, prompt_version, input_refs, output_enc, key_version, internal_signals,
-        input_tokens, output_tokens, latency_ms, status, requested_for_user_id)
-      VALUES (app.tenant_id(), ${runId}, 'ai_isa_turn', ${m.model.slice(0, 100)}, ${pre.prompt.templateKey}, ${pre.prompt.templateVersion},
-        ${JSON.stringify({ assignmentId: a.id, turnId: pre.turnId })}::jsonb, ${enc}, ${enc === null ? null : 1}, ${JSON.stringify(signals)}::jsonb,
-        0, 0, ${m.latency}, ${parsed !== null && parsed.ok ? 'succeeded' : 'failed'}, ${a.ownerUserId})`.execute(tx);
-    await sql`UPDATE ai_isa_turns SET ai_run_id = ${runId} WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
+    await sql`UPDATE ai_isa_turns SET ai_run_id = ${m.runId} WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
     const ctx = await contextFor(tx, a, now);
     const env = { tx, deps, actor: actor(tenantId), ctx, now, turnId: pre.turnId, pinnedSeq: pre.pinnedSeq, bundle: pre.bundle };
     if (parsed === null || !parsed.ok) {
@@ -353,7 +456,8 @@ async function txB(deps: TurnDeps, tenantId: string, pre: Prepared, m: { text: s
       const repair = r.actions.some((x) => x.kind === 'await_model');
       await applyActionsInTx(env, { state: r.state, actions: r.actions.filter((x) => x.kind !== 'await_model') });
       if (repair && m.repairAllowed && parsed !== null) {
-        await sql`UPDATE ai_isa_turns SET attempt = attempt + 1 WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
+        // E906: the turn is in its repair phase; a retry that adopts it again makes the repair call, not a second first call
+        await sql`UPDATE ai_isa_turns SET attempt = attempt + 1, decision = decision || '{"repair":true}'::jsonb WHERE tenant_id = app.tenant_id() AND id = ${pre.turnId}`.execute(tx);
         pre.attempt += 1;
         return { kind: 'repair', note: repairNote(parsed.ok ? [] : parsed.paths) };
       }

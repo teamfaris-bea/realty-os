@@ -90,7 +90,9 @@ export type DispatchResult =
   | { kind: 'blocked'; messageId: string; decision: DecisionView }
   | { kind: 'needs_retap'; messageId: string; reason: 'CLIENT_REPLIED_SINCE_SCHEDULED' }
   | { kind: 'not_due'; messageId: string; due: Instant }
-  | { kind: 'noop'; messageId: string; status: string };
+  // refused: a re-tap this dispatch canceled instead of sending (a held CMA share whose CMA is no longer client-ready,
+  // R-CMA-7); the caller answers with that code and details.blockers (codes only)
+  | { kind: 'noop'; messageId: string; status: string; refused?: { code: 'CMA_NOT_SHAREABLE'; blockers: string[] } };
 
 export type DialResult =
   | { kind: 'dialing'; callId: string; bridgeToken: string; decision: DecisionView }

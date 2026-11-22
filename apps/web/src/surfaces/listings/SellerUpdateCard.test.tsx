@@ -2,7 +2,7 @@
 // dated), R-SELL-3 / E88 (the recommendation is required and never prefilled), R-SELL-4 (stale data says so
 // and offers one tap to refresh), R-SELL-5 (an opted-out seller is shown before the tap, never after),
 // E89 (feedback verbatim, removable, a named person flagged). The real API runs in e2e/seller-updates.
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
@@ -58,6 +58,18 @@ function update(over: Partial<SellerUpdateView> = {}): SellerUpdateView {
     sentAt: null,
     delivery: null,
     ...over,
+  };
+}
+
+const RANGE = 'Estimated value $590,000 to $640,000 as of Nov 10, 2026.';
+function valueSection(): SellerUpdateView['sections'][number] {
+  return {
+    kind: 'value',
+    title: 'Home value',
+    state: 'has_data',
+    statement: 'An estimate from comparable recent MLS sales, not an appraisal. MLS data as of Nov 10, 2026.',
+    lines: [{ text: RANGE, feedback: null }, { text: 'Comparable closed sales:', feedback: null }, { text: '14 Oak St, Oakland: sold Oct 2, 2026 for $612,000, listed by Sample Realty', feedback: null }],
+    sources: [{ text: 'A value range from 1 comparable closed MLS sale', evidence: [{ sourceType: 'listing', sourceId: 'mls:1', label: 'MLS sale: 14 Oak St' }] }],
   };
 }
 
@@ -227,6 +239,117 @@ describe('Seller update card (module 38)', () => {
     expect(within(c).queryByText(/won’t see the value range/)).toBeNull();
   });
 
+  it('E631 R-CMA-10: the listing agent removes the value range before sending and can put it back; the card says the seller will not see it and Send carries the choice', async () => {
+    const fake = app(update({ recommendation: REC, sections: [...update().sections, valueSection()] }));
+    const c = await card();
+    const value = within(c).getByRole('group', { name: 'Home value' });
+    expect(within(value).getByText(RANGE)).toBeInTheDocument();
+    expect(within(value).queryByText('Removed: the seller will not see the value range.')).toBeNull();
+    await user().click(within(value).getByRole('button', { name: 'Remove the value range' }));
+    await waitFor(() => expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1));
+    expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)[0]!.body).toEqual({ valueRemoved: true });
+    expect(await within(value).findByText('Removed: the seller will not see the value range.')).toBeInTheDocument();
+    expect(within(value).queryByRole('button', { name: 'Remove the value range' })).toBeNull();
+    // the send carries the removal even while the refetch of the update is still on its way
+    await user().click(within(c).getByRole('button', { name: 'Send to Sam Ortiz' }));
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ valueRemoved: true, recipientIds: [SAM] });
+  });
+
+  it('E907 R-CMA-10: Send is off while the removal of the value range is still saving (the PATCH unanswered); once it is saved Send is on again and carries valueRemoved', async () => {
+    let answer!: () => void;
+    const unanswered = new Promise<void>((r) => { answer = r; });
+    const u = update({ recommendation: REC, sections: [...update().sections, valueSection()] });
+    const fake = app(u, (f) => f
+      .on(`PATCH /seller-updates/${UPDATE}`, async (c) => { await unanswered; return { status: 200, body: { update: { ...u, ...(c.body as object) } } }; })
+      .on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'sent', messageId: 'm1', recipients: [{ contactId: SAM, messageId: 'm1', result: 'sent' }] } }));
+    const c = await card();
+    const value = within(c).getByRole('group', { name: 'Home value' });
+    const sendBtn = within(c).getByRole('button', { name: 'Send to Sam Ortiz' });
+    expect(sendBtn).toBeEnabled();
+    await user().click(within(value).getByRole('button', { name: 'Remove the value range' }));
+    await waitFor(() => expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1));
+    // the save is on its way: the seller would still get the value range, so nothing can be sent yet
+    expect(sendBtn).toBeDisabled();
+    expect(within(c).getByText('Saving your change. Send is back in a moment.')).toBeInTheDocument();
+    await user().click(sendBtn);
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(0);
+    answer();
+    expect(await within(value).findByText('Removed: the seller will not see the value range.')).toBeInTheDocument();
+    await waitFor(() => expect(sendBtn).toBeEnabled());
+    expect(within(c).queryByText('Saving your change. Send is back in a moment.')).toBeNull();
+    await user().click(sendBtn);
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ valueRemoved: true, recipientIds: [SAM] });
+  });
+
+  it('E907: Send is off while a removed feedback item is still saving, and back on when it is saved', async () => {
+    let answer!: () => void;
+    const unanswered = new Promise<void>((r) => { answer = r; });
+    const u = update({ recommendation: REC });
+    const fake = app(u, (f) => f.on(`PATCH /seller-updates/${UPDATE}`, async (c) => { await unanswered; return { status: 200, body: { update: { ...u, ...(c.body as object) } } }; }));
+    const c = await card();
+    const sendBtn = within(c).getByRole('button', { name: 'Send to Sam Ortiz' });
+    expect(sendBtn).toBeEnabled();
+    await user().click(within(c).getAllByRole('button', { name: /^Remove/ })[0]!);
+    await waitFor(() => expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1));
+    expect(sendBtn).toBeDisabled();
+    answer();
+    await waitFor(() => expect(sendBtn).toBeEnabled());
+  });
+
+  it('E907: typing the recommendation and going straight to Send still sends in one tap (the save on leaving the box does not switch Send off: the send carries the recommendation itself)', async () => {
+    let answer!: () => void;
+    const unanswered = new Promise<void>((r) => { answer = r; });
+    const u = update();
+    const fake = app(u, (f) => f
+      .on(`PATCH /seller-updates/${UPDATE}`, async (c) => { await unanswered; return { status: 200, body: { update: { ...u, ...(c.body as object) } } }; })
+      .on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'sent', messageId: 'm1', recipients: [{ contactId: SAM, messageId: 'm1', result: 'sent' }] } }));
+    const c = await card();
+    await user().type(within(c).getByLabelText('Your recommendation (required)'), REC);
+    await user().click(within(c).getByRole('button', { name: 'Send to Sam Ortiz' }));
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ recommendation: REC, recipientIds: [SAM] });
+    answer();
+  });
+
+  it('E631: a removed value range can be put back, and a send then leaves the choice to the saved update', async () => {
+    const fake = app(update({ recommendation: REC, valueRemoved: true, sections: [...update().sections, valueSection()] }));
+    const c = await card();
+    const value = within(c).getByRole('group', { name: 'Home value' });
+    expect(within(value).getByText('Removed: the seller will not see the value range.')).toBeInTheDocument();
+    await user().click(within(value).getByRole('button', { name: 'Put the value range back' }));
+    await waitFor(() => expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1));
+    expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)[0]!.body).toEqual({ valueRemoved: false });
+    expect(await within(value).findByRole('button', { name: 'Remove the value range' })).toBeInTheDocument();
+    expect(within(value).queryByText('Removed: the seller will not see the value range.')).toBeNull();
+    await user().click(within(c).getByRole('button', { name: 'Send to Sam Ortiz' }));
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).not.toHaveProperty('valueRemoved');
+  });
+
+  it('E631: when the server refuses the removal the card says why, in words, and the value range stays in the update', async () => {
+    const fake = app(update({ sections: [...update().sections, valueSection()] }), (f) => f.on(`PATCH /seller-updates/${UPDATE}`, err(409, 'ACTION_NOT_PENDING')));
+    const c = await card();
+    const value = within(c).getByRole('group', { name: 'Home value' });
+    await user().click(within(value).getByRole('button', { name: 'Remove the value range' }));
+    expect(await within(value).findByText('This update was already handled.')).toBeInTheDocument();
+    expect(fake.callsTo(`PATCH /seller-updates/${UPDATE}`)).toHaveLength(1);
+    expect(within(value).getByRole('button', { name: 'Remove the value range' })).toBeInTheDocument();
+    expect(within(value).queryByText('Removed: the seller will not see the value range.')).toBeNull();
+  });
+
+  it('E631: no remove control for someone who cannot send the update, nor when the value section holds nothing the seller would read', async () => {
+    app(update({ canSend: false, sections: [...update().sections, valueSection()] }));
+    const readOnly = within(await card()).getByRole('group', { name: 'Home value' });
+    expect(within(readOnly).queryByRole('button', { name: 'Remove the value range' })).toBeNull();
+    cleanup();
+    app(update({ sections: [...update().sections, { kind: 'value', title: 'Home value', state: 'unavailable', statement: 'Value range off: the MLS display rules are not reviewed yet.', lines: [], sources: [] }] }));
+    const agentOnly = within(await card()).getByRole('group', { name: 'Home value' });
+    expect(within(agentOnly).getByText('Value range off: the MLS display rules are not reviewed yet.')).toBeInTheDocument();
+    expect(within(agentOnly).queryByRole('button', { name: 'Remove the value range' })).toBeNull();
+  });
+
   it('review fix: a failed refresh says why instead of leaving the agent stuck', async () => {
     app(update({ stale: true }), (f) => f.on(`POST /seller-updates/${UPDATE}/reassemble`, err(409, 'DRAFT_INVALIDATED')));
     const c = await card();
@@ -239,5 +362,14 @@ describe('Seller update card (module 38)', () => {
     const c = await card();
     const r = await axe.run(c, { rules: { 'color-contrast': { enabled: false } } });
     expect(r.violations.map((v) => v.id)).toEqual([]);
+  });
+
+  it('has no axe violations with the value range shown and with it removed', async () => {
+    app(update({ sections: [...update().sections, valueSection()] }));
+    const c = await card();
+    expect((await axe.run(c, { rules: { 'color-contrast': { enabled: false } } })).violations.map((v) => v.id)).toEqual([]);
+    await user().click(within(c).getByRole('button', { name: 'Remove the value range' }));
+    await within(c).findByText('Removed: the seller will not see the value range.');
+    expect((await axe.run(c, { rules: { 'color-contrast': { enabled: false } } })).violations.map((v) => v.id)).toEqual([]);
   });
 });

@@ -78,7 +78,8 @@ export async function valueForSubjectInTx(tx: Tx, now: Instant, subject: Subject
   try {
     const sizeField = await connectionSizeField(tx, connectionIds);
     const resolved = await resolveSubject(tx, subject, { contactId: o.contactId, sizeField, connectionIds });
-    const { result, candidates, tierReads } = await run(tx, conns, resolved, valuationDate, [], []);
+    // VERIFY E7: an automated value never shows or stores the market context, so the run does not read it
+    const { result, candidates, tierReads } = await run(tx, conns, resolved, valuationDate, [], [], { context: false });
     return {
       ok: true,
       resolved,
