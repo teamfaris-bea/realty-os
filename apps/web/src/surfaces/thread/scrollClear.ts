@@ -1,10 +1,12 @@
-// The thread scrolls the document. The page header and the compose bar stay on screen and cover
-// whatever stops underneath them. axe target-size fails a control whose largest rectangle not covered
-// by that chrome is under 24px (WCAG 2.2 2.5.8), which is where a Why disclosure lands when the
-// conversation opens at the latest message and a later banner shifts it by a few dozen pixels.
-// A control fully inside the chrome passes (nothing of it can be hit). One that only sticks out a
-// sliver does not. scrollIntoView of the end marker does not look at those other controls, so after
-// that scroll we nudge until every control is clear, using the chrome's real boxes.
+// The thread scrolls the document. The page header, the tab bar and the compose bar stay on screen
+// and cover whatever stops underneath them. Two checks have to pass together:
+// - WCAG 2.4.11, the way obscuredFocus samples it: the focused control's center, clamped into the
+//   viewport, must not land on the header, the tab bar or a [data-sticky] bar. A 24px sliver, or a
+//   control fully under the chrome, still hides that center.
+// - axe target-size (WCAG 2.2 2.5.8): the largest run not covered by that chrome is at least 24px.
+//   That is an extra constraint, not a substitute for a clear center.
+// scrollIntoView of the end marker does not look at the other controls, so after that scroll we nudge
+// until every control's center is clear, using the chrome's real boxes.
 
 export const MIN_UNOBSCURED = 24;
 
@@ -72,66 +74,75 @@ export function targetClears(target: Box, covers: readonly Box[], min = MIN_UNOB
   return bigEnough(target, covers, min);
 }
 
+/** The point obscuredFocus samples: the control's center, clamped into the viewport. */
+export function sampledCenter(target: Box, viewportHeight: number, viewportWidth = 390): { x: number; y: number } {
+  const cx = (target.left + target.right) / 2;
+  const cy = (target.top + target.bottom) / 2;
+  return {
+    x: Math.min(Math.max(cx, 1), Math.max(1, viewportWidth - 1)),
+    y: Math.min(Math.max(cy, 1), Math.max(1, viewportHeight - 1)),
+  };
+}
+
+/** True when that sampled center lands on the header, the tab bar or a sticky bar. */
+export function centerHitsChrome(target: Box, covers: readonly Box[], viewportHeight: number, viewportWidth = 390): boolean {
+  const { x, y } = sampledCenter(target, viewportHeight, viewportWidth);
+  return covers.some((c) => x >= c.left && x <= c.right && y >= c.top && y <= c.bottom);
+}
+
+/** Center clear of the chrome, and the 24px target-size run on top of that. */
+export function focusClears(target: Box, covers: readonly Box[], viewportHeight: number, viewportWidth = 390, min = MIN_UNOBSCURED): boolean {
+  if (target.bottom <= target.top || target.right <= target.left) return true;
+  if (centerHitsChrome(target, covers, viewportHeight, viewportWidth)) return false;
+  return targetClears(target, covers, min);
+}
+
 function shift(target: Box, delta: number): Box {
   return { top: target.top - delta, bottom: target.bottom - delta, left: target.left, right: target.right };
 }
 
-interface ClearStats {
-  fails: number;
-  visible: number;
-}
-
 /**
- * How far to scroll the document so controls stop failing target-size under the chrome.
+ * How far to scroll the document so each control's center is clear of the chrome and the 24px run holds.
  * Positive scrolls down (content moves up). 0 when no move helps.
- * A control fully under the chrome passes target-size (nothing of it can be hit), so a drop in the
- * fail count is not enough: every control that has room before the nudge must still have room after.
- * Among equal fixes, the smaller move wins.
+ * A control whose center is already clear must stay clear. Fully covering one, or leaving a 24px sliver
+ * whose center is still on the chrome, does not count. Among equal fixes, the smaller move wins.
  */
-export function scrollDeltaToClear(targets: readonly Box[], covers: readonly Box[], min = MIN_UNOBSCURED): number {
+export function scrollDeltaToClear(targets: readonly Box[], covers: readonly Box[], min = MIN_UNOBSCURED, viewportHeight = 844, viewportWidth = 390): number {
   const live = targets.filter((t) => t.bottom > t.top && t.right > t.left);
-  const hadRoom = live.map((t) => targetHasRoom(t, covers, min));
-  const statsOf = (delta: number): ClearStats => {
-    let fails = 0;
-    let visible = 0;
-    for (const t of live) {
-      const s = shift(t, delta);
-      if (!targetClears(s, covers, min)) fails += 1;
-      if (targetHasRoom(s, covers, min)) visible += 1;
-    }
-    return { fails, visible };
-  };
-  const keepsRoom = (delta: number) => live.every((t, i) => !hadRoom[i] || targetHasRoom(shift(t, delta), covers, min));
-  const base = statsOf(0);
+  const ok = (t: Box) => focusClears(t, covers, viewportHeight, viewportWidth, min);
+  const hadClearCenter = live.map((t) => ok(t));
+  const failsOf = (delta: number) => live.filter((t) => !ok(shift(t, delta))).length;
+  const keepsCenters = (delta: number) => live.every((t, i) => !hadClearCenter[i] || ok(shift(t, delta)));
+  const baseFails = failsOf(0);
   const candidates = new Set<number>();
   for (const t of live) {
-    if (targetClears(t, covers, min)) continue;
+    if (ok(t)) continue;
+    const cy = (t.top + t.bottom) / 2;
+    for (const c of covers) {
+      if (c.right <= t.left || c.left >= t.right) continue;
+      // center just above this cover, and just below it
+      candidates.add(Math.ceil(cy - c.top + 1));
+      candidates.add(Math.floor(cy - c.bottom - 1));
+    }
     for (const c of fullBleedCovers(t, covers)) {
-      // wholly on one side of the cover
+      // a 24px run on one side of the cover, and wholly to one side
       candidates.add(Math.ceil(t.bottom - c.top));
       candidates.add(Math.floor(t.top - c.bottom));
-      // a 24px run on one side of the cover
       candidates.add(Math.ceil(t.top + min - c.top));
       candidates.add(Math.floor(t.bottom - min - c.bottom));
     }
   }
-  const improves = (s: ClearStats) => s.fails < base.fails || (s.fails === base.fails && s.visible > base.visible);
-  const better = (s: ClearStats, delta: number, best: ClearStats, bestDelta: number) => {
-    if (s.fails !== best.fails) return s.fails < best.fails;
-    if (s.visible !== best.visible) return s.visible > best.visible;
-    return Math.abs(delta) < Math.abs(bestDelta);
-  };
   let bestDelta = 0;
-  let best = base;
+  let bestFails = baseFails;
   for (const delta of candidates) {
-    if (delta === 0 || !keepsRoom(delta)) continue;
-    const s = statsOf(delta);
-    if (improves(s) && better(s, delta, best, bestDelta)) {
-      best = s;
+    if (delta === 0 || !keepsCenters(delta)) continue;
+    const fails = failsOf(delta);
+    if (fails < bestFails || (fails === bestFails && bestDelta !== 0 && Math.abs(delta) < Math.abs(bestDelta))) {
+      bestFails = fails;
       bestDelta = delta;
     }
   }
-  return bestDelta;
+  return bestFails < baseFails ? bestDelta : 0;
 }
 
 export interface SettleHeights {
@@ -175,7 +186,7 @@ function stickyCovers(): Box[] {
   return out;
 }
 
-/** Nudge the document until controls in `root` are not left as a sliver under sticky chrome. */
+/** Nudge the document until each control's center is clear of the header, the tab bar and sticky bars. */
 export function clearObscuredControls(root: ParentNode): void {
   if (typeof window === 'undefined' || typeof window.scrollBy !== 'function') return;
   const controls = [...root.querySelectorAll<HTMLElement>(CONTROLS)].filter((e) => {
@@ -184,7 +195,7 @@ export function clearObscuredControls(root: ParentNode): void {
     return r.width >= 1 && r.height >= 1;
   });
   for (let pass = 0; pass < 4; pass++) {
-    const delta = scrollDeltaToClear(controls.map(boxOf), stickyCovers());
+    const delta = scrollDeltaToClear(controls.map(boxOf), stickyCovers(), MIN_UNOBSCURED, window.innerHeight, window.innerWidth);
     if (delta === 0) return;
     const before = window.scrollY;
     window.scrollBy(0, delta);

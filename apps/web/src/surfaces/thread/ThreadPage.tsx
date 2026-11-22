@@ -218,10 +218,20 @@ function Messages({ items, mail = [], contact, firstContactOpen = false }: { ite
       return h;
     };
     const measure = (): SettleHeights => ({ above: above(), compose: compose() });
+    // The media tray grows the bar after the first measure. Publish that height before scrolling so
+    // scroll-padding and the conversation scroll-margin match the real [data-sticky] box.
+    const syncCompose = () => {
+      const px = compose();
+      if (px <= 0) return;
+      const raw = document.documentElement.style.getPropertyValue('--sticky-bottom-h');
+      const current = raw ? parseFloat(raw) : 0;
+      if (!(current >= px - 0.5)) document.documentElement.style.setProperty('--sticky-bottom-h', `${Math.ceil(px)}px`);
+    };
     const settle = () => {
       if (settling) return;
       settling = true;
       try {
+        syncCompose();
         end.current?.scrollIntoView?.({ block: 'end', inline: 'nearest' });
         clearObscuredControls(listEl.closest('main') ?? listEl);
       } finally {
