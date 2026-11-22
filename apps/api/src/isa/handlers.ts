@@ -248,7 +248,7 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
     kind: 'ai_isa.turn', queue: 'realtime', mode: 'standalone', via: 'assistant', schema: TurnPayload, maxAttempts: 5,
     async run(ctx, p) {
       const deps = isaDeps(depsFor, ctx.providers);
-      const r = await runTurn(deps, ctx.actor.tenantId, p);
+      const r = await runTurn(deps, ctx.actor.tenantId, p, { jobId: ctx.job.id.toString() });
       if (r.kind === 'retry') return { retryAt: r.retryAt };
     },
   };

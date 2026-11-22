@@ -172,4 +172,30 @@ describe('R-ISA-4 R-ISA-20: every follow-up of one epoch is its own turn', () =>
     expect((await careOf(l.id)).machine.awaitingModel).toBe(false);
     expect((await aiMessages(h, l.id)).map((m) => m.status)).toEqual(['sent', 'sent', 'sent']);
   }));
+
+  it('R-ISA-4: two follow-up jobs queued before the payload carried `at`: the earlier one does nothing; only the job whose own run_at is next_follow_up_at sends', () => initiatedDayNow(h, w.tenantId, openZone(), async () => {
+    const l = await inCare();
+    const care = await careOf(l.id);
+    const [current] = await pendingFollowUps(care.id);
+    expect(typeof current!.payload.at).toBe('number');
+    const next = (await h.su.query<{ at: Date }>(`SELECT next_follow_up_at AS at FROM ai_isa_assignments WHERE id = $1`, [care.id])).rows[0]!.at;
+    // both jobs are the legacy shape: no `at`. Their run_at is the only instant each one has.
+    const legacy = { ...current!.payload };
+    delete legacy.at;
+    await h.su.query(`UPDATE jobs SET payload = $2::jsonb, run_at = $3 WHERE id = $1`, [current!.id, JSON.stringify(legacy), next]);
+    const earlier = (await h.su.query<{ id: string }>(`INSERT INTO jobs (tenant_id, queue, kind, payload, run_at, dedupe_key)
+      VALUES ($1, 'default', 'ai_isa.turn', $2::jsonb, $3::timestamptz - interval '1 day', $4) RETURNING id`,
+      [w.tenantId, JSON.stringify(legacy), next, `ai_isa.timer:${care.id}:follow_up:earlier`])).rows[0]!;
+    await threeDaysPass(l);
+    const calls = w.ai.calls.length;
+    const before = { care: await careOf(l.id), messages: await aiMessages(h, l.id) };
+    const run = (jobId: string) => runTurn(depsFromPlatform(h.app.platform) as never, w.tenantId, legacy, { jobId });
+    expect(await run(earlier.id)).toEqual({ kind: 'done', code: 'FOLLOW_UP_SUPERSEDED' });
+    expect(w.ai.calls.length).toBe(calls);
+    expect(await followUpTurns(l.id)).toHaveLength(0);
+    expect({ care: await careOf(l.id), messages: await aiMessages(h, l.id) }).toEqual(before);
+    expect(await run(current!.id)).toEqual({ kind: 'done', code: 'QUEUED' });
+    await runIsa(h, w.tenantId, 1);
+    await expectFollowUp(l, 1, calls);
+  }));
 });
