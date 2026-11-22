@@ -17,6 +17,7 @@
 //   POST /imports/:id/stages/:category/skip           a stage the team does not import
 //   POST /imports/:id/revert                          { category? } (R-IMPORT-10)
 //   POST /imports/:id/abandon                         purge the FUB key now (R-IMPORT-11)
+//   GET|PUT /imports/:id/deal-stages                FUB deal stage → Realty OS stage or ignore; saving re-resolves held deals
 //   GET|PUT /imports/:id/parity                     stage map, keep-stage-as-tag, typed custom fields (R-PAR-46; resets the contacts dry run);
 //                                                     GET also carries the import's source review (R-LSRC-10, E728): every
 //                                                     label found and the no-label group, with state and counts (the Owner
@@ -41,6 +42,7 @@ import { defaultFubConnector } from './handlers.js';
 import * as brepo from './repos/batches.js';
 import * as rrepo from './repos/records.js';
 import { type ParityView, getParity, setParity } from './parity.js';
+import { getDealStages, setDealStages } from './dealStages.js';
 import { requestRevert } from './revert.js';
 import * as S from './schemas.js';
 import { MAX_FILE_BASE64_CHARS } from './schemas.js';
@@ -172,6 +174,11 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
       r.get('/imports/:id/parity', { ...auth, schema: { params: S.IdParams, response: { 200: S.ParityResponse } } }, async (req) => parityResponse(await getParity(deps(req), actorOf(req), req.params.id)));
       r.put('/imports/:id/parity', { ...auth, schema: { params: S.IdParams, body: S.ParityBody, response: { 200: S.ParityResponse } } }, async (req) =>
         parityResponse(await setParity(deps(req), actorOf(req), req.params.id, req.body as never)),
+      );
+
+      r.get('/imports/:id/deal-stages', { ...auth, schema: { params: S.IdParams, response: { 200: S.DealStagesResponse } } }, async (req) => getDealStages(deps(req), actorOf(req), req.params.id));
+      r.put('/imports/:id/deal-stages', { ...auth, schema: { params: S.IdParams, body: S.DealStagesBody, response: { 200: S.DealStagesResponse } } }, async (req) =>
+        setDealStages(deps(req), actorOf(req), req.params.id, req.body.dealStageMap),
       );
 
       r.put('/imports/:id/csv-mapping', { ...auth, schema: { params: S.IdParams, body: S.CsvMappingBody, response: { 200: S.BatchResponse } } }, async (req) => {

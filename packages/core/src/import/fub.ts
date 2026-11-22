@@ -596,9 +596,12 @@ function mapCall(raw: unknown, users: UserMapping): RecordOutcome<NormalizedCall
 export interface FubMapContext {
   /** When the appointment ended, relative to this instant: past is history, future stays scheduled. */
   now?: Instant;
-  /** FUB deal stage label → Realty OS deal stage. Checked before the built-in names. */
-  dealStageMap?: Readonly<Record<string, DealStage>>;
+  /** FUB deal stage label → Realty OS deal stage, or `ignore` (do not import). Checked before the built-in names. */
+  dealStageMap?: Readonly<Record<string, DealStageChoice>>;
 }
+
+/** A Follow Up Boss deal stage the owner placed, or `ignore` (those deals are not imported). */
+export type DealStageChoice = DealStage | 'ignore';
 
 const DEAL_STAGES: readonly DealStage[] = ['prospect', 'agreement_signed', 'active', 'under_contract', 'closed', 'lost'];
 
@@ -657,16 +660,25 @@ const DEAL_SIDE_WORDS: Record<string, DealSide> = {
   tenant: 'lease',
 };
 
-/** The Realty OS deal stage for a FUB stage label, or null when nobody (map or vocabulary) can place it. */
-export function mapDealStage(label: string | null | undefined, map: Readonly<Record<string, DealStage>> = {}): DealStage | null {
-  if (label === null || label === undefined) return null;
+/**
+ * Where a FUB deal stage label lands. An explicit map entry wins over the built-in names.
+ * `ignore` is a decision to leave the deals out. Null stage and not ignored means nobody can place it.
+ */
+export function dealStageChoice(label: string | null | undefined, map: Readonly<Record<string, DealStageChoice>> = {}): { stage: DealStage | null; ignored: boolean } {
+  if (label === null || label === undefined) return { stage: null, ignored: false };
   const trimmed = label.trim();
-  if (trimmed === '') return null;
+  if (trimmed === '') return { stage: null, ignored: false };
   if (Object.hasOwn(map, trimmed)) {
     const chosen = map[trimmed];
-    return chosen !== undefined && (DEAL_STAGES as readonly string[]).includes(chosen) ? chosen : null;
+    if (chosen === 'ignore') return { stage: null, ignored: true };
+    return { stage: chosen !== undefined && (DEAL_STAGES as readonly string[]).includes(chosen) ? chosen : null, ignored: false };
   }
-  return DEAL_STAGE_WORDS[foldKey(trimmed)] ?? null;
+  return { stage: DEAL_STAGE_WORDS[foldKey(trimmed)] ?? null, ignored: false };
+}
+
+/** The Realty OS deal stage for a FUB stage label, or null when nobody (map or vocabulary) can place it. `ignore` is null. */
+export function mapDealStage(label: string | null | undefined, map: Readonly<Record<string, DealStageChoice>> = {}): DealStage | null {
+  return dealStageChoice(label, map).stage;
 }
 
 function mapDealSide(pipeline: string | null | undefined): DealSide | null {
@@ -739,9 +751,10 @@ function mapDeal(raw: unknown, users: UserMapping, ctx: FubMapContext): RecordOu
   const name = lineField(d.name, 'name', 300, issues) ?? `Deal ${d.id}`;
   const stageLabel = lineField(d.stageName, 'stageName', 200, issues);
   const pipelineLabel = lineField(d.pipelineName, 'pipelineName', 200, issues);
-  const stage = mapDealStage(stageLabel, ctx.dealStageMap ?? {});
-  if (stageLabel !== null && stage === null) issues.push({ code: 'STAGE_UNMAPPED', severity: 'review', field: 'stageName' });
-  if (stageLabel === null && stage === null) issues.push({ code: 'STAGE_UNMAPPED', severity: 'review', field: 'stageName' });
+  const choice = dealStageChoice(stageLabel, ctx.dealStageMap ?? {});
+  const stage = choice.stage;
+  if (choice.ignored) issues.push({ code: 'STAGE_IGNORED', severity: 'error' });
+  else if (stage === null) issues.push({ code: 'STAGE_UNMAPPED', severity: 'review', field: 'stageName' });
   const side = mapDealSide(pipelineLabel);
   if (side === null) issues.push({ code: 'SIDE_UNMAPPED', severity: 'review', field: 'pipelineName' });
 

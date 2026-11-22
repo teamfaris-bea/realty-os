@@ -53,6 +53,8 @@ export type IssueCode =
   | 'VALUE_TRUNCATED'
   | 'TOO_MANY_VALUES'
   | 'STAGE_UNMAPPED'
+  /** The owner marked this Follow Up Boss deal stage as one this import does not bring over. */
+  | 'STAGE_IGNORED'
   | 'TYPE_UNMAPPED'
   | 'INTENT_UNMAPPED'
   | 'NAME_MISSING'

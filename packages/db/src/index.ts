@@ -16,6 +16,7 @@ export {
   type TenantTxOptions,
   type Tx,
   actorGucs,
+  applyGucs,
   dbNow,
   isRetryable,
   setOwnershipCommand,

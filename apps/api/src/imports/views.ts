@@ -22,6 +22,7 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   TAG_LIMIT: 'These tags would pass the 1,000-tag limit. Merge or delete some tags first; the ones that do not fit stay as text on each person.',
   CUSTOM_FIELD_LIMIT: 'These new custom fields would pass the 50-field limit. Map some onto existing fields or keep them as text.',
   STAGE_UNMAPPED: 'The stage name is not one we know. For a person it uses the stage chosen in the stage map. For a deal it waits in review and is not guessed.',
+  STAGE_IGNORED: 'This Follow Up Boss stage is marked "Don\'t import", so the deal is left out.',
   ASSIGNEE_UNMAPPED: 'A Follow Up Boss user on this record is not mapped to a team member. It does not stop the import. When a team member can still be placed on it, the record comes in; otherwise it waits in review.',
   SIDE_UNMAPPED: 'The deal pipeline is not buy, sell, dual or lease, so the deal waits in review.',
   COMMISSION_SPLIT_INVALID: 'The agent and team commission are more than the gross, or a commission was given with no gross. The deal waits in review. The amounts were not changed.',

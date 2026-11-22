@@ -24,10 +24,11 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ImportBatch, ImportCounts, ImportRecord, ImportStage, MappingsResponse, MembersResponse, Pond, ReportResponse, VerificationResponse } from '../admin/lib/types.js';
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
+import { DealStageMap } from './DealStageMap.js';
 import { ParityMapping } from './ParityMapping.js';
 import { ImportLabelList, type ImportLabelView, REVIEW_PATH } from '../lead-sources/ImportLabels.js';
 import { IN_REVIEW_MEANS, WHAT_CHOOSING_DOES, afterImportLine, beforeImportLine } from '../lead-sources/reviewWords.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, sourceReviewIsAStep, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, type DealStagesResponse, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, sourceReviewIsAStep, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -172,6 +173,7 @@ export function ImportPage() {
           {b.source === 'csv' && b.csv && !b.stages.some((s) => ['approved', 'committing', 'committed', 'verified'].includes(s.status)) ? <CsvMapping batch={b} onDone={announce} /> : null}
           {b.source !== 'csv' && b.snapshotSha256 && b.stages.some((s) => s.category === 'ownership' && !['verified', 'skipped', 'committed', 'committing'].includes(s.status)) ? <UserMappings batch={b} onDone={announce} /> : null}
           {b.snapshotSha256 && parityEditable(b.stages) ? <Parity batch={b} onDone={announce} /> : null}
+          {b.source !== 'csv' && b.snapshotSha256 ? <DealStages batch={b} onDone={announce} /> : null}
           {sourceReviewIsAStep(b) ? <ReviewSourcesStep batch={b} /> : null}
           <Section title="Categories" description="Each category is checked, approved, imported and verified on its own. A category imports only after the ones above it are verified or skipped.">
             <ol className="flex flex-col gap-3">
@@ -202,6 +204,13 @@ function Parity({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void
   if (q.isError) return sourceReviewIsAStep(batch) ? null : <QueryError error={q.error} retry={() => void q.refetch()} />;
   if (!q.data) return null;
   return <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />;
+}
+
+function DealStages({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void }) {
+  const q = useImportsQuery<DealStagesResponse>([...batchKey(batch.id), 'deal-stages', batch.snapshotSha256], `/imports/${batch.id}/deal-stages`);
+  if (q.isError) return <QueryError error={q.error} retry={() => void q.refetch()} />;
+  if (!q.data) return null;
+  return <DealStageMap key={JSON.stringify(q.data.dealStageMap) + q.data.unmappedDeals} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />;
 }
 
 const sourceOf = (source: string): string => (source === 'csv' ? 'Your file' : 'Follow Up Boss');
