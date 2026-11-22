@@ -2,6 +2,8 @@
 // Saving the map writes a held deal once, leaves an ignored stage out, and a second save
 // does not add another deal. An agent cannot see it.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sql } from 'kysely';
+import { withTenantTx } from '@realty/db';
 import { type ImportWorld, type ImportsHarness, approve, call, commitStage, dryRunStage, fullStage, importWorld, importsHarness, records, startFub } from './testing.js';
 
 const KEY = 'fub-deal-stage-map';
@@ -149,6 +151,11 @@ describe('deal stage map', () => {
     expect(map.status).toBe(200);
     for (const cat of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent'] as const) await fullStage(ih, w.owner, b.id, cat);
     const dry = await dryRunStage(ih, w.owner, b.id, 'deals');
+    const unmapped = await records(w.owner, b.id, 'deals', 'needs_review');
+    expect(unmapped).toHaveLength(1);
+    const refused = await call(w.owner, 'POST', `/imports/${b.id}/records/${unmapped[0]!.id}/review`, { decision: 'import' });
+    expect(refused.status).toBe(422);
+    expect(refused.code).toBe('IMPORT_REVIEW_INVALID');
     const first = await call<{ plannedNow: number; importedNow: number }>(w.owner, 'PUT', `/imports/${b.id}/deal-stages`, { dealStageMap: { 'Waiting On Lender': 'active' } });
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ plannedNow: 1, importedNow: 0 });
@@ -176,14 +183,11 @@ describe('deal stage map', () => {
       [w.tenantId],
     );
     expect(history).toEqual([{ actor_kind: 'system', from_stage: null, changed_by_user_id: null, to_stage: 'agreement_signed' }]);
-    // The shape app.scoreboard_activity is being taught to skip: system, opening row (from_stage null).
-    const counted = await q<{ n: number }>(
-      `SELECT count(*)::int AS n FROM deal_stage_history h
-         JOIN deals d ON d.tenant_id = h.tenant_id AND d.id = h.deal_id
-        WHERE d.tenant_id = $1 AND d.name = 'Paperwork' AND h.to_stage = 'agreement_signed'
-          AND NOT (h.actor_kind = 'system' AND h.from_stage IS NULL)`,
-      [w.tenantId],
+    const signed = await withTenantTx(
+      w.agents[0]!.actor(),
+      async (tx) => Number((await sql<{ n: string }>`SELECT agreements_signed::text AS n FROM app.scoreboard_activity(${[w.agents[0]!.userId]}::uuid[], now() - interval '2 days', now() + interval '1 hour')`.execute(tx)).rows[0]!.n),
+      { db: ih.h.database },
     );
-    expect(counted[0]!.n).toBe(0);
+    expect(signed).toBe(0);
   });
 });
