@@ -4,7 +4,7 @@
 // POST /contacts/:id/stage, with Undo. A drop reads that person's locked stages first and never
 // posts onto one. Scrolling a column loads the next page of people.
 import { type InfiniteData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ReactNode, type UIEvent, useId, useRef, useState } from 'react';
+import { type ReactNode, type UIEvent, useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Dialog, EmptyState, Notice } from '../../design/index.js';
 import { ApiError, messageFor, useApi } from '../../shell/index.js';
@@ -140,7 +140,7 @@ function Pipeline() {
       {counts.isError ? <Notice tone="error">{messageFor(counts.error, PEOPLE_ERROR_MESSAGES)}</Notice> : null}
       {moveError ? <Notice tone="error">{moveError}</Notice> : null}
       {desktop ? (
-        <div className="flex gap-3 overflow-x-auto pb-2" aria-label="Stages">
+        <div tabIndex={0} role="region" aria-label="Stages" className="flex gap-3 overflow-x-auto pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
           {stages.map((s) => (
             <Column
               key={s.key}
@@ -278,7 +278,7 @@ function PhoneBoard({
   const current = stages.find((s) => s.key === selected) ?? stages[0];
   return (
     <div className="flex flex-col gap-3">
-      <div role="tablist" aria-label="Stages" className="flex gap-2 overflow-x-auto pb-1">
+      <div role="tablist" aria-label="Stages" tabIndex={0} className="flex gap-2 overflow-x-auto pb-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
         {stages.map((s) => {
           const c = countOf(s.key);
           const n = c ? countLabel(c.count, c.capped) : '…';
@@ -291,17 +291,22 @@ function PhoneBoard({
           );
         })}
       </div>
-      <StagePeople definition={definition} label={current?.label ?? 'Stage'} stage={current?.key ?? selected} empty={<EmptyState icon="people" title="No one in this stage" />} onOpenMove={onOpenMove} />
+      <StagePeople definition={definition} label={current?.label ?? 'Stage'} stage={current?.key ?? selected} pageScroll empty={<EmptyState icon="people" title="No one in this stage" />} onOpenMove={onOpenMove} />
     </div>
   );
 }
 
 /** The people in one stage. Scrolling near the bottom of this list loads the next page. */
+function nearEnd(el: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+}
+
 function StagePeople({
   definition,
   label,
   stage,
   draggable = false,
+  pageScroll = false,
   empty,
   onDragPerson,
   onOpenMove,
@@ -310,23 +315,37 @@ function StagePeople({
   label: string;
   stage: string;
   draggable?: boolean;
+  /** Phone: the page scrolls, so the list stays in normal flow and clears the tab bar. */
+  pageScroll?: boolean;
   empty?: ReactNode;
   onDragPerson?: (id: string, from: string) => void;
   onOpenMove: (p: PersonView) => void;
 }) {
   const q = usePeople({ kind: 'definition', definition, label });
   const people = (q.data as InfiniteData<PeoplePage> | undefined)?.pages.flatMap((p) => p.people) ?? [];
-  const onScroll = (e: UIEvent<HTMLUListElement>) => {
-    const el = e.currentTarget;
-    if (!q.hasNextPage || q.isFetchingNextPage) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) void q.fetchNextPage();
+  const more = () => {
+    if (q.hasNextPage && !q.isFetchingNextPage) void q.fetchNextPage();
   };
+  const moreRef = useRef(more);
+  moreRef.current = more;
+  const onScroll = (e: UIEvent<HTMLUListElement>) => {
+    if (nearEnd(e.currentTarget)) moreRef.current();
+  };
+  useEffect(() => {
+    if (!pageScroll) return;
+    const onWindow = () => {
+      const doc = document.documentElement;
+      if (nearEnd({ scrollHeight: doc.scrollHeight, scrollTop: window.scrollY, clientHeight: window.innerHeight })) moreRef.current();
+    };
+    window.addEventListener('scroll', onWindow, { passive: true });
+    return () => window.removeEventListener('scroll', onWindow);
+  }, [pageScroll]);
   return (
     <>
       {q.isError ? <Notice tone="error">{messageFor(q.error, PEOPLE_ERROR_MESSAGES)}</Notice> : null}
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.data && people.length === 0 ? (empty ?? <p className="px-1 py-2 text-[14px] text-ink-muted">No one here.</p>) : null}
-      <ul aria-label={`People in ${label}`} className="flex max-h-[70vh] flex-col gap-2 overflow-y-auto" onScroll={onScroll}>
+      <ul aria-label={`People in ${label}`} className={pageScroll ? 'flex flex-col gap-2' : 'flex max-h-[70vh] flex-col gap-2 overflow-y-auto'} onScroll={onScroll}>
         {people.map((p) => (
           <li key={p.id}>
             <PersonCard person={p} draggable={draggable} onDragStart={onDragPerson ? () => onDragPerson(p.id, stage) : undefined} onMove={() => onOpenMove(p)} />
@@ -346,7 +365,7 @@ function PersonCard({ person, draggable = false, onDragStart, onMove }: { person
       className="flex flex-col gap-1 rounded-xl border border-line bg-surface px-3 py-2"
     >
       <div className="flex items-start gap-2">
-        <Link to={`/contacts/${person.id}`} className="min-w-0 flex-1 text-[16px] font-medium text-ink underline-offset-2 hover:underline [overflow-wrap:anywhere]">
+        <Link to={`/contacts/${person.id}`} className="inline-flex min-h-tap min-w-tap flex-1 items-center text-[16px] font-medium text-ink underline-offset-2 hover:underline [overflow-wrap:anywhere]">
           {person.displayName}
         </Link>
         <Button variant="quiet" className="shrink-0" onClick={onMove} aria-label={`Move ${person.displayName}`}>
