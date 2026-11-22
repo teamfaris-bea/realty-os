@@ -6,19 +6,23 @@
 //   GET /imports/:id/deal-stages   every stage name in the snapshot, with how many deals, the
 //                                  built-in suggestion, the saved choice, and how many deals are
 //                                  waiting on STAGE_UNMAPPED
-//   PUT /imports/:id/deal-stages   saves the map and re-resolves the deals that are waiting (and
-//                                  deals an earlier save left out). A deal already imported is not
-//                                  written again (external_refs). The change is audited.
+//   PUT /imports/:id/deal-stages   saves the map and re-resolves every deal row not yet written
+//                                  (a planned row, a row left out, a row still waiting on its person).
+//                                  A deal already imported is not written again (external_refs).
+//                                  On a committed step the new deal is inserted as the import system,
+//                                  so its opening stage history is not a person's scoreboard event.
+//                                  The change is audited.
 //
 // Owner/Admin only, the same `import.run` re-authentication as the rest of the import.
 import type { DealStage, DealStageChoice, Issue, NormalizedDeal } from '@realty/core/import';
 import { dealStageChoice } from '@realty/core/import';
 import type { Instant, UserActor } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
-import { type Tx, withTenantTx } from '@realty/db';
+import { actorGucs, applyGucs, type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
+import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
 import * as rrepo from './repos/records.js';
 import * as w from './repos/writes.js';
@@ -67,10 +71,6 @@ function asInstantOrNull(v: unknown): Instant | null {
 }
 
 /** Drop the stage issues this screen owns, and keep everything else the dry run recorded. */
-function withoutStageChoice(issues: readonly Issue[]): Issue[] {
-  return issues.filter((i) => i.code !== 'STAGE_UNMAPPED' && i.code !== 'STAGE_IGNORED');
-}
-
 function hasReview(issues: readonly Issue[]): boolean {
   return issues.some((i) => i.severity === 'review' || (i.severity === 'error' && i.field !== undefined));
 }
@@ -172,12 +172,15 @@ async function insertDeal(
 async function refreshCounts(tx: Tx, stage: brepo.StageRow): Promise<void> {
   const committed = stage.status === 'committed' || stage.status === 'verified';
   if (committed) {
+    // The approval baseline is what a later verification compares. Refresh it in this same
+    // transaction so a save after verify does not leave the old totals.
+    const c = await rrepo.recount(tx, stage.id);
+    const expected = { source: c.source, imported: c.imported, needs_review: c.needs_review, rejected: c.rejected, duplicate: c.duplicate };
     await sql`UPDATE import_stages SET
-                count_imported = (SELECT count(*)::int FROM import_records WHERE tenant_id = app.tenant_id() AND stage_id = ${stage.id} AND outcome = 'imported'),
-                count_needs_review = (SELECT count(*)::int FROM import_records WHERE tenant_id = app.tenant_id() AND stage_id = ${stage.id} AND outcome = 'needs_review'),
-                count_rejected = (SELECT count(*)::int FROM import_records WHERE tenant_id = app.tenant_id() AND stage_id = ${stage.id} AND outcome = 'rejected'),
-                count_duplicate = (SELECT count(*)::int FROM import_records WHERE tenant_id = app.tenant_id() AND stage_id = ${stage.id} AND outcome = 'duplicate')
-               WHERE tenant_id = app.tenant_id() AND id = ${stage.id}`.execute(tx);
+                count_source = ${c.source}, count_imported = ${c.imported}, count_needs_review = ${c.needs_review},
+                count_rejected = ${c.rejected}, count_duplicate = ${c.duplicate},
+                expected_counts = ${JSON.stringify(expected)}::jsonb
+               WHERE tenant_id = app.tenant_id() AND id = ${stage.id} AND status IN ('committed', 'verified')`.execute(tx);
     return;
   }
   if (stage.status === 'dry_run_ready' || stage.status === 'approved') {
@@ -213,6 +216,32 @@ async function viewIn(deps: ImportDeps, tx: Tx, actor: UserActor, b: brepo.Batch
 
 function canon(m: Record<string, DealStageChoice>): string {
   return JSON.stringify(Object.fromEntries(Object.entries(m).sort(([a], [b]) => a.localeCompare(b))));
+}
+
+const RECOMPUTED = new Set(['STAGE_UNMAPPED', 'STAGE_IGNORED', 'PARENT_NOT_FOUND', 'ASSIGNEE_UNMAPPED']);
+
+function keptIssues(issues: readonly Issue[]): Issue[] {
+  return issues.filter((i) => !RECOMPUTED.has(i.code));
+}
+
+function codes(issues: readonly { code: string }[]): string {
+  return [...issues].map((i) => i.code).sort().join('|');
+}
+
+function planSig(plan: unknown): string {
+  if (plan === null || typeof plan !== 'object') return '';
+  const p = plan as { kind?: string; ownerUserId?: string; contact?: { pendingPersonRef?: string }; existingId?: string };
+  return `${p.kind ?? ''}|${p.ownerUserId ?? ''}|${p.contact?.pendingPersonRef ?? ''}|${p.existingId ?? ''}`;
+}
+
+/** The import system writes the deal, so the opening stage history is actor_kind system (not today's scoreboard). */
+async function insertAsImport(tx: Tx, actor: UserActor, write: () => Promise<string>): Promise<string> {
+  await applyGucs(tx, actorGucs(systemActor(actor.tenantId, 'import')));
+  try {
+    return await write();
+  } finally {
+    await applyGucs(tx, actorGucs(actor));
+  }
 }
 
 export async function getDealStages(deps: ImportDeps, actor: UserActor, batchId: string): Promise<DealStagesView> {
@@ -257,69 +286,103 @@ export async function setDealStages(deps: ImportDeps, actor: UserActor, batchId:
         const committed = stage.status === 'committed' || stage.status === 'verified';
         const system = SOURCE_SYSTEM[b.source];
         const members = await w.memberIds(tx);
-        const held = await rrepo.dealsAwaitingStage(tx, stage.id);
+        const held = await rrepo.unwrittenDeals(tx, stage.id);
         for (const rec of held) {
           const raw = rec.normalized as NormalizedDeal | null;
           if (!raw || raw.category !== 'deals') continue;
           const choice = dealStageChoice(raw.stageLabel, next);
-          if (!choice.ignored && choice.stage === null) continue;
-          const baseIssues = withoutStageChoice(rec.issues as Issue[]);
+          const ownerOnRecord = raw.ownerUserId !== null && members.has(raw.ownerUserId) ? raw.ownerUserId : null;
+          const base = keptIssues(rec.issues as Issue[]).filter((i) => !(ownerOnRecord !== null && i.code === 'ASSIGNEE_UNMAPPED'));
+          const blocking = hasReview(base) || raw.side === null || raw.primaryPersonRef === null;
           if (choice.ignored) {
-            if (rec.outcome === 'rejected' && (rec.issues as Issue[]).some((i) => i.code === 'STAGE_IGNORED')) continue;
-            const issues: Issue[] = [...baseIssues, { code: 'STAGE_IGNORED', severity: 'error' }];
-            const normalized: NormalizedDeal = { ...raw, stage: null };
-            await rrepo.writeDealResolution(tx, rec.id, {
-              normalized,
-              issues,
-              outcome: 'rejected',
-              dryRunOutcome: committed ? rec.dry_run_outcome : 'rejected',
+            const row = {
+              normalized: { ...raw, stage: null, closedAt: null, lostReason: null } as NormalizedDeal,
+              issues: [...base, { code: 'STAGE_IGNORED' as const, severity: 'error' as const }],
+              outcome: 'rejected' as const,
+              dryRunOutcome: committed ? rec.dry_run_outcome : ('rejected' as const),
               plan: null,
               targetTable: null,
               targetId: null,
               created: [],
-            });
+            };
+            if (rec.outcome === row.outcome && (!committed ? rec.dry_run_outcome === row.dryRunOutcome : true) && codes(rec.issues) === codes(row.issues) && (rec.normalized as NormalizedDeal).stage === null) continue;
+            await rrepo.writeDealResolution(tx, rec.id, row);
             ignoredNow += 1;
             changed += 1;
             continue;
           }
-          const normalized = placeStage(raw, choice.stage as DealStage, now);
-          const issues = baseIssues;
-          const blocked = hasReview(issues) || normalized.side === null || normalized.primaryPersonRef === null;
-          if (blocked || !committed) {
-            const owner = normalized.ownerUserId;
-            const canPlan = !blocked && owner !== null && normalized.primaryPersonRef !== null;
-            await rrepo.writeDealResolution(tx, rec.id, {
-              normalized,
-              issues,
-              outcome: canPlan ? 'will_import' : 'needs_review',
-              dryRunOutcome: committed ? rec.dry_run_outcome : canPlan ? 'will_import' : 'needs_review',
-              plan: canPlan ? { kind: 'insert_deal', contact: { pendingPersonRef: normalized.primaryPersonRef }, ownerUserId: owner } : null,
+          if (choice.stage === null) {
+            const row = {
+              normalized: { ...raw, stage: null } as NormalizedDeal,
+              issues: [...base, { code: 'STAGE_UNMAPPED' as const, severity: 'review' as const, field: 'stageName' }],
+              outcome: 'needs_review' as const,
+              dryRunOutcome: committed ? rec.dry_run_outcome : ('needs_review' as const),
+              plan: null,
               targetTable: null,
               targetId: null,
               created: [],
-            });
-            if (canPlan) plannedNow += 1;
+            };
+            if (rec.outcome === 'needs_review' && codes(rec.issues) === codes(row.issues) && (rec.normalized as NormalizedDeal).stage === null && (committed || rec.dry_run_outcome === 'needs_review')) continue;
+            await rrepo.writeDealResolution(tx, rec.id, row);
+            changed += 1;
+            continue;
+          }
+          const normalized = placeStage(raw, choice.stage, now);
+          if (blocking || ownerOnRecord === null) {
+            const issues: Issue[] = [...base];
+            if (ownerOnRecord === null && raw.primaryPersonRef !== null) issues.push({ code: 'ASSIGNEE_UNMAPPED', severity: 'review', field: 'users' });
+            const row = {
+              normalized,
+              issues,
+              outcome: 'needs_review' as const,
+              dryRunOutcome: committed ? rec.dry_run_outcome : ('needs_review' as const),
+              plan: null,
+              targetTable: null,
+              targetId: null,
+              created: [],
+            };
+            if (rec.outcome === row.outcome && codes(rec.issues) === codes(row.issues) && (rec.normalized as NormalizedDeal).stage === normalized.stage && planSig(rec.plan) === '' && (committed || rec.dry_run_outcome === row.dryRunOutcome)) continue;
+            await rrepo.writeDealResolution(tx, rec.id, row);
+            changed += 1;
+            continue;
+          }
+          if (!committed) {
+            const plan = { kind: 'insert_deal' as const, contact: { pendingPersonRef: normalized.primaryPersonRef }, ownerUserId: ownerOnRecord };
+            const row = {
+              normalized,
+              issues: base,
+              outcome: 'will_import' as const,
+              dryRunOutcome: 'will_import' as const,
+              plan,
+              targetTable: null,
+              targetId: null,
+              created: [],
+            };
+            // Already planned as this stage: a later save that picks a different stage falls through and replaces it.
+            if (rec.outcome === 'will_import' && rec.dry_run_outcome === 'will_import' && (rec.normalized as NormalizedDeal).stage === normalized.stage && planSig(rec.plan).startsWith('insert_deal')) continue;
+            await rrepo.writeDealResolution(tx, rec.id, row);
+            plannedNow += 1;
             changed += 1;
             continue;
           }
           const contact = await liveContactId(tx, system, normalized.primaryPersonRef as string);
-          const mappedOwner = normalized.ownerUserId !== null && members.has(normalized.ownerUserId) ? normalized.ownerUserId : null;
-          const contactOwner = contact?.ownerUserId && members.has(contact.ownerUserId) ? contact.ownerUserId : null;
-          const owner = mappedOwner ?? contactOwner;
+          const owner = ownerOnRecord ?? (contact?.ownerUserId && members.has(contact.ownerUserId) ? contact.ownerUserId : null);
           if (contact === null || owner === null) {
-            const extra: Issue[] = [...issues];
-            if (contact === null && !extra.some((i) => i.code === 'PARENT_NOT_FOUND')) extra.push({ code: 'PARENT_NOT_FOUND', severity: 'review' });
-            if (owner === null && !extra.some((i) => i.code === 'ASSIGNEE_UNMAPPED')) extra.push({ code: 'ASSIGNEE_UNMAPPED', severity: 'review', field: 'users' });
-            await rrepo.writeDealResolution(tx, rec.id, {
+            const issues: Issue[] = [...base];
+            if (contact === null) issues.push({ code: 'PARENT_NOT_FOUND', severity: 'review' });
+            if (owner === null) issues.push({ code: 'ASSIGNEE_UNMAPPED', severity: 'review', field: 'users' });
+            const row = {
               normalized,
-              issues: extra,
-              outcome: 'needs_review',
+              issues,
+              outcome: 'needs_review' as const,
               dryRunOutcome: rec.dry_run_outcome,
               plan: null,
               targetTable: null,
               targetId: null,
               created: [],
-            });
+            };
+            if (rec.outcome === 'needs_review' && codes(rec.issues) === codes(issues) && (rec.normalized as NormalizedDeal).stage === normalized.stage) continue;
+            await rrepo.writeDealResolution(tx, rec.id, row);
             changed += 1;
             continue;
           }
@@ -327,7 +390,7 @@ export async function setDealStages(deps: ImportDeps, actor: UserActor, batchId:
           if (existing) {
             await rrepo.writeDealResolution(tx, rec.id, {
               normalized,
-              issues,
+              issues: base,
               outcome: 'duplicate',
               dryRunOutcome: rec.dry_run_outcome,
               plan: { kind: 'skip', existingId: existing },
@@ -338,10 +401,10 @@ export async function setDealStages(deps: ImportDeps, actor: UserActor, batchId:
             changed += 1;
             continue;
           }
-          const id = await insertDeal(deps, tx, actor, nb, normalized, contact, owner, now);
+          const id = await insertAsImport(tx, actor, () => insertDeal(deps, tx, actor, nb, normalized, contact, owner, now));
           await rrepo.writeDealResolution(tx, rec.id, {
             normalized,
-            issues,
+            issues: base,
             outcome: 'imported',
             dryRunOutcome: rec.dry_run_outcome,
             plan: { kind: 'insert_deal', contact: { pendingPersonRef: normalized.primaryPersonRef }, ownerUserId: owner },

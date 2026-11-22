@@ -132,19 +132,20 @@ export async function allPlannedRecords(tx: Tx, stageId: string): Promise<Record
 }
 
 const STAGE_UNMAPPED_MARK = '[{"code":"STAGE_UNMAPPED"}]';
-const STAGE_IGNORED_MARK = '[{"code":"STAGE_IGNORED"}]';
 
 /**
- * Deals still waiting on a stage name, and deals an earlier save left out (`STAGE_IGNORED`) so a later
- * choice can bring them in. Locked in id order. Already-imported rows are not here, so a second save
- * cannot write them again.
+ * Every deal row this import has not written yet (no target deal). A later save of the stage map
+ * re-reads these, including a row an earlier save already planned (`will_import`) or held because
+ * its person was not here yet. Locked in id order. Imported and duplicate rows stay out, so a
+ * second save cannot write them again.
  */
-export async function dealsAwaitingStage(tx: Tx, stageId: string): Promise<RecordRow[]> {
+export async function unwrittenDeals(tx: Tx, stageId: string): Promise<RecordRow[]> {
   return (
     await sql<RecordRow>`SELECT ${COLS} FROM import_records
       WHERE tenant_id = app.tenant_id() AND stage_id = ${stageId}
-        AND ((outcome = 'needs_review' AND issues @> ${STAGE_UNMAPPED_MARK}::jsonb)
-          OR (outcome = 'rejected' AND issues @> ${STAGE_IGNORED_MARK}::jsonb))
+        AND dry_run_outcome IS NOT NULL
+        AND outcome IN ('will_import', 'needs_review', 'rejected')
+        AND target_id IS NULL
       ORDER BY id
       FOR UPDATE`.execute(tx)
   ).rows;
