@@ -84,10 +84,13 @@ interface ClearStats {
 /**
  * How far to scroll the document so controls stop failing target-size under the chrome.
  * Positive scrolls down (content moves up). 0 when no move helps.
- * Burying a control that already has room does not count as fixing one. Among equal fixes, the smaller move wins.
+ * A control fully under the chrome passes target-size (nothing of it can be hit), so a drop in the
+ * fail count is not enough: every control that has room before the nudge must still have room after.
+ * Among equal fixes, the smaller move wins.
  */
 export function scrollDeltaToClear(targets: readonly Box[], covers: readonly Box[], min = MIN_UNOBSCURED): number {
   const live = targets.filter((t) => t.bottom > t.top && t.right > t.left);
+  const hadRoom = live.map((t) => targetHasRoom(t, covers, min));
   const statsOf = (delta: number): ClearStats => {
     let fails = 0;
     let visible = 0;
@@ -98,6 +101,7 @@ export function scrollDeltaToClear(targets: readonly Box[], covers: readonly Box
     }
     return { fails, visible };
   };
+  const keepsRoom = (delta: number) => live.every((t, i) => !hadRoom[i] || targetHasRoom(shift(t, delta), covers, min));
   const base = statsOf(0);
   const candidates = new Set<number>();
   for (const t of live) {
@@ -120,7 +124,7 @@ export function scrollDeltaToClear(targets: readonly Box[], covers: readonly Box
   let bestDelta = 0;
   let best = base;
   for (const delta of candidates) {
-    if (delta === 0) continue;
+    if (delta === 0 || !keepsRoom(delta)) continue;
     const s = statsOf(delta);
     if (improves(s) && better(s, delta, best, bestDelta)) {
       best = s;
@@ -128,6 +132,25 @@ export function scrollDeltaToClear(targets: readonly Box[], covers: readonly Box
     }
   }
   return bestDelta;
+}
+
+export interface SettleHeights {
+  above: number;
+  compose: number;
+}
+
+export function settleKey(h: SettleHeights): string {
+  return `${h.above}:${h.compose}`;
+}
+
+/**
+ * Scroll the thread again when content above the list or the compose bar changes size.
+ * A pair already settled is skipped, so a grow-then-shrink loop stops, and a later compose-bar
+ * change is not dropped after several banner updates.
+ */
+export function shouldResettle(prev: SettleHeights, next: SettleHeights, seen: ReadonlySet<string>): boolean {
+  if (next.above === prev.above && next.compose === prev.compose) return false;
+  return !seen.has(settleKey(next));
 }
 
 const CONTROLS = 'button, a[href], summary, input:not([type=hidden]), select, textarea';

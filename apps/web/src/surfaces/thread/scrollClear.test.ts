@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type Box, scrollDeltaToClear, targetClears, targetHasRoom, unobscuredHeight } from './scrollClear.js';
+import { type Box, type SettleHeights, scrollDeltaToClear, settleKey, shouldResettle, targetClears, targetHasRoom, unobscuredHeight } from './scrollClear.js';
 
 const header: Box = { top: 0, right: 390, bottom: 52, left: 0 };
 const whyAt = (top: number, height = 44, left = 300, width = 59.25): Box => ({ top, bottom: top + height, left, right: left + width });
@@ -42,5 +42,36 @@ describe('thread scroll clear of sticky chrome', () => {
     const moved = (b: Box): Box => ({ ...b, top: b.top - delta, bottom: b.bottom - delta });
     expect(targetHasRoom(moved(early), [header, composer])).toBe(true);
     expect(targetHasRoom(moved(latest), [header, composer])).toBe(true);
+  });
+
+  it('does not bury a control that already has room to clear a sliver (fully covered still passes target-size)', () => {
+    const bar: Box = { top: 120, right: 390, bottom: 300, left: 0 };
+    const covers = [header, bar];
+    const sliver = whyAt(14);
+    const keeper = whyAt(60);
+    const neighbor = whyAt(90);
+    expect(targetHasRoom(keeper, covers)).toBe(true);
+    expect(targetHasRoom(neighbor, covers)).toBe(true);
+    expect(targetClears(sliver, covers)).toBe(false);
+    const delta = scrollDeltaToClear([sliver, keeper, neighbor], covers);
+    const moved = (b: Box): Box => ({ ...b, top: b.top - delta, bottom: b.bottom - delta });
+    expect(targetHasRoom(moved(keeper), covers)).toBe(true);
+    expect(targetHasRoom(moved(neighbor), covers)).toBe(true);
+  });
+});
+
+describe('thread settle watch', () => {
+  it('settles again when the compose bar grows, including after several changes above the list', () => {
+    const seen = new Set<string>();
+    let prev: SettleHeights = { above: 100, compose: 80 };
+    seen.add(settleKey(prev));
+    for (const above of [120, 140, 160, 180, 200]) {
+      const next = { above, compose: 80 };
+      expect(shouldResettle(prev, next, seen)).toBe(true);
+      seen.add(settleKey(next));
+      prev = next;
+    }
+    expect(shouldResettle(prev, { above: 200, compose: 80 }, seen)).toBe(false);
+    expect(shouldResettle(prev, { above: 200, compose: 160 }, seen)).toBe(true);
   });
 });

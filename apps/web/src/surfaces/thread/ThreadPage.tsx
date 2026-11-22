@@ -43,7 +43,7 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ComposeResponse, ContactFullView, MessageView, TimelineItem, TimelineResponse } from '../feed/lib/types.js';
 import { AiLabelsProvider, AiThreadBanner, useAiLabel } from '../aiCare/Thread.js'; // module 76 (flagged edit)
 import { useUndoOpen } from '../aiCare/undoStore.js';
-import { clearObscuredControls } from './scrollClear.js';
+import { clearObscuredControls, type SettleHeights, settleKey, shouldResettle } from './scrollClear.js';
 
 /** A web-chat message newer than this keeps the thread refreshing quickly (a visitor may still be on the page). */
 export const LIVE_CHAT_MS = 30 * 60_000;
@@ -185,14 +185,13 @@ function Messages({ items, mail = [], contact, firstContactOpen = false }: { ite
   const last = rows[rows.length - 1]?.item.id;
   const loaded = new Set(items.map((i) => i.id));
   // Open on the latest message, then keep every control out of the sticky header and the compose bar.
-  // Content above the list (the AI banner, mail coverage) often arrives a moment later and would
-  // otherwise slide a disclosure into that chrome. Scrolling again when that height changes puts it back.
+  // Content above the list (the AI banner, mail coverage) and the compose bar itself often finish
+  // after that first scroll. Scrolling again when either height changes puts disclosures back in the clear.
   useLayoutEffect(() => {
     const listEl = list.current;
     const column = listEl?.parentElement;
     if (!listEl) return;
     let settling = false;
-    let followUps = 0;
     const above = () => {
       if (!column) return 0;
       let h = 0;
@@ -202,6 +201,23 @@ function Messages({ items, mail = [], contact, firstContactOpen = false }: { ite
       }
       return h;
     };
+    // The compose bar sits after the list and can grow once its draft or channel row arrives.
+    const compose = () => {
+      if (!column) return 0;
+      let passed = false;
+      let h = 0;
+      for (const child of column.children) {
+        if (!passed) {
+          if (child === listEl) passed = true;
+          continue;
+        }
+        const el = child as HTMLElement;
+        const bar = el.matches('[data-sticky]') ? el : el.querySelector<HTMLElement>('[data-sticky]');
+        if (bar) h += bar.offsetHeight;
+      }
+      return h;
+    };
+    const measure = (): SettleHeights => ({ above: above(), compose: compose() });
     const settle = () => {
       if (settling) return;
       settling = true;
@@ -214,12 +230,13 @@ function Messages({ items, mail = [], contact, firstContactOpen = false }: { ite
     };
     settle();
     if (!column || typeof ResizeObserver === 'undefined') return;
-    let heightAbove = above();
+    let heights = measure();
+    const seen = new Set<string>([settleKey(heights)]);
     const ro = new ResizeObserver(() => {
-      const next = above();
-      if (next === heightAbove || followUps >= 4) return;
-      heightAbove = next;
-      followUps += 1;
+      const next = measure();
+      if (!shouldResettle(heights, next, seen)) return;
+      seen.add(settleKey(next));
+      heights = next;
       settle();
     });
     ro.observe(column);
