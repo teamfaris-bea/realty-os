@@ -65,6 +65,7 @@ function fake(b: ImportBatch, labels: () => ImportLabelView[]) {
     .on(`GET /imports/${BID}/report`, () => ({ status: 200, body: { source: 'Follow Up Boss', categories: [], parity: null, sourceLabels: labels() } }))
     .on(`GET /imports/${BID}/user-mappings`, { status: 200, body: { users: [], ponds: [], unmapped: 0, complete: true } })
     .on(`GET /imports/${BID}/parity`, () => ({ status: 200, body: parity(labels()) }))
+    .on(`GET /imports/${BID}/deal-stages`, { status: 200, body: { stages: [], unmappedDeals: 0, dealStageMap: {}, importedNow: 0, ignoredNow: 0, plannedNow: 0, approvalCleared: false } })
     .on('GET /lead-sources/overview', { status: 200, body: overview([source({ id: MARKED.id, name: MARKED.name, noAiCare: true, noAiCareSentence: 'on' }), source({ id: OPEN.id, name: OPEN.name })]) })
     .on('GET /members', { status: 200, body: { members: [], invites: [] } })
     .on('GET /ponds', { status: 200, body: { ponds: [] } });

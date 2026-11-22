@@ -58,6 +58,26 @@ const FieldActionBody = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('existing'), fieldId: z.uuid() }),
 ]);
 /** PUT /imports/:id/parity (R-PAR-46): labels and keys only, never contact data. */
+const DealStageChoice = z.enum(['prospect', 'agreement_signed', 'active', 'under_contract', 'closed', 'lost', 'ignore']);
+/** PUT /imports/:id/deal-stages: each Follow Up Boss stage name the owner placed, or `ignore`. */
+export const DealStagesBody = z.strictObject({
+  dealStageMap: z.record(z.string().trim().min(1).max(200), DealStageChoice).refine((m) => Object.keys(m).length <= 500, 'too_many'),
+});
+const DealStageRow = z.object({
+  label: z.string(),
+  deals: z.number(),
+  suggested: z.enum(['prospect', 'agreement_signed', 'active', 'under_contract', 'closed', 'lost']).nullable(),
+  choice: DealStageChoice.nullable(),
+});
+export const DealStagesResponse = z.object({
+  stages: z.array(DealStageRow),
+  unmappedDeals: z.number(),
+  dealStageMap: z.record(z.string(), DealStageChoice),
+  importedNow: z.number(),
+  ignoredNow: z.number(),
+  plannedNow: z.number(),
+  approvalCleared: z.boolean(),
+});
 export const ParityBody = z.strictObject({
   stageMap: z.record(z.string().trim().min(1).max(200), Stage8).refine((m) => Object.keys(m).length <= 500, 'too_many'),
   keepStageAsTag: z.boolean(),
@@ -268,6 +288,7 @@ export const IMPORTS_RESPONSE_SCHEMAS = {
   ReportResponse,
   CreatedResponse,
   ParityResponse,
+  DealStagesResponse,
 };
 
-export const IMPORTS_REQUEST_SCHEMAS = { CreateImportBody, MappingsBody, CsvMappingBody, RecordsQuery, ReviewBody, ApproveBody, VerifyBody, RevertBody, ParityBody };
+export const IMPORTS_REQUEST_SCHEMAS = { CreateImportBody, MappingsBody, CsvMappingBody, RecordsQuery, ReviewBody, ApproveBody, VerifyBody, RevertBody, ParityBody, DealStagesBody };

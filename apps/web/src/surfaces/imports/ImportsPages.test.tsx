@@ -47,6 +47,7 @@ function importFake(b: ImportBatch) {
     .on(`GET /imports/${BID}`, { status: 200, body: { batch: b } })
     .on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', categories: [] } })
     .on(`GET /imports/${BID}/user-mappings`, { status: 200, body: { users: [], ponds: [], unmapped: 0, complete: true } })
+    .on(`GET /imports/${BID}/deal-stages`, { status: 200, body: { stages: [], unmappedDeals: 0, dealStageMap: {}, importedNow: 0, ignoredNow: 0, plannedNow: 0, approvalCleared: false } })
     .on('GET /members', { status: 200, body: { members: [], invites: [] } })
     .on('GET /ponds', { status: 200, body: { ponds: [] } });
 }

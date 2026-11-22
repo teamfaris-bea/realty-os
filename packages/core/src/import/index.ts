@@ -37,6 +37,8 @@ export {
   MAX_BODY,
   mapFub,
   mapDealStage,
+  dealStageChoice,
+  type DealStageChoice,
   fubDollarsToCents,
   fubSourceRef,
   htmlToText,

@@ -103,6 +103,10 @@ describe('FUB deals', () => {
     const mapped = mapFub('deals', raw, USERS, { now: NOW, dealStageMap: { 'Waiting On Lender': 'active' } });
     expect(mapped.record).toMatchObject({ stage: 'active' });
     expect(mapped.issues.some((i) => i.code === 'STAGE_UNMAPPED')).toBe(false);
+    const ignored = mapFub('deals', raw, USERS, { now: NOW, dealStageMap: { 'Waiting On Lender': 'ignore' } });
+    expect(ignored.status).toBe('rejected');
+    expect(ignored.record).toBeNull();
+    expect(ignored.issues).toContainEqual({ code: 'STAGE_IGNORED', severity: 'error' });
   });
 
   it('an unknown person waits in review and does not fail the stage; a re-run is a duplicate', () => {

@@ -51,8 +51,8 @@ export interface BatchOptions {
   snapshotError?: string | null;
   /** PARITY 65 (R-PAR-46): the Admin's stage map, keep-stage-as-tag switch and custom field mapping */
   parity?: ParityOptions;
-  /** FUB deal stage label → Realty OS deal stage. A label absent here uses the built-in vocabulary. */
-  dealStageMap?: Record<string, 'prospect' | 'agreement_signed' | 'active' | 'under_contract' | 'closed' | 'lost'>;
+  /** FUB deal stage label → Realty OS deal stage, or `ignore` (those deals are not imported). A label absent here uses the built-in vocabulary. */
+  dealStageMap?: Record<string, 'prospect' | 'agreement_signed' | 'active' | 'under_contract' | 'closed' | 'lost' | 'ignore'>;
   /** PARITY 65: the contacts dry run's parity summary (stage labels, tag and field plan; no contact PII) */
   paritySummary?: ParitySummary;
   /** PARITY 65: catalog rows this batch created (revert removes the unused ones) */

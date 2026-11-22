@@ -221,6 +221,26 @@ export function spotChecksReady(sample: readonly { sourceRef: string }[], marks:
 
 // ---- PARITY 65: stages, tags and custom fields (R-PAR-46) -------------------------------------------
 
+export const DEAL_STAGES = ['prospect', 'agreement_signed', 'active', 'under_contract', 'closed', 'lost'] as const;
+export const DEAL_STAGE_LABEL: Record<(typeof DEAL_STAGES)[number], string> = {
+  prospect: 'Prospect',
+  agreement_signed: 'Agreement signed',
+  active: 'Active',
+  under_contract: 'Under contract',
+  closed: 'Closed',
+  lost: 'Lost',
+};
+
+export interface DealStagesResponse {
+  stages: { label: string; deals: number; suggested: string | null; choice: string | null }[];
+  unmappedDeals: number;
+  dealStageMap: Record<string, string>;
+  importedNow: number;
+  ignoredNow: number;
+  plannedNow: number;
+  approvalCleared: boolean;
+}
+
 export const PARITY_STAGES = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'] as const;
 export const STAGE_KEY_LABEL: Record<(typeof PARITY_STAGES)[number], string> = {
   new: 'New',
