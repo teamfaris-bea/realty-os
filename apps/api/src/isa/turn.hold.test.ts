@@ -11,7 +11,8 @@ import { withTenantTx } from '@realty/db';
 import { systemActor } from '../worker/systemActor.js';
 import { sweepInTx } from './handlers.js';
 import { aiMessages, assignmentOf, feedItems, handbacksOf, type IsaLead, isaLead, isaWorker, isaWorld, type IsaWorld, runIsa, startCare } from './testing.js';
-import { budgetResumeSpreadMs, BUDGET_RESUME_SPREAD_MS } from './spend.js';
+import { assignmentById } from './repo.js';
+import { budgetResumeSpreadMs, BUDGET_RESUME_SPREAD_MS, reserveForTurn } from './spend.js';
 import { runTurn } from './turn.js';
 
 let h: ApiHarness;
@@ -332,4 +333,44 @@ it('E908 R-ISA-20: a resume job that is refused again (the team is still at its 
   expect(await jobsByKey(c, 'budget')).toHaveLength(1);
   expect((await h.su.query(`SELECT status, decision->>'code' AS code FROM ai_isa_turns WHERE assignment_id = $1 AND trigger_key LIKE 'sweep:%'`, [c.assignmentId])).rows)
     .toEqual([{ status: 'deferred', code: 'ISA_MODEL_PERSON_DAILY_LIMIT' }]);
+});
+
+it('R-ISA-20: a newer inbound committed while a hold is between its read and its update does not leave the older turn deferred', async () => {
+  const c = await care();
+  await recordedToday(c, 12);
+  await text(c, 'We want to buy a home near Rowan Court this spring.');
+  const held = (await h.su.query<{ id: string; pinned: string }>(
+    `SELECT id, pinned_inbound_seq AS pinned FROM ai_isa_turns WHERE assignment_id = $1 AND status = 'deferred'`, [c.assignmentId])).rows;
+  expect(held).toHaveLength(1);
+  const turnId = held[0]!.id;
+  const pinned = Number(held[0]!.pinned);
+  // back to deciding, as it was in the gap before the deferred update: supersedeHeldTurns would not have retired it
+  await h.su.query(`UPDATE ai_isa_turns SET status = 'deciding', not_before = NULL, decision = '{}'::jsonb WHERE id = $1`, [turnId]);
+  const client = await h.su.connect();
+  try {
+    await client.query('BEGIN');
+    // the turn lock, held across a not-yet-committed inbound sequence, the way TX-A holds it
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`ai_isa.turn:${c.w.tenantId}:${c.assignmentId}`]);
+    await client.query(`UPDATE conversations SET inbound_seq = inbound_seq + 1 WHERE contact_id = $1`, [c.lead.id]);
+    const deps = depsFromPlatform(h.app.platform);
+    const a = await withTenantTx(systemActor(c.w.tenantId as never, 'assistant'), (tx) => assignmentById(tx, c.assignmentId), { db: h.database });
+    expect(a).not.toBeNull();
+    let settled = false;
+    const pending = reserveForTurn(deps, c.w.tenantId, a!, {
+      id: turnId, pinnedSeq: pinned, repair: false, owner: 'job-gap', park: true, inboundUnanswered: true,
+    }).then((r) => { settled = true; return r; });
+    const deadline = Date.now() + 1_500;
+    while (Date.now() < deadline && !settled) await new Promise((r) => setTimeout(r, 40));
+    // still in flight: it is waiting on the turn lock, not deferring on the sequence it read first
+    expect(settled, 'the hold deferred on the sequence it read before the newer inbound committed').toBe(false);
+    await client.query('COMMIT');
+    expect(await pending).toMatchObject({ kind: 'done', code: 'ISA_STALE_REPLY' });
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+  expect((await h.su.query<{ status: string; code: string | null }>(
+    `SELECT status, decision->>'code' AS code FROM ai_isa_turns WHERE id = $1`, [turnId])).rows[0]).toEqual({ status: 'stale', code: 'ISA_STALE_REPLY' });
+  const seq = Number((await h.su.query<{ n: string }>(`SELECT inbound_seq::text AS n FROM conversations WHERE contact_id = $1`, [c.lead.id])).rows[0]!.n);
+  expect(seq).toBe(pinned + 1);
 });

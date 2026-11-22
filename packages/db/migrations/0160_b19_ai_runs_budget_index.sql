@@ -15,9 +15,9 @@
 --     tenant only (at most the team's daily limit plus the day's holds, about a thousand index entries).
 --
 --   No new table, column, policy, grant or definer. ai_runs keeps its row-level security and its policies; an index
---   changes no visibility. EXISTING DATA: nothing is rewritten; the index is built over the existing rows in this
---   migration's transaction (ai_runs is written a few times per AI call; the build holds a lock that blocks those
---   writes while it runs).
+--   changes no visibility. EXISTING DATA: nothing is rewritten. The index is built inside this migration's one
+--   transaction, so it cannot be CREATE INDEX CONCURRENTLY. The build takes a lock that blocks writes to ai_runs
+--   until the migration commits (ai_runs is written a few times per AI call).
 
 CREATE INDEX ai_runs_purpose_created_idx ON ai_runs (tenant_id, purpose, created_at);
 

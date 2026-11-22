@@ -23,7 +23,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { backstopInTx } from './backstop.js';
 import { AI_ISA_PROMPT_VERSION, ISA_TURN_LIMITS } from './coreSeam.js';
 import { activityCardInTx, budgetHoldNoticeInTx, type IsaDeps } from './effects.js';
-import type { AssignmentRow } from './repo.js';
+import { lockForTurn, type AssignmentRow } from './repo.js';
 import { BUDGET_HOLD_REPLY } from './sentences.js';
 
 export type ModelBudgetCode = 'ISA_MODEL_PERSON_DAILY_LIMIT' | 'ISA_MODEL_TENANT_DAILY_LIMIT';
@@ -112,6 +112,10 @@ async function countAndReserve(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: Assignment
  * turn reads both messages, so a person never has two held turns (E904).
  */
 async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t: TurnCall, refused: Refused, now: Instant): Promise<{ kind: 'retry'; retryAt: Instant } | { kind: 'done'; code: string }> {
+  // The turn lock, then the sequence again. A newer inbound commits under this same lock (TX-A). Without it, holdTurn
+  // can read the old sequence, the newer inbound can commit (supersedeHeldTurns only retires rows already deferred),
+  // and this update then leaves both turns open, each able to text the next day.
+  await lockForTurn(tx, a.contactId, a.id);
   const open = sql`(status = 'deciding' OR (status = 'deferred' AND decision->>'code' IN ('ISA_MODEL_PERSON_DAILY_LIMIT','ISA_MODEL_TENANT_DAILY_LIMIT')))`;
   const conv = await sql<{ seq: string | null }>`SELECT inbound_seq AS seq FROM conversations WHERE tenant_id = app.tenant_id() AND contact_id = ${a.contactId}`.execute(tx);
   const seq = Number(conv.rows[0]?.seq ?? 0);
@@ -123,8 +127,11 @@ async function holdTurn(tx: Tx, deps: Pick<IsaDeps, 'ids'>, a: AssignmentRow, t:
     return { kind: 'done', code: 'ISA_STALE_REPLY' };
   }
   const decision = { code: refused.code, budgetRepair: t.repair, ...(t.owner !== null ? { job: t.owner } : {}) };
+  // inbound_seq <= pinned is part of the update, re-read in the statement, so a sequence that moved after the read above
+  // still cannot defer the turn.
   const held = await sql<{ id: string }>`UPDATE ai_isa_turns SET status = 'deferred', not_before = ${refused.reset}, decision = ${JSON.stringify(decision)}::jsonb
     WHERE tenant_id = app.tenant_id() AND id = ${t.id} AND ${open}
+      AND COALESCE((SELECT c.inbound_seq FROM conversations c WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId}), 0) <= ${t.pinnedSeq}
     RETURNING id`.execute(tx);
   if (held.rows.length === 0) return { kind: 'done', code: 'DISCARDED' };
   // E905: the hold is visible to a human in this same transaction, and nothing about it goes to the person. A reply
@@ -164,8 +171,9 @@ export async function supersedeHeldTurns(tx: Tx, assignmentId: string, exceptTur
 /**
  * What a turn does before each provider call (the original and the repair), with no other lock held: one short
  * transaction takes the team lock, counts and reserves, and commits. A refused call is then held in a second
- * transaction, after the lock is gone (holdTurn: the UPDATE of the turn's own row, guarded by its status, and with it
- * what tells the owner, E905, and for a sweep-triggered turn the resume job, E908). This is the only reservation path:
+ * transaction, after the budget lock is gone. holdTurn takes the turn lock, re-reads the inbound sequence, and the
+ * deferred update requires that sequence still be the one TX-A pinned. With that it writes what tells the owner
+ * (E905) and, for a sweep-triggered turn, the resume job (E908). This is the only reservation path:
  * turn.spend.test.ts and turn.budgetLock.test.ts exercise it, as runTurn does.
  */
 export async function reserveForTurn(deps: Pick<IsaDeps, 'ids' | 'db'>, tenantId: string, a: AssignmentRow, t: TurnCall): Promise<Reservation> {
