@@ -227,7 +227,11 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRu
       }
       if (open) {
         const held = open.status === 'deferred';
-        const followUpTimerKey = p.timer === 'follow_up' && p.at !== undefined ? `timer:${a.epoch}:follow_up:${p.at}` : null;
+        // A follow-up's row is `timer:<epoch>:follow_up:<at>`, including a hand-run with no `at` (it uses next_follow_up_at).
+        const followUpInstant = p.timer !== 'follow_up' ? null : p.at ?? (run.jobId === undefined
+          ? (await sql<{ at: Date | null }>`SELECT next_follow_up_at AS at FROM ai_isa_assignments WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx)).rows[0]?.at?.getTime() ?? null
+          : (await sql<{ at: Date | null }>`SELECT app.job_run_at(${run.jobId}::bigint) AS at`.execute(tx)).rows[0]?.at?.getTime() ?? null);
+        const followUpTimerKey = followUpInstant !== null ? `timer:${a.epoch}:follow_up:${followUpInstant}` : null;
         const ownTrigger = open.trigger_key.startsWith(`${p.trigger}:${a.epoch}:`) && (p.trigger !== 'timer' || open.trigger_key === (followUpTimerKey ?? `timer:${a.epoch}:${p.timer ?? 'start'}`));
         // held: the recorded owner decides (a job id, or the resume job: E908, whose turn may carry any trigger, e.g. a
         // recovered inbound turn). A turn held by a run outside a job, or resumed by one, has no owner to compare
