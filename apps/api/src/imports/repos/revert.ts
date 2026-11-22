@@ -110,8 +110,8 @@ export async function touchedRows(tx: Tx, table: 'notes' | 'messages' | 'calls' 
 /** app.import_revert_delete (migration 0009): deletes only rows this stage's records wrote; returns what it deleted. */
 /**
  * A deal someone attached work to after the import. Deleting it would take that work with it.
- * Confirmed dates, a commission edit, an added member, a linked appointment and a portal grant do not
- * bump deals.row_version, and appointments.deal_id and portal_grants.deal_id cascade on delete.
+ * Confirmed dates, a commission edit, an added member, an added party, a linked appointment and a
+ * portal grant do not bump deals.row_version, and appointments.deal_id and portal_grants.deal_id cascade.
  * The same predicate guards app.import_revert_delete (0127).
  */
 export async function dealsWithLaterWork(tx: Tx, ids: readonly string[]): Promise<Set<string>> {
@@ -136,7 +136,16 @@ export async function dealsWithLaterWork(tx: Tx, ids: readonly string[]): Promis
                            AND COALESCE(r.normalized->'memberUserIds', '[]'::jsonb) @> to_jsonb(m.user_id::text)))
             )
             OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = d.tenant_id AND a.deal_id = d.id)
-            OR EXISTS (SELECT 1 FROM portal_grants g WHERE g.tenant_id = d.tenant_id AND g.deal_id = d.id))`.execute(tx);
+            OR EXISTS (SELECT 1 FROM portal_grants g WHERE g.tenant_id = d.tenant_id AND g.deal_id = d.id)
+            OR EXISTS (
+              SELECT 1 FROM deal_contacts dc
+               WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id
+                 AND NOT EXISTS (
+                   SELECT 1 FROM import_records r
+                     JOIN external_refs er
+                       ON er.tenant_id = r.tenant_id AND er.entity_type = 'contact' AND er.entity_id = dc.contact_id
+                    WHERE r.tenant_id = d.tenant_id AND r.target_id = d.id
+                      AND COALESCE(r.normalized->'people', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('personRef', er.external_id)))))`.execute(tx);
   return new Set(r.rows.map((x) => x.id));
 }
 

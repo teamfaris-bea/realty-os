@@ -327,6 +327,47 @@ describe('FUB deals and appointments import', () => {
     await expect(q('DELETE FROM deal_stage_history WHERE tenant_id = $1 AND deal_id = $2', [w.tenantId, byName.get('Date')!.id])).rejects.toThrow(/APPEND_ONLY/);
   });
 
+  it('keeps a deal that gained a party the import did not write, and drops only the parties an untouched deal imported', async () => {
+    const key = 'fub-added-party';
+    ih.fub.add(key, {
+      users: [{ id: 11, name: 'Alex Agent' }],
+      people: [
+        { id: 501, firstName: 'Pat', lastName: 'Primary', stage: 'Active', assignedUserId: 11, emails: [{ value: 'pat.primary@example.com', type: 'home' }] },
+        { id: 502, firstName: 'Sol', lastName: 'Only', stage: 'Active', assignedUserId: 11, emails: [{ value: 'sol.only@example.com', type: 'home' }] },
+        { id: 503, firstName: 'Ada', lastName: 'Added', stage: 'Active', assignedUserId: 11, emails: [{ value: 'ada.added@example.com', type: 'home' }] },
+      ],
+      deals: [
+        { id: 501, name: 'Party', stageName: 'Active', pipelineName: 'Buyers', price: 20, peopleIds: [501], userIds: [11] },
+        { id: 502, name: 'Solo', stageName: 'Active', pipelineName: 'Buyers', price: 20, peopleIds: [502], userIds: [11] },
+      ],
+    });
+    const b = await startFub(ih, w.admin, key);
+    await mapOwner(b.id);
+    for (const cat of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals'] as const) await fullStage(ih, w.admin, b.id, cat);
+    const deals = await q<{ id: string; name: string }>(
+      `SELECT id, name FROM deals WHERE tenant_id = $1 AND name = ANY ($2)`,
+      [w.tenantId, ['Party', 'Solo']],
+    );
+    const party = deals.find((d) => d.name === 'Party')!;
+    const solo = deals.find((d) => d.name === 'Solo')!;
+    const added = await q<{ id: string }>(`SELECT id FROM contacts WHERE tenant_id = $1 AND display_name = 'Ada Added'`, [w.tenantId]);
+    await withTenantTx(w.admin.actor(), async (tx) => {
+      await sql`INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role)
+                VALUES (app.tenant_id(), ${party.id}, ${added[0]!.id}, 'co_buyer')`.execute(tx);
+    });
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/revert`, { category: 'deals' })).status).toBe(202);
+    await ih.drain();
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1 AND id = $2', [w.tenantId, party.id]))[0]!.n).toBe(1);
+    const parties = await q<{ name: string }>(
+      `SELECT c.display_name AS name FROM deal_contacts dc JOIN contacts c ON c.tenant_id = dc.tenant_id AND c.id = dc.contact_id
+        WHERE dc.tenant_id = $1 AND dc.deal_id = $2 ORDER BY c.display_name`,
+      [w.tenantId, party.id],
+    );
+    expect(parties.map((r) => r.name)).toEqual(['Ada Added', 'Pat Primary']);
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1 AND id = $2', [w.tenantId, solo.id]))[0]!.n).toBe(0);
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deal_contacts WHERE tenant_id = $1 AND deal_id = $2', [w.tenantId, solo.id]))[0]!.n).toBe(0);
+  });
+
 
   it('revert removes an untouched imported appointment and deal, and a later import can write them again', async () => {
     const key = 'fub-revert-one';

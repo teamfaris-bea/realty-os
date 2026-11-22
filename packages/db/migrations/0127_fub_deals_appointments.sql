@@ -145,11 +145,29 @@ BEGIN
              )
              AND NOT EXISTS (SELECT 1 FROM public.appointments a WHERE a.tenant_id = d.tenant_id AND a.deal_id = d.id)
              AND NOT EXISTS (SELECT 1 FROM public.portal_grants g WHERE g.tenant_id = d.tenant_id AND g.deal_id = d.id)
+             AND NOT EXISTS (
+               SELECT 1 FROM public.deal_contacts dc
+                WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.import_records r
+                      JOIN public.external_refs er
+                        ON er.tenant_id = r.tenant_id AND er.entity_type = 'contact' AND er.entity_id = dc.contact_id
+                     WHERE r.tenant_id = d.tenant_id AND r.target_id = d.id
+                       AND COALESCE(r.normalized->'people', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('personRef', er.external_id)))
+             )
         ) THEN
           PERFORM set_config('app.import_revert_history', 'on', true);
           DELETE FROM public.deal_stage_history h WHERE h.tenant_id = app.tenant_id() AND h.deal_id = v_id;
           DELETE FROM public.deal_dates x WHERE x.tenant_id = app.tenant_id() AND x.deal_id = v_id;
-          DELETE FROM public.deal_contacts x WHERE x.tenant_id = app.tenant_id() AND x.deal_id = v_id;
+          -- only the parties the import wrote; a person added later is later work and the deal stays
+          DELETE FROM public.deal_contacts x
+           WHERE x.tenant_id = app.tenant_id() AND x.deal_id = v_id
+             AND EXISTS (
+               SELECT 1 FROM public.import_records r
+                 JOIN public.external_refs er
+                   ON er.tenant_id = r.tenant_id AND er.entity_type = 'contact' AND er.entity_id = x.contact_id
+                WHERE r.tenant_id = x.tenant_id AND r.target_id = v_id
+                  AND COALESCE(r.normalized->'people', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('personRef', er.external_id)));
           DELETE FROM public.deal_members x WHERE x.tenant_id = app.tenant_id() AND x.deal_id = v_id;
           DELETE FROM public.deal_financials x WHERE x.tenant_id = app.tenant_id() AND x.deal_id = v_id;
           DELETE FROM public.deals d WHERE d.tenant_id = app.tenant_id() AND d.id = v_id;
