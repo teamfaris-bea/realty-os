@@ -762,10 +762,13 @@ function mapDeal(raw: unknown, users: UserMapping, ctx: FubMapContext): RecordOu
   const team = fubDollarsToCents(d.teamCommission);
   let agentSplit = gross !== null && agent !== null ? bpsOf(agent, gross) : null;
   let teamSplit = gross !== null && team !== null ? bpsOf(team, gross) : null;
-  if (agentSplit !== null && teamSplit !== null && agentSplit + teamSplit > 10_000) {
-    const over = agentSplit + teamSplit - 10_000;
-    if (agentSplit >= teamSplit) agentSplit -= over;
-    else teamSplit -= over;
+  const positiveWithoutGross = ((agent !== null && agent > 0) || (team !== null && team > 0)) && (gross === null || gross === 0);
+  const overGross = (agent !== null && gross !== null && gross > 0 && agent > gross) || (team !== null && gross !== null && gross > 0 && team > gross);
+  const overHundred = agentSplit !== null && teamSplit !== null && agentSplit + teamSplit > 10_000;
+  if (positiveWithoutGross || overGross || overHundred) {
+    issues.push({ code: 'COMMISSION_SPLIT_INVALID', severity: 'review', field: 'commissionValue' });
+    agentSplit = null;
+    teamSplit = null;
   }
   const rate = gross !== null && priceCents !== null ? bpsOf(gross, priceCents) : null;
   const financials: NormalizedDealFinancials | null =

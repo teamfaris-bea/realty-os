@@ -108,7 +108,12 @@ export async function touchedRows(tx: Tx, table: 'notes' | 'messages' | 'calls' 
 }
 
 /** app.import_revert_delete (migration 0009): deletes only rows this stage's records wrote; returns what it deleted. */
-/** A deal someone attached work to after the import (a note, a task, or a document). Deleting it would take that work. */
+/**
+ * A deal someone attached work to after the import. Deleting it would take that work with it.
+ * Confirmed dates, a commission edit, an added member, a linked appointment and a portal grant do not
+ * bump deals.row_version, and appointments.deal_id and portal_grants.deal_id cascade on delete.
+ * The same predicate guards app.import_revert_delete (0127).
+ */
 export async function dealsWithLaterWork(tx: Tx, ids: readonly string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const r = await sql<{ id: string }>`
@@ -117,7 +122,21 @@ export async function dealsWithLaterWork(tx: Tx, ids: readonly string[]): Promis
        AND (d.row_version > 1
             OR EXISTS (SELECT 1 FROM notes n WHERE n.tenant_id = d.tenant_id AND n.deal_id = d.id AND NOT n.imported)
             OR EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = d.tenant_id AND t.deal_id = d.id AND t.created_by_kind <> 'import')
-            OR EXISTS (SELECT 1 FROM documents doc WHERE doc.tenant_id = d.tenant_id AND doc.deal_id = d.id))`.execute(tx);
+            OR EXISTS (SELECT 1 FROM documents doc WHERE doc.tenant_id = d.tenant_id AND doc.deal_id = d.id)
+            OR EXISTS (SELECT 1 FROM deal_dates x WHERE x.tenant_id = d.tenant_id AND x.deal_id = d.id
+                        AND (x.status <> 'proposed' OR x.source <> 'import'))
+            OR EXISTS (SELECT 1 FROM deal_financials f WHERE f.tenant_id = d.tenant_id AND f.deal_id = d.id AND f.updated_at > d.created_at)
+            OR EXISTS (
+              SELECT 1 FROM deal_members m
+               WHERE m.tenant_id = d.tenant_id AND m.deal_id = d.id
+                 AND (m.role <> 'co_agent'
+                      OR NOT EXISTS (
+                        SELECT 1 FROM import_records r
+                         WHERE r.tenant_id = d.tenant_id AND r.target_id = d.id
+                           AND COALESCE(r.normalized->'memberUserIds', '[]'::jsonb) @> to_jsonb(m.user_id::text)))
+            )
+            OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = d.tenant_id AND a.deal_id = d.id)
+            OR EXISTS (SELECT 1 FROM portal_grants g WHERE g.tenant_id = d.tenant_id AND g.deal_id = d.id))`.execute(tx);
   return new Set(r.rows.map((x) => x.id));
 }
 

@@ -1,4 +1,5 @@
 // FUB deals and appointments import (B7 reversed 2026-11-21). Synthetic records only, FakeFub, no live account.
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -6,12 +7,16 @@ import { systemActor } from '../worker/systemActor.js';
 import {
   type ImportWorld,
   type ImportsHarness,
+  approve,
   call,
+  commitStage,
+  dryRunStage,
   fullStage,
   importWorld,
   importsHarness,
   records,
   startFub,
+  verify,
 } from './testing.js';
 
 const KEY = 'fub-deals-appointments';
@@ -163,6 +168,35 @@ describe('FUB deals and appointments import', () => {
     expect(await q('SELECT 1 FROM tasks WHERE tenant_id = $1', [w.tenantId])).toHaveLength(0);
   });
 
+  it('a historical agreement imported today is not an agreement signed today; a person moving a deal into that stage is', async () => {
+    const opening = await q<{ n: number }>(
+      `SELECT count(*)::int AS n FROM deal_stage_history h
+        JOIN deals d ON d.tenant_id = h.tenant_id AND d.id = h.deal_id
+       WHERE h.tenant_id = $1 AND h.to_stage = 'agreement_signed' AND h.actor_kind = 'system' AND h.from_stage IS NULL`,
+      [w.tenantId],
+    );
+    expect(opening[0]!.n).toBeGreaterThan(0);
+    const signed = async () =>
+      withTenantTx(w.agents[0]!.actor(), async (tx) =>
+        Number((await sql<{ n: string }>`SELECT agreements_signed::text AS n FROM app.scoreboard_activity(${[w.agents[0]!.userId]}::uuid[], now() - interval '2 days', now() + interval '1 hour')`.execute(tx)).rows[0]!.n),
+      );
+    expect(await signed()).toBe(0);
+    const defs = await q<{ proname: string; ok: boolean }>(
+      `SELECT proname, position('actor_kind = ''system'' AND h.from_stage IS NULL' IN prosrc) > 0 AS ok
+         FROM pg_proc WHERE proname IN ('scoreboard_activity', 'scoreboard_rollup_roll') ORDER BY proname`,
+    );
+    expect(defs).toEqual([
+      { proname: 'scoreboard_activity', ok: true },
+      { proname: 'scoreboard_rollup_roll', ok: true },
+    ]);
+    const active = await q<{ id: string; row_version: number }>(
+      `SELECT id, row_version FROM deals WHERE tenant_id = $1 AND stage = 'active' AND owner_user_id = $2 LIMIT 1`,
+      [w.tenantId, w.agents[0]!.userId],
+    );
+    expect((await call(w.agents[0]!, 'POST', `/deals/${active[0]!.id}/stage`, { rowVersion: active[0]!.row_version, stage: 'agreement_signed' })).status).toBe(200);
+    expect(await signed()).toBe(1);
+  });
+
   it('links appointments to the contact and agent, keeps reminders off, and does not notify', async () => {
     const s = await fullStage(ih, w.admin, batchId, 'appointments');
     expect(s.counts).toMatchObject({ source: 6, imported: 6, rejected: 0, needsReview: 0 });
@@ -198,6 +232,101 @@ describe('FUB deals and appointments import', () => {
     expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1', [w.tenantId]))[0]!.n).toBe(N);
     expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM appointments WHERE tenant_id = $1', [w.tenantId]))[0]!.n).toBe(6);
   });
+
+  it('refuses Import on an unmapped deal instead of accepting a decision the approval cannot commit', async () => {
+    const key = 'fub-unmapped-review';
+    ih.fub.add(key, {
+      users: [{ id: 11, name: 'Alex Agent' }],
+      people: [{ id: 81, firstName: 'Nia', lastName: 'Stage', stage: 'Active', assignedUserId: 11, emails: [{ value: 'nia.stage@example.com', type: 'home' }] }],
+      deals: [
+        { id: 81, name: 'Known stage', stageName: 'Active', pipelineName: 'Buyers', price: 10, peopleIds: [81], userIds: [11] },
+        { id: 82, name: 'Unknown stage', stageName: 'Waiting On Lender', pipelineName: 'Buyers', price: 10, peopleIds: [81], userIds: [11] },
+      ],
+    });
+    const b = await startFub(ih, w.admin, key);
+    await mapOwner(b.id);
+    for (const cat of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent'] as const) await fullStage(ih, w.admin, b.id, cat);
+    const dry = await dryRunStage(ih, w.admin, b.id, 'deals');
+    const held = (await records(w.admin, b.id, 'deals', 'needs_review')).find((r) => r.sourceRef === 'fub:deals/82');
+    expect(held?.planned).toBeNull();
+    const refused = await call(w.admin, 'POST', `/imports/${b.id}/records/${held!.id}/review`, { decision: 'import' });
+    expect([refused.status, refused.code]).toEqual([422, 'IMPORT_REVIEW_INVALID']);
+    expect((await records(w.admin, b.id, 'deals', 'needs_review')).find((r) => r.sourceRef === 'fub:deals/82')?.outcome).toBe('needs_review');
+    expect((await approve(w.admin, b.id, 'deals', dry.dryRunSha256 as string)).status).toBe(200);
+    expect((await commitStage(ih, w.admin, b.id, 'deals')).status).toBe('committed');
+    expect((await verify(w.admin, b.id, 'deals')).res.status).toBe(200);
+    expect((await q<{ n: number }>("SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1 AND name = 'Unknown stage'", [w.tenantId]))[0]!.n).toBe(0);
+    expect((await q<{ n: number }>("SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1 AND name = 'Known stage'", [w.tenantId]))[0]!.n).toBe(1);
+  });
+
+  it('keeps an imported deal that later gained a confirmed date, a commission edit, a member, an appointment, or a portal grant', async () => {
+    const key = 'fub-later-work';
+    ih.fub.add(key, {
+      users: [{ id: 11, name: 'Alex Agent' }],
+      people: ['Date', 'Money', 'Member', 'Showing', 'Portal', 'Clean'].map((name, i) => ({
+        id: 90 + i,
+        firstName: name,
+        lastName: 'Work',
+        stage: 'Active',
+        assignedUserId: 11,
+        emails: [{ value: `${name.toLowerCase()}.work@example.com`, type: 'home' }],
+      })),
+      deals: ['Date', 'Money', 'Member', 'Showing', 'Portal', 'Clean'].map((name, i) => ({
+        id: 300 + i,
+        name,
+        stageName: 'Active',
+        pipelineName: 'Buyers',
+        price: 20,
+        commissionValue: 10,
+        agentCommission: 7,
+        teamCommission: 3,
+        mutualAcceptanceDate: '2026-08-01',
+        peopleIds: [90 + i],
+        userIds: [11],
+      })),
+    });
+    const b = await startFub(ih, w.admin, key);
+    await mapOwner(b.id);
+    for (const cat of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals'] as const) await fullStage(ih, w.admin, b.id, cat);
+    const rows = await q<{ id: string; name: string; contact_id: string }>(
+      `SELECT d.id, d.name, d.primary_contact_id AS contact_id FROM deals d WHERE d.tenant_id = $1 AND d.name = ANY ($2)`,
+      [w.tenantId, ['Date', 'Money', 'Member', 'Showing', 'Portal', 'Clean']],
+    );
+    const byName = new Map(rows.map((r) => [r.name, r]));
+    const owner = w.agents[0]!;
+    await withTenantTx(w.admin.actor(), async (tx) => {
+      await sql`UPDATE deal_dates SET status = 'confirmed', confirmed_by_user_id = ${w.admin.userId}, confirmed_at = now()
+                WHERE tenant_id = app.tenant_id() AND deal_id = ${byName.get('Date')!.id}`.execute(tx);
+    });
+    await withTenantTx(owner.actor(), async (tx) => {
+      await sql`UPDATE deal_financials SET gross_commission_cents = 1, updated_at = now(), updated_by_user_id = ${owner.userId}
+                WHERE tenant_id = app.tenant_id() AND deal_id = ${byName.get('Money')!.id}`.execute(tx);
+    });
+    await withTenantTx(w.admin.actor(), async (tx) => {
+      await sql`INSERT INTO deal_members (tenant_id, deal_id, user_id, role)
+                VALUES (app.tenant_id(), ${byName.get('Member')!.id}, ${w.agents[1]!.userId}, 'tc')`.execute(tx);
+      await sql`INSERT INTO appointments (tenant_id, id, contact_id, deal_id, user_id, kind, starts_at, ends_at, status, created_by_kind)
+                VALUES (app.tenant_id(), ${randomUUID()}, ${byName.get('Showing')!.contact_id}, ${byName.get('Showing')!.id}, ${owner.userId},
+                        'consult', now() + interval '3 days', now() + interval '3 days' + interval '1 hour', 'scheduled', 'user')`.execute(tx);
+      const point = await sql<{ id: string }>`SELECT id FROM contact_points WHERE tenant_id = app.tenant_id() AND contact_id = ${byName.get('Portal')!.contact_id} AND removed_at IS NULL LIMIT 1`.execute(tx);
+      const account = randomUUID();
+      await sql`INSERT INTO portal_accounts (tenant_id, id, contact_id, login_point_id, status, invited_by_user_id)
+                VALUES (app.tenant_id(), ${account}, ${byName.get('Portal')!.contact_id}, ${point.rows[0]!.id}, 'invited', ${w.admin.userId})`.execute(tx);
+      await sql`INSERT INTO portal_grants (tenant_id, id, portal_account_id, deal_id, granted_by_user_id, granted_at, display)
+                VALUES (app.tenant_id(), ${randomUUID()}, ${account}, ${byName.get('Portal')!.id}, ${w.admin.userId}, now(), '{}'::jsonb)`.execute(tx);
+    });
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/revert`, { category: 'deals' })).status).toBe(202);
+    await ih.drain();
+    const left = await q<{ name: string }>(
+      `SELECT name FROM deals WHERE tenant_id = $1 AND name = ANY ($2) ORDER BY name`,
+      [w.tenantId, ['Date', 'Money', 'Member', 'Showing', 'Portal', 'Clean']],
+    );
+    expect(left.map((r) => r.name)).toEqual(['Date', 'Member', 'Money', 'Portal', 'Showing']);
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM appointments WHERE tenant_id = $1 AND deal_id = $2', [w.tenantId, byName.get('Showing')!.id]))[0]!.n).toBe(1);
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM portal_grants WHERE tenant_id = $1 AND deal_id = $2', [w.tenantId, byName.get('Portal')!.id]))[0]!.n).toBe(1);
+    await expect(q('DELETE FROM deal_stage_history WHERE tenant_id = $1 AND deal_id = $2', [w.tenantId, byName.get('Date')!.id])).rejects.toThrow(/APPEND_ONLY/);
+  });
+
 
   it('revert removes an untouched imported appointment and deal, and a later import can write them again', async () => {
     const key = 'fub-revert-one';

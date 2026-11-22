@@ -24,6 +24,7 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   STAGE_UNMAPPED: 'The stage name is not one we know. For a person it uses the stage chosen in the stage map. For a deal it waits in review and is not guessed.',
   ASSIGNEE_UNMAPPED: 'A Follow Up Boss user on this record is not mapped to a team member. It does not stop the import. When a team member can still be placed on it, the record comes in; otherwise it waits in review.',
   SIDE_UNMAPPED: 'The deal pipeline is not buy, sell, dual or lease, so the deal waits in review.',
+  COMMISSION_SPLIT_INVALID: 'The agent and team commission are more than the gross, or a commission was given with no gross. The deal waits in review. The amounts were not changed.',
   TYPE_UNMAPPED: 'The contact type is not one we know; it was kept for reference.',
   INTENT_UNMAPPED: 'Buyer/seller intent could not be read; it was kept for reference.',
   NAME_MISSING: 'No name; the contact is named after a phone or email.',

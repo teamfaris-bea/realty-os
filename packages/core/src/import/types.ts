@@ -79,6 +79,11 @@ export type IssueCode =
   | 'ASSIGNEE_UNMAPPED'
   /** A deal pipeline name is not buy, sell, dual or lease. The deal waits in review. */
   | 'SIDE_UNMAPPED'
+  /**
+   * The agent and team amounts are more than the gross commission, or a positive split was given with no
+   * gross. The deal waits in review. The amounts are not rewritten to fit.
+   */
+  | 'COMMISSION_SPLIT_INVALID'
   | 'IN_FILE_DUPLICATE'
   | 'ALREADY_IMPORTED'
   | 'NAME_ONLY_MATCH'

@@ -302,6 +302,11 @@ export async function reviewRecord(deps: ImportDeps, actor: UserActor, batchId: 
       const stage = stages.find((s) => s.id === rec.stage_id) as brepo.StageRow;
       if (!['dry_run_ready', 'approved'].includes(stage.status)) throw conflict(stage.status);
       if (rec.outcome === 'skipped' || rec.dry_run_outcome === null) throw new AppError('IMPORT_REVIEW_INVALID', { reason: 'NOT_IN_DRY_RUN' });
+      // An unmapped deal (or any needs-review row with no planned action) cannot be imported. Approving
+      // that decision would refuse the whole stage (REVIEW_NOT_ALLOWED). Reject it here.
+      if (decision === 'import' && rec.dry_run_outcome === 'needs_review' && rec.plan === null) {
+        throw new AppError('IMPORT_REVIEW_INVALID', { reason: 'NOT_IMPORTABLE' });
+      }
       let stored: 'import' | 'merge' | 'reject' | null = decision;
       if (rec.dry_run_outcome === 'will_import') {
         if (decision === 'merge') throw new AppError('IMPORT_REVIEW_INVALID', { reason: 'MERGE_NOT_OFFERED' });

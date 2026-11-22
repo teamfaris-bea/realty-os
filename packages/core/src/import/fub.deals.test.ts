@@ -79,6 +79,20 @@ describe('FUB deals', () => {
     expect(JSON.stringify(o.record)).not.toContain('Not stored');
   });
 
+  it('a split over 100 percent, or a positive split with no gross, waits in review and is not rewritten', () => {
+    const over = mapFub('deals', deal({ id: 8, commissionValue: 10000, agentCommission: 8000, teamCommission: 4000 }), USERS, { now: NOW });
+    expect(over.status).toBe('needs_review');
+    expect(over.issues).toContainEqual({ code: 'COMMISSION_SPLIT_INVALID', severity: 'review', field: 'commissionValue' });
+    expect(over.record && over.record.category === 'deals' ? over.record.financials : null).toMatchObject({ agentSplitBps: null, teamSplitBps: null, grossCommissionCents: 1_000_000 });
+    const none = mapFub('deals', deal({ id: 9, commissionValue: 0, agentCommission: 500, teamCommission: 0 }), USERS, { now: NOW });
+    expect(none.status).toBe('needs_review');
+    expect(none.issues).toContainEqual({ code: 'COMMISSION_SPLIT_INVALID', severity: 'review', field: 'commissionValue' });
+    const dry = dryRun('deals', [over, none, mapFub('deals', deal(), USERS, { now: NOW })], index());
+    expect(dry.blockers).toEqual([]);
+    expect(dry.counts).toMatchObject({ will_import: 1, needs_review: 2 });
+    expect(dry.records.find((r) => r.sourceRef === 'fub:deals/8')!.action).toBeNull();
+  });
+
   it('an unknown stage waits in review and is not guessed; an admin map places it', () => {
     const raw = deal({ id: 2, stageName: 'Waiting On Lender' });
     const unknown = mapFub('deals', raw, USERS, { now: NOW });
