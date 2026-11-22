@@ -101,14 +101,14 @@ function evidenceOf(lead: ParsedLead): Record<string, unknown> {
   };
 }
 
-function sourceDetailOf(lead: ParsedLead, subject: string, text: string, review: boolean): Record<string, string | number | boolean> {
+function sourceDetailOf(lead: ParsedLead, subject: string, text: string, review: boolean, senderDomain: string | null): Record<string, string | number | boolean> {
   const detail: Record<string, string | number | boolean> = {
     channel: 'lead_email',
     format: lead.format,
     detected_source: detectedSource(lead.format, subject, text).slice(0, 200),
   };
   if (lead.listingId) detail.listing_id = lead.listingId.value.slice(0, 64);
-  if (wantsReferralReminder(lead.format, subject, text)) detail.referral_update = true;
+  if (wantsReferralReminder(senderDomain, subject, text)) detail.referral_update = true;
   if (review) detail.needs_review = true;
   if (lead.format === 'agentdash') {
     const flags = agentdashFlags(text);
@@ -119,7 +119,7 @@ function sourceDetailOf(lead: ParsedLead, subject: string, text: string, review:
   return detail;
 }
 
-function inquiryOf(lead: ParsedLead, points: { phones: string[]; emails: string[] }, leadSourceId: string, externalId: string, subject: string, text: string, review: boolean, overrides: AcceptOverrides = {}) {
+function inquiryOf(lead: ParsedLead, points: { phones: string[]; emails: string[] }, leadSourceId: string, externalId: string, subject: string, text: string, review: boolean, senderDomain: string | null, overrides: AcceptOverrides = {}) {
   const fullName = (overrides.name ?? lead.name?.value ?? '').trim().slice(0, 120);
   return {
     leadSourceId,
@@ -131,7 +131,7 @@ function inquiryOf(lead: ParsedLead, points: { phones: string[]; emails: string[
     ...(lead.message ? { message: lead.message.value.slice(0, 4000) } : {}),
     ...(lead.property ? { propertyText: lead.property.value.slice(0, 500) } : {}),
     ...(lead.postalCode && /^[0-9]{5}$/.test(lead.postalCode) ? { postalCode: lead.postalCode } : {}),
-    sourceDetail: sourceDetailOf(lead, subject, text, review),
+    sourceDetail: sourceDetailOf(lead, subject, text, review, senderDomain),
   };
 }
 
@@ -169,18 +169,20 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
   let lead = parsedLead ? await withoutTeamPoints(tx, deps, actor.tenantId, parsedLead, n.from) : null;
   let points = contactPointsOf(lead);
   const strictHold = confirmation ? 'FORWARDING_CONFIRMATION' : !trust.trusted ? trust.code : !parsed.ok ? parsed.reason : points.phones.length + points.emails.length === 0 ? 'NO_CONTACT_POINT' : null;
+  // An invoice, a closing-document notice, or a market newsletter is not a lead, even when its labels would parse.
+  const nonLead = !confirmation && isNonLeadMail(n.subject, parsed.text);
   // A trusted email no template could read, with a phone or email sitting in the prose, still becomes a lead.
-  // It is flagged (parse_status needs_review) and gets no autonomous first response. Invoice and newsletter mail
-  // is not a lead. Untrusted mail is never created from (a forged email stays in Needs review).
+  // It is flagged (parse_status needs_review) and gets no autonomous first response.
+  // Untrusted mail is never created from (a forged email stays in Needs review).
   let review = false;
   if (
+    !nonLead &&
     strictHold !== null &&
     trust.trusted &&
     !confirmation &&
     !parsed.ok &&
     (parsed.reason === 'UNKNOWN_FORMAT' || parsed.reason === 'PARTIAL_FORMAT') &&
-    points.phones.length + points.emails.length === 0 &&
-    !isNonLeadMail(n.subject, parsed.text)
+    points.phones.length + points.emails.length === 0
   ) {
     const loose = fallbackLead(parsed.text, trust.fromDomain ?? '');
     if (loose) {
@@ -206,11 +208,11 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
     dkimPassDomains: [...new Set(n.dkim.filter((v) => v.result === 'pass').map((v) => v.domain))].slice(0, 10),
   };
 
-  if ((strictHold === null || review) && lead) {
+  if (!nonLead && (strictHold === null || review) && lead) {
     const res: IngestResult = await ingestInquiryInTx(
       tx,
       actor,
-      inquiryOf(lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`, subject, parsed.text, review),
+      inquiryOf(lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`, subject, parsed.text, review, trust.fromDomain),
       now,
       { envelope: deps.envelope, ids: deps.ids },
       { firstResponse: !review, parse: { status: review ? 'needs_review' : 'parsed', evidence: evidenceOf(lead) } },
@@ -498,7 +500,7 @@ export async function acceptReview(deps: LeadEmailDeps, actor: UserActor, id: st
     const res = await ingestInquiryInTx(
       tx,
       sys,
-      inquiryOf(lead, points, m.lead_source_id, `lead-email:${m.id}`, storedText?.subject ?? '', storedText?.text ?? '', false, overrides),
+      inquiryOf(lead, points, m.lead_source_id, `lead-email:${m.id}`, storedText?.subject ?? '', storedText?.text ?? '', false, m.sender_domain, overrides),
       now,
       { envelope: deps.envelope, ids: deps.ids },
       // R-INBOX-9: an email that was not verified never gets an autonomous reply, even once a person accepted it

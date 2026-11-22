@@ -31,7 +31,7 @@ BEGIN
      AND pg_get_constraintdef(con.oid) ILIKE '%author_user_id IS NOT NULL%'
      AND pg_get_constraintdef(con.oid) NOT ILIKE '%activity%';
   IF c IS NULL THEN
-    RAISE EXCEPTION '0124: notes author check not found';
+    RAISE EXCEPTION '0125: notes author check not found';
   END IF;
   EXECUTE format('ALTER TABLE notes DROP CONSTRAINT %I', c);
 END $$;
@@ -105,17 +105,17 @@ GRANT SELECT, INSERT ON referral_update_cues TO app_user;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.referral_update_cues'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
-    RAISE EXCEPTION '0124: referral_update_cues must force row-level security';
+    RAISE EXCEPTION '0125: referral_update_cues must force row-level security';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.referral_update_cues'::regclass AND polname = 'tenant_isolation' AND NOT polpermissive) THEN
-    RAISE EXCEPTION '0124: referral_update_cues needs the restrictive tenant policy';
+    RAISE EXCEPTION '0125: referral_update_cues needs the restrictive tenant policy';
   END IF;
   IF (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.referral_update_cues'::regclass AND polname LIKE 'support_read_only_%' AND NOT polpermissive) <> 3
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.referral_update_cues'::regclass AND tgname = 'support_read_only' AND tgenabled <> 'D') THEN
-    RAISE EXCEPTION '0124: referral_update_cues needs the support read-only policies and trigger';
+    RAISE EXCEPTION '0125: referral_update_cues needs the support read-only policies and trigger';
   END IF;
   IF has_table_privilege('app_user', 'public.referral_update_cues', 'DELETE') OR has_table_privilege('app_user', 'public.referral_update_cues', 'TRUNCATE')
      OR has_table_privilege('app_user', 'public.referral_update_cues', 'UPDATE') THEN
-    RAISE EXCEPTION '0124: app_user must not update or delete referral_update_cues rows';
+    RAISE EXCEPTION '0125: app_user must not update or delete referral_update_cues rows';
   END IF;
 END $$;

@@ -187,7 +187,8 @@ function parse(input: ParseInput, text: string, meta: LeadMetadata): ParseResult
     if (!isVendorSender(v, sender)) continue;
     vendorSender = true;
     const ex = extract(text, lines, v.labels, sender);
-    if (v.marker.test(scope) && hasContactLabel(ex)) return result(text, toLead(v.format, ex, text, subject));
+    // the subject counts: "New Market VIP Prospect" is realtor.com even when the body never says so
+    if (v.marker.test(`${subject}\n${scope}`) && hasContactLabel(ex)) return result(text, toLead(v.format, ex, text, subject));
     const lead = toLead(v.format, ex, text, subject);
     if (!vendorPartial && foundAnything(lead)) vendorPartial = lead;
   }

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { isValidEmail } from './fields.js';
 import { isOwnAddress } from './extract.js';
 import { isConsumerMailboxDomain } from '../trust.js';
-import { agentdashFlags, fallbackLead, isNonLeadMail } from './index.js';
+import { agentdashFlags, fallbackLead, isNonLeadMail, wantsReferralReminder } from './index.js';
 import {
   AGENTDASH,
   AGENTDASH_INVOICE,
@@ -984,5 +984,45 @@ describe('source templates and the unparsed fallback (synthetic fixtures)', () =
     expect(fallbackLead('Thanks for reading.', 'leads.idx-broker.test')).toBeNull();
     // the portal's own address in the prose is not the lead
     expect(fallbackLead('Email me at leads@zillow.com or (555) 555-0100', 'mail.zillow.com')?.emails).toEqual([]);
+  });
+
+  it('a Market VIP subject is realtor.com even when the body never says so', () => {
+    const r = parseLeadEmail({
+      subject: 'New Market VIP Prospect',
+      text: 'Name: Pat Sample\nEmail: pat.sample@example.test\nPhone: (555) 555-0133',
+      html: null,
+      senderDomain: 'email.realtor.com',
+    });
+    expect(okLead(r).format).toBe('realtor');
+    expect(okLead(r).name?.value).toBe('Pat Sample');
+  });
+
+  it('an invoice, a closing-document notice, and a market newsletter each match on their own', () => {
+    expect(isNonLeadMail('Invoice 100', 'Please pay the attached bill.')).toBe(true);
+    expect(isNonLeadMail('Documents', 'Closing documents are attached.')).toBe(true);
+    expect(isNonLeadMail('Notice', 'The closing-document packet is ready.')).toBe(true);
+    expect(isNonLeadMail('Market update', 'Prices rose 2% this month.')).toBe(true);
+    expect(isNonLeadMail('November notes', 'This newsletter covers rates.')).toBe(true);
+    expect(isNonLeadMail('New lead', 'Name: Ann Lee\nEmail: ann.lee@example.test')).toBe(false);
+  });
+
+  it('lofty.com and exprealty.com addresses are the relay’s, never the lead’s', () => {
+    expect(PORTAL_DOMAINS).toEqual(expect.arrayContaining(['lofty.com', 'exprealty.com']));
+    for (const d of ['lofty.com', 'exprealty.com']) {
+      // the sender is not the relay, so only the portal list can drop alerts@<relay>
+      const labelled = parseLeadEmail(generic(`Name: Ann Lee\nEmail: alerts@${d}\nEmail: ann.lee@example.test\nPhone: 555-555-0191`, 'forms.agent-site.test'));
+      expect(okLead(labelled).emails.map((e) => e.value), d).toEqual(['ann.lee@example.test']);
+      expect(fallbackLead(`Write alerts@${d} or ann.lee@example.test or (555) 555-0192`, 'forms.other.test')?.emails.map((e) => e.value), d).toEqual(['ann.lee@example.test']);
+    }
+  });
+
+  it('the day-5 flag follows the trusted sender plus the subject and body, not the template that matched', () => {
+    expect(wantsReferralReminder('mail.opcity.com', 'Hello', 'Please call me back.')).toBe(true);
+    expect(wantsReferralReminder('email.realtor.com', 'New Market VIP Prospect', 'Name: Pat Sample')).toBe(true);
+    expect(wantsReferralReminder('alerts.lofty.com', 'New lead', 'Source: Opcity')).toBe(true);
+    expect(wantsReferralReminder('alerts.exprealty.com', 'Opcity referral', 'Name: Pat Sample')).toBe(true);
+    expect(wantsReferralReminder('leads.realtor.com', 'New realtor.com lead', 'I want to sell my home this spring.')).toBe(false);
+    expect(wantsReferralReminder('alerts.lofty.com', 'New lead', 'Name: Pat Sample')).toBe(false);
+    expect(wantsReferralReminder('mail.zillow.com', 'New Market VIP Prospect', 'Source: Opcity')).toBe(false);
   });
 });

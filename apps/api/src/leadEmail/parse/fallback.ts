@@ -16,13 +16,14 @@ const NAME_RE = /(?:my name is|this is|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,
 const PROPERTY_RE = /\d{1,6}\s+(?:[A-Za-z0-9.'-]+\s+){1,5}[A-Za-z0-9.'-]+,\s*[A-Za-z .'-]{2,40},?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?/;
 
 /**
- * Mail that is not a new lead: an AgentDash invoice or closing-docs notice, or a market newsletter.
- * Held for a person to see; never turned into a contact.
+ * Mail that is not a new lead. Each kind matches on its own: an invoice, a closing-document notice, or a
+ * market newsletter / market update. Checked before any lead is created, including when the labels would parse.
  */
 export function isNonLeadMail(subject: string | null, text: string): boolean {
   const head = `${subject ?? ''}\n${text}`.slice(0, 8_000);
-  if (/\binvoice\b/i.test(head) && /\b(?:closing documents|amount due|not a new referral)\b/i.test(head)) return true;
-  if (/\bnewsletter\b/i.test(subject ?? '') || /^\s*market update\b/i.test(text)) return true;
+  if (/\binvoice\b/i.test(head)) return true;
+  if (/\bclosing[- ]documents?\b/i.test(head)) return true;
+  if (/\bnewsletter\b/i.test(head) || /\bmarket update\b/i.test(head)) return true;
   return false;
 }
 

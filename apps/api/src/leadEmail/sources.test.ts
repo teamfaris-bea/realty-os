@@ -171,8 +171,78 @@ describe('realtor.com referral reminder at day 5', () => {
     const quietInquiry = (await inquiryOf(quietId!))[0]!.id;
     await h.su.query(`UPDATE lead_inquiries SET received_at = now() - interval '6 days' WHERE id = $1`, [quietInquiry]);
     await h.su.query(`INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body, source) VALUES ($1, $2, $3, $4, 'Called and logged the referral update', 'manual')`, [w.tenantId, randomUUID(), quietId, w.owner.userId]);
-    expect(await remind()).toEqual({ scanned: 1, opened: 0 });
+    expect(await remind()).toEqual({ scanned: 0, opened: 0 });
     expect((await h.su.query('SELECT count(*)::int AS n FROM tasks WHERE contact_id = $1', [quietId])).rows[0]!.n).toBe(0);
     expect((await h.su.query('SELECT count(*)::int AS n FROM messages WHERE contact_id = $1', [quietId])).rows[0]!.n).toBe(0);
+  });
+
+  it('a hundred older handled referrals do not keep a later one from getting a task', async () => {
+    const handledEmail = leadAddress();
+    const laterEmail = leadAddress();
+    expect(outcomeOf(await post('opcity.com', swap(OPCITY_TEXT, handledEmail), 'New Opcity referral'))).toBe('lead_created');
+    expect(outcomeOf(await post('opcity.com', swap(OPCITY_TEXT, laterEmail), 'New Opcity referral'))).toBe('lead_created');
+    const [handledId] = await contactsWith(h, w.tenantId, handledEmail);
+    const [laterId] = await contactsWith(h, w.tenantId, laterEmail);
+    const handledInquiry = (await inquiryOf(handledId!))[0]!;
+    const laterInquiry = (await inquiryOf(laterId!))[0]!.id;
+    await h.su.query(`UPDATE lead_inquiries SET received_at = now() - interval '50 days' WHERE id = $1`, [handledInquiry.id]);
+    await h.su.query(
+      `INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, source_detail, fingerprint, outcome)
+       SELECT $1, gen_random_uuid(), $2, lead_source_id, now() - interval '40 days' - (g || ' minutes')::interval,
+              'buy', '{"referral_update":true,"channel":"lead_email"}'::jsonb, 'starvation-' || g::text, 'attached'
+         FROM lead_inquiries, generate_series(1, 99) g
+        WHERE id = $3`,
+      [w.tenantId, handledId, handledInquiry.id],
+    );
+    await h.su.query(`UPDATE lead_inquiries SET received_at = now() - interval '6 days' WHERE id = $1`, [laterInquiry]);
+    await h.su.query(`INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body, source) VALUES ($1, $2, $3, $4, 'Already updated this referral', 'manual')`, [w.tenantId, randomUUID(), handledId, w.owner.userId]);
+    const remind = () => withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => remindReferralUpdates(tx, defaultIds(), now), { db: h.database });
+    const run = await remind();
+    expect(run.opened).toBe(1);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM tasks WHERE contact_id = $1', [handledId])).rows[0]!.n).toBe(0);
+    expect((await h.su.query<{ title: string }>('SELECT title FROM tasks WHERE contact_id = $1', [laterId])).rows).toEqual([{ title: 'Update this realtor.com referral' }]);
+  });
+});
+
+describe('non-leads and referral flags that do not depend on the template', () => {
+  it('an invoice, a closing-document notice, and a market update each create nobody, even with a name and email labelled', async () => {
+    const before = await contactCount(h, w.tenantId);
+    const kinds = [
+      ['Invoice 100', 'Invoice for last month.'],
+      ['Documents', 'Closing documents are attached.'],
+      ['Market update', 'Market update for November. Prices rose.'],
+    ];
+    for (const [subject, line] of kinds) {
+      const email = leadAddress();
+      const text = `${line}\nName: Pat Notice\nEmail: ${email}\nPhone: ${randomPhone()}`;
+      expect(outcomeOf(await post('forms.idx-site.test', text, subject)), subject).toBe('needs_review');
+      expect(await contactsWith(h, w.tenantId, email), subject).toEqual([]);
+    }
+    expect(await contactCount(h, w.tenantId)).toBe(before);
+  });
+
+  it('trusted Opcity, Lofty, and realtor.com mail arms the day-5 flag even when the template is generic or the fallback', async () => {
+    const genericEmail = leadAddress();
+    expect(outcomeOf(await post('opcity.com', `Name: Ora Generic\nEmail: ${genericEmail}\nPhone: ${randomPhone()}\nPlease call me back.`, 'Hello'))).toBe('lead_created');
+    const [genericId] = await contactsWith(h, w.tenantId, genericEmail);
+    expect((await inquiryOf(genericId!))[0]!.source_detail).toMatchObject({ format: 'generic', referral_update: true });
+
+    const vipEmail = leadAddress();
+    expect(outcomeOf(await post('realtor.com', `Name: Pat Vip\nEmail: ${vipEmail}\nPhone: ${randomPhone()}`, 'New Market VIP Prospect'))).toBe('lead_created');
+    const [vipId] = await contactsWith(h, w.tenantId, vipEmail);
+    expect((await inquiryOf(vipId!))[0]!.source_detail).toMatchObject({ format: 'realtor', referral_update: true });
+
+    const looseEmail = leadAddress();
+    const loose = `Hi, this is Quinn Sample.\nYou can reach me at ${looseEmail} or (555) 555-0144.`;
+    expect(outcomeOf(await post('realtor.com', loose, 'New Market VIP Prospect'))).toBe('lead_created');
+    const [looseId] = await contactsWith(h, w.tenantId, looseEmail);
+    expect((await inquiryOf(looseId!))[0]!.source_detail).toMatchObject({ format: 'fallback', referral_update: true });
+
+    const relayEmail = leadAddress();
+    expect(outcomeOf(await post('lofty.com', `Name: Ann Lee\nEmail: alerts@lofty.com\nEmail: ${relayEmail}\nPhone: ${randomPhone()}`, 'New lead'))).toBe('lead_created');
+    expect(await contactsWith(h, w.tenantId, 'alerts@lofty.com')).toEqual([]);
+    const [relayId] = await contactsWith(h, w.tenantId, relayEmail);
+    expect(relayId).toBeDefined();
+    expect((await inquiryOf(relayId!))[0]!.source_detail.referral_update).toBeUndefined();
   });
 });

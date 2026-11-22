@@ -210,14 +210,26 @@ export function detectedSource(format: LeadFormat, subject: string, text: string
   return SOURCE_LABEL[format];
 }
 
+const REFERRAL_WORD = /\b(?:referral|market vip|opcity)\b/i;
+
+function senderUnder(sender: string | null, base: string): boolean {
+  const d = (sender ?? '').trim().toLowerCase().replace(/\.+$/, '');
+  return d === base || d.endsWith(`.${base}`);
+}
+
 /**
- * Opcity and realtor.com referral mail (Market VIP, a referral, or an Opcity relay) needs a logged update.
- * Their rule is 7 days; the reminder fires at 5. A plain realtor.com contact email is not one.
+ * Whether this trusted email is an Opcity or realtor.com referral that needs a logged update.
+ * Decided from the sender plus the subject and body, not from which template matched: a generic or
+ * fallback read of the same mail still arms the day-5 reminder. Their rule is 7 days; the reminder
+ * fires at 5. A plain realtor.com contact email (no referral, Market VIP, or Opcity) is not one.
+ * A Lofty or eXp relay counts only when the subject or body names Opcity.
  */
-export function wantsReferralReminder(format: LeadFormat, subject: string, text: string): boolean {
-  if (format === 'opcity') return true;
-  if (format !== 'realtor') return false;
-  return /\b(?:referral|market vip|opcity)\b/i.test(`${subject}\n${text}`.slice(0, 4000));
+export function wantsReferralReminder(senderDomain: string | null, subject: string, text: string): boolean {
+  const blob = `${subject}\n${text}`.slice(0, 8_000);
+  if (senderUnder(senderDomain, 'opcity.com')) return true;
+  if ((senderUnder(senderDomain, 'lofty.com') || senderUnder(senderDomain, 'exprealty.com')) && /\bopcity\b/i.test(blob)) return true;
+  if ((senderUnder(senderDomain, 'realtor.com') || senderUnder(senderDomain, 'move.com')) && REFERRAL_WORD.test(blob)) return true;
+  return false;
 }
 
 /**
@@ -228,6 +240,7 @@ export const PORTAL_DOMAINS: readonly string[] = [
   'zillow.com', 'realtor.com', 'move.com', // VERIFY
   'redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com', // VERIFY
   'vu.com', // VERIFY: Veterans United AgentDash
+  'lofty.com', 'exprealty.com', // VERIFY: eXp Lofty relays Opcity; those addresses are the relay's, never the lead's
 ];
 
 /**
