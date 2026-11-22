@@ -1,8 +1,9 @@
 // WP3a: a per-tenant read-only token, keyset pages, and an updatedSince cursor.
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TEST_PASSWORD, type ApiHarness, type TestClient, createApiHarness, safeJson } from '../auth/testHarness.js';
+import { SIGNIN_TOKEN_HIDDEN } from '../portal/shared/redact.js';
 import { Activity, CRM_RESPONSE_SCHEMAS, Deal, Person } from './schemas.js';
 
 let h: ApiHarness;
@@ -194,6 +195,8 @@ describe('CRM read API', () => {
     const callId = randomUUID();
     const textId = randomUUID();
     const emailId = randomUUID();
+    const quoted = randomBytes(32).toString('base64url');
+    const quotedLink = `https://app.realty-os.invalid/portal.html#token=${quoted}`;
     await replica([
       { text: `INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, contact_id) DO NOTHING`, values: [owner.tenantId, conv, id] },
     ]);
@@ -211,8 +214,8 @@ describe('CRM read API', () => {
       },
       {
         text: `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, subject, body, status, initiator, occurred_at)
-               VALUES ($1, $2, $3, $4, 'email', 'inbound', 'ada.crmread@example.test', 'ada.agent@example.test', 'Thursday', 'Thursday works.', 'received', 'client', now())`,
-        values: [owner.tenantId, emailId, convId, id],
+               VALUES ($1, $2, $3, $4, 'email', 'inbound', 'ada.crmread@example.test', 'ada.agent@example.test', $5, $6, 'received', 'client', now())`,
+        values: [owner.tenantId, emailId, convId, id, `Thursday ${quotedLink}`, `See ${quotedLink}`],
       },
     ]);
 
@@ -232,6 +235,12 @@ describe('CRM read API', () => {
     const call = events.find((e) => e.id === `call_${callId}`);
     expect(call).toBeTruthy();
     expect(JSON.stringify(events)).not.toContain('recording');
+    const emailGet = await crm(token.token, `/api/crm/v1/events/email_${emailId}`);
+    expect(emailGet.statusCode, emailGet.body).toBe(200);
+    const email = emailGet.json() as { subject: string | null; body: string | null };
+    expect(email.subject).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect(email.body).toContain(SIGNIN_TOKEN_HIDDEN);
+    expect(emailGet.body).not.toContain(quoted);
     const callGet = await crm(token.token, `/api/crm/v1/events/call_${callId}`);
     expect(callGet.statusCode).toBe(200);
     expect((callGet.json() as { phone: string; durationSeconds: number }).durationSeconds).toBe(42);

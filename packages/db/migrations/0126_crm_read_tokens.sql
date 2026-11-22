@@ -1,9 +1,25 @@
 -- =============================================================================
--- 0124_crm_read_tokens.sql : per-tenant read-only service tokens for the CRM read API (WP3a).
+-- 0126_crm_read_tokens.sql : per-tenant read-only service tokens for the CRM read API (WP3a).
+-- Merge order: this PR is 0126. 0124, 0125 and 0127 belong to other PRs.
 --
 -- Prducer syncs people, activities, deals, users and stages. A token is created by the Owner, stored
 -- only as sha256, and revoked by the Owner. The read API resolves it through app.resolve_crm_read_token
 -- and never writes CRM rows. Revocation is checked on every request (no cache).
+--
+-- Lock plan: this file creates only the new, empty crm_read_tokens table (its UNIQUE builds an index
+-- on that empty table). It does not CREATE INDEX on contacts, deals, calls, messages, notes or
+-- appointments. Those tables are already live. A plain CREATE INDEX takes ShareLock and blocks writes
+-- for the whole build, and the migration runner applies each file in one transaction, so CREATE INDEX
+-- CONCURRENTLY cannot live here. The keyset reads are correct without the extra indexes. If a large
+-- tenant needs them at cutover, build them outside this runner, one table at a time:
+--   CREATE INDEX CONCURRENTLY contacts_crm_read_idx ON contacts (tenant_id, updated_at, id)
+--     WHERE deleted_at IS NULL AND merged_into_contact_id IS NULL;
+--   CREATE INDEX CONCURRENTLY deals_crm_read_idx ON deals (tenant_id, updated_at, id);
+--   CREATE INDEX CONCURRENTLY calls_crm_read_idx ON calls (tenant_id, updated_at, id);
+--   CREATE INDEX CONCURRENTLY messages_crm_read_idx ON messages (tenant_id, updated_at, id);
+--   CREATE INDEX CONCURRENTLY notes_crm_read_idx ON notes (tenant_id, updated_at, id);
+--   CREATE INDEX CONCURRENTLY appointments_crm_read_idx ON appointments (tenant_id, updated_at, id);
+-- CONCURRENTLY does not block writes. Do not wrap those statements in a transaction.
 --
 -- SECURITY REVIEW ITEM (CONVENTIONS §4; ARCHITECTURE §21.92; SECURITY §21):
 --   app.resolve_crm_read_token(bytea)  SECURITY DEFINER, owner app_definer, search_path pinned,
@@ -36,14 +52,6 @@ CREATE TABLE crm_read_tokens (
 );
 COMMENT ON TABLE crm_read_tokens IS
   'WP3a: one read-only service token for the CRM read API. The secret is never stored; token_hash is sha256 of the bearer token. token_prefix is the first ten characters so an Owner can tell tokens apart. A revocation is final.';
-
-CREATE INDEX contacts_crm_read_idx ON contacts (tenant_id, updated_at, id)
-  WHERE deleted_at IS NULL AND merged_into_contact_id IS NULL;
-CREATE INDEX deals_crm_read_idx ON deals (tenant_id, updated_at, id);
-CREATE INDEX calls_crm_read_idx ON calls (tenant_id, updated_at, id);
-CREATE INDEX messages_crm_read_idx ON messages (tenant_id, updated_at, id);
-CREATE INDEX notes_crm_read_idx ON notes (tenant_id, updated_at, id);
-CREATE INDEX appointments_crm_read_idx ON appointments (tenant_id, updated_at, id);
 
 ALTER TABLE crm_read_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm_read_tokens FORCE ROW LEVEL SECURITY;
@@ -123,18 +131,18 @@ GRANT SELECT ON crm_read_tokens TO app_definer;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = 'public.crm_read_tokens'::regclass AND c.relrowsecurity AND c.relforcerowsecurity) THEN
-    RAISE EXCEPTION '0124: crm_read_tokens must force row-level security';
+    RAISE EXCEPTION '0126: crm_read_tokens must force row-level security';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.crm_read_tokens'::regclass AND polname = 'tenant_isolation' AND NOT polpermissive) THEN
-    RAISE EXCEPTION '0124: crm_read_tokens needs the restrictive tenant policy';
+    RAISE EXCEPTION '0126: crm_read_tokens needs the restrictive tenant policy';
   END IF;
   IF (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.crm_read_tokens'::regclass AND polname LIKE 'support_read_only_%' AND NOT polpermissive) <> 3
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.crm_read_tokens'::regclass AND tgname = 'support_read_only' AND tgenabled <> 'D') THEN
-    RAISE EXCEPTION '0124: crm_read_tokens needs the support read-only policies and trigger';
+    RAISE EXCEPTION '0126: crm_read_tokens needs the support read-only policies and trigger';
   END IF;
   IF has_table_privilege('app_user', 'public.crm_read_tokens', 'DELETE')
      OR has_table_privilege('app_user', 'public.crm_read_tokens', 'TRUNCATE') THEN
-    RAISE EXCEPTION '0124: app_user must not delete crm_read_tokens rows';
+    RAISE EXCEPTION '0126: app_user must not delete crm_read_tokens rows';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_proc p
@@ -144,16 +152,16 @@ BEGIN
       AND r.rolname = 'app_definer'
       AND EXISTS (SELECT 1 FROM unnest(p.proconfig) cfg WHERE cfg LIKE 'search_path=%')
   ) THEN
-    RAISE EXCEPTION '0124: app.resolve_crm_read_token must be a definer owned by app_definer with search_path pinned';
+    RAISE EXCEPTION '0126: app.resolve_crm_read_token must be a definer owned by app_definer with search_path pinned';
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'app' AND p.proname = 'crm_read_tokens_guard' AND p.prosecdef
   ) THEN
-    RAISE EXCEPTION '0124: the token guard must not be a security definer';
+    RAISE EXCEPTION '0126: the token guard must not be a security definer';
   END IF;
   IF has_function_privilege('public', 'app.resolve_crm_read_token(bytea)', 'EXECUTE')
      OR NOT has_function_privilege('app_user', 'app.resolve_crm_read_token(bytea)', 'EXECUTE') THEN
-    RAISE EXCEPTION '0124: only app_user may execute app.resolve_crm_read_token';
+    RAISE EXCEPTION '0126: only app_user may execute app.resolve_crm_read_token';
   END IF;
 END $$;

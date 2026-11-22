@@ -10,6 +10,7 @@ import type { Database, Tx } from '@realty/db';
 import { withTenantTx } from '@realty/db';
 import { audit, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
+import { hideForDisplay } from '../portal/shared/redact.js';
 import { systemActor } from '../worker/systemActor.js';
 import { sha256Token } from './auth.js';
 import { type EventCursor, type EventKind, CursorError, decodeEvent, decodePair, encodeEvent, encodePair, eventId, parseEventId } from './cursor.js';
@@ -237,8 +238,10 @@ function toActivity(row: EventRow) {
     userId: row.user_id,
     dealId: row.deal_id,
     direction: row.direction === 'inbound' || row.direction === 'outbound' ? (row.direction as 'inbound' | 'outbound') : null,
-    subject: row.subject,
-    body: row.body,
+    // A message stored before the sign-in token was stripped can still quote it. Hide it at read time,
+    // the same way the timeline and the thread do. The stored row is not rewritten.
+    subject: hideForDisplay(row.subject).text,
+    body: hideForDisplay(row.body).text,
     from: row.from_address,
     to: row.to_address,
     phone: row.phone,
