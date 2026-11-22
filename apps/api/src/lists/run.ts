@@ -151,7 +151,7 @@ export async function runStageCounts(tx: Tx, def: SmartListDefinition): Promise<
   const plan = await planFor(tx, def);
   const hint = people.scopeHintFor(await currentRole(tx));
   await limitListStatement(tx);
-  const rows = await people.stageCounts(tx, plan, hint);
+  const rows = await people.stageCounts(tx, plan, LIST_COUNT_CAP, hint);
   const by = new Map(rows.map((r) => [r.stage, r.n]));
   return LIST_STAGES.map((stage) => {
     const n = by.get(stage) ?? 0;

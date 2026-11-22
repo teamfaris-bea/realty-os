@@ -32,8 +32,8 @@ function counts(stage = 'new', n = 1) {
   return { counts: STAGES.map((s) => ({ stage: s, count: s === stage ? n : 0, capped: false })) };
 }
 
-function page(people: PersonView[]) {
-  return { people, nextCursor: null, sort: 'last_activity_desc', list: null, scope: 'people_you_can_see', audienceProtected: false };
+function page(people: PersonView[], nextCursor: string | null = null) {
+  return { people, nextCursor, sort: 'last_activity_desc', list: null, scope: 'people_you_can_see', audienceProtected: false };
 }
 
 function stageOf(body: unknown): string | undefined {
@@ -41,7 +41,7 @@ function stageOf(body: unknown): string | undefined {
   return all.find((c) => c.kind === 'stage')?.in?.[0];
 }
 
-function mount(locked: string[] = []) {
+function mount(locked: string[] = [], o: { more?: boolean } = {}) {
   const jane = person();
   const fake = new FakeFetch()
     .on('GET /auth/session', { status: 200, body: sessionFixture() })
@@ -49,7 +49,13 @@ function mount(locked: string[] = []) {
     .on('GET /people/filter-options', { status: 200, body: { sources: [], members: [{ userId: BLAKE, name: 'Blake Chen', role: 'agent', active: true }] } })
     .on('GET /people/stage-counts', { status: 200, body: counts() })
     .on(`GET /people/stage-counts?owner=${BLAKE}`, { status: 200, body: counts('new', 0) })
-    .on('POST /people/query', (call) => ({ status: 200, body: page(stageOf(call.body) === 'new' ? [jane] : []) }))
+    .on('POST /people/query', (call) => {
+      const stage = stageOf(call.body);
+      if (stage !== 'new') return { status: 200, body: page([]) };
+      const cursor = (call.body as { cursor?: string }).cursor;
+      if (o.more && cursor === 'p2') return { status: 200, body: page([person({ id: IDS.pat, displayName: 'Pat Ng' })]) };
+      return { status: 200, body: page([jane], o.more ? 'p2' : null) };
+    })
     .on(`GET /contacts/${IDS.jane}/details`, { status: 200, body: { details: { stage: { locked } } } })
     .on(`POST /contacts/${IDS.jane}/stage`, { status: 200, body: { stage: { stage: 'connected', label: 'Connected' }, previousStage: 'new', rowVersion: 2, eventId: '01900000-0000-7000-8000-0000000000e9' } });
   renderApp({ fake, path: '/pipeline', table: tableWith(pipelineSurface) });
@@ -80,6 +86,15 @@ describe('Pipeline', () => {
     await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/stage`).at(-1)!.body).toEqual({ stage: 'new', undoOf: '01900000-0000-7000-8000-0000000000e9' }));
   });
 
+  it('loads the next page of a stage when that column is scrolled', async () => {
+    const fake = mount([], { more: true });
+    expect(await screen.findByRole('link', { name: 'Jane Doe' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Pat Ng' })).not.toBeInTheDocument();
+    fireEvent.scroll(screen.getByRole('list', { name: 'People in New lead' }));
+    expect(await screen.findByRole('link', { name: 'Pat Ng' })).toBeInTheDocument();
+    expect(fake.callsTo('POST /people/query').some((c) => (c.body as { cursor?: string }).cursor === 'p2')).toBe(true);
+  });
+
   it('on a desktop, dropping a card on another stage asks for that stage', async () => {
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(min-width: 768px)', media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false }));
     const fake = mount();
@@ -89,5 +104,16 @@ describe('Pipeline', () => {
     fireEvent.dragOver(target);
     fireEvent.drop(target);
     await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/stage`)[0]!.body).toEqual({ stage: 'connected' }));
+  });
+
+  it('on a desktop, a drop onto a locked stage is refused with the Move dialog’s explanation and does not post', async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(min-width: 768px)', media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false }));
+    const fake = mount(['connected']);
+    const card = (await screen.findByRole('link', { name: 'Jane Doe' })).closest('article')!;
+    const target = await screen.findByRole('region', { name: /Connected, 0/ });
+    fireEvent.dragStart(card);
+    fireEvent.drop(target);
+    expect(await screen.findByText('Reach them first (a call, text, email or reply in their website chat), or close the lead.')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/stage`)).toHaveLength(0);
   });
 });

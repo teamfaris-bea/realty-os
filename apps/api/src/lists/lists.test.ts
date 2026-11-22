@@ -6,6 +6,8 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { mapListsDbError, limitListStatement } from './common.js';
+import { stageCounts } from './repos/people.js';
+import { planFor } from './run.js';
 import { resolveSelection } from './selection.js';
 import { auditRows, call, createContact, listsWorld, type ListsWorld, makeTag, run, runAll, tagContact } from './testing.js';
 
@@ -174,6 +176,14 @@ describe('stage counts (pipeline board)', () => {
     const byList = await call<{ counts: { stage: string; count: number }[] }>(w.agentA, 'GET', `/people/stage-counts?list=${list.body.list.id}`);
     expect(byList.body.counts.find((c) => c.stage === 'connected')!.count).toBe(connected.length);
     expect(byList.body.counts.filter((c) => c.stage !== 'connected').every((c) => c.count === 0)).toBe(true);
+  });
+
+  it('R-PAR-29: a stage count stops at the cap in SQL, the same LIMIT a people count uses', async () => {
+    for (let i = 0; i < 3; i++) await createContact(w.agentA, `Cap Person ${i}`);
+    const rows = await withTenantTx(w.agentA.actor(), async (tx) => stageCounts(tx, await planFor(tx, { v: 1, all: [] }), 1, 'book'), { db: h.database });
+    for (const row of rows) expect(row.n).toBeLessThanOrEqual(2);
+    const full = await withTenantTx(w.agentA.actor(), async (tx) => stageCounts(tx, await planFor(tx, { v: 1, all: [] }), 10_000, 'book'), { db: h.database });
+    expect(full.find((r) => r.stage === 'new')!.n).toBeGreaterThan(2);
   });
 });
 

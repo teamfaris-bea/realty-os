@@ -7,7 +7,7 @@ import { F_AREA, F_BIRTHDAY, F_BUDGET, F_CLOSED_ON, F_FEATURES, F_TIMELINE, fixt
 import fc from 'fast-check';
 import { Kysely, PostgresDialect } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import { countQuery, pageQuery } from './repos/people.js';
+import { countQuery, pageQuery, stageCountsQuery } from './repos/people.js';
 
 // compile-only Kysely (never connects)
 const db = new Kysely<Record<string, never>>({ dialect: new PostgresDialect({ pool: { connect: () => Promise.reject(new Error('no db')), end: async () => {} } as never }) });
@@ -66,6 +66,7 @@ describe('R-PAR-29 the list SQL is fixed fragments plus bound parameters', () =>
           [pageQuery(ra.plan, null, 51), pageQuery(rb.plan, null, 51)],
           [pageQuery(ra.plan, cursorA, 51), pageQuery(rb.plan, cursorB, 51)],
           [countQuery(ra.plan, 10000), countQuery(rb.plan, 10000)],
+          [stageCountsQuery(ra.plan, 10000), stageCountsQuery(rb.plan, 10000)],
         ] as const;
         for (const [qa, qb] of pairs) {
           const ca = qa.compile(db);
@@ -81,6 +82,18 @@ describe('R-PAR-29 the list SQL is fixed fragments plus bound parameters', () =>
       { numRuns: 600 },
     );
     expect(shapes.size).toBeGreaterThan(10);
+  });
+
+  it('R-PAR-29: each stage count stops at the same cap as a people count (LIMIT is a bound parameter)', () => {
+    const def = SmartListDefinitionSchema.parse({ v: 1, all: [] });
+    const r = compileList(def, fixtureViewer());
+    if (!r.ok) throw new Error('compile');
+    const capped = stageCountsQuery(r.plan, 10_000).compile(db);
+    const people = countQuery(r.plan, 10_000).compile(db);
+    expect(capped.sql).toMatch(/LIMIT/);
+    expect(capped.sql).not.toContain('10001');
+    expect(capped.parameters).toContain(10_001);
+    expect(people.parameters).toContain(10_001);
   });
 
   it('R-PAR-29: an injection attempt in a name filter is a parameter (escaped for LIKE), never SQL', () => {

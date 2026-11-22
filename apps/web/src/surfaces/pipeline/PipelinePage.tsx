@@ -1,9 +1,10 @@
 // Stage pipeline: the eight fixed contact stages as columns. Drag a card on desktop, or tap Move
 // (the phone has no drag: a stage switcher and a list). Counts and the cards are the people the
 // viewer can see (RLS). A saved smart list and an agent narrow both. A stage change goes through
-// POST /contacts/:id/stage, with Undo. A locked stage says why before the tap.
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type MutableRefObject, useId, useRef, useState } from 'react';
+// POST /contacts/:id/stage, with Undo. A drop reads that person's locked stages first and never
+// posts onto one. Scrolling a column loads the next page of people.
+import { type InfiniteData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type ReactNode, type UIEvent, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Dialog, EmptyState, Notice } from '../../design/index.js';
 import { ApiError, messageFor, useApi } from '../../shell/index.js';
@@ -12,7 +13,7 @@ import { AgentSheetsProvider } from '../feed/lib/AgentSheets.js';
 import { PEOPLE_ERROR_MESSAGES } from '../people-edit/api.js';
 import { useIsDesktop, useToast } from '../people-edit/hooks.js';
 import { LOCKED_FOR_NOW, type StageResponse } from '../people-edit/stageFlow.js';
-import { type PersonView, type SmartListView, useFilterOptions, usePeople, useSmartLists, useStageGuide } from '../people/api.js';
+import { type PeoplePage, type PersonView, type SmartListView, useFilterOptions, usePeople, useSmartLists, useStageGuide } from '../people/api.js';
 import { boardDefinition, countLabel, stageDefinition } from './board.js';
 
 interface StageCount {
@@ -55,7 +56,35 @@ function Pipeline() {
   });
   const [moveError, setMoveError] = useState<string | null>(null);
   const [moving, setMoving] = useState<PersonView | null>(null);
-  const drag = useRef<{ id: string; from: string } | null>(null);
+  const drag = useRef<{ id: string; from: string; locked: Promise<ReadonlySet<string>> } | null>(null);
+
+  const beginDrag = (id: string, from: string) => {
+    drag.current = {
+      id,
+      from,
+      locked: api.get<{ details: { stage: { locked: string[] } } }>(`/contacts/${id}/details`).then((d) => new Set(d.details.stage.locked)),
+    };
+  };
+
+  /** A drop applies the locked set before any write. A locked stage is explained and not posted. */
+  const dropOn = async (stage: string) => {
+    const d = drag.current;
+    drag.current = null;
+    if (!d || d.from === stage) return;
+    let locked: ReadonlySet<string>;
+    try {
+      locked = await d.locked;
+    } catch (e) {
+      const err = e instanceof ApiError ? e : new ApiError('INTERNAL_ERROR', 0);
+      setMoveError(messageFor(err, PEOPLE_ERROR_MESSAGES));
+      return;
+    }
+    if (locked.has(stage)) {
+      setMoveError(PEOPLE_ERROR_MESSAGES.STAGE_NEEDS_CONTACT ?? LOCKED_FOR_NOW);
+      return;
+    }
+    await move(d.id, stage, d.from);
+  };
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -119,8 +148,8 @@ function Pipeline() {
               label={s.label}
               count={countOf(s.key)}
               definition={stageDefinition(board, s.key)}
-              drag={drag}
-              onMove={(id, from) => void move(id, s.key, from)}
+              onDragPerson={beginDrag}
+              onDrop={() => void dropOn(s.key)}
               onOpenMove={setMoving}
             />
           ))}
@@ -197,20 +226,18 @@ function Column({
   label,
   count,
   definition,
-  drag,
-  onMove,
+  onDragPerson,
+  onDrop,
   onOpenMove,
 }: {
   stage: string;
   label: string;
   count: StageCount | undefined;
   definition: ReturnType<typeof stageDefinition>;
-  drag: MutableRefObject<{ id: string; from: string } | null>;
-  onMove: (id: string, from: string) => void;
+  onDragPerson: (id: string, from: string) => void;
+  onDrop: () => void;
   onOpenMove: (p: PersonView) => void;
 }) {
-  const q = usePeople({ kind: 'definition', definition, label });
-  const people = q.data?.pages.flatMap((p) => p.people) ?? [];
   const n = count ? countLabel(count.count, count.capped) : '…';
   return (
     <section
@@ -221,31 +248,14 @@ function Column({
       }}
       onDrop={(e) => {
         e.preventDefault();
-        const d = drag.current;
-        drag.current = null;
-        if (d && d.from !== stage) onMove(d.id, d.from);
+        onDrop();
       }}
     >
       <h2 className="flex items-baseline justify-between gap-2 px-1 text-[15px] font-semibold text-ink">
         <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
         <span className="text-[13px] font-medium text-ink-muted">{n}</span>
       </h2>
-      {q.isError ? <Notice tone="error">{messageFor(q.error, PEOPLE_ERROR_MESSAGES)}</Notice> : null}
-      {q.data && people.length === 0 ? <p className="px-1 py-2 text-[14px] text-ink-muted">No one here.</p> : null}
-      <ul className="flex flex-col gap-2">
-        {people.map((p) => (
-          <li key={p.id}>
-            <PersonCard
-              person={p}
-              draggable
-              onDragStart={() => {
-                drag.current = { id: p.id, from: stage };
-              }}
-              onMove={() => onOpenMove(p)}
-            />
-          </li>
-        ))}
-      </ul>
+      <StagePeople definition={definition} label={label} stage={stage} draggable onDragPerson={onDragPerson} onOpenMove={onOpenMove} />
     </section>
   );
 }
@@ -266,8 +276,6 @@ function PhoneBoard({
   onOpenMove: (p: PersonView) => void;
 }) {
   const current = stages.find((s) => s.key === selected) ?? stages[0];
-  const q = usePeople({ kind: 'definition', definition, label: current?.label ?? 'Stage' });
-  const people = q.data?.pages.flatMap((p) => p.people) ?? [];
   return (
     <div className="flex flex-col gap-3">
       <div role="tablist" aria-label="Stages" className="flex gap-2 overflow-x-auto pb-1">
@@ -283,17 +291,49 @@ function PhoneBoard({
           );
         })}
       </div>
+      <StagePeople definition={definition} label={current?.label ?? 'Stage'} stage={current?.key ?? selected} empty={<EmptyState icon="people" title="No one in this stage" />} onOpenMove={onOpenMove} />
+    </div>
+  );
+}
+
+/** The people in one stage. Scrolling near the bottom of this list loads the next page. */
+function StagePeople({
+  definition,
+  label,
+  stage,
+  draggable = false,
+  empty,
+  onDragPerson,
+  onOpenMove,
+}: {
+  definition: ReturnType<typeof stageDefinition>;
+  label: string;
+  stage: string;
+  draggable?: boolean;
+  empty?: ReactNode;
+  onDragPerson?: (id: string, from: string) => void;
+  onOpenMove: (p: PersonView) => void;
+}) {
+  const q = usePeople({ kind: 'definition', definition, label });
+  const people = (q.data as InfiniteData<PeoplePage> | undefined)?.pages.flatMap((p) => p.people) ?? [];
+  const onScroll = (e: UIEvent<HTMLUListElement>) => {
+    const el = e.currentTarget;
+    if (!q.hasNextPage || q.isFetchingNextPage) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) void q.fetchNextPage();
+  };
+  return (
+    <>
       {q.isError ? <Notice tone="error">{messageFor(q.error, PEOPLE_ERROR_MESSAGES)}</Notice> : null}
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
-      {q.data && people.length === 0 ? <EmptyState icon="people" title="No one in this stage" /> : null}
-      <ul className="flex flex-col gap-2">
+      {q.data && people.length === 0 ? (empty ?? <p className="px-1 py-2 text-[14px] text-ink-muted">No one here.</p>) : null}
+      <ul aria-label={`People in ${label}`} className="flex max-h-[70vh] flex-col gap-2 overflow-y-auto" onScroll={onScroll}>
         {people.map((p) => (
           <li key={p.id}>
-            <PersonCard person={p} onMove={() => onOpenMove(p)} />
+            <PersonCard person={p} draggable={draggable} onDragStart={onDragPerson ? () => onDragPerson(p.id, stage) : undefined} onMove={() => onOpenMove(p)} />
           </li>
         ))}
       </ul>
-    </div>
+    </>
   );
 }
 
