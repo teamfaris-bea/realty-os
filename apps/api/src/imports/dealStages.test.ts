@@ -25,6 +25,18 @@ beforeAll(async () => {
       { id: 4, name: 'Waiting, no person', status: 'Active', price: 40, stageName: 'Waiting On Lender', pipelineName: 'Buyers', peopleIds: [404], userIds: [11] },
     ],
   });
+  ih.fub.add('fub-deal-stage-party', {
+    users: [{ id: 11, name: 'Alex Agent' }],
+    people: [
+      { id: 61, firstName: 'Pat', lastName: 'Primary', stage: 'Active', assignedUserId: 11, emails: [{ value: 'pat.party.map@example.com', type: 'home' }] },
+      { id: 62, firstName: 'Sol', lastName: 'Only', stage: 'Active', assignedUserId: 11, emails: [{ value: 'sol.party.map@example.com', type: 'home' }] },
+      { id: 63, firstName: 'Ned', lastName: 'Later', stage: 'Active', assignedUserId: 11, emails: [{ value: 'ned.later.map@example.com', type: 'home' }] },
+    ],
+    deals: [
+      { id: 61, name: 'Kept party', stageName: 'Held Stage', pipelineName: 'Buyers', price: 20, peopleIds: [61], userIds: [11] },
+      { id: 62, name: 'Dropped party', stageName: 'Held Stage', pipelineName: 'Buyers', price: 20, peopleIds: [62], userIds: [11] },
+    ],
+  });
   ih.fub.add('fub-deal-stage-remap', {
     users: [{ id: 11, name: 'Alex Agent' }],
     people: [{ id: 1, firstName: 'Ada', lastName: 'Lovelace', stage: 'Active', assignedUserId: 11, emails: [{ value: 'ada.remap@example.com', type: 'home' }] }],
@@ -189,5 +201,35 @@ describe('deal stage map', () => {
       { db: ih.h.database },
     );
     expect(signed).toBe(0);
+  });
+
+  it('keeps a deal the stage map wrote when someone adds a party, and deletes only the parties of an untouched one', async () => {
+    const b = await startFub(ih, w.owner, 'fub-deal-stage-party');
+    const map = await call(w.owner, 'PUT', `/imports/${b.id}/user-mappings`, {
+      mappings: [{ sourceRef: '11', kind: 'user', target: { kind: 'user', userId: w.agents[0]!.userId } }],
+    });
+    expect(map.status).toBe(200);
+    for (const cat of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals'] as const) await fullStage(ih, w.owner, b.id, cat);
+    const put = await call<{ importedNow: number }>(w.owner, 'PUT', `/imports/${b.id}/deal-stages`, { dealStageMap: { 'Held Stage': 'active' } });
+    expect(put.status).toBe(200);
+    expect(put.body.importedNow).toBe(2);
+    const deals = await q<{ id: string; name: string }>('SELECT id, name FROM deals WHERE tenant_id = $1 AND name = ANY ($2)', [w.tenantId, ['Kept party', 'Dropped party']]);
+    const kept = deals.find((d) => d.name === 'Kept party')!;
+    const dropped = deals.find((d) => d.name === 'Dropped party')!;
+    const later = await q<{ id: string }>(`SELECT id FROM contacts WHERE tenant_id = $1 AND display_name = 'Ned Later'`, [w.tenantId]);
+    await withTenantTx(w.owner.actor(), async (tx) => {
+      await sql`INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role) VALUES (app.tenant_id(), ${kept.id}, ${later[0]!.id}, 'co_buyer')`.execute(tx);
+    }, { db: ih.h.database });
+    expect((await call(w.owner, 'POST', `/imports/${b.id}/revert`, { category: 'deals' })).status).toBe(202);
+    await ih.drain();
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1 AND id = $2', [w.tenantId, kept.id]))[0]!.n).toBe(1);
+    const parties = await q<{ name: string }>(
+      `SELECT c.display_name AS name FROM deal_contacts dc JOIN contacts c ON c.tenant_id = dc.tenant_id AND c.id = dc.contact_id
+        WHERE dc.tenant_id = $1 AND dc.deal_id = $2 ORDER BY c.display_name`,
+      [w.tenantId, kept.id],
+    );
+    expect(parties.map((r) => r.name)).toEqual(['Ned Later', 'Pat Primary']);
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deals WHERE tenant_id = $1 AND id = $2', [w.tenantId, dropped.id]))[0]!.n).toBe(0);
+    expect((await q<{ n: number }>('SELECT count(*)::int AS n FROM deal_contacts WHERE tenant_id = $1 AND deal_id = $2', [w.tenantId, dropped.id]))[0]!.n).toBe(0);
   });
 });

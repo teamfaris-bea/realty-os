@@ -275,8 +275,24 @@ export async function insertDeal(
     closedAt: string | null;
     lostReason: string | null;
     createdByUserId: string | null;
+    /**
+     * When the deals step already committed, stamp the row at that commit. A later save is still the import's
+     * row: revert treats `updated_at` after the commit as a person's edit, and a party the import did not write
+     * as later work.
+     */
+    writtenAt?: string | null;
   },
 ): Promise<void> {
+  if (d.writtenAt) {
+    await sql`
+      INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, price_cents,
+                         expected_close_date, agreement_signed_at, under_contract_at, closed_at, lost_reason, created_by_user_id,
+                         created_at, updated_at)
+      VALUES (app.tenant_id(), ${d.id}, ${d.name}, ${d.side}, ${d.stage}, ${d.stageEnteredAt}::timestamptz, ${d.primaryContactId}, ${d.ownerUserId},
+              ${d.priceCents}, ${d.expectedCloseDate}::date, ${d.agreementSignedAt}::timestamptz, ${d.underContractAt}::timestamptz,
+              ${d.closedAt}::timestamptz, ${d.lostReason}, ${d.createdByUserId}, ${d.writtenAt}::timestamptz, ${d.writtenAt}::timestamptz)`.execute(tx);
+    return;
+  }
   await sql`
     INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, price_cents,
                        expected_close_date, agreement_signed_at, under_contract_at, closed_at, lost_reason, created_by_user_id)
@@ -307,8 +323,13 @@ export async function insertDealDate(tx: Tx, a: { id: string; dealId: string; ki
 /** System insert (0124). The approving human is updated_by; the system cannot read the row back. */
 export async function insertDealFinancials(
   tx: Tx,
-  f: { dealId: string; grossCents: number | null; rateBps: number | null; teamBps: number | null; agentBps: number | null; updatedBy: string },
+  f: { dealId: string; grossCents: number | null; rateBps: number | null; teamBps: number | null; agentBps: number | null; updatedBy: string; writtenAt?: string | null },
 ): Promise<void> {
+  if (f.writtenAt) {
+    await sql`INSERT INTO deal_financials (tenant_id, deal_id, gross_commission_cents, commission_rate_bps, team_split_bps, agent_split_bps, commission_status, updated_by_user_id, updated_at)
+              VALUES (app.tenant_id(), ${f.dealId}, ${f.grossCents}, ${f.rateBps}, ${f.teamBps}, ${f.agentBps}, 'estimated', ${f.updatedBy}, ${f.writtenAt}::timestamptz)`.execute(tx);
+    return;
+  }
   await sql`INSERT INTO deal_financials (tenant_id, deal_id, gross_commission_cents, commission_rate_bps, team_split_bps, agent_split_bps, commission_status, updated_by_user_id)
             VALUES (app.tenant_id(), ${f.dealId}, ${f.grossCents}, ${f.rateBps}, ${f.teamBps}, ${f.agentBps}, 'estimated', ${f.updatedBy})`.execute(tx);
 }

@@ -117,6 +117,7 @@ async function insertDeal(
   contact: { id: string; seq: number },
   ownerUserId: string,
   now: Instant,
+  writtenAt: string | null,
 ): Promise<string> {
   const id = deps.ids.next<'DealId'>();
   const entered = asInstant(n.stageEnteredAt, now);
@@ -135,6 +136,7 @@ async function insertDeal(
     closedAt: asInstantOrNull(n.closedAt) !== null ? toIso(asInstantOrNull(n.closedAt) as Instant) : null,
     lostReason: n.lostReason,
     createdByUserId: actor.userId,
+    ...(writtenAt ? { writtenAt } : {}),
   });
   const linked = new Set<string>([contact.id]);
   const system = SOURCE_SYSTEM[batch.source];
@@ -163,6 +165,7 @@ async function insertDeal(
       teamBps: fin.teamSplitBps,
       agentBps: fin.agentSplitBps,
       updatedBy: actor.userId,
+      ...(writtenAt ? { writtenAt } : {}),
     });
   }
   await w.insertExternalRef(tx, { system, entityType: 'deal', externalId: n.externalId, entityId: id, batchId: batch.id });
@@ -401,7 +404,8 @@ export async function setDealStages(deps: ImportDeps, actor: UserActor, batchId:
             changed += 1;
             continue;
           }
-          const id = await insertAsImport(tx, actor, () => insertDeal(deps, tx, actor, nb, normalized, contact, owner, now));
+          const writtenAt = stage.committed_at ? stage.committed_at.toISOString() : null;
+          const id = await insertAsImport(tx, actor, () => insertDeal(deps, tx, actor, nb, normalized, contact, owner, now, writtenAt));
           await rrepo.writeDealResolution(tx, rec.id, {
             normalized,
             issues: base,
