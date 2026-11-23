@@ -207,7 +207,7 @@ describe('realtor.com referral reminder at day 5', () => {
 describe('non-leads and referral flags that do not depend on the template', () => {
   it('an invoice, a closing-document notice, and a market update each create nobody, even with a name and email labelled', async () => {
     const before = await contactCount(h, w.tenantId);
-    const kinds = [
+    const kinds: readonly (readonly [subject: string, line: string])[] = [
       ['Invoice 100', 'Invoice for last month.'],
       ['Documents', 'Closing documents are attached.'],
       ['Market update', 'Market update for November. Prices rose.'],
