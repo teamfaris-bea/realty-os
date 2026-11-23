@@ -33,6 +33,9 @@ const searchIds: string[] = [];
 let subject: string;
 
 const p95 = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * 0.95))]!;
+// Warmup is not timed. p95 of ten samples is the slowest one, so one stall fails the budget; >= 40 makes it a percentile.
+const WARMUP = 3;
+const SAMPLES = 40;
 async function timed<T>(fn: () => Promise<T>): Promise<[T, number]> {
   const t = performance.now();
   const r = await fn();
@@ -100,14 +103,21 @@ describe('RLS volume benchmark: 500k MLS rows per tenant', () => {
   }, 300_000);
 
   it('the competing endpoint over 500k rows stays fast (p95 printed; budget 1.5 s)', async () => {
+    const once = () => timed(() => call<{ listings: unknown[] }>(w.agents[0]!, 'GET', `/listings/${subject}/competing`));
+    for (let i = 0; i < WARMUP; i++) {
+      const [r] = await once();
+      expect(r.status).toBe(200);
+      expect(r.body.listings.length).toBeGreaterThan(0);
+    }
     const times: number[] = [];
-    for (let i = 0; i < 10; i++) {
-      const [r, ms] = await timed(() => call<{ listings: unknown[] }>(w.agents[0]!, 'GET', `/listings/${subject}/competing`));
+    for (let i = 0; i < SAMPLES; i++) {
+      const [r, ms] = await once();
       expect(r.status).toBe(200);
       expect(r.body.listings.length).toBeGreaterThan(0);
       times.push(ms);
     }
-    console.info(`[mls volume] competing p95 ${Math.round(p95(times))} ms`);
+    console.info(`[mls volume] competing p95 ${Math.round(p95(times))} ms over ${times.length} timed runs after ${WARMUP} warmup (${times.map((x) => Math.round(x)).join(', ')})`);
+    expect(times.length).toBeGreaterThanOrEqual(SAMPLES);
     expect(p95(times)).toBeLessThan(1500);
   }, 300_000);
 
