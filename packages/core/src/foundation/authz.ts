@@ -186,6 +186,7 @@ export const ACTIONS = [
   'portal.manage', // module 45: invite, publish, retract, revoke, disable, change the login point (Owner, Admin, TL T, agent own)
   'lead_source.ai_care', // b18 item f / B18S-5: "No automated contact for leads from this source" on a lead source (the Owner only; 🔒 when turning it off; DB guard)
   'team_queue.view', // b19 team-queue lane: the team work queue and the lead response report (read-only; Owner/Admin all, a Team Lead their teams)
+  'crm_read.manage', // WP3a: the Owner creates and revokes a read-only CRM service token (re-auth; no other role)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -425,6 +426,9 @@ export const AUDIT_ACTIONS = [
   'portal.item_retracted', // module 45: a person or the sync retracted an item (reason code)
   'portal.display_updated', // module 45: a grant's published title or contact card changed (field names only)
   'portal.grant_expiry_stored', // module 45 (b14 review B14-OWN-5): the sync stored a grant's expiry once (reason code: deal_closed, deal_lost, listing_ended)
+  'crm_read.token_created', // WP3a: an Owner created a read-only CRM service token (id and label; the secret is never written)
+  'crm_read.token_revoked', // WP3a: an Owner revoked a read-only CRM service token
+  'crm_read.read', // WP3a: a service token read one page (collection, count; no person fields)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -793,6 +797,8 @@ const MATRIX: Record<Action, ActionRule> = {
   // Read-only. The rows a Team Lead gets are narrowed by the queries (their teams' leads and pond leads) and by RLS.
   // People only: no system via and no support (fail closed; nothing automated reads a manager's queue).
   'team_queue.view': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['team'] } } },
+  // WP3a: minting a long-lived read credential. The Owner only, and only while re-authenticated. No system via.
+  'crm_read.manage': { roles: { owner: ALL_REAUTH } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

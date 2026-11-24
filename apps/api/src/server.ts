@@ -36,6 +36,7 @@ import { EnvelopeService } from './crypto/envelope.js';
 import { localKek } from './crypto/kek.js';
 import { AppError, type ErrorCode, errorBody } from './errors.js';
 import type { Providers } from './providers/index.js';
+import { crmReadGuard } from './crmRead/auth.js';
 import { webhookGuard } from './providers/webhooks.js';
 import { type ErrorReporter, MemoryErrorReporter } from './observability/errors.js';
 import { instrumentHttp } from './observability/metrics.js';
@@ -310,7 +311,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
       // Every /api route must declare its authorization; the guard is installed from the
       // declaration (rbac.ts). (Plugin routes outside /api, e.g. the CORS preflight, are not app routes.)
       api.addHook('onRoute', (route) => {
-        const { guard, chain, entry } = securedPreHandlers(route, { session: requireSession, actor: requireActor, webhook: webhookGuard });
+        const { guard, chain, entry } = securedPreHandlers(route, { session: requireSession, actor: requireActor, webhook: webhookGuard, crmRead: crmReadGuard });
         route.preHandler = chain;
         // the guard runs before input validation (preValidation), ahead of any route preValidation
         if (guard) {
@@ -327,7 +328,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
       // (CSRF token, MFA state, tenant, RBAC) still runs in preValidation; this only moves the 401.
       api.addHook('preParsing', async (req, _reply, payload) => {
         const auth = req.routeOptions.config?.auth;
-        if (auth !== undefined && auth !== 'public' && auth !== 'webhook' && !(await loadAuthState(req))) throw new AppError('UNAUTHENTICATED');
+        if (auth !== undefined && auth !== 'public' && auth !== 'webhook' && auth !== 'crm_read' && !(await loadAuthState(req))) throw new AppError('UNAUTHENTICATED');
         return payload;
       });
       for (const m of modules) await api.register(m.register);

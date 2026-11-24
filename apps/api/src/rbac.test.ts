@@ -146,7 +146,7 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
     // the Phase 1 list: imports, role/member changes, erasure, export, number release, support grant,
     // brokerage identity, compliance loosening
     expect(new Set(sensitive.map(([, a]) => a))).toEqual(
-      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text', 'mail_sync.manage', 'source_cost.edit', 'coaching.settings', 'ads.cap_set', 'settings.ai_isa', 'ai_isa.optin', 'lead_source.ai_care']), // b18 item f: the Owner turning "No AI care for leads from this source" off (loosening); module 68: Gmail sync; module 33: a closed month's cost (absent closedPeriod = closed); module 36: coaching settings; module 52: the ad cap; module 75 (D12): the AI ISA switch and the opt-in (loosening)
+      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text', 'mail_sync.manage', 'source_cost.edit', 'coaching.settings', 'ads.cap_set', 'settings.ai_isa', 'ai_isa.optin', 'lead_source.ai_care', 'crm_read.manage']), // b18 item f: the Owner turning "No AI care for leads from this source" off (loosening); module 68: Gmail sync; module 33: a closed month's cost (absent closedPeriod = closed); module 36: coaching settings; module 52: the ad cap; module 75 (D12): the AI ISA switch and the opt-in (loosening); WP3a: minting a CRM read token
     );
     for (const role of new Set(sensitive.map(([r]) => r))) {
       await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '16 minutes' WHERE user_id = $1 AND revoked_at IS NULL", [users[role].userId]);
@@ -187,7 +187,7 @@ describe('route table', () => {
       expect(r.url.startsWith('/api/')).toBe(true);
       expect(r.auth).toBeDefined();
       if ((ACTIONS as readonly string[]).includes(r.auth)) expect(r.authorizes).toBe(r.auth);
-      else expect(['public', 'webhook', 'session', 'self']).toContain(r.auth);
+      else expect(['public', 'webhook', 'session', 'self', 'crm_read']).toContain(r.auth);
     }
   });
 

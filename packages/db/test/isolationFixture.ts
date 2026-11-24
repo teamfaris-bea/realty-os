@@ -156,6 +156,8 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   import_source_labels: { import_label: "'Fixture label'", unlabeled_batch_id: 'NULL', first_seen_batch_id: 'NULL', first_seen_kind: 'NULL', first_seen_at: 'NULL', lead_source_id: 'NULL', mapped_by_user_id: 'NULL', mapped_at: 'NULL' },
   // parity module 67: a recorded skip (the generic row; a start needs an enrollment)
   stage_automation_decisions: { outcome: "'skipped'", reason: "'not_visible'", playbook_id: 'NULL', enrollment_id: 'NULL' },
+  // WP3a: a live read token. The prefix check is ros_ plus 6 characters; the hash is 32 bytes (the * override).
+  crm_read_tokens: { token_prefix: "'ros_fixtur'", name: "'Fixture token'" },
   // D2 migration (Gmail inbox sync): a revoked link holds no token, so the generic row is a revoked one
   user_mail_links: {
     status: "'revoked'", revoked_at: 'now()', revoke_reason: "'USER_DISCONNECTED'", purge_after: 'now()',

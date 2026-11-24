@@ -12,6 +12,7 @@
 //                'webhook'  provider-signed; no session, no CSRF/Origin check (see providers/webhooks.ts)
 //                'session'  a valid session, tenant optional (session info, tenant switch, MFA)
 //                'self'     a valid session in a tenant, acting only on the caller's own rows (RLS self-only)
+//                'crm_read' a per-tenant read-only service token (Authorization: Bearer), no session (WP3a)
 //                <Action>   a valid session in a tenant AND core.can(actor, action, facts)
 //
 //   config.capabilityUrl: true   ('public' routes only) the route's ONLY authority is an unguessable,
@@ -32,7 +33,7 @@ import { type Action, type ResourceFacts, can, isAction } from '@realty/core/fou
 import type { FastifyRequest, RouteOptions, preHandlerHookHandler } from 'fastify';
 import { AppError, isErrorCode } from './errors.js';
 
-export type RouteAuth = Action | 'public' | 'webhook' | 'session' | 'self';
+export type RouteAuth = Action | 'public' | 'webhook' | 'session' | 'self' | 'crm_read';
 /** Session states a route still serves: MFA not yet verified, or enrollment-only (R-PERM-14). */
 export type PartialAllowance = 'mfa_pending' | 'enrollment';
 
@@ -143,7 +144,7 @@ export class RouteAuthorizationError extends Error {
  */
 export function securedPreHandlers(
   route: Pick<RouteOptions, 'method' | 'url' | 'preHandler' | 'config' | 'schema'>,
-  guards: { session: preHandlerHookHandler; actor: preHandlerHookHandler; webhook: preHandlerHookHandler },
+  guards: { session: preHandlerHookHandler; actor: preHandlerHookHandler; webhook: preHandlerHookHandler; crmRead: preHandlerHookHandler },
 ): { guard: preHandlerHookHandler | null; chain: preHandlerHookHandler[]; entry: RouteTableEntry } {
   const cfg = (route.config ?? {}) as { auth?: RouteAuth; allowPartial?: readonly PartialAllowance[]; capabilityUrl?: boolean };
   const method = Array.isArray(route.method) ? route.method.join(',') : String(route.method);
@@ -157,6 +158,7 @@ export function securedPreHandlers(
   else if (auth === 'webhook') guard = guards.webhook;
   else if (auth === 'session') guard = guards.session;
   else if (auth === 'self') guard = guards.actor;
+  else if (auth === 'crm_read') guard = guards.crmRead;
   else if (isAction(auth)) {
     if (!tagged.includes(auth)) throw new RouteAuthorizationError(`${where}: declares '${auth}' but has no authorize('${auth}', …) preHandler`);
     guard = guards.actor;

@@ -446,6 +446,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     PHASE_2_3.push('ai_isa.seller_facts', 'ai_isa.subject_confirm'); // module 75 seller part (ISA-3): docs/AI_ISA.md §6.3, tested in apps/api/src/isa/seller/authz.test.ts
     PHASE_2_3.push('lead_source.ai_care'); // b18 item f: tested in apps/api/src/isa/sourceNoAiCare.test.ts (Owner only; Admin and agent 404; DB guard)
     PHASE_2_3.push('team_queue.view'); // b19 team-queue lane: R-TEAMQ-6, tested below and in apps/api/src/accountability/teamQueue.test.ts (role × route vs can())
+    PHASE_2_3.push('crm_read.manage'); // WP3a: Owner-only read-token management, tested below and in apps/api/src/crmRead/crmRead.test.ts
     const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });
@@ -461,6 +462,17 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     }
     expect(can({ kind: 'support', userId: 'u' as never, tenantId: user('owner').tenantId, grantId: 'g' }, a, { team: true })).toEqual({ ok: false, code: 'NOT_FOUND' });
     expect(can({ kind: 'system', tenantId: user('owner').tenantId, via: 'worker' }, a, { team: true })).toEqual({ ok: false, code: 'NOT_FOUND' });
+  });
+
+  it('crm_read.manage (WP3a): the Owner, re-authenticated; never another role, support or the system', () => {
+    const a: Action = 'crm_read.manage';
+    expect(can(user('owner'), a, { reauth: FRESH })).toEqual({ ok: true });
+    expect(can(user('owner'), a, {})).toEqual({ ok: false, code: 'REAUTH_REQUIRED', reauth: true });
+    for (const role of ['admin', 'team_lead', 'agent', 'isa', 'tc'] as Role[]) {
+      expect(can(user(role), a, { reauth: FRESH })).toEqual({ ok: false, code: 'NOT_FOUND' });
+    }
+    expect(can({ kind: 'support', userId: 'u' as never, tenantId: user('owner').tenantId, grantId: 'g' }, a, { reauth: FRESH })).toEqual({ ok: false, code: 'NOT_FOUND' });
+    expect(can({ kind: 'system', tenantId: user('owner').tenantId, via: 'worker' }, a, { reauth: FRESH })).toEqual({ ok: false, code: 'NOT_FOUND' });
   });
 
   it('system.view and system.jobs (System page, not a §3 row): Owner and Admin only, no re-auth; never support or the system', () => {

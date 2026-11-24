@@ -1119,3 +1119,20 @@ ASVS L2 checklist for the portal surface (`/api/portal/*` and the staff portal r
 | Messaging (D1) | The link and the invite notice go through `dispatchOutbound`: opt-outs (R-PAR-12 included), suppressions, do-not-contact and the DB guard apply; only the automation pause is skipped, and only for the system's own sign-in link | `packages/core/src/compliance/gate_portal.test.ts`, `portal/signin.test.ts` (E682), `portal/adversarial.test.ts` |
 
 Open items: VERIFY 7's readers are closed (batch 14 audit F1 and F2: the URL is never in the stored body, and lastOutbound, the assistant context, the AI ISA turn and reaction linking skip sign-in links; ARCHITECTURE §21.52); a client's own inbound message quoting an unused link (an SMS reaction or an email reply) is stored as written (owner question, module 22); Q11 (a separate DB role, unchanged), and the counsel items Q-PORTAL-1, -2, -4, -5, -6, -7, -9 and the session lengths (VERIFY 1-6; batch 14 audit F9 added -5 and -9).
+
+## 21. CRM read API (WP3a; migration `0126_crm_read_tokens`; ARCHITECTURE §21.92)
+
+A per-team bearer token reads people, activities, deals, users and stages for a sync. The HTTP contract is `docs/CRM_READ_API.md`.
+
+| Control | Where | Test |
+|---|---|---|
+| The secret is sha256 at rest, shown once, and never a URL parameter (so it is not a capability path and nginx has nothing new to redact) | `crm_read_tokens.token_hash`, `Authorization: Bearer` | `crmRead.test.ts` (hash match, prefix only on the list, token absent from logs and from the row's text) |
+| Unknown, malformed and revoked tokens are the same 401, and a revoke is read from the database on the next request | `app.resolve_crm_read_token` | `crmRead.test.ts` |
+| A token's queries run in its own tenant. Another tenant's person is 404 and is absent from the list | RLS plus the resolver's tenant id | `crmRead.test.ts` |
+| `/api/crm/v1` has no write method. Token create and revoke are Owner routes, re-authenticated, and they are not on the sync surface | route table, `crm_read.manage` | `crmRead.test.ts`, `authz.test.ts`, `rbac.test.ts` |
+| Response objects are strict. Fair-housing attributes, imported field blobs, password hashes and commission are not selected | `crmRead/schemas.ts`, the SELECT lists | `crmRead.test.ts` |
+| Every read writes `crm_read.read` with the collection and a count, not the person's phone or the secret | `audit()` inside the read transaction | `crmRead.test.ts` |
+| A quoted sign-in token in an activity subject or body is hidden at read time ("[sign-in token hidden]"); the stored row is not rewritten | `hideForDisplay` in `crmRead/service.ts` | `crmRead.test.ts` |
+| Deploy does not build indexes on the live people, deal or activity tables (a plain `CREATE INDEX` would block writes; `CONCURRENTLY` cannot run inside the migration transaction). The lock plan is in the `0126` header and ARCHITECTURE §21.92 | `0126_crm_read_tokens.sql` | the migration contains no `CREATE INDEX` on those tables |
+
+`app.resolve_crm_read_token(bytea)` is a security-review item: SECURITY DEFINER, owner `app_definer`, pinned `search_path`, no write, EXECUTE for `app_user` only. Details are in ARCHITECTURE §21.92. Residual: deleting the Owner who minted a token does not revoke it; another Owner revokes it. Putting a live token in Prducer is an operations step and is out of scope here.
