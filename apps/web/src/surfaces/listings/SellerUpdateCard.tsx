@@ -13,6 +13,12 @@
 //   - Feedback is shown verbatim; each item can be removed before sending, and an item that names a person
 //     is flagged (E89).
 //   - Stale data says so and offers one tap to refresh the update; Send stays off until then.
+//   - The value range (lane V2-B, E631) can be removed before sending and put back, by whoever can send the update
+//     (the API's own rule: the listing agent's own unsent draft). A refused removal says why and changes nothing.
+//   - E907: Send is off while a tap that changes what the seller gets is still saving (the value range, a feedback
+//     item): until the save is answered the saved update still holds the old choice. The recommendation's own save on
+//     leaving the box does not switch Send off (leaving the box is how the agent gets to Send, and the send carries
+//     the recommendation itself).
 // No confidence, no page views and no email opens appear anywhere.
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import type { QueryKey } from '@tanstack/react-query';
@@ -56,6 +62,8 @@ export interface SellerUpdateView {
   sections: SellerUpdateSection[];
   recommendation: string;
   excludedFeedbackIds: string[];
+  /** lane V2-B (E631): the agent took the value section out of what the seller gets */
+  valueRemoved?: boolean;
   recipients: SellerUpdateRecipient[];
   preview: { channel: 'email' | 'sms'; subject: string; body: string };
   /** lane V2-B (E630; b13 audit V2B-7): the API's sentence when a seller who gets this by text will not see the value range */
@@ -127,8 +135,19 @@ function Recipients({ recipients }: { recipients: SellerUpdateRecipient[] }) {
   );
 }
 
-function SectionBlock({ s, asOf, canEdit, onToggle, busy }: { s: SellerUpdateSection; asOf: string; canEdit: boolean; onToggle: (feedbackId: string, exclude: boolean) => void; busy: boolean }) {
+/** E631: what the 'value' section needs to offer its removal (null for every other section). */
+interface ValueControl {
+  removed: boolean;
+  canEdit: boolean;
+  pending: boolean;
+  error: string | null;
+  onToggle: (remove: boolean) => void;
+}
+
+function SectionBlock({ s, asOf, canEdit, onToggle, busy, value = null }: { s: SellerUpdateSection; asOf: string; canEdit: boolean; onToggle: (feedbackId: string, exclude: boolean) => void; busy: boolean; value?: ValueControl | null }) {
   const id = useId();
+  // the control is there only when the seller would otherwise read something of this section (or to put it back)
+  const removable = value !== null && (s.lines.length > 0 || value.removed);
   return (
     // a group, not a labelled <section>: a region landmark here would repeat the page's own "Showings" card
     <div role="group" aria-labelledby={id} className="flex flex-col gap-1 border-t border-line pt-3">
@@ -152,12 +171,19 @@ function SectionBlock({ s, asOf, canEdit, onToggle, busy }: { s: SellerUpdateSec
                 ) : null}
               </li>
             ) : (
-              <li key={`${s.kind}:${i}`} className="text-[15px] text-ink">
+              <li key={`${s.kind}:${i}`} className={`text-[15px] text-ink ${removable && value.removed ? 'line-through opacity-70' : ''}`}>
                 {l.text}
               </li>
             ),
           )}
       </ul>
+      {removable && value.removed ? <p className="text-[14px] text-ink-muted">Removed: the seller will not see the value range.</p> : null}
+      {removable && value.canEdit ? (
+        <Button variant="secondary" className="self-start" pending={value.pending} pendingLabel="Saving" onClick={() => value.onToggle(!value.removed)}>
+          {value.removed ? 'Put the value range back' : 'Remove the value range'}
+        </Button>
+      ) : null}
+      {removable && value.error ? <Notice tone="error">{value.error}</Notice> : null}
       {s.sources.length > 0 ? (
         <details className="text-[14px] text-ink-muted">
           <summary className="flex min-h-tap cursor-pointer items-center text-[15px] font-medium text-accent">Sources · as of {formatDateTime(asOf)}</summary>
@@ -196,8 +222,17 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
   // the removed feedback as the agent last chose it (the server copy can lag behind a refetch)
   const [excluded, setExcluded] = useState<string[]>(update.excludedFeedbackIds);
   useEffect(() => setExcluded(update.excludedFeedbackIds), [update.excludedFeedbackIds]);
+  // E631: the value range as the agent last chose it (as with removed feedback, the server copy can lag behind a refetch)
+  const [valueRemoved, setValueRemoved] = useState(update.valueRemoved ?? false);
+  useEffect(() => setValueRemoved(update.valueRemoved ?? false), [update.valueRemoved]);
+  const [valueError, setValueError] = useState<string | null>(null);
   const keys: QueryKey[] = [...invalidate, ['feed'], ['inbox']];
+  // the removal of a feedback item (a tap): Send waits for it (E907)
   const patch = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
+  // the recommendation as typed, saved when the agent leaves the box: its own request, which Send does not wait for
+  const patchText = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
+  // its own request, so a refusal is shown at the control and not as a recommendation error
+  const patchValue = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
   const reassemble = useMutate<Record<string, unknown>>('POST', { invalidate: keys });
   const send = useCommand<Record<string, unknown>, SendResponse>(`/seller-updates/${update.id}/send`, { invalidate: [...keys, ['timeline']], onSuccess: () => onSent?.() });
   useEffect(() => {
@@ -225,7 +260,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
 
   const save = async () => {
     if (!update.canSend || text.trim() === savedText.trim()) return;
-    const r = await patch.run(`/seller-updates/${update.id}`, { recommendation: text });
+    const r = await patchText.run(`/seller-updates/${update.id}`, { recommendation: text });
     if (r.ok) setSavedText(text);
   };
   const toggle = async (feedbackId: string, exclude: boolean) => {
@@ -235,16 +270,29 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
     const r = await patch.run(`/seller-updates/${update.id}`, { excludedFeedbackIds: next, ...(text.trim() !== savedText.trim() ? { recommendation: text } : {}) });
     if (!r.ok) setExcluded(prev);
   };
+  const toggleValue = async (remove: boolean) => {
+    setValueError(null);
+    const r = await patchValue.run(`/seller-updates/${update.id}`, { valueRemoved: remove });
+    if (r.ok) setValueRemoved(remove);
+    else setValueError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
+  };
   const doReassemble = async () => {
     setError(null);
     const r = await reassemble.run(`/seller-updates/${update.id}/reassemble`);
     if (!r.ok) setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
   };
+  // E907: a tap that changes what the seller gets (the value range, a feedback item) is still being saved. Until it is
+  // answered the saved update holds the old choice, so nothing is sent; when it is, the state below is the agent's last
+  // choice (a refused save put it back and says why).
+  const saving = patchValue.pending || patch.pending;
+  const whyNotYet = blockedReason ?? (saving ? 'Saving your change. Send is back in a moment.' : null);
   const doSend = async (e: FormEvent) => {
     e.preventDefault();
-    if (blockedReason !== null) return;
+    if (blockedReason !== null || saving) return;
     setError(null);
-    const r = await send.run({ recommendation: text.trim(), excludedFeedbackIds: excluded, recipientIds: reachable.map((x) => x.contactId) });
+    // the agent's last choice rides with the send: a removal takes the value range out whatever the saved update says
+    // (the send can only take it out, never put it back in); without one the saved update decides
+    const r = await send.run({ recommendation: text.trim(), excludedFeedbackIds: excluded, recipientIds: reachable.map((x) => x.contactId), ...(valueRemoved ? { valueRemoved: true } : {}) });
     if (r.ok) setResult(r.data);
     else setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
   };
@@ -305,7 +353,8 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
       {!sent && update.valueNote ? <p className="text-[14px] text-ink-muted">{update.valueNote}</p> : null}
 
       {update.sections.map((s) => (
-        <SectionBlock key={s.kind} s={{ ...s, lines: s.lines.map((l) => (l.feedback ? { ...l, feedback: { ...l.feedback, excluded: excluded.includes(l.feedback.feedbackId) } } : l)) }} asOf={update.assembledThrough} canEdit={update.canSend && !sent} busy={patch.pending} onToggle={(id, ex) => void toggle(id, ex)} />
+        <SectionBlock key={s.kind} s={{ ...s, lines: s.lines.map((l) => (l.feedback ? { ...l, feedback: { ...l.feedback, excluded: excluded.includes(l.feedback.feedbackId) } } : l)) }} asOf={update.assembledThrough} canEdit={update.canSend && !sent} busy={patch.pending} onToggle={(id, ex) => void toggle(id, ex)}
+          value={s.kind === 'value' ? { removed: valueRemoved, canEdit: update.canSend && !sent, pending: patchValue.pending, error: valueError, onToggle: (remove) => void toggleValue(remove) } : null} />
       ))}
 
       {update.canSend && !sent ? (
@@ -327,16 +376,16 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent 
             aria-describedby={helpId}
             className="min-h-[120px] rounded-xl border border-line bg-surface px-3.5 py-2 text-[17px] text-ink"
           />
-          {blockedReason ? (
+          {whyNotYet ? (
             <p className="text-[14px] text-ink-muted" aria-live="polite">
-              {blockedReason}
+              {whyNotYet}
             </p>
           ) : null}
-          <Button type="submit" block disabled={blockedReason !== null} pending={send.pending} pendingLabel="Sending">
+          <Button type="submit" block disabled={blockedReason !== null || saving} pending={send.pending} pendingLabel="Sending">
             {reachable.length === 1 ? `Send to ${reachable[0]!.name ?? 'the seller'}` : `Send to ${reachable.length} sellers`}
           </Button>
           {error && !update.stale ? <Notice tone="error">{error}</Notice> : null}
-          {patch.error ? <Notice tone="error">{messageFor(patch.error, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES })}</Notice> : null}
+          {(patch.error ?? patchText.error) ? <Notice tone="error">{messageFor((patch.error ?? patchText.error)!, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES })}</Notice> : null}
         </form>
       ) : null}
       {!update.canSend && !sent ? <p className="text-[14px] text-ink-muted">Only the listing agent can send this update.</p> : null}

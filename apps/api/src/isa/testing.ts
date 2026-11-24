@@ -239,11 +239,14 @@ export function isaWorker(h: ApiHarness, o: { hold?: readonly string[] } = {}) {
 }
 
 /** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. Jobs of a `hold` kind stay pending.
- *  `beforeTick` (ISA-2b) runs before each job of a round. */
-export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { hold?: readonly string[]; beforeTick?: () => Promise<void> } = {}): Promise<void> {
+ *  `beforeTick` (ISA-2b) runs before each job of a round. A follow-up timer stays where the cadence put it (days out)
+ *  unless `followUps` is set: it is not work in flight, and made due it sends the next follow-up of every live care of
+ *  the tenant, one per round (each asks the model, so it also takes the next scripted answer). */
+export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { hold?: readonly string[]; beforeTick?: () => Promise<void>; followUps?: boolean } = {}): Promise<void> {
   const notDue = ['ai_isa.sweep', 'ai_isa.sla', ...(o.hold ?? [])];
   for (let i = 0; i < rounds; i += 1) {
-    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind <> ALL ($2::text[])`, [tenantId, notDue]);
+    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind <> ALL ($2::text[])
+      AND ($3::boolean OR payload->>'timer' IS DISTINCT FROM 'follow_up')`, [tenantId, notDue, o.followUps ?? false]);
     // the debounce reads conversations.last_inbound_at: age it so a due turn runs now
     await h.su.query(`UPDATE conversations SET last_inbound_at = last_inbound_at - interval '1 minute' WHERE tenant_id = $1 AND last_inbound_at > now() - interval '1 minute'`, [tenantId]);
     await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > now() - interval '3 minutes'`, [tenantId]);

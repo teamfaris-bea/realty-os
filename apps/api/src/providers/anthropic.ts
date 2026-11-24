@@ -10,12 +10,16 @@
 //   is reported as stopReason 'refusal' and the caller marks the output needs_review.
 // - The system prompt is static per purpose and marked for prompt caching; per-request facts and all
 //   untrusted content are in the user turn.
+// - Retries: the SDK retries a 408/409/429/5xx, a lost connection and a timeout twice (maxRetries 2), so one
+//   complete() call can be up to three HTTP requests. A request with `singleRequest` (the AI assistant's turn, which
+//   reserved exactly one call in its daily budget, R-ISA-20) is sent with maxRetries 0: one HTTP request, and its
+//   failure is the call's failure. The server-side refusal fallback above runs inside that one request.
 // - Prompts and outputs are never logged here.
 import Anthropic from '@anthropic-ai/sdk';
 import { type AiProvider, type AiRequest, type AiResponse, ProviderError } from './types.js';
 
-export function anthropicAi(opts: { apiKey: string; model: string; timeoutMs?: number }): AiProvider {
-  const client = new Anthropic({ apiKey: opts.apiKey, maxRetries: 2, timeout: opts.timeoutMs ?? 60_000 });
+export function anthropicAi(opts: { apiKey: string; model: string; timeoutMs?: number; /** tests only: a local stand-in */ baseUrl?: string }): AiProvider {
+  const client = new Anthropic({ apiKey: opts.apiKey, maxRetries: 2, timeout: opts.timeoutMs ?? 60_000, ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}) });
   return {
     async complete(r: AiRequest): Promise<AiResponse> {
       try {
@@ -29,7 +33,8 @@ export function anthropicAi(opts: { apiKey: string; model: string; timeoutMs?: n
           output_config: { effort: 'medium' },
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-        });
+          // R-ISA-20 (E903): a caller that reserved one call in a budget gets one HTTP request, never an SDK retry
+        }, r.singleRequest ? { maxRetries: 0 } : undefined);
         let text = '';
         for (const block of res.content) if (block.type === 'text') text += block.text;
         const stop = res.stop_reason;
