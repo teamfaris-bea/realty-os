@@ -20,7 +20,7 @@ import { type TestDb, createTestDb } from '@realty/db/testing';
 import fc from 'fast-check';
 import { sql } from 'kysely';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { EnvelopeService } from '../crypto/envelope.js';
 import { runOwnershipCommand } from '../leads/ownership.js';
 import { addDealContact } from '../workspace/deals.js';
@@ -41,6 +41,9 @@ let app: Database;
 let deps: FeedDeps;
 let users: { userId: string; role: string }[] = [];
 let now = Date.now();
+/** Database copied after setup. Each test and each property run starts from it, including after a failure. */
+let baselineName = '';
+let now0 = 0;
 const stats = { events: 0, skipped: 0, compared: 0, cards: 0, incremental: 0 };
 const byKind = new Map<string, number>();
 /** free text for drafts, including the label template's marker (it must never be read as a token) */
@@ -119,6 +122,79 @@ async function asPerson(userId: string, fn: () => Promise<void>): Promise<void> 
 
 const one = async <R extends Record<string, unknown>>(q: string, p: unknown[]): Promise<R | undefined> => (await su.query<R>(q, p)).rows[0];
 const iso = (t: number) => new Date(t).toISOString();
+
+function adminUrl(): string {
+  const u = new URL(db.ownerUrl);
+  u.pathname = '/postgres';
+  return u.toString();
+}
+
+async function closeClients(): Promise<void> {
+  await app?.close();
+  await su?.end().catch(() => undefined);
+}
+
+async function retryDb(fn: () => Promise<unknown>): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      await fn();
+      return;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (i >= 10 || (code !== '55006' && code !== '55000')) throw err;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+}
+
+async function openClients(): Promise<void> {
+  su = new pg.Client({ connectionString: db.ownerUrl });
+  await su.connect();
+  app = createDatabase({ url: db.appUserUrl, max: 4, applicationName: 'feed-equivalence' });
+}
+
+/** Copy the loaded tenant once setup has finished. The copy stays unconnected so it can be a template. */
+async function snapshotBaseline(): Promise<void> {
+  now0 = now;
+  await closeClients();
+  const admin = new pg.Client({ connectionString: adminUrl() });
+  await admin.connect();
+  try {
+    baselineName = `${db.name}_base`;
+    await retryDb(() => admin.query(`CREATE DATABASE ${admin.escapeIdentifier(baselineName)} TEMPLATE ${admin.escapeIdentifier(db.name)}`));
+  } finally {
+    await admin.end();
+  }
+  await openClients();
+}
+
+/** Drop the working database and recreate it from the baseline, then put the feed clock back. */
+async function restoreBaseline(): Promise<void> {
+  if (!baselineName) return;
+  await closeClients();
+  const admin = new pg.Client({ connectionString: adminUrl() });
+  await admin.connect();
+  try {
+    const working = admin.escapeIdentifier(db.name);
+    const base = admin.escapeIdentifier(baselineName);
+    await retryDb(() => admin.query(`DROP DATABASE IF EXISTS ${working} WITH (FORCE)`));
+    await retryDb(() => admin.query(`CREATE DATABASE ${working} TEMPLATE ${base}`));
+  } finally {
+    await admin.end();
+  }
+  now = now0;
+  await openClients();
+}
+
+/** Read until the predicate holds. One read loses to a group delete that commits a moment later under load. */
+async function pollRows(q: string, p: unknown[], want: number, timeoutMs = 10_000): Promise<number> {
+  const start = Date.now();
+  for (;;) {
+    const n = (await su.query(q, p)).rowCount ?? 0;
+    if (n === want || Date.now() - start >= timeoutMs) return n;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 /** Kinds of random events (apply's switch; pond entries and exits are drawn twice as often as the others). */
 const EVENT_KINDS = 20;
@@ -376,10 +452,22 @@ beforeAll(async () => {
   }
   // the worker caught up after the bulk load
   await materializeAll(app, deps.envelope, [T]);
+  await snapshotBaseline();
 }, 600_000);
+beforeEach(async () => {
+  await restoreBaseline();
+});
 afterAll(async () => {
-  await app?.close();
-  await su?.end();
+  await closeClients();
+  if (baselineName && db) {
+    const admin = new pg.Client({ connectionString: adminUrl() });
+    await admin.connect();
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${admin.escapeIdentifier(baselineName)} WITH (FORCE)`);
+    } finally {
+      await admin.end();
+    }
+  }
   await db?.drop();
 });
 
@@ -393,25 +481,31 @@ describe('incremental feed equals a full recompute (lane perf-misses)', () => {
 
   it('after every event of random event sequences, the materialized feed is what a full recompute gives', async () => {
     const event = fc.record({ kind: fc.nat(1_000), pick: fc.nat(100_000), size: fc.nat(1_000), user: fc.nat(100) });
-    await fc.assert(
-      fc.asyncProperty(fc.array(event, { minLength: 25, maxLength: 25 }), async (events) => {
-        for (const [i, e] of events.entries()) {
-          let what: string;
-          try {
-            what = await apply(e);
-          } catch (err) {
-            // a guard refused this synthetic write (it would never be issued by the app): nothing changed
-            what = `refused: ${(err as Error).message.slice(0, 60)}`;
+    try {
+      await fc.assert(
+        fc.asyncProperty(fc.array(event, { minLength: 25, maxLength: 25 }), async (events) => {
+          // a failed run (and its shrinks) must not leave a pond card in the tenant the next run or the later tests compare
+          await restoreBaseline();
+          for (const [i, e] of events.entries()) {
+            let what: string;
+            try {
+              what = await apply(e);
+            } catch (err) {
+              // a guard refused this synthetic write (it would never be issued by the app): nothing changed
+              what = `refused: ${(err as Error).message.slice(0, 60)}`;
+            }
+            if (what === 'skip' || what.startsWith('refused')) stats.skipped++;
+            else stats.events++;
+            const k = what.startsWith('refused') ? what : `${e.kind % EVENT_KINDS}:${what}`;
+            byKind.set(k, (byKind.get(k) ?? 0) + 1);
+            for (const u of users) await compare(u, `event ${i} (${what})`);
           }
-          if (what === 'skip' || what.startsWith('refused')) stats.skipped++;
-          else stats.events++;
-          const k = what.startsWith('refused') ? what : `${e.kind % EVENT_KINDS}:${what}`;
-          byKind.set(k, (byKind.get(k) ?? 0) + 1);
-          for (const u of users) await compare(u, `event ${i} (${what})`);
-        }
-      }),
-      { numRuns: Number(process.env.FEED_EQ_RUNS ?? 4), endOnFailure: true, ...(process.env.FEED_EQ_SEED ? { seed: Number(process.env.FEED_EQ_SEED) } : {}) },
-    );
+        }),
+        { numRuns: Number(process.env.FEED_EQ_RUNS ?? 4), endOnFailure: true, ...(process.env.FEED_EQ_SEED ? { seed: Number(process.env.FEED_EQ_SEED) } : {}) },
+      );
+    } finally {
+      await restoreBaseline();
+    }
     console.log(JSON.stringify({ stats, byKind: Object.fromEntries(byKind), seenTypes: [...seenTypes] }));
     // the comparison is not vacuous: most events applied, cards of every kind were shown, and groups were re-scored incrementally
     expect(stats.events).toBeGreaterThan(0.6 * 25 * Number(process.env.FEED_EQ_RUNS ?? 4));
@@ -662,7 +756,7 @@ describe('incremental feed after ownership, deal, team, contact point and settin
     await asMember(owner, (tx) => sql`SELECT app.erase_contact(${c.id}::uuid, ${randomUUID()}::uuid, 'PRIVACY_REQUEST')`.execute(tx));
     expect(await marks(agent.userId, `c:${c.id}`)).toBeGreaterThan(0);
     await compare(agent, 'the lead erased');
-    expect((await su.query('SELECT 1 FROM feed_groups WHERE tenant_id = $1 AND group_key = $2', [T, `c:${c.id}`])).rowCount).toBe(0);
+    expect(await pollRows('SELECT 1 FROM feed_groups WHERE tenant_id = $1 AND group_key = $2', [T, `c:${c.id}`], 0)).toBe(0);
   }, 300_000);
 
   it('a settings write marks no member unless the zone changes; a zone change marks every member \'!full\'', async () => {

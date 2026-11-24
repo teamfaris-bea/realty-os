@@ -21,6 +21,10 @@ let h: ApiHarness;
 let w: CmaWorld;
 
 const p95 = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * 0.95))]!;
+// Warmup is not timed: the first requests pay plan-cache and buffer misses. p95 of a handful of samples is the
+// slowest one, so one stall fails the budget. >= 40 timed samples makes p95 a real percentile (not the max).
+const WARMUP = 3;
+const SAMPLES = 40;
 
 beforeAll(async () => {
   h = await createApiHarness();
@@ -36,10 +40,8 @@ afterAll(async () => {
 
 describe('POST /cma at volume (VERIFY budget)', () => {
   it('POST /cma and the one-tap CMA stay under p95 2 s on 500k skewed rows; every tier reads its own most recent sales up to its limit (F6)', async () => {
-    const times: number[] = [];
     type Body = { cma: { area: { reads: { tier: string; ran: boolean; limitReached: boolean }[] }; comps: unknown[] } };
-    let last: Body | null = null;
-    for (let i = 0; i < 8; i++) {
+    const contactCma = async (i: number): Promise<{ ms: number; body: Body }> => {
       const c = await contact(w.agents[0]!);
       const line1 = `${50 + i} Sample Avenue`;
       await address(h, w.tenantId, c, { line1, city: BIG_CITY, postalCode: HOT_ZIP });
@@ -47,20 +49,34 @@ describe('POST /cma at volume (VERIFY budget)', () => {
       await mlsSale(w, { line1, city: BIG_CITY, postalCode: HOT_ZIP, subdivision: BIG_SUBDIVISION, closeDate: daysAgo(3000), sqft: 1500, yearBuilt: 1975, latE6: HOT_LAT + 15_000, lonE6: HOT_LON - 15_000 });
       const t = performance.now();
       const r = await call<Body>(w.agents[0]!, 'POST', `/contacts/${c}/cma`);
-      times.push(performance.now() - t);
+      const ms = performance.now() - t;
       expect(r.status).toBe(201);
-      last = r.body;
+      return { ms, body: r.body };
+    };
+    const enteredCma = async (): Promise<number> => {
+      const t = performance.now();
+      const e = await call(w.agents[0]!, 'POST', '/cma', { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: HOT_ZIP, city: BIG_CITY }, facts: { propertyType: 'single_family', sqft: 1500 } }, purpose: 'listing_price' });
+      const ms = performance.now() - t;
+      expect(e.status).toBe(201);
+      return ms;
+    };
+    for (let i = 0; i < WARMUP; i++) await contactCma(i);
+    await enteredCma();
+    const times: number[] = [];
+    let last: Body | null = null;
+    for (let i = 0; i < SAMPLES - 4; i++) {
+      const got = await contactCma(WARMUP + i);
+      times.push(got.ms);
+      last = got.body;
     }
-    const t2 = performance.now();
-    const e = await call(w.agents[0]!, 'POST', '/cma', { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: HOT_ZIP, city: BIG_CITY }, facts: { propertyType: 'single_family', sqft: 1500 } }, purpose: 'listing_price' });
-    times.push(performance.now() - t2);
-    expect(e.status).toBe(201);
-    console.info(`[cma volume] POST /cma p95 ${Math.round(p95(times))} ms over ${times.length} runs (${times.map((x) => Math.round(x)).join(', ')})`);
+    for (let i = 0; i < 4; i++) times.push(await enteredCma());
+    console.info(`[cma volume] POST /cma p95 ${Math.round(p95(times))} ms over ${times.length} timed runs after ${WARMUP + 1} warmup (${times.map((x) => Math.round(x)).join(', ')})`);
+    expect(times.length).toBeGreaterThanOrEqual(SAMPLES);
     expect(last!.cma.comps.length).toBeGreaterThanOrEqual(3);
     expect(last!.cma.area.reads.map((t) => t.tier)).toEqual(['subdivision', 'within_1mi', 'postal_code', 'within_3mi', 'city', 'rate_pool']);
     for (const t of last!.cma.area.reads) expect([t.tier, t.ran, t.limitReached]).toEqual([t.tier, true, true]);
     expect(p95(times)).toBeLessThan(2000);
-  }, 300_000);
+  }, 600_000);
 
   it('VERIFY 5 R-CMA-9: GET /cma/:id/share-preview (its read transaction and comms\' preview transaction) stays under p95 2 s on the same rows', async () => {
     const times: number[] = [];
