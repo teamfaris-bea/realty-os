@@ -273,7 +273,7 @@ function PanelBody({ p, contact, viewer }: { p: PanelResponse; contact: ContactF
       ) : null}
       {a && live && p.chain.length > 0 ? (
         <details>
-          <summary className="inline-flex min-h-tap cursor-pointer items-center text-[15px] font-medium text-accent">Authorization</summary>
+          <summary className="inline-flex min-h-tap min-w-tap cursor-pointer items-center justify-center px-4 text-[15px] font-medium text-accent">Authorization</summary>
           <ul className="flex flex-col gap-1 pt-1 text-[15px]">
             {p.chain.map((l) => (
               <li key={l.link}>

@@ -44,6 +44,19 @@ describe('useStickyBottom', () => {
     expect(document.documentElement.style.getPropertyValue('--person-bar-h')).toBe('');
   });
 
+  it('a bar that grows (the media tray) publishes the new height, which is the scroll padding', () => {
+    let h = 200;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ height: h, width: 390, top: 0, left: 0, right: 390, bottom: h, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect,
+    );
+    const { unmount } = render(<Bar />);
+    expect(value()).toBe('200px');
+    h = 360;
+    window.dispatchEvent(new Event('resize'));
+    expect(value()).toBe('360px');
+    unmount();
+  });
+
   it('a bar that is in the flow (short screen, large zoom) adds nothing to the scroll padding', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ height: 131.4, width: 390, top: 0, left: 0, right: 390, bottom: 131.4, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
     const { unmount } = render(<Bar position="static" />);

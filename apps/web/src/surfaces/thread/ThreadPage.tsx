@@ -20,7 +20,7 @@
 // web chat is live the thread refreshes every few seconds, from the server only: there is no typing or
 // presence indicator anywhere (genuineness). D2: no Messenger or Instagram channel, no messaging window.
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Notice, useStickyBottom } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, isHeld, messageStatus, useChannelState } from '../../reasons/index.js';
@@ -43,6 +43,7 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ComposeResponse, ContactFullView, MessageView, TimelineItem, TimelineResponse } from '../feed/lib/types.js';
 import { AiLabelsProvider, AiThreadBanner, useAiLabel } from '../aiCare/Thread.js'; // module 76 (flagged edit)
 import { useUndoOpen } from '../aiCare/undoStore.js';
+import { clearObscuredControls, type SettleHeights, settleKey, shouldResettle } from './scrollClear.js';
 
 /** A web-chat message newer than this keeps the thread refreshing quickly (a visitor may still be on the page). */
 export const LIVE_CHAT_MS = 30 * 60_000;
@@ -180,13 +181,79 @@ function ThreadHeader({ contact }: { contact: ContactFullView }) {
 function Messages({ items, mail = [], contact, firstContactOpen = false }: { items: TimelineItem[]; mail?: MailMessageView[]; contact: { id: string; name: string }; firstContactOpen?: boolean }) {
   const rows = mergeByTime(items, mail); // module 69
   const end = useRef<HTMLLIElement>(null);
+  const list = useRef<HTMLOListElement>(null);
   const last = rows[rows.length - 1]?.item.id;
   const loaded = new Set(items.map((i) => i.id));
-  useEffect(() => {
-    end.current?.scrollIntoView?.({ block: 'end' });
+  // Open on the latest message, then keep every control out of the sticky header and the compose bar.
+  // Content above the list (the AI banner, mail coverage) and the compose bar itself often finish
+  // after that first scroll. Scrolling again when either height changes puts disclosures back in the clear.
+  useLayoutEffect(() => {
+    const listEl = list.current;
+    const column = listEl?.parentElement;
+    if (!listEl) return;
+    let settling = false;
+    const above = () => {
+      if (!column) return 0;
+      let h = 0;
+      for (const child of column.children) {
+        if (child === listEl) break;
+        h += (child as HTMLElement).offsetHeight;
+      }
+      return h;
+    };
+    // The compose bar sits after the list and can grow once its draft or channel row arrives.
+    const compose = () => {
+      if (!column) return 0;
+      let passed = false;
+      let h = 0;
+      for (const child of column.children) {
+        if (!passed) {
+          if (child === listEl) passed = true;
+          continue;
+        }
+        const el = child as HTMLElement;
+        const bar = el.matches('[data-sticky]') ? el : el.querySelector<HTMLElement>('[data-sticky]');
+        if (bar) h += bar.offsetHeight;
+      }
+      return h;
+    };
+    const measure = (): SettleHeights => ({ above: above(), compose: compose() });
+    // The media tray grows the bar after the first measure. Publish that height before scrolling so
+    // scroll-padding and the conversation scroll-margin match the real [data-sticky] box.
+    const syncCompose = () => {
+      const px = compose();
+      if (px <= 0) return;
+      const raw = document.documentElement.style.getPropertyValue('--sticky-bottom-h');
+      const current = raw ? parseFloat(raw) : 0;
+      if (!(current >= px - 0.5)) document.documentElement.style.setProperty('--sticky-bottom-h', `${Math.ceil(px)}px`);
+    };
+    const settle = () => {
+      if (settling) return;
+      settling = true;
+      try {
+        syncCompose();
+        end.current?.scrollIntoView?.({ block: 'end', inline: 'nearest' });
+        clearObscuredControls(listEl.closest('main') ?? listEl);
+      } finally {
+        settling = false;
+      }
+    };
+    settle();
+    if (!column || typeof ResizeObserver === 'undefined') return;
+    let heights = measure();
+    const seen = new Set<string>([settleKey(heights)]);
+    const ro = new ResizeObserver(() => {
+      const next = measure();
+      if (!shouldResettle(heights, next, seen)) return;
+      seen.add(settleKey(next));
+      heights = next;
+      settle();
+    });
+    ro.observe(column);
+    return () => ro.disconnect();
   }, [last]);
   return (
-    <ol className="flex flex-col gap-2" aria-label="Conversation">
+    <ol ref={list} className="flex flex-col gap-2" aria-label="Conversation">
       {rows.map((r) => (r.kind === 'gmail' ? <GmailEntry key={`gmail-${r.item.id}`} item={r.item} contact={contact} firstContactOpen={firstContactOpen} /> : <MessageRow key={r.item.id} item={r.item} contact={contact} loaded={loaded} />))}
       <li ref={end} aria-hidden="true" />
     </ol>
