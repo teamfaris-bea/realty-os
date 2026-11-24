@@ -1768,3 +1768,8 @@ Section number: 21.78 since the merge (follows §21.77; it was 21.74 on this bra
 - **Writes nothing else.** The job writes no message, task, notification, stage, owner or score; the spec's draft-task step is deferred.
 - **Not changed.** The cloud assistant provider, prompts and budgets; `notes` and its policies; `contacts.last_human_touch_at` (read only).
 - **Proof.** `packages/core/src/timing/timing.test.ts`; `apps/api/src/insights/timing.test.ts`; `apps/api/src/providers/ollama.test.ts`; `apps/api/src/config.test.ts`; the db suite's isolation and schema invariants over the new table.
+
+### 21.92 Security notes: a legacy AI follow-up job is identified by its own run time (migration `0150_b19_job_run_at`; one definer, no table, no policy, no grant on `jobs`)
+- **Why.** `app_user` can insert jobs and cannot read them. A follow-up queued before its payload carried `at` has no instant of its own except `jobs.run_at`. Reading that column from the turn would need a grant on the whole table.
+- **`app.job_run_at(bigint)`** is SECURITY DEFINER, owned by `app_definer`, `search_path = pg_catalog, public`, EXECUTE revoked from PUBLIC and granted to `app_user`. It returns that one `run_at` only when the job's `tenant_id` is `app.tenant_id()`. No payload, no other column, no other tenant. A missing tenant context matches nothing.
+- **Proof.** `apps/api/src/isa/turn.followup.test.ts` (two legacy follow-up jobs: only the one whose `run_at` is `next_follow_up_at` sends).
