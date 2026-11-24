@@ -194,8 +194,11 @@ export interface IngestOptions {
    * (R-INBOX-9: an email that was not verified never gets an autonomous reply; the agent replies themselves).
    */
   firstResponse?: boolean;
-  /** a parsed lead email: lead_inquiries.parse_status 'parsed' with each field's source span (R-INBOX-9) */
-  parse?: { status: 'parsed'; evidence: Record<string, unknown> };
+  /**
+   * a lead email: lead_inquiries.parse_status 'parsed' (a template) or 'needs_review' (the prose fallback) with each
+   * field's source span (R-INBOX-9).
+   */
+  parse?: { status: 'parsed' | 'needs_review'; evidence: Record<string, unknown> };
   /**
    * Module 22 web chat (R-INBOX-1, E138): the session's own new chat identity (wc:<hex>, its tenant HMAC and the
    * point id to give it). The inquiry then carries no phone or email (what the visitor typed is only a claim on the

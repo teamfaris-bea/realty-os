@@ -4,9 +4,21 @@ import { describe, expect, it } from 'vitest';
 import { isValidEmail } from './fields.js';
 import { isOwnAddress } from './extract.js';
 import { isConsumerMailboxDomain } from '../trust.js';
+import { agentdashFlags, fallbackLead, isNonLeadMail, wantsReferralReminder } from './index.js';
 import {
+  AGENTDASH,
+  AGENTDASH_INVOICE,
+  AGENTDASH_REREFERRAL,
   CATALOG_PORTAL_DOMAINS,
+  FALLBACK,
+  FALLBACK_PROSE,
   GENERIC,
+  HOMES,
+  IDX,
+  OPCITY,
+  OPCITY_LOFTY,
+  REALTOR_MARKET_VIP,
+  ZILLOW_PREMIER,
   GENERIC_HTML,
   LEADMETA_BODY_HTML,
   LEADMETA_DUPLICATE_HTML,
@@ -543,17 +555,19 @@ const expectHeld = (h: string, conflicts: string[], values: Record<string, strin
 };
 
 describe('R-LEM-9 catalog portals without a vendor parser', () => {
-  it('R-LEM-9 E332: a labelled email from each catalog portal parses as generic; unlabelled is held UNKNOWN_FORMAT; their own addresses are never a lead’s', () => {
+  it('R-LEM-9 E332: a labelled email from each catalog portal parses; Homes.com and Opcity use their template, the others generic; unlabelled Homes/Opcity is partial, the rest unknown; their own addresses are never a lead’s', () => {
+    const dedicated: Record<string, string> = { 'homes.com': 'homes', 'homesnap.com': 'homes', 'opcity.com': 'opcity' };
     for (const d of CATALOG_PORTAL_DOMAINS) {
       expect(PORTAL_DOMAINS, d).toContain(d);
       const r = parseLeadEmail(catalogLabelled(d));
       const l = okLead(r);
-      expect([d, l.format]).toEqual([d, 'generic']);
+      expect([d, l.format]).toEqual([d, dedicated[d] ?? 'generic']);
       expect(l.name?.value).toBe('Morgan Sample');
       expect(l.emails.map((e) => e.value)).toEqual(['morgan.sample@example.test']);
       expect(l.phones.map((p) => p.value)).toEqual(['555-555-0124']);
       expectSpans(r);
-      expect(parseLeadEmail(catalogUnlabelled(d)), d).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+      const unlabelled = dedicated[d] ? { ok: false, reason: 'PARTIAL_FORMAT', partial: null } : { ok: false, reason: 'UNKNOWN_FORMAT', partial: null };
+      expect(parseLeadEmail(catalogUnlabelled(d)), d).toMatchObject(unlabelled);
       // a portal address on an Email: line, whoever sent it, is never a lead's
       const own = parseLeadEmail(generic(`Name: A B\nEmail: leads@${d}\nEmail: x@mail.${d}\nPhone: 555-555-0118`, 'forms.agent-site.test'));
       expect(okLead(own).emails, d).toEqual([]);
@@ -884,5 +898,131 @@ describe('R-LEM-11 personal mailboxes and hand forwards', () => {
     const meta = parseLeadEmail({ subject: null, text: null, html: LEADMETA_HEAD_HTML, senderDomain: 'gmail.com', forwardedOnly: true });
     expect(meta).toMatchObject({ ok: false, partial: null });
     expect(meta.text.startsWith('lead_')).toBe(false);
+  });
+});
+
+describe('source templates and the unparsed fallback (synthetic fixtures)', () => {
+  it('Zillow Premier Agent, realtor.com Market VIP, Opcity, the Lofty relay, Homes.com, AgentDash, and an IDX form', () => {
+    const premier = okLead(parseLeadEmail(ZILLOW_PREMIER));
+    expect(premier.format).toBe('zillow');
+    expect(premier.name?.value).toBe('Reese Sample');
+    expect(premier.emails.map((e) => e.value)).toEqual(['reese.sample@example.test']);
+    expect(premier.phones.map((p) => p.value)).toEqual(['(555) 555-0160']);
+    expect(premier.property?.value).toBe('80 Pine Rd, Reno, NV 89501');
+    expect(premier.postalCode).toBe('89501');
+    expect(premier.leadType).toBe('buy');
+    expectSpans(parseLeadEmail(ZILLOW_PREMIER));
+
+    const vip = okLead(parseLeadEmail(REALTOR_MARKET_VIP));
+    expect(vip.format).toBe('realtor');
+    expect(vip.name?.value).toBe('Avery Prospect');
+    expect(vip.emails.map((e) => e.value)).toEqual(['avery.prospect@example.test']);
+    expect(vip.property?.value).toBe('200 Market St, Austin, TX 78701');
+    expectSpans(parseLeadEmail(REALTOR_MARKET_VIP));
+
+    const op = okLead(parseLeadEmail(OPCITY));
+    expect(op.format).toBe('opcity');
+    expect(op.name?.value).toBe('Blair Referral');
+    expect(op.emails.map((e) => e.value)).toEqual(['blair.referral@example.test']);
+    expect(op.leadType).toBe('buy');
+    expectSpans(parseLeadEmail(OPCITY));
+
+    const lofty = okLead(parseLeadEmail(OPCITY_LOFTY));
+    expect(lofty.format).toBe('opcity');
+    expect(lofty.name?.value).toBe('Casey Relay');
+    expect(lofty.emails.map((e) => e.value)).toEqual(['casey.relay@example.test']);
+    expectSpans(parseLeadEmail(OPCITY_LOFTY));
+
+    const homes = okLead(parseLeadEmail(HOMES));
+    expect(homes.format).toBe('homes');
+    expect(homes.name?.value).toBe('Drew Homes');
+    expect(homes.listingId?.value).toBe('CO-44021');
+    expect(homes.property?.value).toBe('60 Oak St, Denver, CO 80202');
+    expectSpans(parseLeadEmail(HOMES));
+
+    const dash = okLead(parseLeadEmail(AGENTDASH));
+    expect(dash.format).toBe('agentdash');
+    expect(dash.name?.value).toBe('Casey Sample');
+    expect(dash.emails.map((e) => e.value)).toEqual(['casey.sample@example.test']);
+    expect(dash.phones.map((p) => p.value)).toEqual(['(555) 555-0190']);
+    expect(dash.postalCode).toBe('23510');
+    expect(dash.leadType).toBe('buy');
+    expect(agentdashFlags(parseLeadEmail(AGENTDASH).text)).toEqual({ military: 'Active duty', lender: 'Veterans United', loanType: 'VA' });
+    expectSpans(parseLeadEmail(AGENTDASH));
+
+    const again = okLead(parseLeadEmail(AGENTDASH_REREFERRAL));
+    expect(again.format).toBe('agentdash');
+    expect(again.emails.map((e) => e.value)).toEqual(['casey.sample@example.test']);
+    expect(again.leadType).toBe('sell');
+
+    const idx = okLead(parseLeadEmail(IDX));
+    expect(idx.format).toBe('generic');
+    expect(idx.name?.value).toBe('Indy Sample');
+    expect(idx.listingId?.value).toBe('IDX-4401');
+    expect(idx.leadType).toBe('buy');
+    expect(idx.message?.value).toBe('Is this still available?');
+    expectSpans(parseLeadEmail(IDX));
+  });
+
+  it('an AgentDash invoice is not a lead; a prose email is unknown to the strict parser and readable by the fallback', () => {
+    const invoice = parseLeadEmail(AGENTDASH_INVOICE);
+    expect(invoice.ok).toBe(false);
+    expect(isNonLeadMail(AGENTDASH_INVOICE.subject, AGENTDASH_INVOICE.text ?? '')).toBe(true);
+    expect(isNonLeadMail('Market update', NEWSLETTER_TEXT)).toBe(true);
+
+    const strict = parseLeadEmail(FALLBACK);
+    expect(strict.ok).toBe(false);
+    if (strict.ok) return;
+    expect(strict.reason).toBe('UNKNOWN_FORMAT');
+    const loose = fallbackLead(FALLBACK_PROSE, 'leads.idx-broker.test');
+    expect(loose?.format).toBe('fallback');
+    expect(loose?.name?.value).toBe('Quinn Sample');
+    expect(loose?.emails.map((e) => e.value)).toEqual(['quinn.sample@example.test']);
+    expect(loose?.phones.map((p) => p.value)).toEqual(['(555) 555-0188']);
+    expect(loose?.property?.value).toBe('15 Spruce St, Bend, OR 97701');
+    expect(loose?.postalCode).toBe('97701');
+    expect(fallbackLead('Thanks for reading.', 'leads.idx-broker.test')).toBeNull();
+    // the portal's own address in the prose is not the lead
+    expect(fallbackLead('Email me at leads@zillow.com or (555) 555-0100', 'mail.zillow.com')?.emails).toEqual([]);
+  });
+
+  it('a Market VIP subject is realtor.com even when the body never says so', () => {
+    const r = parseLeadEmail({
+      subject: 'New Market VIP Prospect',
+      text: 'Name: Pat Sample\nEmail: pat.sample@example.test\nPhone: (555) 555-0133',
+      html: null,
+      senderDomain: 'email.realtor.com',
+    });
+    expect(okLead(r).format).toBe('realtor');
+    expect(okLead(r).name?.value).toBe('Pat Sample');
+  });
+
+  it('an invoice, a closing-document notice, and a market newsletter each match on their own', () => {
+    expect(isNonLeadMail('Invoice 100', 'Please pay the attached bill.')).toBe(true);
+    expect(isNonLeadMail('Documents', 'Closing documents are attached.')).toBe(true);
+    expect(isNonLeadMail('Notice', 'The closing-document packet is ready.')).toBe(true);
+    expect(isNonLeadMail('Market update', 'Prices rose 2% this month.')).toBe(true);
+    expect(isNonLeadMail('November notes', 'This newsletter covers rates.')).toBe(true);
+    expect(isNonLeadMail('New lead', 'Name: Ann Lee\nEmail: ann.lee@example.test')).toBe(false);
+  });
+
+  it('lofty.com and exprealty.com addresses are the relay’s, never the lead’s', () => {
+    expect(PORTAL_DOMAINS).toEqual(expect.arrayContaining(['lofty.com', 'exprealty.com']));
+    for (const d of ['lofty.com', 'exprealty.com']) {
+      // the sender is not the relay, so only the portal list can drop alerts@<relay>
+      const labelled = parseLeadEmail(generic(`Name: Ann Lee\nEmail: alerts@${d}\nEmail: ann.lee@example.test\nPhone: 555-555-0191`, 'forms.agent-site.test'));
+      expect(okLead(labelled).emails.map((e) => e.value), d).toEqual(['ann.lee@example.test']);
+      expect(fallbackLead(`Write alerts@${d} or ann.lee@example.test or (555) 555-0192`, 'forms.other.test')?.emails.map((e) => e.value), d).toEqual(['ann.lee@example.test']);
+    }
+  });
+
+  it('the day-5 flag follows the trusted sender plus the subject and body, not the template that matched', () => {
+    expect(wantsReferralReminder('mail.opcity.com', 'Hello', 'Please call me back.')).toBe(true);
+    expect(wantsReferralReminder('email.realtor.com', 'New Market VIP Prospect', 'Name: Pat Sample')).toBe(true);
+    expect(wantsReferralReminder('alerts.lofty.com', 'New lead', 'Source: Opcity')).toBe(true);
+    expect(wantsReferralReminder('alerts.exprealty.com', 'Opcity referral', 'Name: Pat Sample')).toBe(true);
+    expect(wantsReferralReminder('leads.realtor.com', 'New realtor.com lead', 'I want to sell my home this spring.')).toBe(false);
+    expect(wantsReferralReminder('alerts.lofty.com', 'New lead', 'Name: Pat Sample')).toBe(false);
+    expect(wantsReferralReminder('mail.zillow.com', 'New Market VIP Prospect', 'Source: Opcity')).toBe(false);
   });
 });

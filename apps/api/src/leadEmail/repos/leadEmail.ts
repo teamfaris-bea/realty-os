@@ -200,6 +200,14 @@ export async function messageById(tx: Tx, id: string, o: { forUpdate?: boolean }
   ).rows[0] ?? null;
 }
 
+/** One timeline note for a lead email (source lead_email, no author: the system wrote it). */
+export async function insertLeadNote(tx: Tx, id: string, contactId: string, body: string): Promise<void> {
+  const text = body.trim().slice(0, 20_000);
+  if (text === '') return;
+  await sql`INSERT INTO notes (tenant_id, id, contact_id, body, source)
+            VALUES (app.tenant_id(), ${id}::uuid, ${contactId}::uuid, ${text}, 'lead_email')`.execute(tx);
+}
+
 /** The decision purges what the held email kept: its content, its parse and its address keys. */
 export async function decide(tx: Tx, id: string, d: { status: 'accepted' | 'discarded'; userId: string; contactId: string | null; inquiryId: string | null }): Promise<void> {
   await sql`UPDATE lead_email_messages SET status = ${d.status}, decided_by_user_id = ${d.userId}::uuid, decided_at = clock_timestamp(),
