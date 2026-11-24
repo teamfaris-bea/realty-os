@@ -170,6 +170,135 @@ export const LEADMETA_HOSTILE_HTML = `<html><head>
 <p>Lead</p>
 </body></html>`;
 
+// ---- vendor shapes (SYNTHETIC; no real sample — VERIFY before launch) ----------------------------------------
+
+export const ZILLOW_PREMIER_TEXT = [
+  'New contact from Zillow Premier Agent',
+  '',
+  'Buyer name: Reese Sample',
+  'Client email: Reese.Sample@Example.test',
+  'Phone number: (555) 555-0160',
+  'Property address: 80 Pine Rd, Reno, NV 89501',
+  'Message: Can we tour this weekend?',
+  '',
+  'You received this because you are a Premier Agent. leads@zillow.com',
+].join('\n');
+export const ZILLOW_PREMIER: ParseInput = { subject: 'New Zillow contact', text: ZILLOW_PREMIER_TEXT, html: null, senderDomain: 'mail.zillow.com' };
+
+export const REALTOR_MARKET_VIP_TEXT = [
+  'You have a new Market VIP prospect from realtor.com',
+  '',
+  'Prospect name: Avery Prospect',
+  'Prospect email: avery.prospect@example.test',
+  'Prospect phone: (555) 555-0164',
+  'Property of interest: 200 Market St, Austin, TX 78701',
+  'Notes: Ready to tour homes in this area.',
+  '',
+  'realtor.com | Do not reply',
+].join('\n');
+export const REALTOR_MARKET_VIP: ParseInput = { subject: 'New Market VIP Prospect', text: REALTOR_MARKET_VIP_TEXT, html: null, senderDomain: 'email.realtor.com' };
+
+export const OPCITY_TEXT = [
+  'You have a new referral from Opcity',
+  '',
+  'Client name: Blair Referral',
+  'Client email: blair.referral@example.test',
+  'Client phone: (555) 555-0168',
+  'Property address: 14 Lake Dr, Tampa, FL 33602',
+  'Notes: Interested in buying this spring.',
+  '',
+  'Opcity | noreply@opcity.com',
+].join('\n');
+export const OPCITY: ParseInput = { subject: 'New Opcity referral', text: OPCITY_TEXT, html: null, senderDomain: 'mail.opcity.com' };
+
+export const OPCITY_LOFTY_TEXT = [
+  'New lead alert',
+  '',
+  'Source: Opcity',
+  'Name: Casey Relay',
+  'Email: casey.relay@example.test',
+  'Phone: (555) 555-0172',
+  'Property: 9 River Rd, Dallas, TX 75201',
+  'Message: Please call about this referral.',
+].join('\n');
+export const OPCITY_LOFTY: ParseInput = { subject: 'New lead - Source Opcity', text: OPCITY_LOFTY_TEXT, html: null, senderDomain: 'alerts.lofty.com' };
+
+export const HOMES_TEXT = [
+  'New lead from Homes.com',
+  '',
+  'Lead name: Drew Homes',
+  'Lead email: drew.homes@example.test',
+  'Lead phone: (555) 555-0176',
+  'Property address: 60 Oak St, Denver, CO 80202',
+  'MLS number: CO-44021',
+  'Comments: Is the backyard fenced?',
+  '',
+  'Homes.com | leads@homes.com',
+].join('\n');
+export const HOMES: ParseInput = { subject: 'New Homes.com lead', text: HOMES_TEXT, html: null, senderDomain: 'leads.homes.com' };
+
+export const AGENTDASH_TEXT = [
+  'AgentDash',
+  'You have a new referral from Veterans United.',
+  '',
+  'Borrower name: Casey Sample',
+  'Borrower email: casey.sample@example.test',
+  'Borrower phone: (555) 555-0190',
+  'Property address: 100 Oak St, Norfolk, VA 23510',
+  'Loan type: VA',
+  'Military status: Active duty',
+  'Lender: Veterans United',
+  'Message: Interested in buying near the base.',
+  '',
+  'Veterans United | agentupdates@vu.com',
+].join('\n');
+export const AGENTDASH: ParseInput = { subject: 'New referral from Veterans United', text: AGENTDASH_TEXT, html: null, senderDomain: 'vu.com' };
+
+export const AGENTDASH_REREFERRAL_TEXT = [
+  'AgentDash',
+  'This borrower was re-referred by Veterans United.',
+  '',
+  'Borrower name: Casey Sample',
+  'Borrower email: casey.sample@example.test',
+  'Borrower phone: (555) 555-0190',
+  'Property address: 100 Oak St, Norfolk, VA 23510',
+  'Message: They want to sell my home too.',
+  '',
+  'Veterans United | agentupdates@vu.com',
+].join('\n');
+export const AGENTDASH_REREFERRAL: ParseInput = { subject: 'Updated referral from Veterans United', text: AGENTDASH_REREFERRAL_TEXT, html: null, senderDomain: 'vu.com' };
+
+export const AGENTDASH_INVOICE_TEXT = [
+  'Veterans United',
+  'Invoice for closing documents',
+  'Invoice #1001',
+  'Amount due: $0.00',
+  'This is not a new referral. Closing documents are attached.',
+  'Questions? Call (555) 555-0199 or billing@vu.com',
+].join('\n');
+export const AGENTDASH_INVOICE: ParseInput = { subject: 'Invoice for closing documents', text: AGENTDASH_INVOICE_TEXT, html: null, senderDomain: 'vu.com' };
+
+export const IDX_TEXT = [
+  'New inquiry from your IDX site',
+  '',
+  'Your name: Indy Sample',
+  'Your email: indy.sample@example.test',
+  'Your phone: 555-555-0171',
+  'MLS number: IDX-4401',
+  'Property address: 4 Cedar Ave, Boise, ID 83702',
+  'Your message: Is this still available?',
+  'Interested in: Buying',
+].join('\n');
+export const IDX: ParseInput = { subject: 'New IDX inquiry', text: IDX_TEXT, html: null, senderDomain: 'forms.idx-site.test' };
+
+export const FALLBACK_PROSE = [
+  'Hi, this is Quinn Sample.',
+  'I would like information on 15 Spruce St, Bend, OR 97701.',
+  'You can reach me at quinn.sample@example.test or (555) 555-0188.',
+  'Thanks',
+].join('\n');
+export const FALLBACK: ParseInput = { subject: 'Question about a listing', text: FALLBACK_PROSE, html: null, senderDomain: 'leads.idx-broker.test' };
+
 // ---- catalog portals without a vendor parser (R-LEM-9) -------------------------------------------------------
 // SYNTHETIC — a generic-labelled lead email from each catalog portal's domain (no real samples: VERIFY)
 export const CATALOG_PORTAL_DOMAINS = ['redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com'] as const;

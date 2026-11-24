@@ -62,7 +62,7 @@ export function isConsumerMailboxDomain(raw: string | null | undefined): boolean
   return CONSUMER_MAILBOX_DOMAINS.some((base) => isUnder(d, base));
 }
 
-export type PortalId = 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity';
+export type PortalId = 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity' | 'agentdash';
 
 /**
  * The portal catalog shown when an Owner/Admin sets up an inbox. VERIFY with each portal which domain DKIM-signs its
@@ -83,6 +83,8 @@ export const PORTAL_CATALOG: readonly { portal: PortalId; domain: string; label:
   { portal: 'trulia', domain: 'trulia.com', label: 'Trulia', preTicked: false }, // VERIFY
   // VERIFY: Opcity (a Realtor.com company) may send from a realtor.com domain instead
   { portal: 'opcity', domain: 'opcity.com', label: 'Opcity', preTicked: false },
+  // VERIFY: AgentDash referral mail is sent from agentupdates@vu.com
+  { portal: 'agentdash', domain: 'vu.com', label: 'Veterans United', preTicked: false },
 ];
 
 /** The pre-ticked suggestions (the existing API field suggestedSenderDomains). */
@@ -212,4 +214,5 @@ export function holdSentence(code: string | null, subject: string | null): strin
 }
 
 /** The lead source page's sentence on what we read (for the web). */
-export const READABLE_FORMATS_SENTENCE = "We read emails that label the name, email and phone. If a portal's emails wait in Needs review, send us one so we can read that portal.";
+export const READABLE_FORMATS_SENTENCE =
+  "We read labelled emails and the lead emails from Zillow, realtor.com, Opcity, Homes.com, and Veterans United. An email we cannot read still becomes a lead for review when it names a phone or email. If a portal's emails wait in Needs review, send us one so we can read that portal.";

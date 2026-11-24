@@ -20,6 +20,7 @@ import { TIMER_KIND_OF, TimerPayload } from '../worker/contracts.js';
 import type { JobHandler, TxJobHandler } from '../worker/types.js';
 import { backupAlertHandler, backupAlertSweepHandler } from './backupAlert.js';
 import { deactivationHandler } from './deactivation.js';
+import { referralUpdateHandler } from './referralUpdate.js';
 import { releaseRecheckHandler } from './releaseRecheck.js';
 
 export type { TimerPayload };
@@ -56,4 +57,6 @@ export const leadsHandlers: JobHandler<unknown>[] = [
   backupAlertSweepHandler() as unknown as JobHandler<unknown>,
   // b19 R-TEAMQ-20: a waived auto-release comes back when its source stops being covered or its owner stops being active
   releaseRecheckHandler() as unknown as JobHandler<unknown>,
+  // realtor.com / Opcity: a task and a feed card at day 5 when no update is logged (their rule is 7)
+  referralUpdateHandler() as unknown as JobHandler<unknown>,
 ];
