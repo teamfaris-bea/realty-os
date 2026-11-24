@@ -6,6 +6,8 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { mapListsDbError, limitListStatement } from './common.js';
+import { stageCounts } from './repos/people.js';
+import { planFor } from './run.js';
 import { resolveSelection } from './selection.js';
 import { auditRows, call, createContact, listsWorld, type ListsWorld, makeTag, run, runAll, tagContact } from './testing.js';
 
@@ -149,6 +151,39 @@ describe('saved smart lists (R-PAR-27)', () => {
     expect(asA.body.scope).toBe('people_you_can_see');
     const asB = await call<{ count: number }>(w.agentB, 'GET', `/people/count?list=${team.body.list.id}`);
     expect(asB.body.count).toBe(1);
+  });
+});
+
+describe('stage counts (pipeline board)', () => {
+  it('counts the eight stages for people the caller can see, and an owner filter does not widen that', async () => {
+    const id = await createContact(w.agentA, 'Stage Board Person');
+    const moved = await call(w.agentA, 'POST', `/contacts/${id}/stage`, { stage: 'connected' });
+    expect(moved.status).toBe(200);
+    const counts = await call<{ counts: { stage: string; count: number; capped: boolean }[] }>(w.agentA, 'GET', '/people/stage-counts');
+    expect(counts.status).toBe(200);
+    expect(counts.body.counts.map((c) => c.stage)).toEqual(['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost']);
+    const connected = await runAll(w.agentA, { v: 1, all: [{ kind: 'stage', in: ['connected'] }] });
+    expect(counts.body.counts.find((c) => c.stage === 'connected')!.count).toBe(connected.length);
+    expect(connected).toContain(id);
+    const hidden = await call<{ counts: { stage: string; count: number }[] }>(w.agentB, 'GET', '/people/stage-counts');
+    expect(await runAll(w.agentB, { v: 1, all: [{ kind: 'stage', in: ['connected'] }] })).not.toContain(id);
+    const lead = await call<{ counts: { stage: string; count: number }[] }>(w.lead, 'GET', `/people/stage-counts?owner=${w.agentA.userId}`);
+    const leadSees = await runAll(w.lead, { v: 1, all: [{ kind: 'owner', in: [w.agentA.userId!] }, { kind: 'stage', in: ['connected'] }] });
+    expect(lead.body.counts.find((c) => c.stage === 'connected')!.count).toBe(leadSees.length);
+    expect(leadSees).toContain(id);
+    expect(hidden.body.counts.find((c) => c.stage === 'connected')!.count).toBeLessThan(lead.body.counts.find((c) => c.stage === 'connected')!.count);
+    const list = await call<{ list: { id: string } }>(w.agentA, 'POST', '/smart-lists', { scope: 'personal', name: 'Connected board', definition: { v: 1, all: [{ kind: 'stage', in: ['connected'] }] } });
+    const byList = await call<{ counts: { stage: string; count: number }[] }>(w.agentA, 'GET', `/people/stage-counts?list=${list.body.list.id}`);
+    expect(byList.body.counts.find((c) => c.stage === 'connected')!.count).toBe(connected.length);
+    expect(byList.body.counts.filter((c) => c.stage !== 'connected').every((c) => c.count === 0)).toBe(true);
+  });
+
+  it('R-PAR-29: a stage count stops at the cap in SQL, the same LIMIT a people count uses', async () => {
+    for (let i = 0; i < 3; i++) await createContact(w.agentA, `Cap Person ${i}`);
+    const rows = await withTenantTx(w.agentA.actor(), async (tx) => stageCounts(tx, await planFor(tx, { v: 1, all: [] }), 1, 'book'), { db: h.database });
+    for (const row of rows) expect(row.n).toBeLessThanOrEqual(2);
+    const full = await withTenantTx(w.agentA.actor(), async (tx) => stageCounts(tx, await planFor(tx, { v: 1, all: [] }), 10_000, 'book'), { db: h.database });
+    expect(full.find((r) => r.stage === 'new')!.n).toBeGreaterThan(2);
   });
 });
 

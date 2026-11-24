@@ -1102,6 +1102,51 @@ exports[`R-PERM-1 route × role matrix (lists routes) > R-AST-13 R-TEN-3: lists 
     ],
     "type": "object",
   },
+  "StageCountsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "counts": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "capped": {
+              "type": "boolean",
+            },
+            "count": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "stage": {
+              "enum": [
+                "new",
+                "attempting",
+                "connected",
+                "nurture",
+                "active",
+                "under_contract",
+                "closed",
+                "lost",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "stage",
+            "count",
+            "capped",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "counts",
+    ],
+    "type": "object",
+  },
   "TagCreatedResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,

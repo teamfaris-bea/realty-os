@@ -97,7 +97,7 @@ describe('R-PERM-1 route × role matrix (lists routes)', () => {
 
   it('R-PERM-1: every lists route declares its authorization, and an Action route carries authorize(<that action>)', () => {
     const rows = h.app.platform.routeTable.filter((r) => r.method !== 'HEAD' && /^\/api\/(tags|custom-fields|smart-lists|people)|^\/api\/contacts\/:id\/(tags|fields)/.test(r.url));
-    expect(rows.length).toBe(24); // + GET /people/filter-options (lane people-filters)
+    expect(rows.length).toBe(25); // + GET /people/stage-counts (pipeline board)
     for (const r of rows) {
       expect(r.auth, `${r.method} ${r.url}`).toBeDefined();
       if (r.auth !== 'self') expect(r.authorizes, `${r.method} ${r.url}`).toBe(r.auth);

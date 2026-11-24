@@ -5,7 +5,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, pondCard, reachability, stopReason } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, decision, draftAction, err, findToast, fullContact, iso, pondCard, reachability, stopReason } from '../feed/lib/testing.js';
 import { detailsFixture } from '../people-edit/testing.js';
 
 const user = () => userEvent.setup();
@@ -290,6 +290,36 @@ describe('Contact: full view', () => {
     const fake = new FakeFetch().on(`GET /contacts/${IDS.pat}`, err(404, 'NOT_FOUND'));
     agentApp(fake, `/contacts/${IDS.pat}`);
     expect(await screen.findByRole('alert')).toHaveTextContent("This isn't available. It may have moved, or you may not have access to it.");
+  });
+
+  it('adds a promise from the contact page in the sheet, and a task line shows on the timeline', async () => {
+    const c = fullContact();
+    const at = iso(-600_000);
+    const task = { id: '01900000-0000-7000-8000-0000000000e3', type: 'task', occurredAt: at, actor: { userId: IDS.me, displayName: 'Ava Agent' }, detail: 'promise:open', preview: 'Send the comps', note: null, provenance: 'native' };
+    const fake = fullFake(c)
+      .on(`GET /contacts/${c.id}/timeline?limit=100`, { status: 200, body: { items: [task], nextCursor: null } })
+      .on('GET /people/filter-options', { status: 200, body: { sources: [], members: [{ userId: '01900000-0000-7000-8000-0000000000bb', name: 'Blake Chen', role: 'agent', active: true }] } })
+      .on('POST /tasks', (call) => {
+        const body = call.body as { assigneeUserId?: string; title?: string };
+        if (body.assigneeUserId) return err(422, 'ASSIGNEE_NOT_ELIGIBLE');
+        return { status: 201, body: { task: { id: IDS.task, title: body.title, kind: 'promise', status: 'open' }, replayed: false } };
+      });
+    agentApp(fake, `/contacts/${c.id}`);
+    expect(await screen.findByText('Promise: Send the comps')).toBeInTheDocument();
+    const u = user();
+    await u.click(await screen.findByRole('button', { name: 'Add a task' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add a task for Jane Doe' });
+    await u.click(within(dialog).getByRole('radio', { name: 'Promise' }));
+    await u.type(within(dialog).getByLabelText('What'), 'Send the comps');
+    await u.click(within(dialog).getByRole('button', { name: 'Add' }));
+    expect(await findToast('Promise saved: Send the comps')).toBeInTheDocument();
+    expect(fake.callsTo('POST /tasks').at(-1)!.body).toMatchObject({ title: 'Send the comps', kind: 'promise', contactId: c.id });
+    await u.click(await screen.findByRole('button', { name: 'Add a task' }));
+    const again = await screen.findByRole('dialog', { name: 'Add a task for Jane Doe' });
+    await u.type(within(again).getByLabelText('What'), 'For Blake');
+    await u.selectOptions(within(again).getByLabelText('Assign to'), '01900000-0000-7000-8000-0000000000bb');
+    await u.click(within(again).getByRole('button', { name: 'Add' }));
+    expect(await within(again).findByRole('alert')).toHaveTextContent("That person can't be assigned this task.");
   });
 
   it('has no axe violations', async () => {

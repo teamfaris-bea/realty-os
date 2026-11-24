@@ -1,7 +1,7 @@
 // Zod schemas of the api/lists routes (PARITY_PLAN module 60). Input schemas are strict (an extra
 // tenant id, or anything else, is 422). Response schemas are snapshot-tested: no confidence* fields,
 // no tenant id fields (R-AST-13, R-TEN-3).
-import { LIST_SORTS } from '@realty/core/parity/lists';
+import { LIST_SORTS, LIST_STAGES } from '@realty/core/parity/lists';
 import { FIELD_TYPES } from '@realty/core/parity/fields';
 import { TAG_COLORS } from '@realty/core/parity/tags';
 import { z } from 'zod';
@@ -160,6 +160,11 @@ export const PeoplePageResponse = z.object({
 export const PeopleCountResponse = z.object({ count: z.number().int(), capped: z.boolean() });
 export const PeopleQuery = z.strictObject({ list: Id.optional(), cursor: z.string().max(3000).optional(), sort: Sort.optional() });
 export const PeopleCountQuery = z.strictObject({ list: Id.optional() });
+/** One grouped count of the eight stages, under the same visibility as a list run (R-PAR-28, R-PAR-29). */
+export const StageCountsQuery = z.strictObject({ list: Id.optional(), owner: Id.optional() });
+export const StageCountsResponse = z.object({
+  counts: z.array(z.object({ stage: z.enum(LIST_STAGES), count: z.number().int().min(0), capped: z.boolean() })),
+});
 export const PeopleQueryBody = z.strictObject({ definition: z.unknown(), cursor: z.string().max(3000).optional(), sort: Sort.optional() });
 export const PeopleCountBody = z.strictObject({ definition: z.unknown() });
 
@@ -187,4 +192,5 @@ export const LISTS_RESPONSE_SCHEMAS = {
   SmartListResponse,
   PeoplePageResponse,
   PeopleCountResponse,
+  StageCountsResponse,
 };

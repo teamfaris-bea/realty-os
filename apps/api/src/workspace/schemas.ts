@@ -121,6 +121,10 @@ export const TasksQuery = z.strictObject({
   dealId: uuid.optional(),
   /** default: the caller's own tasks; `visible` lists every task the caller can see (RLS) */
   scope: z.enum(['mine', 'visible']).optional(),
+  /** the promises screen asks for kind=promise */
+  kind: TaskKind.optional(),
+  /** a Team Lead narrows a visible list to one assignee (RLS still applies) */
+  assigneeUserId: uuid.optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 export const CreateTaskBody = z
@@ -128,7 +132,7 @@ export const CreateTaskBody = z
     /** R-STG-6: an optional client-generated id; the same id again by the same person answers the same task */
     id: uuid.optional(),
     title: z.string().trim().min(1).max(300),
-    kind: z.enum(['todo', 'callback', 'follow_up', 'document']).optional(),
+    kind: z.enum(['todo', 'callback', 'follow_up', 'promise', 'document']).optional(),
     notes: z.string().max(5000).nullable().optional(),
     dueAt: isoDate.nullable().optional(),
     dueAllDay: z.boolean().optional(),

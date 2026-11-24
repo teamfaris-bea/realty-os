@@ -140,7 +140,7 @@ describe('tasks', () => {
   it('strict bodies: an all-day task needs a zone; unknown fields are refused', async () => {
     const a = w.agents[0]!;
     expect((await call(a, 'POST', '/tasks', { title: 'x', dueAllDay: true, dueAt: new Date().toISOString() })).code).toBe('VALIDATION_FAILED');
-    expect((await call(a, 'POST', '/tasks', { title: 'x', kind: 'promise' })).code).toBe('VALIDATION_FAILED'); // promises come from the assistant with evidence
+    expect((await call(a, 'POST', '/tasks', { title: 'x', kind: 'vow' })).code).toBe('VALIDATION_FAILED'); // a person may record a promise; an unknown kind is still refused
     expect((await call(a, 'POST', '/tasks', { title: 'x', tenant_id: w.tenantId })).code).toBe('VALIDATION_FAILED');
   });
 });
@@ -169,6 +169,43 @@ describe('appointments and outcomes', () => {
     const row = (await h.su.query('SELECT outcome_logged_by_user_id FROM appointments WHERE id = $1', [id])).rows[0];
     expect(row.outcome_logged_by_user_id).toBe(a.userId);
     expect((await feedOf(a)).all.some((x) => x.subjectId === id)).toBe(false);
+  });
+
+  it('a person records a promise: it lists by kind, shows on the timeline, and Done moves that line', async () => {
+    const a = w.agents[0]!;
+    const b = w.agents[1]!;
+    const ca = await contactOf(a, { firstName: 'Sam' });
+    const cb = await contactOf(b, { firstName: 'Blake' });
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    const made = await call<{ task: { id: string; kind: string; status: string; notes: string | null } }>(a, 'POST', '/tasks', {
+      title: 'Send Sam the comps',
+      kind: 'promise',
+      contactId: ca.id,
+      dueAt: past,
+      notes: 'Said it on the call',
+    });
+    expect(made.status).toBe(201);
+    expect(made.body.task).toMatchObject({ kind: 'promise', status: 'open', notes: 'Said it on the call' });
+    const blake = await call<{ task: { id: string } }>(b, 'POST', '/tasks', { title: 'Blake promise', kind: 'promise', contactId: cb.id, dueAt: past });
+    expect(blake.status).toBe(201);
+    const open = await call<{ tasks: { id: string }[] }>(a, 'GET', `/tasks?kind=promise&status=open&contactId=${ca.id}`);
+    expect(open.body.tasks.map((t) => t.id)).toEqual([made.body.task.id]);
+    expect((await call<{ tasks: unknown[] }>(a, 'GET', `/tasks?kind=todo&contactId=${ca.id}`)).body.tasks).toHaveLength(0);
+    const mine = await call<{ tasks: { title: string; assigneeUserId: string }[] }>(a, 'GET', '/tasks?kind=promise&status=open&scope=mine');
+    expect(mine.body.tasks.every((t) => t.assigneeUserId === a.userId)).toBe(true);
+    expect(mine.body.tasks.some((t) => t.title === 'Blake promise')).toBe(false);
+    const lead = await call<{ tasks: { title: string }[] }>(w.teamLead!, 'GET', '/tasks?kind=promise&status=open&scope=visible&limit=200');
+    expect(lead.body.tasks.map((t) => t.title)).toEqual(expect.arrayContaining(['Send Sam the comps', 'Blake promise']));
+    const onlyB = await call<{ tasks: { title: string; assigneeUserId: string }[] }>(w.teamLead!, 'GET', `/tasks?kind=promise&status=open&scope=visible&assigneeUserId=${b.userId}&limit=200`);
+    expect(onlyB.body.tasks.every((t) => t.assigneeUserId === b.userId)).toBe(true);
+    expect(onlyB.body.tasks.some((t) => t.title === 'Send Sam the comps')).toBe(false);
+    const tl = await call<{ items: { id: string; type: string; detail: string; preview: string }[] }>(a, 'GET', `/contacts/${ca.id}/timeline`);
+    expect(tl.body.items.find((i) => i.type === 'task' && i.id === made.body.task.id)).toMatchObject({ detail: 'promise:open', preview: 'Send Sam the comps' });
+    const done = await call<{ task: { status: string } }>(a, 'PATCH', `/tasks/${made.body.task.id}`, { status: 'done' });
+    expect(done.body.task.status).toBe('done');
+    const tl2 = await call<{ items: { id: string; type: string; detail: string }[] }>(a, 'GET', `/contacts/${ca.id}/timeline`);
+    expect(tl2.body.items.find((i) => i.type === 'task' && i.id === made.body.task.id)).toMatchObject({ detail: 'promise:done' });
+    expect((await call<{ tasks: unknown[] }>(a, 'GET', `/tasks?kind=promise&status=open&contactId=${ca.id}`)).body.tasks).toHaveLength(0);
   });
 
   it('a no-show is an outcome too; a canceled appointment cannot get one', async () => {

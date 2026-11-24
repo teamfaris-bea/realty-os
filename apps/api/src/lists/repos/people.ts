@@ -10,7 +10,7 @@
 // The equivalence is proven in people.visibility.test.ts. Detail-only predicates (tags, fields, tasks)
 // are EXISTS sub-queries on their own RLS-protected tables, so a pond card is never found by data its
 // viewer cannot see.
-import type { ListCursor, ListPlan, ListPredicate, ListSort, NumCmp } from '@realty/core/parity/lists';
+import { LIST_STAGES, type ListCursor, type ListPlan, type ListPredicate, type ListSort, type NumCmp } from '@realty/core/parity/lists';
 import type { Tx } from '@realty/db';
 import { type RawBuilder, sql } from 'kysely';
 
@@ -387,6 +387,22 @@ export async function pageKeys(tx: Tx, plan: ListPlan, cursor: ListCursor | null
 
 export function countQuery(plan: ListPlan, cap: number, hint: ScopeHint = null): Frag {
   return sql`SELECT count(*)::int AS n FROM (SELECT 1 FROM contacts c WHERE ${whereSql(plan, hint, { driven: true })} LIMIT ${cap + 1}) x`;
+}
+
+/**
+ * How many people of each stage the list holds. Each stage is counted the same way as a people count
+ * (`countQuery`): a `SELECT 1 … LIMIT cap + 1`, so a stage of 250k does not scan past the cap. The
+ * caller turns `cap + 1` into "cap+" (R-PAR-29).
+ */
+export function stageCountsQuery(plan: ListPlan, cap: number, hint: ScopeHint = null): Frag {
+  return sql`SELECT s.stage, (SELECT count(*)::int FROM (
+    SELECT 1 FROM contacts c WHERE ${whereSql(plan, hint, { driven: true })} AND c.stage = s.stage LIMIT ${cap + 1}
+  ) capped) AS n FROM unnest(${[...LIST_STAGES]}::text[]) AS s(stage)`;
+}
+
+export async function stageCounts(tx: Tx, plan: ListPlan, cap: number, hint: ScopeHint = null): Promise<{ stage: string; n: number }[]> {
+  const r = await stageCountsQuery(plan, cap, hint).execute(tx);
+  return (r.rows as { stage: string; n: number }[]).map((row) => ({ stage: row.stage, n: Number(row.n) }));
 }
 
 /** Exact count up to `cap`, then cap + 1 (the API says "10,000+"). */
