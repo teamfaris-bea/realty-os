@@ -51,6 +51,8 @@ export interface BatchOptions {
   snapshotError?: string | null;
   /** PARITY 65 (R-PAR-46): the Admin's stage map, keep-stage-as-tag switch and custom field mapping */
   parity?: ParityOptions;
+  /** FUB deal stage label → Realty OS deal stage. A label absent here uses the built-in vocabulary. */
+  dealStageMap?: Record<string, 'prospect' | 'agreement_signed' | 'active' | 'under_contract' | 'closed' | 'lost'>;
   /** PARITY 65: the contacts dry run's parity summary (stage labels, tag and field plan; no contact PII) */
   paritySummary?: ParitySummary;
   /** PARITY 65: catalog rows this batch created (revert removes the unused ones) */
@@ -58,22 +60,21 @@ export interface BatchOptions {
   /** PARITY 65: what the contacts commit wrote (tag links, values, stages set, kept) */
   parityCommitted?: Record<string, number>;
   /**
-   * Owner decision B7 (E233): how many tasks and appointments Follow Up Boss holds (never imported), from the
-   * connection test, the latest snapshot, or the export file; null where a count could not be read.
+   * Tasks Follow Up Boss holds and the import never brings over (B7 amended 2026-11-21). Appointments and deals
+   * are imported. Null when the task count could not be read.
    */
   notImported?: NotImportedOption;
 }
 
 export interface NotImportedOption {
   tasks: number | null;
-  appointments: number | null;
   /** the step that counted last (the connection test, the latest snapshot, or the export file) */
   countedAt: 'connection_test' | 'snapshot' | 'export_file';
   /**
-   * Review F4: a count that step could not read again, kept from an earlier step: the step that counted it. Absent
-   * when every number is that step's own.
+   * Review F4: a task count that step could not read again, kept from an earlier step. Absent when the number
+   * is that step's own.
    */
-  keptFrom?: Partial<Record<'tasks' | 'appointments', NotImportedStep>>;
+  keptFrom?: Partial<Record<'tasks', NotImportedStep>>;
 }
 
 export interface StageRow {

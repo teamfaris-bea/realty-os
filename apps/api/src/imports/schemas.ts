@@ -17,7 +17,7 @@ const FileBase64 = z
   .regex(/^[A-Za-z0-9+/]*={0,2}$/)
   .refine((s) => s.length % 4 === 0, { message: 'base64 length' });
 
-export const CategoryParam = z.enum(['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent']);
+export const CategoryParam = z.enum(['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals', 'appointments']);
 export const IdParams = z.strictObject({ id: z.uuid() });
 export const StageParams = z.strictObject({ id: z.uuid(), category: CategoryParam });
 export const RecordParams = z.strictObject({ id: z.uuid(), rid: z.uuid() });
@@ -157,14 +157,13 @@ export const Batch = z.object({
   revertedAt: z.string().nullable(),
   stages: z.array(Stage),
   connectionTest: z.array(z.string()),
-  /** owner decision B7 (E233): Follow Up Boss tasks and appointments, counted (never read), and that they don't come over; null for CSV */
+  /** B7 amended 2026-11-21: Follow Up Boss tasks, counted and not imported. Null for CSV. Appointments and deals are imported. */
   notImported: z
     .object({
       tasks: z.number().nullable(),
-      appointments: z.number().nullable(),
       countedAt: z.enum(['connection_test', 'snapshot', 'export_file']).nullable(),
-      /** review F4: a count the latest counting could not read again, kept from an earlier step (the step that counted it) */
-      keptFrom: z.object({ tasks: NotImportedStep.optional(), appointments: NotImportedStep.optional() }).optional(),
+      /** review F4: a task count the latest counting could not read again, kept from an earlier step */
+      keptFrom: z.object({ tasks: NotImportedStep.optional() }).optional(),
       lines: z.array(z.string()),
     })
     .nullable(),
@@ -253,7 +252,7 @@ export const ReportResponse = z.object({
   /** PARITY 65 (R-PAR-46): stages, tags and custom fields: source vs imported vs needs review vs rejected */
   parity: z.object({ phase: z.enum(['dry_run', 'committed', 'reverted']), rows: z.array(ParityRow), lines: z.array(z.string()) }).nullable(),
   /** owner decision B7 (E233): what Follow Up Boss holds that the import does not bring over; null for CSV */
-  notImported: z.object({ tasks: z.number().nullable(), appointments: z.number().nullable(), lines: z.array(z.string()) }).nullable(),
+  notImported: z.object({ tasks: z.number().nullable(), lines: z.array(z.string()) }).nullable(),
 });
 export const CreatedResponse = z.object({ batch: Batch });
 

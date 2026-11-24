@@ -4,9 +4,9 @@
 //   createImport   FUB API: decrypts nothing, reads COUNTS ONLY (one-record pages) and stores the key
 //                  encrypted (provider_credentials, AAD bound to the row). CSV / FUB export file: the
 //                  bytes are stored encrypted (per-object DEK) and only counted. Nothing is promised
-//                  before this step and nothing is imported by it (R-IMPORT-1). FUB tasks and
-//                  appointments are counted too, never read (owner decision B7, E233): a count that
-//                  fails is null and never fails the test.
+//                  before this step and nothing is imported by it (R-IMPORT-1). FUB tasks are counted
+//                  too, never read (owner decision B7, amended 2026-11-21: appointments and deals are
+//                  imported). A task count that fails is null and never fails the test.
 //   takeSnapshot   (job) FUB API: reads every collection once, copies recordings into encrypted storage,
 //                  and stores the whole snapshot encrypted with its sha256. Every later step reads the
 //                  snapshot, never live FUB (R-IMPORT-1, R-IMPORT-4). Files: the uploaded bytes are the
@@ -22,6 +22,7 @@ import {
   CATEGORIES,
   type ColumnMapping,
   type FubCollection,
+  type FubMapContext,
   FubPersonSchema,
   type ImportTarget,
   type NormalizedRecord,
@@ -86,10 +87,10 @@ export function parseFubExport(bytes: Uint8Array): FubSnapshot | null {
 }
 
 /**
- * Owner decision B7 (E233): the tasks and appointments FUB holds, from one-record count pages only. Read-only and
- * never blocking: any failure (no scope, an error, a bad page) is a count we could not read (null).
+ * Tasks FUB holds, from a one-record count page only. Read-only and never blocking: any failure is a count we
+ * could not read (null). Appointments and deals are imported, so they are not counted here.
  */
-async function countNotImported(client: FubClient): Promise<{ tasks: number | null; appointments: number | null }> {
+async function countNotImported(client: FubClient): Promise<{ tasks: number | null }> {
   const pages: Partial<Record<FubCountOnlyCollection, unknown>> = {};
   for (const c of FUB_COUNT_ONLY) {
     try {
@@ -105,21 +106,17 @@ async function countNotImported(client: FubClient): Promise<{ tasks: number | nu
  * E233 at the snapshot: what this snapshot counted, and, for a count it could not read, the earlier one with the step
  * that counted it (review F4: kept, never relabelled as this snapshot's). A count never read stays null.
  */
-function recounted(fresh: { tasks: number | null; appointments: number | null }, was: repo.NotImportedOption | undefined): repo.NotImportedOption {
+function recounted(fresh: { tasks: number | null }, was: repo.NotImportedOption | undefined): repo.NotImportedOption {
   const keptFrom: NonNullable<repo.NotImportedOption['keptFrom']> = {};
-  const count = (k: FubCountOnlyCollection): number | null => {
-    if (fresh[k] !== null) return fresh[k];
-    if (!was || was[k] === null) return null;
-    // a live FUB batch is counted only at its connection test and at its snapshots
-    keptFrom[k] = was.keptFrom?.[k] ?? (was.countedAt === 'connection_test' ? 'connection_test' : 'snapshot');
-    return was[k];
-  };
-  const tasks = count('tasks');
-  const appointments = count('appointments');
-  return { tasks, appointments, countedAt: 'snapshot', ...(Object.keys(keptFrom).length > 0 ? { keptFrom } : {}) };
+  let tasks = fresh.tasks;
+  if (tasks === null && was && was.tasks !== null) {
+    keptFrom.tasks = was.keptFrom?.tasks ?? (was.countedAt === 'connection_test' ? 'connection_test' : 'snapshot');
+    tasks = was.tasks;
+  }
+  return { tasks, countedAt: 'snapshot', ...(Object.keys(keptFrom).length > 0 ? { keptFrom } : {}) };
 }
 
-/** E233: tasks and appointments in a FUB export file (top level or under `collections`), counted, never read. */
+/** Tasks in a FUB export file (top level or under `collections`), counted, never read. */
 function exportNotImported(bytes: Uint8Array): repo.NotImportedOption {
   let v: unknown;
   try {
@@ -128,13 +125,36 @@ function exportNotImported(bytes: Uint8Array): repo.NotImportedOption {
     v = null;
   }
   const root = (v !== null && typeof v === 'object' && !Array.isArray(v) ? ((v as { collections?: unknown }).collections ?? v) : {}) as Record<string, unknown>;
-  const n = (c: FubCountOnlyCollection) => (Array.isArray(root[c]) ? (root[c] as unknown[]).length : null);
-  return { tasks: n('tasks'), appointments: n('appointments'), countedAt: 'export_file' };
+  return { tasks: Array.isArray(root.tasks) ? root.tasks.length : null, countedAt: 'export_file' };
 }
 
 function exportCounts(s: FubSnapshot): Record<Category, number | null> {
   const n = (c: FubCollection) => s.collections[c]?.length ?? 0;
-  return { contacts: n('people'), ownership: n('people'), notes: n('notes'), messages: n('textMessages') + n('emails'), call_recordings: n('calls'), consent: n('people') };
+  return {
+    contacts: n('people'),
+    ownership: n('people'),
+    notes: n('notes'),
+    messages: n('textMessages') + n('emails'),
+    call_recordings: n('calls'),
+    consent: n('people'),
+    deals: n('deals'),
+    appointments: n('appointments'),
+  };
+}
+
+/**
+ * A snapshot with no deals or appointments leaves those stages skipped, so a batch that never had them can still
+ * finish. A later snapshot that does have them reopens a skipped stage. Committed stages are left alone.
+ */
+async function settleDealAppointmentStages(tx: Tx, batchId: string, snap: FubSnapshot): Promise<void> {
+  const stages = await repo.lockStages(tx, batchId);
+  for (const cat of ['deals', 'appointments'] as const) {
+    const s = stages.find((x) => x.category === cat);
+    if (!s || ['committed', 'verified', 'committing', 'reverting', 'reverted'].includes(s.status)) continue;
+    const n = snap.collections[cat]?.length ?? 0;
+    if (n === 0 && ['pending', 'dry_run_ready', 'approved', 'failed'].includes(s.status)) await repo.transitionStage(tx, s.id, ['pending', 'dry_run_ready', 'approved', 'failed'], 'skipped');
+    else if (n > 0 && s.status === 'skipped') await repo.resetStageDryRun(tx, s.id, 'pending');
+  }
 }
 
 async function storeFile(deps: ImportDeps, tx: Tx, tenantId: TenantId, bytes: Uint8Array, contentType: string): Promise<string> {
@@ -256,10 +276,14 @@ function sourceUsers(s: FubSnapshot): { users: { ref: string; label: string; peo
     if (p.data.assignedUserId !== null && p.data.assignedUserId !== undefined) users.set(p.data.assignedUserId, (users.get(p.data.assignedUserId) ?? 0) + 1);
     else if (p.data.assignedPondId !== null && p.data.assignedPondId !== undefined) ponds.set(p.data.assignedPondId, (ponds.get(p.data.assignedPondId) ?? 0) + 1);
   }
-  for (const c of ['notes', 'textMessages', 'emails', 'calls'] as const) {
+  for (const c of ['notes', 'textMessages', 'emails', 'calls', 'appointments', 'deals'] as const) {
     for (const raw of s.collections[c] ?? []) {
-      const o = raw as { userId?: unknown; createdById?: unknown };
-      for (const v of [o.userId, o.createdById]) if (typeof v === 'string' || typeof v === 'number') if (!users.has(String(v))) users.set(String(v), 0);
+      const o = raw as { userId?: unknown; createdById?: unknown; userIds?: unknown; users?: unknown; invitees?: unknown };
+      const ids: unknown[] = [o.userId, o.createdById];
+      if (Array.isArray(o.userIds)) ids.push(...o.userIds);
+      if (Array.isArray(o.users)) for (const u of o.users) ids.push((u as { id?: unknown }).id);
+      if (Array.isArray(o.invitees)) for (const u of o.invitees) ids.push((u as { userId?: unknown }).userId);
+      for (const v of ids) if (typeof v === 'string' || typeof v === 'number') if (!users.has(String(v))) users.set(String(v), 0);
     }
   }
   return {
@@ -281,6 +305,7 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
   const { batch } = pre;
   let fileObjectId: string;
   let sha: string;
+  let stageSnap: FubSnapshot = { version: 1, collections: {} };
   const options: repo.BatchOptions = { ...batch.options, snapshotError: null };
   if (batch.source === 'fub_api') {
     const client = deps.fub(pre.apiKey as string);
@@ -302,8 +327,7 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
       }, { db: deps.db });
       return 'done';
     }
-    // E233: the tasks and appointments FUB holds now, counted again (never read). A count that fails keeps the earlier
-    // one with the step that counted it (review F4), so it is never taken for this snapshot's or said as what FUB holds now.
+    // Tasks FUB holds now, counted again (never read). A count that fails keeps the earlier one (review F4).
     options.notImported = recounted(await countNotImported(client), batch.options.notImported);
     // Recordings are copied now, into encrypted storage, so no later step needs live FUB (R-IMPORT-1).
     const recordings: Record<string, string> = {};
@@ -336,6 +360,7 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
     }
     const bytes = new TextEncoder().encode(JSON.stringify(snap));
     sha = sha256Hex(bytes);
+    stageSnap = snap;
     const su = sourceUsers(snap);
     options.sourceUsers = su.users;
     options.sourcePonds = su.ponds;
@@ -354,6 +379,7 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
     sha = sha256Hex(bytes);
     if (batch.source === 'fub_export') {
       const snap = parseFubExport(bytes) as FubSnapshot;
+      stageSnap = snap;
       const su = sourceUsers(snap);
       options.sourceUsers = su.users;
       options.sourcePonds = su.ponds;
@@ -364,6 +390,7 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
     if (!b || b.status !== 'snapshotting') return;
     const stages = await repo.lockStages(tx, batchId);
     for (const s of stages) if (RESETTABLE.includes(s.status)) await repo.resetStageDryRun(tx, s.id, 'pending');
+    if (b.source !== 'csv') await settleDealAppointmentStages(tx, batchId, stageSnap);
     await repo.setSnapshot(tx, batchId, { sha256: sha, fileObjectId, options });
     // a batch with committed stages keeps saying so
     if (stages.some((s) => ['committed', 'verified'].includes(s.status))) await repo.setBatchStatus(tx, batchId, 'partially_committed');
@@ -388,14 +415,24 @@ export async function readSnapshot(deps: ImportDeps, tx: Tx, tenantId: TenantId,
 }
 
 /** The records of one FUB stage, from the snapshot, with each record's raw source object. */
-export function fubStageRecords(s: FubSnapshot, category: Category, users: UserMapping): StageSource {
+export function fubStageRecords(s: FubSnapshot, category: Category, users: UserMapping, ctx: FubMapContext = {}): StageSource {
   const c = s.collections;
   const raws =
-    category === 'notes' ? (c.notes ?? []) : category === 'messages' ? [...(c.textMessages ?? []), ...(c.emails ?? [])] : category === 'call_recordings' ? (c.calls ?? []) : (c.people ?? []);
+    category === 'notes'
+      ? (c.notes ?? [])
+      : category === 'messages'
+        ? [...(c.textMessages ?? []), ...(c.emails ?? [])]
+        : category === 'call_recordings'
+          ? (c.calls ?? [])
+          : category === 'deals'
+            ? (c.deals ?? [])
+            : category === 'appointments'
+              ? (c.appointments ?? [])
+              : (c.people ?? []);
   const outcomes: RecordOutcome<NormalizedRecord>[] = [];
   const map = new Map<string, unknown>();
   for (const raw of raws) {
-    const o = mapFub(category, raw, users);
+    const o = mapFub(category, raw, users, ctx);
     outcomes.push(o);
     if (!map.has(o.sourceRef)) map.set(o.sourceRef, raw);
   }
@@ -443,7 +480,7 @@ export async function setUserMappings(deps: ImportDeps, actor: UserActor, batchI
         });
       }
       // the mapping feeds ownership and the authors of history: those dry runs are no longer current
-      for (const s of stages) if (['ownership', 'notes', 'messages', 'call_recordings'].includes(s.category) && ['dry_run_ready', 'approved'].includes(s.status)) await repo.resetStageDryRun(tx, s.id, 'pending');
+      for (const s of stages) if (['ownership', 'notes', 'messages', 'call_recordings', 'deals', 'appointments'].includes(s.category) && ['dry_run_ready', 'approved'].includes(s.status)) await repo.resetStageDryRun(tx, s.id, 'pending');
     },
     { db: deps.db },
   );

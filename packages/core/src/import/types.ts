@@ -17,14 +17,17 @@ export type { ImportTarget };
 
 // ---- categories and stage order (R-IMPORT-3) ----------------------------------------------------
 
-export type Category = 'contacts' | 'ownership' | 'notes' | 'messages' | 'call_recordings' | 'consent';
+export type Category = 'contacts' | 'ownership' | 'notes' | 'messages' | 'call_recordings' | 'consent' | 'deals' | 'appointments';
 
-/** Commit order (import_stages.seq 1…6). Revert runs in the reverse order (R-IMPORT-10). */
-export const CATEGORIES: readonly Category[] = ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent'];
+/**
+ * Commit order (import_stages.seq 1…8). Deals then appointments follow consent so people and owners
+ * exist first; a revert runs in the reverse order (R-IMPORT-10).
+ */
+export const CATEGORIES: readonly Category[] = ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals', 'appointments'];
 
 /** import_stages.seq, fixed by category (DB CHECK). */
-export function categorySeq(c: Category): 1 | 2 | 3 | 4 | 5 | 6 {
-  return (CATEGORIES.indexOf(c) + 1) as 1 | 2 | 3 | 4 | 5 | 6;
+export function categorySeq(c: Category): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
+  return (CATEGORIES.indexOf(c) + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 }
 
 export function isCategory(s: string): s is Category {
@@ -69,6 +72,18 @@ export type IssueCode =
   /** info: the record's person was skipped as a duplicate; it goes on the contact that person is the same as (B6) */
   | 'PARENT_DUPLICATE'
   | 'USER_UNMAPPED'
+  /**
+   * A Follow Up Boss user on a deal or appointment is not in the user mapping. Info when another team
+   * member can still be placed on the record; review when nobody can. It never blocks the stage.
+   */
+  | 'ASSIGNEE_UNMAPPED'
+  /** A deal pipeline name is not buy, sell, dual or lease. The deal waits in review. */
+  | 'SIDE_UNMAPPED'
+  /**
+   * The agent and team amounts are more than the gross commission, or a positive split was given with no
+   * gross. The deal waits in review. The amounts are not rewritten to fit.
+   */
+  | 'COMMISSION_SPLIT_INVALID'
   | 'IN_FILE_DUPLICATE'
   | 'ALREADY_IMPORTED'
   | 'NAME_ONLY_MATCH'
@@ -258,13 +273,90 @@ export interface NormalizedConsent {
   provenance: Record<string, unknown>;
 }
 
+export type DealStage = 'prospect' | 'agreement_signed' | 'active' | 'under_contract' | 'closed' | 'lost';
+export type DealSide = 'buy' | 'sell' | 'dual' | 'lease';
+export type DealContactRole = 'buyer' | 'seller' | 'co_buyer' | 'co_seller' | 'other';
+export type DealDateKind = 'acceptance' | 'inspection' | 'appraisal' | 'financing' | 'closing' | 'possession' | 'custom';
+
+export interface NormalizedDealPerson {
+  personRef: string;
+  role: DealContactRole;
+}
+
+export interface NormalizedDealDate {
+  kind: DealDateKind;
+  label: string | null;
+  dueOn: string;
+}
+
+/** Commission the public FUB deal payload can fill. Referral fee is never present (always null). */
+export interface NormalizedDealFinancials {
+  grossCommissionCents: number | null;
+  commissionRateBps: number | null;
+  teamSplitBps: number | null;
+  agentSplitBps: number | null;
+  referralFeeCents: null;
+}
+
+export interface NormalizedDeal {
+  category: 'deals';
+  sourceRef: string;
+  externalId: string;
+  name: string;
+  side: DealSide | null;
+  /** Null when the FUB stage name is not in the vocabulary or the admin map: the deal waits in review. */
+  stage: DealStage | null;
+  stageLabel: string | null;
+  pipelineLabel: string | null;
+  stageEnteredAt: Instant | null;
+  primaryPersonRef: string | null;
+  people: NormalizedDealPerson[];
+  ownerUserId: UserId | null;
+  /** FUB user ids that did not map, so the review list can say who. */
+  unmappedUserIds: string[];
+  memberUserIds: UserId[];
+  priceCents: number | null;
+  expectedCloseDate: string | null;
+  agreementSignedAt: Instant | null;
+  underContractAt: Instant | null;
+  closedAt: Instant | null;
+  lostReason: string | null;
+  dates: NormalizedDealDate[];
+  financials: NormalizedDealFinancials | null;
+}
+
+export type AppointmentKind = 'buyer_consult' | 'listing_appointment' | 'consult' | 'other';
+export type AppointmentStatus = 'scheduled' | 'held' | 'no_show' | 'canceled' | 'rescheduled';
+export type AppointmentOutcome = 'agreement_signed' | 'follow_up' | 'not_a_fit' | 'no_decision';
+
+export interface NormalizedAppointment {
+  category: 'appointments';
+  sourceRef: string;
+  externalId: string;
+  /** First person invitee. Null when FUB named nobody. */
+  personRef: string | null;
+  organizerUserId: UserId | null;
+  unmappedUserIds: string[];
+  kind: AppointmentKind;
+  startsAt: Instant;
+  endsAt: Instant;
+  location: string | null;
+  status: AppointmentStatus;
+  outcome: AppointmentOutcome | null;
+  outcomeNote: string | null;
+  /** Always false: reminders stay off until cutover. */
+  remindersEnabled: false;
+}
+
 export type NormalizedRecord =
   | NormalizedContact
   | NormalizedOwnership
   | NormalizedNote
   | NormalizedMessage
   | NormalizedCall
-  | NormalizedConsent;
+  | NormalizedConsent
+  | NormalizedDeal
+  | NormalizedAppointment;
 
 export type RecordOf<C extends Category> = Extract<NormalizedRecord, { category: C }>;
 
@@ -276,7 +368,7 @@ export interface UserMapping {
 
 // ---- existing state the dry run matches against --------------------------------------------------
 
-export type ExternalEntityType = 'contact' | 'note' | 'message' | 'call' | 'recording' | 'user' | 'deal';
+export type ExternalEntityType = 'contact' | 'note' | 'message' | 'call' | 'recording' | 'user' | 'deal' | 'appointment';
 
 export interface ExistingContact {
   contactId: ContactId;
@@ -370,7 +462,9 @@ export type PlanAction =
   | { kind: 'skip'; existingId: string }
   | { kind: 'assign'; contact: ContactRef; target: ImportTarget }
   | { kind: 'insert_history'; contact: ContactRef }
-  | { kind: 'record_consent'; contact: ContactRef | null; fields: FubConsentFields; grants: number; revokes: number; doNotContact: number };
+  | { kind: 'record_consent'; contact: ContactRef | null; fields: FubConsentFields; grants: number; revokes: number; doNotContact: number }
+  | { kind: 'insert_deal'; contact: ContactRef; ownerUserId: UserId }
+  | { kind: 'insert_appointment'; contact: ContactRef | null; organizerUserId: UserId };
 
 export interface PlannedRecord {
   sourceRef: string;
@@ -427,20 +521,20 @@ export interface Counts {
 }
 
 /**
- * Owner decision B7 (2026-11-11, E233): what a Follow Up Boss account holds that the import never brings over,
- * counted from one-record pages (`_metadata.total`, never a record). Null: it could not be counted.
+ * Owner decision B7 (2026-11-11, E233), amended 2026-11-21: tasks are the only Follow Up Boss collection the
+ * import never brings over. Counted from one-record pages (`_metadata.total`, never a record). Null: it could
+ * not be counted. Appointments and deals are imported.
  */
 export interface NotImportedCounts {
   tasks: number | null;
-  appointments: number | null;
   /**
    * Review F4: a count the latest counting could not read again, kept from an earlier step (the step named). It is
    * said with when it was taken, never as what Follow Up Boss holds now.
    */
-  kept?: Partial<Record<'tasks' | 'appointments', NotImportedStep>>;
+  kept?: Partial<Record<'tasks', NotImportedStep>>;
 }
 
-/** The step a Follow Up Boss task or appointment count was taken at, when a later one could not count it again. */
+/** The step a Follow Up Boss task count was taken at, when a later one could not count it again. */
 export type NotImportedStep = 'connection_test' | 'snapshot';
 
 export interface CountDiff {

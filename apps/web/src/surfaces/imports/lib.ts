@@ -13,6 +13,8 @@ export const CATEGORY_LABEL: Record<ImportCategory, string> = {
   messages: 'Texts and emails',
   call_recordings: 'Calls and recordings',
   consent: 'Opt-outs and consent history',
+  deals: 'Deals',
+  appointments: 'Appointments',
 };
 
 /**
@@ -62,7 +64,7 @@ const DONE = new Set(['verified', 'skipped']);
 const RUNNING_STAGE = new Set(['dry_run_running', 'committing', 'reverting']);
 const RUNNING_BATCH = new Set(['connection_test', 'snapshotting', 'committing', 'reverting']);
 
-/** Stages in dependency order (contacts → ownership → notes → messages → call_recordings → consent). */
+/** Stages in dependency order (contacts → ownership → notes → messages → call_recordings → consent → deals → appointments). */
 export function ordered(stages: readonly ImportStage[]): ImportStage[] {
   return [...stages].sort((a, b) => IMPORT_CATEGORIES.indexOf(a.category) - IMPORT_CATEGORIES.indexOf(b.category));
 }
@@ -138,15 +140,14 @@ export function reconciles(c: NonNullable<ImportStage['counts']>): boolean {
   return c.source === (c.imported ?? c.willImport) + c.needsReview + c.rejected + c.duplicate;
 }
 
-// ---- owner decision B7 (2026-11-11): Follow Up Boss tasks and appointments are counted, never imported ----
+// ---- B7 amended 2026-11-21: Follow Up Boss tasks are counted and never imported. Appointments and deals are. ----
 
-/** What Follow Up Boss holds that the import does not bring over, with the server's plain sentence (null for CSV). */
+/** Tasks Follow Up Boss holds that the import does not bring over, with the server's plain sentence (null for CSV). */
 export interface NotImportedView {
   tasks: number | null;
-  appointments: number | null;
   countedAt?: 'connection_test' | 'snapshot' | 'export_file' | null;
-  /** review F4: a count the latest counting could not read again, kept from an earlier step (the sentence says when) */
-  keptFrom?: Partial<Record<'tasks' | 'appointments', 'connection_test' | 'snapshot'>>;
+  /** review F4: a task count the latest counting could not read again, kept from an earlier step (the sentence says when) */
+  keptFrom?: Partial<Record<'tasks', 'connection_test' | 'snapshot'>>;
   lines: string[];
 }
 

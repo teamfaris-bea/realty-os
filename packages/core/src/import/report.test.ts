@@ -170,51 +170,34 @@ describe('report rows and copy', () => {
     expect(reportLines('call_recordings', 'committed', counts(2, 2, 0, 0, 0), 'Follow Up Boss')[2]).toBe('Imported recordings are labelled "recording notice unknown" and are not transcribed.');
   });
 
-  it('E233 R-IMPORT-1 owner decision B7: what Follow Up Boss has that the import never brings over, said plainly; every number is a count', () => {
-    const tail = "Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
-    expect(notImportedLines({ tasks: 1240, appointments: 85 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1,240 tasks and 85 appointments. ${tail}`]);
-    expect(notImportedLines({ tasks: 1, appointments: 1 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1 task and 1 appointment. ${tail}`]);
-    expect(notImportedLines({ tasks: 0, appointments: 3 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 0 tasks and 3 appointments. ${tail}`]);
-    expect(notImportedLines({ tasks: 0, appointments: 0 }, 'Follow Up Boss')).toEqual(["Follow Up Boss has no tasks or appointments. Realty OS doesn't bring tasks or appointments over."]);
-    // a count it could not read is said so, never guessed, and the warning stays
-    expect(notImportedLines({ tasks: 12, appointments: null }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 12 tasks; we could not count its appointments. ${tail}`]);
-    expect(notImportedLines({ tasks: null, appointments: 1 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1 appointment; we could not count its tasks. ${tail}`]);
-    expect(notImportedLines({ tasks: null, appointments: null }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss. ${tail}`]);
-    // a CSV file has neither: nothing is said
-    expect(notImportedLines({ tasks: null, appointments: null }, 'your file')).toEqual([]);
+  it('E233 R-IMPORT-1 tasks are what Follow Up Boss holds that the import never brings over; every number is a count', () => {
+    const tail = "Realty OS doesn't bring tasks over: finish or note the open ones in Follow Up Boss before you switch.";
+    expect(notImportedLines({ tasks: 1240 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1,240 tasks. ${tail}`]);
+    expect(notImportedLines({ tasks: 1 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1 task. ${tail}`]);
+    expect(notImportedLines({ tasks: 0 }, 'Follow Up Boss')).toEqual(["Follow Up Boss has no tasks. Realty OS doesn't bring tasks over."]);
+    expect(notImportedLines({ tasks: null }, 'Follow Up Boss')).toEqual([`We could not count tasks in Follow Up Boss. ${tail}`]);
+    expect(notImportedLines({ tasks: null }, 'your file')).toEqual([]);
     fc.assert(
-      fc.property(fc.option(fc.nat(100_000), { nil: null }), fc.option(fc.nat(100_000), { nil: null }), (tasks, appointments) => {
-        const nums = (notImportedLines({ tasks, appointments }, 'Follow Up Boss').join(' ').match(/\d[\d,]*/g) ?? []).map((x) => Number(x.replace(/,/g, '')));
-        for (const x of nums) expect([tasks, appointments]).toContain(x);
+      fc.property(fc.option(fc.nat(100_000), { nil: null }), (tasks) => {
+        const nums = (notImportedLines({ tasks }, 'Follow Up Boss').join(' ').match(/\d[\d,]*/g) ?? []).map((x) => Number(x.replace(/,/g, '')));
+        for (const x of nums) expect(x).toBe(tasks);
       }),
       { numRuns: 200 },
     );
   });
 
-  it('E233 a count the latest counting could not read again keeps its earlier number, said with when it was taken, never as what Follow Up Boss holds now (review F4)', () => {
-    const tail = "Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
-    // one count failed again at the snapshot: the other is the snapshot's, the kept one says when it was counted
-    expect(notImportedLines({ tasks: 3, appointments: 85, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 85 appointments; we could not count its tasks again (it had 3 tasks at the connection test). ${tail}`]);
-    expect(notImportedLines({ tasks: 1240, appointments: 1, kept: { appointments: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1,240 tasks; we could not count its appointments again (it had 1 appointment at the connection test). ${tail}`]);
-    // neither could be counted again
-    expect(notImportedLines({ tasks: 3, appointments: 1, kept: { tasks: 'connection_test', appointments: 'connection_test' } }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss again (at the connection test it had 3 tasks and 1 appointment). ${tail}`]);
-    expect(notImportedLines({ tasks: 3, appointments: 85, kept: { tasks: 'connection_test', appointments: 'snapshot' } }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss again (it had 3 tasks at the connection test and 85 appointments at an earlier snapshot). ${tail}`]);
-    // one was never counted: no "again"
-    expect(notImportedLines({ tasks: 3, appointments: null, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss (it had 3 tasks at the connection test). ${tail}`]);
-    // "no tasks or appointments" only when both were counted just now; a kept marker on a count we never had says nothing
-    expect(notImportedLines({ tasks: 0, appointments: 0, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 0 appointments; we could not count its tasks again (it had 0 tasks at the connection test). ${tail}`]);
-    expect(notImportedLines({ tasks: null, appointments: 4, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 4 appointments; we could not count its tasks. ${tail}`]);
+  it('E233 a task count the latest counting could not read again keeps its earlier number, said with when it was taken (review F4)', () => {
+    const tail = "Realty OS doesn't bring tasks over: finish or note the open ones in Follow Up Boss before you switch.";
+    expect(notImportedLines({ tasks: 3, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`We could not count tasks in Follow Up Boss again (it had 3 tasks at the connection test). ${tail}`]);
+    expect(notImportedLines({ tasks: 0, kept: { tasks: 'snapshot' } }, 'Follow Up Boss')).toEqual([`We could not count tasks in Follow Up Boss again (it had 0 tasks at an earlier snapshot). ${tail}`]);
     const step = fc.option(fc.constantFrom('connection_test' as const, 'snapshot' as const), { nil: undefined });
     fc.assert(
-      fc.property(fc.option(fc.nat(100_000), { nil: null }), fc.option(fc.nat(100_000), { nil: null }), step, step, (tasks, appointments, kt, ka) => {
-        const kept = { ...(kt ? { tasks: kt } : {}), ...(ka ? { appointments: ka } : {}) };
-        const line = notImportedLines({ tasks, appointments, kept }, 'Follow Up Boss').join(' ');
-        for (const x of (line.match(/\d[\d,]*/g) ?? []).map((v) => Number(v.replace(/,/g, '')))) expect([tasks, appointments]).toContain(x);
-        // a kept count is never said as what Follow Up Boss has now
+      fc.property(fc.option(fc.nat(100_000), { nil: null }), step, (tasks, kt) => {
+        const line = notImportedLines({ tasks, ...(kt ? { kept: { tasks: kt } } : {}) }, 'Follow Up Boss').join(' ');
+        for (const x of (line.match(/\d[\d,]*/g) ?? []).map((v) => Number(v.replace(/,/g, '')))) expect(x).toBe(tasks);
         if (kt && tasks !== null) expect(line).not.toContain(`has ${tasks.toLocaleString('en-US')} task`);
-        if (ka && appointments !== null) expect(line).not.toContain(`has ${appointments.toLocaleString('en-US')} appointment`);
       }),
-      { numRuns: 300 },
+      { numRuns: 200 },
     );
   });
 

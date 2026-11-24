@@ -386,6 +386,7 @@ export interface AppointmentsTable {
   external_detached_at: Timestamp | null;
   sync_version: Generated<number>;
   external_pushed_version: number | null;
+  reminders_enabled: Generated<boolean>;
 }
 
 /** public.assistant_actions (table) */
