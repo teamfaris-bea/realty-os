@@ -87,12 +87,19 @@ export async function contextFor(tx: Tx, a: AssignmentRow, now: Instant): Promis
   return { a, content, versionSha: v.rows[0]?.sha ?? '', who, postalAddress: r.postal, zones: rz.zones, zoneSource: rz.source, facts, channels };
 }
 
+/** The assignment's turn row for a key, or null. Reads only. */
+export async function turnByKey(tx: Tx, assignmentId: string, triggerKey: string): Promise<{ id: string; attempt: number; status: string } | null> {
+  const r = await sql<{ id: string; attempt: number; status: string }>`SELECT id, attempt, status FROM ai_isa_turns
+    WHERE tenant_id = app.tenant_id() AND assignment_id = ${assignmentId} AND trigger_key = ${triggerKey}`.execute(tx);
+  return r.rows[0] ?? null;
+}
+
 /** One turn row (the system appends; trigger_key unique per assignment). Returns the id (an existing row is reused). */
 export async function ensureTurn(tx: Tx, ids: IdGenerator, ctx: IsaContext, t: { triggerKind: string; triggerKey: string; pinnedSeq: number; status?: string }): Promise<{ id: string; attempt: number; reused: boolean }> {
-  const ex = await sql<{ id: string; attempt: number }>`SELECT id, attempt FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${ctx.a.id} AND trigger_key = ${t.triggerKey}`.execute(tx);
-  if (ex.rows[0]) {
-    const u = await sql<{ attempt: number }>`UPDATE ai_isa_turns SET attempt = attempt + 1 WHERE tenant_id = app.tenant_id() AND id = ${ex.rows[0].id} RETURNING attempt`.execute(tx);
-    return { id: ex.rows[0].id, attempt: u.rows[0]!.attempt, reused: true };
+  const ex = await turnByKey(tx, ctx.a.id, t.triggerKey);
+  if (ex !== null) {
+    const u = await sql<{ attempt: number }>`UPDATE ai_isa_turns SET attempt = attempt + 1 WHERE tenant_id = app.tenant_id() AND id = ${ex.id} RETURNING attempt`.execute(tx);
+    return { id: ex.id, attempt: u.rows[0]!.attempt, reused: true };
   }
   const seq = await sql<{ n: number }>`SELECT COALESCE(max(seq), 0)::int + 1 AS n FROM ai_isa_turns WHERE tenant_id = app.tenant_id() AND assignment_id = ${ctx.a.id}`.execute(tx);
   const id = ids.next<'X'>() as string;
@@ -174,7 +181,8 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         out.paused = true;
         break;
       case 'schedule_timer':
-        await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: ctx.a.id, trigger: 'timer', timer: act.timer, epoch: ctx.a.epoch },
+        // `at` rides in the payload too: a follow-up's turn row is keyed by it (turn.ts turnTriggerKey)
+        await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: ctx.a.id, trigger: 'timer', timer: act.timer, epoch: ctx.a.epoch, at: act.at },
           runAt: act.at, dedupeKey: `ai_isa.timer:${ctx.a.id}:${act.timer}:${act.at}` });
         if (act.timer === 'follow_up') await sql`UPDATE ai_isa_assignments SET next_follow_up_at = ${new Date(act.at)} WHERE tenant_id = app.tenant_id() AND id = ${ctx.a.id} AND ended_at IS NULL`.execute(tx);
         break;

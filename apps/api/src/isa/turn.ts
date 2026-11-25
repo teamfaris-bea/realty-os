@@ -20,7 +20,7 @@ import {
   buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
-import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
+import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps, turnByKey } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
 import { calendarLiveInTx, nextSendAtInTx } from './booking/rows.js';
 import { buildBuyerBundleInTx, type BuyerBundle, EMPTY_BUNDLE } from './buyer/bundle.js';
@@ -39,9 +39,28 @@ export interface TurnPayload {
   trigger: 'start' | 'inbound' | 'timer' | 'control' | 'sweep';
   timer?: 'follow_up' | 'offer_expiry' | 'pause_expiry' | 'inactivity_warning';
   epoch: number;
+  /** The instant a schedule_timer job was scheduled for (effects.ts). Absent on a job queued before the payload carried it. */
+  at?: number;
+}
+
+/**
+ * The turn row's key (unique per assignment; `^[A-Za-z0-9_:.-]{1,120}$`). An inbound turn is keyed by the last inbound
+ * it reads. A follow-up is keyed by the instant its timer was scheduled for, so every follow-up of an epoch is its own
+ * turn: with one key per epoch (`timer:<epoch>:follow_up`) the second follow-up reused the first one's row, already
+ * decided, and TX-B threw its model call away. Anything that looks a turn up by key builds the key here.
+ */
+export function turnTriggerKey(k: { trigger: TurnPayload['trigger']; epoch: number; inboundSeq: number | null; timer: TurnPayload['timer'] | null; followUpAt: number | null }): string {
+  if (k.inboundSeq !== null) return `${k.trigger}:${k.epoch}:${k.inboundSeq}`;
+  if (k.timer === 'follow_up' && k.followUpAt !== null) return `${k.trigger}:${k.epoch}:follow_up:${k.followUpAt}`;
+  return `${k.trigger}:${k.epoch}:${k.timer ?? 'start'}`;
 }
 
 export type TurnResult = { kind: 'done'; code: string } | { kind: 'retry'; retryAt: Instant };
+
+/** The worker run, when there is one. A follow-up job queued before its payload carried `at` is identified by its own `run_at`. */
+export interface TurnRun {
+  jobId?: string;
+}
 
 interface Prepared {
   a: AssignmentRow;
@@ -95,7 +114,7 @@ function actor(tenantId: string): SystemActor {
 }
 
 /** TX-A. Returns a prepared model call, or the turn's outcome when no model call is needed. */
-async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Prepared | TurnResult> {
+async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRun = {}): Promise<Prepared | TurnResult> {
   return withTenantTx(actor(tenantId), async (tx, now) => {
     const peek = await assignmentById(tx, p.assignmentId);
     if (peek === null || peek.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
@@ -163,10 +182,31 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
       : { type: 'timer', at: now, timer: 'follow_up' };
     if (event.type === 'timer' && event.timer === 'follow_up' && p.trigger !== 'timer') return { kind: 'done', code: 'NOTHING_TO_DO' } as const;
     const r = step(a.machine, event, ctx.facts);
-    const triggerKey = `${p.trigger}:${a.epoch}:${event.type === 'inbound' ? inbounds.at(-1)!.seq : p.timer ?? 'start'}`;
+    // a follow-up's own instant: the job's `at` (schedule_timer). A job queued before the payload carried `at` is not
+    // the assignment's current next_follow_up_at: two such jobs would both adopt it and both text. It sends only when
+    // its own run_at is that instant. A hand-run with no job row still uses next_follow_up_at.
+    const followUp = event.type === 'timer' && event.timer === 'follow_up';
+    const nextFollowUpAt = !followUp ? null : (await sql<{ at: Date | null }>`SELECT next_follow_up_at AS at FROM ai_isa_assignments
+      WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx)).rows[0]?.at?.getTime() ?? null;
+    const jobRunAt = !followUp || p.at !== undefined || run.jobId === undefined ? null
+      : (await sql<{ at: Date | null }>`SELECT app.job_run_at(${run.jobId}::bigint) AS at`.execute(tx)).rows[0]?.at?.getTime() ?? null;
+    const followUpAt = !followUp ? null : p.at ?? jobRunAt ?? nextFollowUpAt ?? now;
+    const triggerKey = turnTriggerKey({ trigger: p.trigger, epoch: a.epoch, inboundSeq: event.type === 'inbound' ? inbounds.at(-1)!.seq : null, timer: p.timer ?? null, followUpAt });
+    const awaiting = r.actions.find((x) => x.kind === 'await_model');
+    // A decided turn row is never the row of a new model call: TX-B's guard (`status = 'deciding'`) would match nothing,
+    // the call would be thrown away (a reserved call spent, R-ISA-20) and the machine left awaiting the model. A
+    // follow-up whose row is decided has run: the same job again (a worker lost after TX-B) changes nothing.
+    const decided = (await turnByKey(tx, a.id, triggerKey))?.status;
+    if (decided !== undefined && decided !== 'deciding' && (awaiting !== undefined || followUp)) return { kind: 'done', code: 'TURN_ALREADY_DECIDED' } as const;
+    // Every AI message schedules its own follow-up and nothing cancels the earlier timer (cancel_timers, effects.ts), so
+    // after a reply two timers are pending. Only the one the assignment names (next_follow_up_at, the latest scheduled)
+    // is the follow-up; an earlier one is a no-op, or the person would be followed up once per timer, not once per cadence.
+    // A payload with `at` is that instant. A legacy payload without it is the job's own run_at, not the assignment's
+    // current next_follow_up_at (two queued jobs would otherwise both adopt it and both send).
+    if (followUp && nextFollowUpAt !== null && p.at !== undefined && nextFollowUpAt !== p.at) return { kind: 'done', code: 'FOLLOW_UP_SUPERSEDED' } as const;
+    if (followUp && p.at === undefined && run.jobId !== undefined && (jobRunAt === null || nextFollowUpAt === null || jobRunAt !== nextFollowUpAt)) return { kind: 'done', code: 'FOLLOW_UP_SUPERSEDED' } as const;
     const turn = await ensureTurn(tx, deps.ids, ctx, { triggerKind: p.trigger === 'control' || p.trigger === 'sweep' ? p.trigger : event.type === 'inbound' ? 'inbound' : p.trigger, triggerKey, pinnedSeq: conv.seq });
     const lastSeq = inbounds.at(-1)?.seq ?? a.machine.lastInboundSeq;
-    const awaiting = r.actions.find((x) => x.kind === 'await_model');
     const applied = await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: turn.id, pinnedSeq: conv.seq }, { state: r.state, actions: r.actions.filter((x) => x.kind !== 'await_model') });
     await sql`UPDATE ai_isa_assignments SET last_inbound_seq = GREATEST(last_inbound_seq, ${lastSeq}) WHERE tenant_id = app.tenant_id() AND id = ${a.id} AND ended_at IS NULL AND last_inbound_seq < ${lastSeq}`.execute(tx);
     if (!awaiting || applied.ended || applied.paused) {
@@ -247,9 +287,9 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
   return { a, ctx, turnId, attempt, pinnedSeq, event, prompt, bundle, decideBase };
 }
 
-/** One full turn (the job body). */
-export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<TurnResult> {
-  const pre = await txA(deps, tenantId, p);
+/** One full turn (the job body). `run` is optional: the worker passes its job id so a legacy follow-up can be told from its run_at. */
+export async function runTurn(deps: TurnDeps, tenantId: string, p: TurnPayload, run: TurnRun = {}): Promise<TurnResult> {
+  const pre = await txA(deps, tenantId, p, run);
   if ('kind' in pre) return pre;
   let note: string | undefined;
   for (let call = 0; call < 2; call += 1) {
