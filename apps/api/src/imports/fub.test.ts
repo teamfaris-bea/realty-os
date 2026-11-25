@@ -116,24 +116,23 @@ describe('FakeFub', () => {
   });
 });
 
-describe('owner decision B7: FUB tasks and appointments are counted, never read (E233)', () => {
-  it('E233 the fake counts them from its dataset with one-record count pages, and fails a count the way a real account would', async () => {
-    const fake = new FakeFub().add('key', { people: [{ id: 1 }], tasks: [{ id: 1 }, { id: 2 }], appointments: [{ id: 9 }], failing: { appointments: 403 } });
+describe('B7 amended: tasks are counted and never listed; appointments and deals are readable (E233)', () => {
+  it('the fake counts tasks from a one-record page and lists appointments and deals', async () => {
+    const fake = new FakeFub().add('key', { people: [{ id: 1 }], tasks: [{ id: 1 }, { id: 2 }], appointments: [{ id: 9 }], deals: [{ id: 3 }], failing: { tasks: 403 } });
     const c = fake.connector('key');
-    expect(FUB_COUNT_ONLY).toEqual(['tasks', 'appointments']);
-    expect(((await c.countPage('tasks')) as { _metadata: { total: number } })._metadata.total).toBe(2);
-    await expect(c.countPage('appointments')).rejects.toMatchObject({ code: 'FUB_UNAUTHORIZED', status: 403 });
+    expect(FUB_COUNT_ONLY).toEqual(['tasks']);
+    await expect(c.countPage('tasks')).rejects.toMatchObject({ code: 'FUB_UNAUTHORIZED', status: 403 });
+    expect((await c.list('appointments', null, 10)).items).toEqual([{ id: 9 }]);
+    expect((await c.list('deals', null, 10)).total).toBe(1);
     fake.mutate('key', (d) => {
       d.failing = { tasks: 503 };
-      d.unavailable = ['appointments'];
     });
     await expect(c.countPage('tasks')).rejects.toMatchObject({ code: 'FUB_UNAVAILABLE', status: 503 });
-    await expect(c.countPage('appointments')).rejects.toMatchObject({ code: 'FUB_UNAVAILABLE', status: 404 });
-    expect(fake.calls.map((x) => x.op)).toEqual(['count', 'count', 'count', 'count']);
+    expect(fake.calls.filter((x) => x.collection === 'tasks').every((x) => x.op === 'count')).toBe(true);
   });
 
-  it('E233 the HTTP adapter counts them at FUB `tasks` / `appointments` (VERIFY), configurable as one plain path segment each', async () => {
-    expect(DEFAULT_FUB_COUNT_ONLY_PATHS).toEqual({ tasks: 'tasks', appointments: 'appointments' });
+  it('E233 the HTTP adapter counts tasks at FUB `tasks` and reads appointments and deals (VERIFY), each one plain path segment', async () => {
+    expect(DEFAULT_FUB_COUNT_ONLY_PATHS).toEqual({ tasks: 'tasks', appointments: 'appointments', deals: 'deals' });
     const { f, seen } = standIn({ '/tasks?limit=1&offset=0': { _metadata: { total: 1240 }, tasks: [{ id: 1 }] }, '/calendarEvents?limit=1&offset=0': { _metadata: { total: 85 }, calendarEvents: [] } });
     const c = httpFubConnector({ fetch: f, ...FUB_TEST, countOnlyPaths: { appointments: 'calendarEvents' } })('k');
     expect(((await c.countPage('tasks')) as { _metadata: { total: number } })._metadata.total).toBe(1240);
@@ -148,7 +147,7 @@ describe('owner decision B7: FUB tasks and appointments are counted, never read 
   it('E233 FUB_TASKS_PATH and FUB_APPOINTMENTS_PATH are server config only (VERIFY), checked at startup: one plain path segment each', () => {
     const env = (o: Record<string, string>) => ({ DATABASE_URL: 'postgres://x', KEK_BASE64: randomBytes(32).toString('base64'), SESSION_SECRET_BASE64: randomBytes(32).toString('base64'), ...o });
     expect(loadConfig(env({})).fub.countOnlyPaths).toBeUndefined();
-    expect(loadConfig(env({ FUB_TASKS_PATH: 'tasks', FUB_APPOINTMENTS_PATH: 'calendarEvents' })).fub.countOnlyPaths).toEqual({ tasks: 'tasks', appointments: 'calendarEvents' });
+    expect(loadConfig(env({ FUB_TASKS_PATH: 'tasks', FUB_APPOINTMENTS_PATH: 'calendarEvents', FUB_DEALS_PATH: 'transactions' })).fub.countOnlyPaths).toEqual({ tasks: 'tasks', appointments: 'calendarEvents', deals: 'transactions' });
     expect(() => loadConfig(env({ FUB_TASKS_PATH: '../people' }))).toThrow(/FUB_TASKS_PATH must be one plain path segment/);
     expect(() => loadConfig(env({ FUB_APPOINTMENTS_PATH: 'appointments?all=1' }))).toThrow(/FUB_APPOINTMENTS_PATH must be one plain path segment/);
     expect(() => defaultFubConnector(loadConfig(env({ FUB_PROVIDER: 'real', FUB_APPOINTMENTS_PATH: 'calendarEvents' })).fub)).not.toThrow();

@@ -119,6 +119,23 @@ export async function externalRef(tx: Tx, system: 'fub' | 'csv', entityType: str
   return r.rows[0]?.entity_id ?? null;
 }
 
+/**
+ * The local id of an external ref whose row is still there. A ref left behind by revert (the row is gone,
+ * the ref stays until the next commit rewrites it) is not a duplicate: the plan already treats it as new.
+ */
+export async function liveExternalRef(tx: Tx, system: 'fub' | 'csv', entityType: 'deal' | 'appointment', externalId: string): Promise<string | null> {
+  const r = entityType === 'deal'
+    ? await sql<{ entity_id: string }>`
+        SELECT r.entity_id FROM external_refs r
+         WHERE r.tenant_id = app.tenant_id() AND r.system = ${system} AND r.entity_type = 'deal' AND r.external_id = ${externalId}
+           AND EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = r.tenant_id AND d.id = r.entity_id)`.execute(tx)
+    : await sql<{ entity_id: string }>`
+        SELECT r.entity_id FROM external_refs r
+         WHERE r.tenant_id = app.tenant_id() AND r.system = ${system} AND r.entity_type = 'appointment' AND r.external_id = ${externalId}
+           AND EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = r.tenant_id AND a.id = r.entity_id)`.execute(tx);
+  return r.rows[0]?.entity_id ?? null;
+}
+
 export async function ensureConversation(tx: Tx, id: string, contactId: string): Promise<string> {
   await sql`INSERT INTO conversations (tenant_id, id, contact_id) VALUES (app.tenant_id(), ${id}, ${contactId}) ON CONFLICT (tenant_id, contact_id) DO NOTHING`.execute(tx);
   const r = await sql<{ id: string }>`SELECT id FROM conversations WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}`.execute(tx);
@@ -239,6 +256,84 @@ export async function importedOptOutKeys(tx: Tx, hmacs: readonly string[]): Prom
     SELECT 'dnc:' || CASE address_kind WHEN 'email' THEN 'email' ELSE 'sms' END || ':' || encode(address_hmac, 'hex') FROM suppressions
      WHERE tenant_id = app.tenant_id() AND reason = 'import_dnc' AND lifted_at IS NULL AND address_hmac IN (SELECT decode(h, 'hex') FROM unnest(${[...hmacs]}::text[]) AS h)`.execute(tx);
   return new Set(r.rows.map((x) => x.k));
+}
+
+export async function insertDeal(
+  tx: Tx,
+  d: {
+    id: string;
+    name: string;
+    side: string;
+    stage: string;
+    stageEnteredAt: string;
+    primaryContactId: string;
+    ownerUserId: string;
+    priceCents: number | null;
+    expectedCloseDate: string | null;
+    agreementSignedAt: string | null;
+    underContractAt: string | null;
+    closedAt: string | null;
+    lostReason: string | null;
+    createdByUserId: string | null;
+  },
+): Promise<void> {
+  await sql`
+    INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, price_cents,
+                       expected_close_date, agreement_signed_at, under_contract_at, closed_at, lost_reason, created_by_user_id)
+    VALUES (app.tenant_id(), ${d.id}, ${d.name}, ${d.side}, ${d.stage}, ${d.stageEnteredAt}::timestamptz, ${d.primaryContactId}, ${d.ownerUserId},
+            ${d.priceCents}, ${d.expectedCloseDate}::date, ${d.agreementSignedAt}::timestamptz, ${d.underContractAt}::timestamptz,
+            ${d.closedAt}::timestamptz, ${d.lostReason}, ${d.createdByUserId})`.execute(tx);
+}
+
+export async function insertDealContact(tx: Tx, dealId: string, contactId: string, role: string): Promise<void> {
+  await sql`INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role)
+            VALUES (app.tenant_id(), ${dealId}, ${contactId}, ${role})
+            ON CONFLICT (tenant_id, deal_id, contact_id) DO NOTHING`.execute(tx);
+}
+
+export async function insertDealMember(tx: Tx, dealId: string, userId: string): Promise<void> {
+  await sql`INSERT INTO deal_members (tenant_id, deal_id, user_id, role)
+            VALUES (app.tenant_id(), ${dealId}, ${userId}, 'co_agent')
+            ON CONFLICT (tenant_id, deal_id, user_id) DO NOTHING`.execute(tx);
+}
+
+export async function insertDealDate(tx: Tx, a: { id: string; dealId: string; kind: string; label: string | null; dueOn: string }): Promise<void> {
+  // source import + proposed: a confirmed manual date is a person's fact (deal_dates_confirm_guard).
+  // An imported date waits for a person to confirm it before it can drive a client reminder.
+  await sql`INSERT INTO deal_dates (tenant_id, id, deal_id, kind, label, due_on, source, status)
+            VALUES (app.tenant_id(), ${a.id}, ${a.dealId}, ${a.kind}, ${a.label}, ${a.dueOn}::date, 'import', 'proposed')`.execute(tx);
+}
+
+/** System insert (0124). The approving human is updated_by; the system cannot read the row back. */
+export async function insertDealFinancials(
+  tx: Tx,
+  f: { dealId: string; grossCents: number | null; rateBps: number | null; teamBps: number | null; agentBps: number | null; updatedBy: string },
+): Promise<void> {
+  await sql`INSERT INTO deal_financials (tenant_id, deal_id, gross_commission_cents, commission_rate_bps, team_split_bps, agent_split_bps, commission_status, updated_by_user_id)
+            VALUES (app.tenant_id(), ${f.dealId}, ${f.grossCents}, ${f.rateBps}, ${f.teamBps}, ${f.agentBps}, 'estimated', ${f.updatedBy})`.execute(tx);
+}
+
+export async function insertAppointment(
+  tx: Tx,
+  a: {
+    id: string;
+    contactId: string | null;
+    userId: string;
+    kind: string;
+    startsAt: string;
+    endsAt: string;
+    location: string | null;
+    status: string;
+    outcome: string | null;
+    outcomeNote: string | null;
+    outcomeLoggedAt: string | null;
+    outcomeLoggedBy: string | null;
+  },
+): Promise<void> {
+  await sql`INSERT INTO appointments (tenant_id, id, contact_id, user_id, kind, starts_at, ends_at, location, status, outcome, outcome_note,
+                                      outcome_logged_at, outcome_logged_by_user_id, created_by_kind, reminders_enabled)
+            VALUES (app.tenant_id(), ${a.id}, ${a.contactId}, ${a.userId}, ${a.kind}, ${a.startsAt}::timestamptz, ${a.endsAt}::timestamptz, ${a.location},
+                    ${a.status}, ${a.outcome}, ${a.outcomeNote}, ${a.outcomeLoggedAt}::timestamptz, ${a.outcomeLoggedBy}, 'import', false)`.execute(tx);
 }
 
 export async function insertImportedSuppression(

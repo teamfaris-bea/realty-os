@@ -17,7 +17,7 @@
 //   planned assignment brought in unassigned because its member could no longer hold leads is not imported
 //   for that reason, never a mismatch); the stored verification keeps both, and the documented counts.
 import type { AddressKind, Channel } from '@realty/core/compliance';
-import type { ContactId, TenantId, UserActor } from '@realty/core/foundation';
+import type { ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import {
   type Category,
   type ContactsStagePlan,
@@ -153,15 +153,15 @@ export async function contactsStageMap(tx: Tx, batchId: string): Promise<Map<str
   return out;
 }
 
-/** The stage's records from the snapshot. */
-export async function stageSource(deps: ImportDeps, tx: Tx, tenantId: TenantId, batch: brepo.BatchRow, category: Category): Promise<StageSource> {
+/** The stage's records from the snapshot. `now` is the transaction clock (past appointments are history). */
+export async function stageSource(deps: ImportDeps, tx: Tx, tenantId: TenantId, batch: brepo.BatchRow, category: Category, now?: Instant): Promise<StageSource> {
   const bytes = await readSnapshot(deps, tx, tenantId, batch);
   if (batch.source === 'csv') {
     return csvStageRecords(bytes, (batch.options.mapping ?? []) as never, batch.options.fileLabel ?? 'file.csv', category);
   }
   const snap = batch.source === 'fub_export' ? parseFubExport(bytes) : (JSON.parse(Buffer.from(bytes).toString('utf8')) as Parameters<typeof fubStageRecords>[0]);
   if (!snap) throw new Error('IMPORT_SNAPSHOT_UNREADABLE');
-  return fubStageRecords(snap, category, await userMapping(tx, batch.id));
+  return fubStageRecords(snap, category, await userMapping(tx, batch.id), { ...(now !== undefined ? { now } : {}), ...(batch.options.dealStageMap ? { dealStageMap: batch.options.dealStageMap } : {}) });
 }
 
 /** Builds the core ExistingIndex for a batch (system actor: tenant-wide). */
@@ -242,11 +242,11 @@ export async function runDryRun(deps: ImportDeps, tenantId: string, stageId: str
   try {
     return await withTenantTx(
       actor,
-      async (tx) => {
+      async (tx, now) => {
         const stage = await brepo.getStageById(tx, stageId, { forUpdate: true });
         if (!stage || stage.status !== 'dry_run_running') return 'skipped';
         const batch = (await brepo.getBatch(tx, stage.batch_id)) as brepo.BatchRow;
-        const src = await stageSource(deps, tx, actor.tenantId, batch, stage.category);
+        const src = await stageSource(deps, tx, actor.tenantId, batch, stage.category, now);
         const index = await existingIndexFor(deps, tx, actor.tenantId, batch, src.outcomes.flatMap((o) => (o.record ? [o.record] : [])), stage.category);
         const dry = dryRun(stage.category, src.outcomes, index);
         const ids = await rrepo.existingRecordIds(tx, stage.id);
@@ -302,6 +302,11 @@ export async function reviewRecord(deps: ImportDeps, actor: UserActor, batchId: 
       const stage = stages.find((s) => s.id === rec.stage_id) as brepo.StageRow;
       if (!['dry_run_ready', 'approved'].includes(stage.status)) throw conflict(stage.status);
       if (rec.outcome === 'skipped' || rec.dry_run_outcome === null) throw new AppError('IMPORT_REVIEW_INVALID', { reason: 'NOT_IN_DRY_RUN' });
+      // An unmapped deal (or any needs-review row with no planned action) cannot be imported. Approving
+      // that decision would refuse the whole stage (REVIEW_NOT_ALLOWED). Reject it here.
+      if (decision === 'import' && rec.dry_run_outcome === 'needs_review' && rec.plan === null) {
+        throw new AppError('IMPORT_REVIEW_INVALID', { reason: 'NOT_IMPORTABLE' });
+      }
       let stored: 'import' | 'merge' | 'reject' | null = decision;
       if (rec.dry_run_outcome === 'will_import') {
         if (decision === 'merge') throw new AppError('IMPORT_REVIEW_INVALID', { reason: 'MERGE_NOT_OFFERED' });
@@ -483,6 +488,10 @@ function sourceSide(n: NormalizedRecord | null): Record<string, unknown> {
         revokes: n.fields.addresses.flatMap((a) => a.revokes.map((c) => `revoke:${c}:none`)).sort(),
         doNotContact: n.fields.addresses.some((a) => a.doNotContact),
       };
+    case 'deals':
+      return { name: n.name, side: n.side, stage: n.stage, priceCents: n.priceCents, primaryPersonRef: n.primaryPersonRef };
+    case 'appointments':
+      return { kind: n.kind, startsAt: new Date(n.startsAt).toISOString(), endsAt: new Date(n.endsAt).toISOString(), status: n.status, personRef: n.personRef };
   }
 }
 
@@ -512,6 +521,10 @@ function same(n: NormalizedRecord | null, dbRow: Record<string, unknown> | null)
       const ev = new Set(dbRow.events as string[]);
       return [...(s.grants as string[]), ...(s.revokes as string[])].every((x) => ev.has(x)) && dbRow.doNotContact === s.doNotContact;
     }
+    case 'deals':
+      return dbRow.name === s.name && dbRow.stage === s.stage && dbRow.side === s.side;
+    case 'appointments':
+      return dbRow.startsAt === s.startsAt && dbRow.kind === s.kind && dbRow.status === s.status;
   }
 }
 

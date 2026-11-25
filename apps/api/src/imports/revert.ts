@@ -99,6 +99,8 @@ function importedRowsOf(rec: rrepo.RecordRow, consent: Map<string, rv.ImportedCo
       case 'messages':
       case 'calls':
       case 'recordings':
+      case 'appointments':
+      case 'deals':
         out.push({ table: c.table, id: c.id, contactId: c.contactId ?? '' });
         break;
       case 'consent_events': {
@@ -135,7 +137,7 @@ function importedRowsOf(rec: rrepo.RecordRow, consent: Map<string, rv.ImportedCo
   return out;
 }
 
-const DELETABLE = ['notes', 'messages', 'calls', 'contact_points', 'contact_addresses'] as const;
+const DELETABLE = ['notes', 'messages', 'calls', 'contact_points', 'contact_addresses', 'appointments', 'deals'] as const;
 
 /**
  * The import's baseline for every contact these records touch: from the contacts stage's own created_rows (what
@@ -210,9 +212,13 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
       const since = stage.committed_at ?? new Date(0);
       // history rows edited after the commit (points/addresses follow their contact: system updates such
       // as a bounce marking a point are not a human touch)
-      for (const t of ['notes', 'messages', 'calls'] as const) {
+      for (const t of ['notes', 'messages', 'calls', 'appointments', 'deals'] as const) {
         const ids = rows.filter((x) => x.table === t).map((x) => x.id);
         for (const id of await rv.touchedRows(tx, t, ids, since)) touched.add(id);
+      }
+      if (stage.category === 'deals') {
+        const ids = rows.filter((x) => x.table === 'deals').map((x) => x.id);
+        for (const id of await rv.dealsWithLaterWork(tx, ids)) touched.add(id);
       }
       // D9 (b10 review ownership-data/F2): a person with a CMA prepared since the import, or an address a CMA cites,
       // is kept for a human (CMA_PREPARED), with everything else of theirs this stage wrote

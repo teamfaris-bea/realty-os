@@ -21,7 +21,10 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   STAGE_MAP_INCOMPLETE: 'Some stages from the source have no stage here yet. Pick one for each under "Stages, tags and custom fields", then run the check again.',
   TAG_LIMIT: 'These tags would pass the 1,000-tag limit. Merge or delete some tags first; the ones that do not fit stay as text on each person.',
   CUSTOM_FIELD_LIMIT: 'These new custom fields would pass the 50-field limit. Map some onto existing fields or keep them as text.',
-  STAGE_UNMAPPED: 'The stage name is not one we know: it gets the stage chosen for it in the stage map, and the original is kept for reference.',
+  STAGE_UNMAPPED: 'The stage name is not one we know. For a person it uses the stage chosen in the stage map. For a deal it waits in review and is not guessed.',
+  ASSIGNEE_UNMAPPED: 'A Follow Up Boss user on this record is not mapped to a team member. It does not stop the import. When a team member can still be placed on it, the record comes in; otherwise it waits in review.',
+  SIDE_UNMAPPED: 'The deal pipeline is not buy, sell, dual or lease, so the deal waits in review.',
+  COMMISSION_SPLIT_INVALID: 'The agent and team commission are more than the gross, or a commission was given with no gross. The deal waits in review. The amounts were not changed.',
   TYPE_UNMAPPED: 'The contact type is not one we know; it was kept for reference.',
   INTENT_UNMAPPED: 'Buyer/seller intent could not be read; it was kept for reference.',
   NAME_MISSING: 'No name; the contact is named after a phone or email.',
@@ -234,22 +237,22 @@ export function stageView(s: StageRow) {
 }
 
 /**
- * Owner decision B7 (E233): what Follow Up Boss holds that the import never brings over (tasks, appointments),
+ * Owner decision B7 (E233), amended 2026-11-21: tasks Follow Up Boss holds that the import never brings over. Appointments and deals are imported.
  * from the latest count (the connection test, the snapshot, or the export file), with the plain sentence. Null for
  * a CSV file. A batch counted before B7 has no counts: said as "could not count", never guessed. A count the latest
  * counting could not read again is the earlier one, named in `keptFrom` and said with when it was taken (review F4).
  */
 export function notImportedView(b: BatchRow): {
   tasks: number | null;
-  appointments: number | null;
   countedAt: 'connection_test' | 'snapshot' | 'export_file' | null;
   keptFrom?: NonNullable<BatchRow['options']['notImported']>['keptFrom'];
   lines: string[];
 } | null {
   if (b.source === 'csv') return null;
   const c = b.options.notImported;
-  const counts = { tasks: c?.tasks ?? null, appointments: c?.appointments ?? null };
-  const kept = c?.keptFrom && Object.keys(c.keptFrom).length > 0 ? c.keptFrom : undefined;
+  const counts = { tasks: c?.tasks ?? null };
+  const keptTasks = c?.keptFrom?.tasks;
+  const kept = keptTasks ? { tasks: keptTasks } : undefined;
   return { ...counts, countedAt: c?.countedAt ?? null, ...(kept ? { keptFrom: kept } : {}), lines: notImportedLines({ ...counts, ...(kept ? { kept } : {}) }, sourceName(b)) };
 }
 
@@ -276,9 +279,11 @@ export function batchView(b: BatchRow, stages: readonly StageRow[]) {
         messages: b.source === 'csv' ? 0 : (b.source_counts.messages ?? null),
         call_recordings: b.source === 'csv' ? 0 : (b.source_counts.call_recordings ?? null),
         consent: b.source_counts.consent ?? null,
+        deals: b.source === 'csv' ? 0 : (b.source_counts.deals ?? null),
+        appointments: b.source === 'csv' ? 0 : (b.source_counts.appointments ?? null),
       },
       sourceName(b),
-    ).filter((l) => b.source !== 'csv' || !/^0 (notes|messages|calls) /.test(l)),
+    ).filter((l) => b.source !== 'csv' || !/^0 (notes|messages|calls|deals|appointments) /.test(l)),
     notImported: notImportedView(b),
   };
 }
@@ -301,6 +306,10 @@ function summary(n: NormalizedRecord | null): Record<string, unknown> | null {
         personRef: n.personRef,
         addresses: n.fields.addresses.map((a) => ({ kind: a.kind, address: a.address, grants: a.grants, revokes: a.revokes, doNotContact: a.doNotContact })),
       };
+    case 'deals':
+      return { name: n.name, side: n.side, stage: n.stage, stageLabel: n.stageLabel, priceCents: n.priceCents, primaryPersonRef: n.primaryPersonRef };
+    case 'appointments':
+      return { kind: n.kind, startsAt: new Date(n.startsAt).toISOString(), endsAt: new Date(n.endsAt).toISOString(), status: n.status, personRef: n.personRef, remindersEnabled: n.remindersEnabled };
   }
 }
 
@@ -312,6 +321,8 @@ const PLAN_WORD: Record<string, string> = {
   assign: 'assign',
   insert_history: 'add',
   record_consent: 'record',
+  insert_deal: 'add',
+  insert_appointment: 'add',
 };
 
 export function recordView(r: RecordRow, names: MemberNames = NO_NAMES) {
@@ -586,7 +597,7 @@ export function reportView(b: BatchRow, stages: readonly StageRow[], extra: { un
     source: name,
     parity: parityReportView(b, stages),
     // owner decision B7 (E233): the final report says what does not come over
-    notImported: left ? { tasks: left.tasks, appointments: left.appointments, lines: left.lines } : null,
+    notImported: left ? { tasks: left.tasks, lines: left.lines } : null,
     categories: table.map((t) => {
       const r = rows.find((x) => x.stage.category === t.category)!;
       return {

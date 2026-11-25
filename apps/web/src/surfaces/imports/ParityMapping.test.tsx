@@ -10,7 +10,7 @@ import type { ParityResponse } from './lib.js';
 
 const SNAP = 'c'.repeat(64);
 const BID = '01900000-0000-7000-8000-0000000b0009';
-const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6 };
+const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6, deals: 7, appointments: 8 };
 
 function stage(category: ImportCategory, status: string): ImportStage {
   return { id: `st-${category}`, category, seq: SEQ[category], status, counts: null, dryRunSha256: null, dryRunCompletedAt: null, blockers: [], approvedAt: null, approvedByUserId: null, committedAt: null, verifiedAt: null, verifiedByUserId: null, revert: null };

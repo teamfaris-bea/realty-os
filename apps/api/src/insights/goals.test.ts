@@ -1,7 +1,7 @@
 // Goals and pace through the real server (module 33; DATA_MODEL agent_goals RLS, R-PLAN-2).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { type InsightsWorld, ago, call, deal, history, insightsWorld, ym } from './testing.js';
+import { type InsightsWorld, ago, call, deal, insightsWorld, ym } from './testing.js';
 
 let h: ApiHarness;
 let w: InsightsWorld;
@@ -54,9 +54,15 @@ describe('R-PLAN-2 goals and pace', () => {
     const r = await create(w.owner, { userId: a1.userId, metric: 'agreements_signed', target: 2 });
     expect(r.status).toBe(201);
     const d = await deal(h, w.tenantId, { owner: a1, stage: 'agreement_signed', enteredAt: new Date(Date.now() - 60_000) });
-    await history(h, w.tenantId, d, 'agreement_signed', new Date(Date.now() - 30_000));
+    // the deal helper's opening row is system with from_stage null: the scoreboard ignores it (an import's
+    // historical agreement is stamped the same way and must not count as signed today). A later change does.
+    await h.su.query(
+      `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage, to_stage, actor_kind, changed_by_user_id, changed_at)
+       VALUES ($1, $2, 'prospect', 'agreement_signed', 'user', $3, $4)`,
+      [w.tenantId, d, a1.userId, new Date(Date.now() - 30_000)],
+    );
     const g = (await call<{ goals: GoalT[] }>(a1, 'GET', '/goals')).body.goals.find((x) => x.id === r.body.goal.id)!;
-    expect(g.pace.actual).toBe(2); // the fixture's entry + the second entry, both this month
+    expect(g.pace.actual).toBe(1);
   });
 
   it('R-PLAN-2: a Team Lead manages goals of their team’s members; an agent manages none; nobody outside the set (404, never 403)', async () => {

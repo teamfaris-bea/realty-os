@@ -172,8 +172,8 @@ export const ConfigSchema = z.object({
     allowedHosts: z.array(z.string()).min(1),
     /** FUB registered-system headers (X-System / X-System-Key), when the account requires them */
     system: z.object({ name: z.string().min(1), key: z.string().min(1) }).optional(),
-    /** owner decision B7: the endpoints FUB tasks and appointments are counted at (VERIFY; default tasks, appointments) */
-    countOnlyPaths: z.object({ tasks: z.string().optional(), appointments: z.string().optional() }).optional(),
+    /** FUB path segments (VERIFY). tasks is count-only; appointments and deals are imported. */
+    countOnlyPaths: z.object({ tasks: z.string().optional(), appointments: z.string().optional(), deals: z.string().optional() }).optional(),
   }),
   /**
    * Read-only MLS feed (Spark RESO Web API; docs/DEPLOY.md "Spark MLS (read-only)"). Nonsecret settings only:
@@ -304,10 +304,10 @@ function fubSettings(env: NodeJS.ProcessEnv, missing: string[], invalid: string[
   const key = env.FUB_SYSTEM_KEY?.trim();
   if (name && !key) missing.push('FUB_SYSTEM_KEY');
   if (key && !name) missing.push('FUB_SYSTEM_NAME');
-  // owner decision B7 (E233): where FUB tasks and appointments are COUNTED (never read). VERIFY the names against a
-  // real account; each is one plain path segment below FUB_BASE_URL, so it can never leave the checked host
-  const countOnlyPaths: { tasks?: string; appointments?: string } = {};
-  for (const [k, field] of [['FUB_TASKS_PATH', 'tasks'], ['FUB_APPOINTMENTS_PATH', 'appointments']] as const) {
+  // B7 amended 2026-11-21: tasks are counted and never read. Appointments and deals are read and imported.
+  // VERIFY the names against a real account; each is one plain path segment below FUB_BASE_URL.
+  const countOnlyPaths: { tasks?: string; appointments?: string; deals?: string } = {};
+  for (const [k, field] of [['FUB_TASKS_PATH', 'tasks'], ['FUB_APPOINTMENTS_PATH', 'appointments'], ['FUB_DEALS_PATH', 'deals']] as const) {
     const v = (env[k] ?? '').trim();
     if (v === '') continue;
     if (!FUB_PATH_SEGMENT.test(v)) invalid.push(`${k} must be one plain path segment (letters, digits, - and _)`);

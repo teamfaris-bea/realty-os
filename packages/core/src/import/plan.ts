@@ -17,7 +17,7 @@
 // Soft-deleted and merged-away contacts never absorb an import (E39): a deleted match means a new
 // contact, and every opt-out on its addresses still applies through the HMAC ("will stay opted out").
 import { canonicalJson, sha256Hex, type AddressKind, type Channel } from '../compliance/index.js';
-import type { ContactId, IdGenerator, Instant } from '../foundation/index.js';
+import type { ContactId, IdGenerator, Instant, UserId } from '../foundation/index.js';
 import { type DuplicateReason, type ExistingMatch, matchContacts, resolveMergeRedirect } from '../ownership/index.js';
 import { personRefOf, statusOf } from './csv.js';
 import { type ImportedConsentEventRow, plannedConsentKeys, revertImportedGrant } from './consent.js';
@@ -461,6 +461,79 @@ function planConsent(rec: Extract<NormalizedRecord, { category: 'consent' }>, in
   };
 }
 
+function organizerOf(rec: Extract<NormalizedRecord, { category: 'appointments' | 'deals' }>, existing: ExistingIndex, personRef: string | null): UserId | null {
+  if (rec.category === 'appointments' && rec.organizerUserId !== null) return rec.organizerUserId;
+  if (rec.category === 'deals' && rec.ownerUserId !== null) return rec.ownerUserId;
+  if (personRef === null) return null;
+  const p = resolveParent(personRef, existing);
+  if (p.kind === 'linked' && p.contact.ownerUserId !== null) return p.contact.ownerUserId;
+  return null;
+}
+
+function planDeal(rec: Extract<NormalizedRecord, { category: 'deals' }>, inIssues: Issue[], existing: ExistingIndex): PlannedRecord {
+  const issues = [...inIssues];
+  const base = { sourceRef: rec.sourceRef, normalized: rec, staysOptedOut: [] as Channel[] };
+  const done = existing.externalRefs.get(refKey('deal', rec.externalId));
+  if (done !== undefined) {
+    return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: done }, issues: [...issues, { code: 'ALREADY_IMPORTED', severity: 'info' }], matchContactId: null };
+  }
+  const personRef = rec.primaryPersonRef;
+  if (personRef === null) {
+    issues.push({ code: 'PARENT_NOT_FOUND', severity: 'review' });
+  } else {
+    const p = resolveParent(personRef, existing);
+    if (p.viaDuplicate) issues.push({ code: 'PARENT_DUPLICATE', severity: 'info' });
+    // A missing person waits in review and does not reject the deal or the stage.
+    if (p.kind === 'missing') issues.push({ code: 'PARENT_NOT_FOUND', severity: 'review' });
+    else if (p.kind === 'rejected') issues.push({ code: 'PARENT_REJECTED', severity: 'error' });
+    else if (p.kind === 'undecided') issues.push({ code: 'PARENT_NOT_LINKED', severity: 'review' });
+    for (const other of rec.people.slice(1)) {
+      const o = resolveParent(other.personRef, existing);
+      if (o.kind === 'missing' || o.kind === 'rejected') issues.push({ code: 'PARENT_NOT_FOUND', severity: 'review', field: 'people' });
+    }
+  }
+  const owner = organizerOf(rec, existing, personRef);
+  if (owner !== null) {
+    for (let i = 0; i < issues.length; i++) if (issues[i]!.code === 'ASSIGNEE_UNMAPPED') issues[i] = { ...issues[i]!, severity: 'info' };
+  } else if (!issues.some((i) => i.code === 'ASSIGNEE_UNMAPPED')) {
+    issues.push({ code: 'ASSIGNEE_UNMAPPED', severity: 'review', field: 'users' });
+  }
+  const outcome = settle(issues, 'will_import');
+  const contact = personRef === null ? null : parentRef(resolveParent(personRef, existing));
+  const action: PlanAction | null =
+    outcome === 'rejected' || outcome === 'needs_review' || owner === null || contact === null || rec.stage === null || rec.side === null
+      ? null
+      : { kind: 'insert_deal', contact, ownerUserId: owner };
+  return { ...base, outcome, action, issues, matchContactId: contact && 'contactId' in contact ? contact.contactId : null };
+}
+
+function planAppointment(rec: Extract<NormalizedRecord, { category: 'appointments' }>, inIssues: Issue[], existing: ExistingIndex): PlannedRecord {
+  const issues = [...inIssues];
+  const base = { sourceRef: rec.sourceRef, normalized: rec, staysOptedOut: [] as Channel[] };
+  const done = existing.externalRefs.get(refKey('appointment', rec.externalId));
+  if (done !== undefined) {
+    return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: done }, issues: [...issues, { code: 'ALREADY_IMPORTED', severity: 'info' }], matchContactId: null };
+  }
+  let contact: ContactRef | null = null;
+  if (rec.personRef !== null) {
+    const p = resolveParent(rec.personRef, existing);
+    if (p.viaDuplicate) issues.push({ code: 'PARENT_DUPLICATE', severity: 'info' });
+    if (p.kind === 'missing') issues.push({ code: 'PARENT_NOT_FOUND', severity: 'review' });
+    else if (p.kind === 'rejected') issues.push({ code: 'PARENT_REJECTED', severity: 'error' });
+    else if (p.kind === 'undecided') issues.push({ code: 'PARENT_NOT_LINKED', severity: 'review' });
+    contact = parentRef(p);
+  }
+  const organizer = organizerOf(rec, existing, rec.personRef);
+  if (organizer !== null) {
+    for (let i = 0; i < issues.length; i++) if (issues[i]!.code === 'ASSIGNEE_UNMAPPED') issues[i] = { ...issues[i]!, severity: 'info' };
+  } else if (!issues.some((i) => i.code === 'ASSIGNEE_UNMAPPED')) {
+    issues.push({ code: 'ASSIGNEE_UNMAPPED', severity: 'review', field: 'createdById' });
+  }
+  const outcome = settle(issues, 'will_import');
+  const action: PlanAction | null = outcome === 'rejected' || outcome === 'needs_review' || organizer === null ? null : { kind: 'insert_appointment', contact, organizerUserId: organizer };
+  return { ...base, outcome, action, issues, matchContactId: contact && 'contactId' in contact ? contact.contactId : null };
+}
+
 function consentSummary(records: readonly PlannedRecord[]): ConsentSummary {
   const s: ConsentSummary = { textingPermission: 0, emailPermission: 0, optedOut: 0, doNotContact: 0 };
   for (const r of records) {
@@ -518,6 +591,12 @@ export function dryRun(category: Category, records: readonly RecordOutcome<Norma
         break;
       case 'consent':
         planned.push(planConsent(rec, r.issues, existing));
+        break;
+      case 'deals':
+        planned.push(planDeal(rec, r.issues, existing));
+        break;
+      case 'appointments':
+        planned.push(planAppointment(rec, r.issues, existing));
         break;
     }
   }
@@ -630,6 +709,7 @@ export function commitPlan(dry: StageDryRun, reviews: readonly Review[], present
       continue;
     }
     const reviewable = r.outcome === 'needs_review' || (r.outcome === 'will_import' && rv.decision === 'reject');
+    if (rv.decision === 'import' && r.action === null) notAllowed.push(rv.sourceRef);
     const mergeOk =
       rv.decision !== 'merge' ||
       (r.normalized?.category === 'contacts' &&
@@ -701,6 +781,7 @@ export type ImportedRow =
   | { table: 'contact_points' | 'contact_addresses'; id: string; contactId: string }
   | { table: 'lead_ownership_events'; id: string; contactId: string }
   | { table: 'notes' | 'messages' | 'calls' | 'recordings'; id: string; contactId: string }
+  | { table: 'appointments' | 'deals'; id: string; contactId: string }
   | { table: 'consent_events'; id: string; event: ImportedConsentEventRow }
   | { table: 'suppressions'; id: string };
 
@@ -722,6 +803,8 @@ const STAGE_TABLES: Record<Category, readonly ImportedRow['table'][]> = {
   // a FUB call's note is written by the calls stage as a notes row on the person (api/imports applyCall)
   call_recordings: ['calls', 'recordings', 'notes'],
   consent: ['consent_events', 'suppressions'],
+  deals: ['deals'],
+  appointments: ['appointments'],
 };
 
 export interface RevertPlan {
@@ -745,7 +828,7 @@ export interface RevertPlan {
 export function revertOrder(stages: readonly Category[]): Category[] {
   return [...stages].sort((a, b) => CATEGORY_INDEX[b] - CATEGORY_INDEX[a]);
 }
-const CATEGORY_INDEX: Record<Category, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6 };
+const CATEGORY_INDEX: Record<Category, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6, deals: 7, appointments: 8 };
 
 /**
  * R-IMPORT-10 / E43: what reverting one stage does. Untouched rows are deleted (or compensated for
@@ -789,8 +872,10 @@ export function planRevert(
       case 'messages':
       case 'calls':
       case 'recordings':
-        if (cma.has(row.id) || cma.has(row.contactId)) manual(row.id, 'CMA_PREPARED');
-        else if (touched.has(row.id) || touched.has(row.contactId)) manual(row.id, 'TOUCHED');
+      case 'appointments':
+      case 'deals':
+        if (cma.has(row.id) || (row.contactId !== '' && cma.has(row.contactId))) manual(row.id, 'CMA_PREPARED');
+        else if (touched.has(row.id) || (row.contactId !== '' && touched.has(row.contactId))) manual(row.id, 'TOUCHED');
         else plan.delete.push(row.id);
         break;
       case 'lead_ownership_events':

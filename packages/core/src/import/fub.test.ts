@@ -76,8 +76,10 @@ describe('FUB contacts', () => {
 
   it('never throws on arbitrary input', () => {
     for (const raw of [null, undefined, 42, 'x', [], { id: {} }, { id: 1, phones: 'nope' }, { id: 1, emails: [{ value: 7 }] }]) {
-      for (const c of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent'] as const) {
+      for (const c of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals', 'appointments'] as const) {
         expect(() => mapFub(c, raw, USERS)).not.toThrow();
+      }
+      for (const c of ['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent'] as const) {
         expect(mapFub(c, raw, USERS).status).toBe('rejected');
       }
     }
@@ -176,7 +178,7 @@ describe('R-IMPORT-1 connection test reads counts only and promises nothing', ()
       emails: { _metadata: { total: 812 } },
       calls: { error: 'forbidden' },
     });
-    expect(r.categories).toEqual({ contacts: 1204, ownership: 1204, notes: 5310, messages: 20812, call_recordings: null, consent: 1204 });
+    expect(r.categories).toEqual({ contacts: 1204, ownership: 1204, notes: 5310, messages: 20812, call_recordings: null, consent: 1204, deals: null, appointments: null });
     expect(r.collections.users).toBeNull();
     const lines = connectionTestLines(r.categories, 'Follow Up Boss');
     expect(lines).toEqual([
@@ -184,20 +186,22 @@ describe('R-IMPORT-1 connection test reads counts only and promises nothing', ()
       '5,310 notes found in Follow Up Boss.',
       '20,812 messages found in Follow Up Boss.',
       'We could not count calls in Follow Up Boss.',
+      'We could not count deals in Follow Up Boss.',
+      'We could not count appointments in Follow Up Boss.',
       'Nothing is imported yet. Each step shows you exactly what would change before anything is written.',
     ]);
     // Counts only: no record content reaches the result.
     expect(JSON.stringify(r)).not.toContain('ignored');
   });
 
-  it('E233 owner decision B7: FUB tasks and appointments are counted the same way (one-record pages), never read; an unreadable count is null', () => {
-    expect(FUB_COUNT_ONLY_COLLECTIONS).toEqual(['tasks', 'appointments']);
-    const c = fubNotImportedCounts({ tasks: { _metadata: { total: 1240 }, tasks: [{ id: 1, name: 'ignored' }] }, appointments: { error: 'forbidden' } });
-    expect(c).toEqual({ tasks: 1240, appointments: null });
+  it('E233 tasks are counted from a one-record page and never read; an unreadable count is null. Appointments are not in this count', () => {
+    expect(FUB_COUNT_ONLY_COLLECTIONS).toEqual(['tasks']);
+    const c = fubNotImportedCounts({ tasks: { _metadata: { total: 1240 }, tasks: [{ id: 1, name: 'ignored' }] } });
+    expect(c).toEqual({ tasks: 1240 });
     expect(JSON.stringify(c)).not.toContain('ignored');
-    expect(fubNotImportedCounts({})).toEqual({ tasks: null, appointments: null });
-    expect(notImportedLines(fubNotImportedCounts({ tasks: { _metadata: { total: 1240 } }, appointments: { _metadata: { total: 85 } } }), 'Follow Up Boss')).toEqual([
-      "Follow Up Boss has 1,240 tasks and 85 appointments. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.",
+    expect(fubNotImportedCounts({})).toEqual({ tasks: null });
+    expect(notImportedLines(c, 'Follow Up Boss')).toEqual([
+      "Follow Up Boss has 1,240 tasks. Realty OS doesn't bring tasks over: finish or note the open ones in Follow Up Boss before you switch.",
     ]);
   });
 });

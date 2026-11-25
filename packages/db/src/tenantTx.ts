@@ -31,8 +31,12 @@ interface Gucs {
   tenantId: string;
   userId: string;
   actorKind: string;
+  /** Why a system actor is acting. Empty for a person. Only `import` may insert deal_financials. */
+  actorVia: string;
   ownershipCommand: string;
 }
+
+const SYSTEM_VIAS = new Set(['timer', 'provider', 'assistant', 'import', 'worker']);
 
 export class ActorContextError extends TypeError {
   override readonly name = 'ActorContextError';
@@ -48,13 +52,14 @@ function requireUuid(v: unknown, what: string): string {
 export function actorGucs(actor: Actor, ownershipCommand?: string): Gucs {
   const tenantId = requireUuid(actor.tenantId, 'actor.tenantId');
   const cmd = ownershipCommand === undefined ? '' : requireUuid(ownershipCommand, 'ownershipCommand');
+  const actorVia = actor.kind === 'system' && SYSTEM_VIAS.has(actor.via) ? actor.via : '';
   switch (actor.kind) {
     case 'user':
-      return { tenantId, userId: requireUuid(actor.userId, 'actor.userId'), actorKind: 'user', ownershipCommand: cmd };
+      return { tenantId, userId: requireUuid(actor.userId, 'actor.userId'), actorKind: 'user', actorVia, ownershipCommand: cmd };
     case 'support':
-      return { tenantId, userId: requireUuid(actor.userId, 'actor.userId'), actorKind: 'support', ownershipCommand: cmd };
+      return { tenantId, userId: requireUuid(actor.userId, 'actor.userId'), actorKind: 'support', actorVia, ownershipCommand: cmd };
     case 'system':
-      return { tenantId, userId: '', actorKind: 'system', ownershipCommand: cmd };
+      return { tenantId, userId: '', actorKind: 'system', actorVia, ownershipCommand: cmd };
     default:
       throw new ActorContextError('unknown actor kind');
   }
@@ -66,6 +71,7 @@ export async function applyGucs(tx: Tx, g: Gucs): Promise<Instant> {
     SELECT set_config('app.tenant_id', ${g.tenantId}, true) AS t,
            set_config('app.user_id', ${g.userId}, true) AS u,
            set_config('app.actor_kind', ${g.actorKind}, true) AS k,
+           set_config('app.actor_via', ${g.actorVia}, true) AS v,
            set_config('app.principal_type', 'staff', true) AS p,
            set_config('app.ownership_command', ${g.ownershipCommand}, true) AS c,
            clock_timestamp() AS now`.execute(tx);
@@ -121,7 +127,7 @@ export function withTenantTx<T>(actor: Actor, fn: (tx: Tx, now: Instant) => Prom
  */
 export function withPreTenant<T>(fn: (tx: Tx, now: Instant) => Promise<T>, opts: { userId?: UserId; db?: Database } = {}): Promise<T> {
   const userId = opts.userId === undefined ? '' : requireUuid(opts.userId, 'userId');
-  const g: Gucs = { tenantId: '', userId, actorKind: userId ? 'user' : '', ownershipCommand: '' };
+  const g: Gucs = { tenantId: '', userId, actorKind: userId ? 'user' : '', actorVia: '', ownershipCommand: '' };
   return runTx(opts.db ?? getDatabase(), g, fn, 0);
 }
 
@@ -139,7 +145,7 @@ export function withPreTenantThenTenant<P, T>(
   fn: (tx: Tx, now: Instant, p: P) => Promise<T>,
   opts: { db?: Database } = {},
 ): Promise<{ pre: P; result: T | null }> {
-  const preGucs: Gucs = { tenantId: '', userId: '', actorKind: '', ownershipCommand: '' };
+  const preGucs: Gucs = { tenantId: '', userId: '', actorKind: '', actorVia: '', ownershipCommand: '' };
   return runTx(
     opts.db ?? getDatabase(),
     preGucs,
@@ -156,5 +162,5 @@ export function withPreTenantThenTenant<P, T>(
 
 /** Cross-tenant definer calls of the worker (claim/finish/reap/due_work): no tenant, no user. */
 export function withNoContext<T>(db: Database, fn: (tx: Tx, now: Instant) => Promise<T>): Promise<T> {
-  return runTx(db, { tenantId: '', userId: '', actorKind: '', ownershipCommand: '' }, fn, 0);
+  return runTx(db, { tenantId: '', userId: '', actorKind: '', actorVia: '', ownershipCommand: '' }, fn, 0);
 }

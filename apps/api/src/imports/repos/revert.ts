@@ -47,10 +47,13 @@ export async function touchedContacts(tx: Tx, batchId: string, baseline: Readonl
     SELECT x.id::text AS id FROM unnest(${ids}::uuid[]) AS x(id)
      WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = app.tenant_id() AND t.contact_id = x.id AND t.created_at > ${since} AND t.created_by_kind <> 'import')
         OR EXISTS (SELECT 1 FROM lead_inquiries li WHERE li.tenant_id = app.tenant_id() AND li.contact_id = x.id AND li.created_at > ${since})
-        OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.contact_id = x.id AND a.created_at > ${since})
-        OR EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.primary_contact_id = x.id AND d.created_at > ${since})
+        OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.contact_id = x.id AND a.created_at > ${since}
+                    AND NOT (a.created_by_kind = 'import' AND EXISTS (SELECT 1 FROM external_refs er WHERE er.tenant_id = a.tenant_id AND er.entity_type = 'appointment' AND er.entity_id = a.id AND er.import_batch_id = ${batchId}::uuid)))
+        OR EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.primary_contact_id = x.id AND d.created_at > ${since}
+                    AND NOT EXISTS (SELECT 1 FROM external_refs er WHERE er.tenant_id = d.tenant_id AND er.entity_type = 'deal' AND er.entity_id = d.id AND er.import_batch_id = ${batchId}::uuid))
         OR EXISTS (SELECT 1 FROM deal_contacts dc JOIN deals d ON d.tenant_id = dc.tenant_id AND d.id = dc.deal_id
-                    WHERE dc.tenant_id = app.tenant_id() AND dc.contact_id = x.id AND d.updated_at > ${since})
+                    WHERE dc.tenant_id = app.tenant_id() AND dc.contact_id = x.id AND d.updated_at > ${since}
+                      AND NOT EXISTS (SELECT 1 FROM external_refs er WHERE er.tenant_id = d.tenant_id AND er.entity_type = 'deal' AND er.entity_id = d.id AND er.import_batch_id = ${batchId}::uuid))
         OR EXISTS (SELECT 1 FROM saved_searches s WHERE s.tenant_id = app.tenant_id() AND s.contact_id = x.id AND s.created_at > ${since})
         OR EXISTS (SELECT 1 FROM playbook_enrollments pe WHERE pe.tenant_id = app.tenant_id() AND pe.contact_id = x.id AND pe.created_at > ${since})
         OR EXISTS (SELECT 1 FROM contact_collaborators cc WHERE cc.tenant_id = app.tenant_id() AND cc.contact_id = x.id AND cc.created_at > ${since})
@@ -97,7 +100,7 @@ export async function cmaCited(tx: Tx, contactIds: readonly string[], addressIds
 }
 
 /** History rows edited after the stage committed. */
-export async function touchedRows(tx: Tx, table: 'notes' | 'messages' | 'calls' | 'contact_points' | 'contact_addresses', ids: readonly string[], since: Date): Promise<Set<string>> {
+export async function touchedRows(tx: Tx, table: 'notes' | 'messages' | 'calls' | 'contact_points' | 'contact_addresses' | 'appointments' | 'deals', ids: readonly string[], since: Date): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const t = sql.table(table);
   const r = await sql<{ id: string }>`SELECT id::text AS id FROM ${t} WHERE tenant_id = app.tenant_id() AND id = ANY (${[...ids]}::uuid[]) AND updated_at > ${since}`.execute(tx);
@@ -105,7 +108,48 @@ export async function touchedRows(tx: Tx, table: 'notes' | 'messages' | 'calls' 
 }
 
 /** app.import_revert_delete (migration 0009): deletes only rows this stage's records wrote; returns what it deleted. */
-export async function revertDelete(tx: Tx, stageId: string, table: 'notes' | 'messages' | 'calls' | 'contact_points' | 'contact_addresses', ids: readonly string[]): Promise<Set<string>> {
+/**
+ * A deal someone attached work to after the import. Deleting it would take that work with it.
+ * Confirmed dates, a commission edit, an added member, an added party, a linked appointment and a
+ * portal grant do not bump deals.row_version, and appointments.deal_id and portal_grants.deal_id cascade.
+ * The same predicate guards app.import_revert_delete (0127).
+ */
+export async function dealsWithLaterWork(tx: Tx, ids: readonly string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const r = await sql<{ id: string }>`
+    SELECT d.id::text AS id FROM deals d
+     WHERE d.tenant_id = app.tenant_id() AND d.id = ANY (${[...ids]}::uuid[])
+       AND (d.row_version > 1
+            OR EXISTS (SELECT 1 FROM notes n WHERE n.tenant_id = d.tenant_id AND n.deal_id = d.id AND NOT n.imported)
+            OR EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = d.tenant_id AND t.deal_id = d.id AND t.created_by_kind <> 'import')
+            OR EXISTS (SELECT 1 FROM documents doc WHERE doc.tenant_id = d.tenant_id AND doc.deal_id = d.id)
+            OR EXISTS (SELECT 1 FROM deal_dates x WHERE x.tenant_id = d.tenant_id AND x.deal_id = d.id
+                        AND (x.status <> 'proposed' OR x.source <> 'import'))
+            OR EXISTS (SELECT 1 FROM deal_financials f WHERE f.tenant_id = d.tenant_id AND f.deal_id = d.id AND f.updated_at > d.created_at)
+            OR EXISTS (
+              SELECT 1 FROM deal_members m
+               WHERE m.tenant_id = d.tenant_id AND m.deal_id = d.id
+                 AND (m.role <> 'co_agent'
+                      OR NOT EXISTS (
+                        SELECT 1 FROM import_records r
+                         WHERE r.tenant_id = d.tenant_id AND r.target_id = d.id
+                           AND COALESCE(r.normalized->'memberUserIds', '[]'::jsonb) @> to_jsonb(m.user_id::text)))
+            )
+            OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = d.tenant_id AND a.deal_id = d.id)
+            OR EXISTS (SELECT 1 FROM portal_grants g WHERE g.tenant_id = d.tenant_id AND g.deal_id = d.id)
+            OR EXISTS (
+              SELECT 1 FROM deal_contacts dc
+               WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id
+                 AND NOT EXISTS (
+                   SELECT 1 FROM import_records r
+                     JOIN external_refs er
+                       ON er.tenant_id = r.tenant_id AND er.entity_type = 'contact' AND er.entity_id = dc.contact_id
+                    WHERE r.tenant_id = d.tenant_id AND r.target_id = d.id
+                      AND COALESCE(r.normalized->'people', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('personRef', er.external_id)))))`.execute(tx);
+  return new Set(r.rows.map((x) => x.id));
+}
+
+export async function revertDelete(tx: Tx, stageId: string, table: 'notes' | 'messages' | 'calls' | 'contact_points' | 'contact_addresses' | 'appointments' | 'deals', ids: readonly string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const r = await sql<{ id: string }>`SELECT x::text AS id FROM app.import_revert_delete(${stageId}::uuid, ${table}, ${[...ids]}::uuid[]) AS x`.execute(tx);
   return new Set(r.rows.map((x) => x.id));

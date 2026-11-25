@@ -100,10 +100,12 @@ export async function loadExternalRefs(tx: Tx, system: 'fub' | 'csv'): Promise<{
      WHERE r.tenant_id = app.tenant_id() AND r.system = ${system}
        -- a history row an undo removed is no longer "already imported" (R-IMPORT-10 then R-IMPORT-9: undo, then import again);
        -- contact refs stay even when the contact is deleted (the plan says MATCH_DELETED_CONTACT, E39)
-       AND (r.entity_type NOT IN ('note', 'message', 'call')
+       AND (r.entity_type NOT IN ('note', 'message', 'call', 'deal', 'appointment')
             OR (r.entity_type = 'note' AND EXISTS (SELECT 1 FROM notes n WHERE n.tenant_id = r.tenant_id AND n.id = r.entity_id))
             OR (r.entity_type = 'message' AND EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = r.tenant_id AND m.id = r.entity_id))
-            OR (r.entity_type = 'call' AND EXISTS (SELECT 1 FROM calls c WHERE c.tenant_id = r.tenant_id AND c.id = r.entity_id)))`.execute(tx);
+            OR (r.entity_type = 'call' AND EXISTS (SELECT 1 FROM calls c WHERE c.tenant_id = r.tenant_id AND c.id = r.entity_id))
+            OR (r.entity_type = 'deal' AND EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = r.tenant_id AND d.id = r.entity_id))
+            OR (r.entity_type = 'appointment' AND EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = r.tenant_id AND a.id = r.entity_id)))`.execute(tx);
   return r.rows.map((x) => ({ entityType: x.entity_type, externalId: x.external_id, entityId: x.entity_id }));
 }
 

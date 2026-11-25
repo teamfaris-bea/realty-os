@@ -73,7 +73,11 @@ describe('R-IMPORT-10: revert', () => {
     await ih.drain();
     const nb = await batchOf(w.admin, b.id);
     expect(nb.status).toBe('reverted');
-    for (const s of nb.stages) expect(s.status).toBe('reverted');
+    for (const s of nb.stages) {
+      // this fixture has no deals or appointments, so those stages were skipped at the snapshot
+      if (s.category === 'deals' || s.category === 'appointments') expect(s.status).toBe('skipped');
+      else expect(s.status).toBe('reverted');
+    }
 
     // Jane: touched → kept, with her imported history; listed for a human decision
     const janeAfter = await contactByName(w.tenantId, 'Jane Doe');
