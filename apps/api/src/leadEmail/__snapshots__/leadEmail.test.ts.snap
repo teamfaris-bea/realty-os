@@ -74,6 +74,7 @@ exports[`R-AST-13 R-TEN-3 response and request schemas > R-AST-13 R-TEN-3: lead-
                     "homes",
                     "trulia",
                     "opcity",
+                    "agentdash",
                   ],
                   "type": "string",
                 },

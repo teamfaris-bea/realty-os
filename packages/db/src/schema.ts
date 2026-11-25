@@ -2421,6 +2421,17 @@ export interface RecordingsTable {
   shredded_at: Timestamp | null;
 }
 
+/** public.referral_update_cues (table) */
+export interface ReferralUpdateCuesTable {
+  tenant_id: string;
+  id: string;
+  inquiry_id: string;
+  contact_id: string;
+  task_id: string;
+  user_id: string;
+  opened_at: Generated<Timestamp>;
+}
+
 /** public.routing_rotation_state (table) */
 export interface RoutingRotationStateTable {
   tenant_id: string;
@@ -3200,6 +3211,7 @@ export interface DB {
   push_subscriptions: PushSubscriptionsTable;
   recording_stream_tokens: RecordingStreamTokensTable;
   recordings: RecordingsTable;
+  referral_update_cues: ReferralUpdateCuesTable;
   routing_rotation_state: RoutingRotationStateTable;
   routing_rule_members: RoutingRuleMembersTable;
   routing_rules: RoutingRulesTable;
@@ -3381,6 +3393,7 @@ export const TABLE_NAMES = [
   'push_subscriptions',
   'recording_stream_tokens',
   'recordings',
+  'referral_update_cues',
   'routing_rotation_state',
   'routing_rule_members',
   'routing_rules',

@@ -140,7 +140,8 @@ export const TRACKING_SENTENCE =
   "New callers and texters become leads credited to this source and are offered by its routing rule. The call itself still rings the team's on-duty person (the first catch-all rule), who may not be the person the lead is offered to. People you already know are threaded as before; someone in a pond or unassigned is routed like a returning lead. Recording is unchanged. Texting back from this number needs its registration.";
 
 /** apps/api/src/leadEmail/trust.ts READABLE_FORMATS_SENTENCE */
-export const READABLE_FORMATS_SENTENCE = "We read emails that label the name, email and phone. If a portal's emails wait in Needs review, send us one so we can read that portal.";
+export const READABLE_FORMATS_SENTENCE =
+  "We read labelled emails and the lead emails from Zillow, realtor.com, Opcity, Homes.com, and Veterans United. An email we cannot read still becomes a lead for review when it names a phone or email. If a portal's emails wait in Needs review, send us one so we can read that portal.";
 
 export const GOOGLE_NOT_AVAILABLE = "This deployment has no public https address, so Google can't reach it.";
 export const GOOGLE_TEST_UNRELIABLE = "Google's test button may not reach us. A real lead from your own form is the check.";
@@ -156,7 +157,7 @@ export function googleUnreadableLine(count: number, lastAt: string | null): stri
 
 // ---- portals ---------------------------------------------------------------------------------------------------
 
-export type PortalId = 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity';
+export type PortalId = 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity' | 'agentdash';
 export interface CatalogEntry {
   portal: PortalId;
   domain: string;
@@ -177,6 +178,7 @@ export const PORTAL_CATALOG: readonly CatalogEntry[] = [
   { portal: 'homes', domain: 'homesnap.com', label: 'Homes.com', preTicked: false }, // VERIFY
   { portal: 'trulia', domain: 'trulia.com', label: 'Trulia', preTicked: false }, // VERIFY
   { portal: 'opcity', domain: 'opcity.com', label: 'Opcity', preTicked: false }, // VERIFY
+  { portal: 'agentdash', domain: 'vu.com', label: 'Veterans United', preTicked: false }, // VERIFY
 ];
 
 /** One row per portal (Homes.com has two domains). */
@@ -202,6 +204,9 @@ export function portalStep(portal: PortalId, label: string): string {
     case 'opcity':
       // VERIFY: Opcity sends its lead emails to the account's main email address
       return "Opcity: set Opcity's main email to this address.";
+    case 'agentdash':
+      // VERIFY: AgentDash notification settings name the address that receives new-referral mail
+      return 'Veterans United AgentDash: set the lead-notification email to this address.';
     default:
       // VERIFY: Zillow, Realtor.com, Redfin and Trulia each have a lead-notification (or CC) email setting
       return `${label}: put this address in the lead-notification or CC field. If there is none, add this address where ${label} sends new-lead emails.`;

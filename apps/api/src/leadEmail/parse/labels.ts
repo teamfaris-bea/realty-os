@@ -37,6 +37,10 @@ export const GENERIC_LABELS: LabelTable = table({
   type: 'leadType',
   'lead type': 'leadType',
   'interested in': 'leadType',
+  'your name': 'name',
+  'your email': 'email',
+  'your phone': 'phone',
+  'your message': 'message',
 });
 
 // VERIFY: every Zillow label (names, variants, which one carries the lead's name).
@@ -58,6 +62,12 @@ export const ZILLOW_LABELS: LabelTable = table({
   zpid: 'listingId', // VERIFY
   'lead type': 'leadType', // VERIFY
   'interested in': 'leadType', // VERIFY
+  'buyer name': 'name', // VERIFY: Premier Agent contact emails
+  'client name': 'name', // VERIFY
+  'client email': 'email', // VERIFY
+  'property address': 'property', // VERIFY
+  comments: 'message', // VERIFY
+  question: 'message', // VERIFY
 });
 
 // VERIFY: every Realtor.com label.
@@ -80,10 +90,90 @@ export const REALTOR_LABELS: LabelTable = table({
   'mls id': 'listingId', // VERIFY
   'lead type': 'leadType', // VERIFY
   'interested in': 'leadType', // VERIFY
+  'prospect name': 'name', // VERIFY: Market VIP
+  'prospect email': 'email', // VERIFY
+  'prospect phone': 'phone', // VERIFY
+  'property of interest': 'property', // VERIFY
+  'property address': 'property', // VERIFY
+  notes: 'message', // VERIFY
+});
+
+// VERIFY: Homes.com / Homesnap lead-parsing emails. No real sample; labels are a plausible guess.
+export const HOMES_LABELS: LabelTable = table({
+  name: 'name',
+  'lead name': 'name',
+  'full name': 'name',
+  email: 'email',
+  'lead email': 'email',
+  'email address': 'email',
+  phone: 'phone',
+  'lead phone': 'phone',
+  'phone number': 'phone',
+  message: 'message',
+  comments: 'message',
+  property: 'property',
+  address: 'property',
+  'property address': 'property',
+  'listing id': 'listingId',
+  'mls #': 'listingId',
+  'mls#': 'listingId',
+  mls: 'listingId',
+  'mls number': 'listingId',
+  'lead type': 'leadType',
+  'interested in': 'leadType',
+});
+
+// VERIFY: Opcity referral emails, including a Lofty/eXp relay whose body says "Source: Opcity".
+export const OPCITY_LABELS: LabelTable = table({
+  name: 'name',
+  'client name': 'name',
+  'contact name': 'name',
+  'prospect name': 'name',
+  email: 'email',
+  'client email': 'email',
+  'email address': 'email',
+  phone: 'phone',
+  'client phone': 'phone',
+  'phone number': 'phone',
+  message: 'message',
+  notes: 'message',
+  comments: 'message',
+  property: 'property',
+  address: 'property',
+  'property address': 'property',
+  'property of interest': 'property',
+  'mls #': 'listingId',
+  'mls number': 'listingId',
+  'lead type': 'leadType',
+  'interested in': 'leadType',
+});
+
+// VERIFY: Veterans United AgentDash new-referral emails (From agentupdates@vu.com). No real sample.
+export const AGENTDASH_LABELS: LabelTable = table({
+  name: 'name',
+  'borrower name': 'name',
+  'client name': 'name',
+  'contact name': 'name',
+  email: 'email',
+  'borrower email': 'email',
+  'client email': 'email',
+  'email address': 'email',
+  phone: 'phone',
+  'borrower phone': 'phone',
+  'client phone': 'phone',
+  'phone number': 'phone',
+  message: 'message',
+  notes: 'message',
+  comments: 'message',
+  property: 'property',
+  address: 'property',
+  'property address': 'property',
+  'lead type': 'leadType',
+  'interested in': 'leadType',
 });
 
 export interface VendorFormat {
-  format: Exclude<LeadFormat, 'generic' | 'leadmetadata'>;
+  format: Exclude<LeadFormat, 'generic' | 'leadmetadata' | 'fallback'>;
   /** the trusted sender's domain is one of these or a subdomain */
   senderDomains: readonly string[];
   /** the body carries this marker */
@@ -92,9 +182,55 @@ export interface VendorFormat {
 }
 
 export const VENDORS: readonly VendorFormat[] = [
+  // VERIFY: AgentDash notifications are seen from agentupdates@vu.com
+  { format: 'agentdash', senderDomains: ['vu.com'] /* VERIFY */, marker: /agentdash|veterans united/i /* VERIFY */, labels: AGENTDASH_LABELS },
+  { format: 'opcity', senderDomains: ['opcity.com'] /* VERIFY */, marker: /opcity/i /* VERIFY */, labels: OPCITY_LABELS },
+  // VERIFY: an eXp Lofty relay names the source in the body; the sender is not opcity.com
+  { format: 'opcity', senderDomains: ['lofty.com', 'exprealty.com'] /* VERIFY */, marker: /source\s*:?\s*opcity/i /* VERIFY */, labels: OPCITY_LABELS },
+  { format: 'homes', senderDomains: ['homes.com', 'homesnap.com'] /* VERIFY */, marker: /homes\.com|homesnap/i /* VERIFY */, labels: HOMES_LABELS },
   { format: 'zillow', senderDomains: ['zillow.com'] /* VERIFY */, marker: /zillow/i /* VERIFY */, labels: ZILLOW_LABELS },
-  { format: 'realtor', senderDomains: ['realtor.com', 'move.com'] /* VERIFY */, marker: /realtor\.com/i /* VERIFY */, labels: REALTOR_LABELS },
+  { format: 'realtor', senderDomains: ['realtor.com', 'move.com'] /* VERIFY */, marker: /realtor\.com|market vip/i /* VERIFY */, labels: REALTOR_LABELS },
 ];
+
+/** What the timeline and the inquiry call this email's source. The inbox's lead source is unchanged. */
+export const SOURCE_LABEL: Record<LeadFormat, string> = {
+  zillow: 'Zillow',
+  realtor: 'Realtor.com',
+  opcity: 'Opcity',
+  homes: 'Homes.com',
+  agentdash: 'Veterans United',
+  generic: 'Website',
+  leadmetadata: 'Lead email',
+  fallback: 'Unparsed email',
+};
+
+/** IDX website mail uses the generic labels; the timeline says IDX when the email says so. */
+export function detectedSource(format: LeadFormat, subject: string, text: string): string {
+  if (format === 'generic' && /\bidx\b/i.test(`${subject}\n${text}`.slice(0, 2000))) return 'IDX';
+  return SOURCE_LABEL[format];
+}
+
+const REFERRAL_WORD = /\b(?:referral|market vip|opcity)\b/i;
+
+function senderUnder(sender: string | null, base: string): boolean {
+  const d = (sender ?? '').trim().toLowerCase().replace(/\.+$/, '');
+  return d === base || d.endsWith(`.${base}`);
+}
+
+/**
+ * Whether this trusted email is an Opcity or realtor.com referral that needs a logged update.
+ * Decided from the sender plus the subject and body, not from which template matched: a generic or
+ * fallback read of the same mail still arms the day-5 reminder. Their rule is 7 days; the reminder
+ * fires at 5. A plain realtor.com contact email (no referral, Market VIP, or Opcity) is not one.
+ * A Lofty or eXp relay counts only when the subject or body names Opcity.
+ */
+export function wantsReferralReminder(senderDomain: string | null, subject: string, text: string): boolean {
+  const blob = `${subject}\n${text}`.slice(0, 8_000);
+  if (senderUnder(senderDomain, 'opcity.com')) return true;
+  if ((senderUnder(senderDomain, 'lofty.com') || senderUnder(senderDomain, 'exprealty.com')) && /\bopcity\b/i.test(blob)) return true;
+  if ((senderUnder(senderDomain, 'realtor.com') || senderUnder(senderDomain, 'move.com')) && REFERRAL_WORD.test(blob)) return true;
+  return false;
+}
 
 /**
  * Portal domains (and their subdomains): an address there is the portal's own (no-reply, lead routing,
@@ -102,8 +238,9 @@ export const VENDORS: readonly VendorFormat[] = [
  */
 export const PORTAL_DOMAINS: readonly string[] = [
   'zillow.com', 'realtor.com', 'move.com', // VERIFY
-  // the catalog portals without a vendor parser (trust.ts PORTAL_CATALOG): VERIFY each
-  'redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com',
+  'redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com', // VERIFY
+  'vu.com', // VERIFY: Veterans United AgentDash
+  'lofty.com', 'exprealty.com', // VERIFY: eXp Lofty relays Opcity; those addresses are the relay's, never the lead's
 ];
 
 /**
