@@ -158,6 +158,8 @@ const NOUN: Record<Category, [string, string]> = {
   messages: ['message', 'messages'],
   call_recordings: ['call', 'calls'],
   consent: ['person with consent information', 'people with consent information'],
+  deals: ['deal', 'deals'],
+  appointments: ['appointment', 'appointments'],
 };
 
 function n(x: number): string {
@@ -222,34 +224,23 @@ export function connectionTestLines(categories: Record<Category, number | null>,
 const COUNTED_AT: Record<NotImportedStep, string> = { connection_test: 'at the connection test', snapshot: 'at an earlier snapshot' };
 
 /**
- * Owner decision B7 (2026-11-11, E233): what Follow Up Boss has that the import never brings over, said plainly
- * on the Imports page (from the connection test and the snapshot) and in the final report. Every number is a
- * count; one that could not be read is said so. A CSV file has neither, so nothing is said for it.
+ * Owner decision B7 (2026-11-11, E233), amended 2026-11-21: tasks are what Follow Up Boss has that the import
+ * never brings over, said plainly on the Imports page and in the final report. Appointments and deals are
+ * imported. Every number is a count; one that could not be read is said so. A CSV file has no tasks.
  *
  * Review F4: a count the latest counting could not read again keeps the number an earlier step counted, and is said
- * with that step ("we could not count its tasks again (it had 3 tasks at the connection test)"): only a count taken
- * just now is said as what the source has.
+ * with that step ("we could not count its tasks again (it had 3 tasks at the connection test)").
  */
 export function notImportedLines(c: NotImportedCounts, source: SourceName): string[] {
   if (source === 'your file') return [];
-  const tail = `Realty OS doesn't bring tasks or appointments over: finish or note the open ones in ${source} before you switch.`;
-  const keptTasks = c.tasks !== null ? c.kept?.tasks : undefined;
-  const keptAppointments = c.appointments !== null ? c.kept?.appointments : undefined;
-  // what the latest counting read; a kept count is only ever said with when it was taken (below)
-  const tasks = keptTasks ? null : c.tasks;
-  const appointments = keptAppointments ? null : c.appointments;
+  const tail = `Realty OS doesn't bring tasks over: finish or note the open ones in ${source} before you switch.`;
+  const kept = c.tasks !== null ? c.kept?.tasks : undefined;
+  const tasks = kept ? null : c.tasks;
   const t = (x: number) => plural(x, 'task', 'tasks');
-  const a = (x: number) => plural(x, 'appointment', 'appointments');
-  let earlier = '';
-  if (keptTasks && keptAppointments && keptTasks === keptAppointments) earlier = ` (${COUNTED_AT[keptTasks]} it had ${t(c.tasks as number)} and ${a(c.appointments as number)})`;
-  else if (keptTasks && keptAppointments) earlier = ` (it had ${t(c.tasks as number)} ${COUNTED_AT[keptTasks]} and ${a(c.appointments as number)} ${COUNTED_AT[keptAppointments]})`;
-  else if (keptTasks) earlier = ` (it had ${t(c.tasks as number)} ${COUNTED_AT[keptTasks]})`;
-  else if (keptAppointments) earlier = ` (it had ${a(c.appointments as number)} ${COUNTED_AT[keptAppointments]})`;
-  if (tasks === 0 && appointments === 0) return [`${source} has no tasks or appointments. Realty OS doesn't bring tasks or appointments over.`];
-  if (tasks !== null && appointments !== null) return [`${source} has ${t(tasks)} and ${a(appointments)}. ${tail}`];
-  if (tasks !== null) return [`${source} has ${t(tasks)}; we could not count its appointments${keptAppointments ? ' again' : ''}${earlier}. ${tail}`];
-  if (appointments !== null) return [`${source} has ${a(appointments)}; we could not count its tasks${keptTasks ? ' again' : ''}${earlier}. ${tail}`];
-  return [`We could not count tasks or appointments in ${source}${keptTasks && keptAppointments ? ' again' : ''}${earlier}. ${tail}`];
+  const earlier = kept ? ` (it had ${t(c.tasks as number)} ${COUNTED_AT[kept]})` : '';
+  if (tasks === 0) return [`${source} has no tasks. Realty OS doesn't bring tasks over.`];
+  if (tasks !== null) return [`${source} has ${t(tasks)}. ${tail}`];
+  return [`We could not count tasks in ${source}${kept ? ' again' : ''}${earlier}. ${tail}`];
 }
 
 const CHANNEL_WORD: Record<Channel, string> = { sms: 'texts', voice: 'calls', email: 'email', web_chat: 'website chat' };

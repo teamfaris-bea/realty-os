@@ -10,7 +10,7 @@ import type { ParityResponse } from './lib.js';
 
 const SNAP = 'c'.repeat(64);
 const BID = '01900000-0000-7000-8000-0000000b0009';
-const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6 };
+const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6, deals: 7, appointments: 8 };
 
 function stage(category: ImportCategory, status: string): ImportStage {
   return { id: `st-${category}`, category, seq: SEQ[category], status, counts: null, dryRunSha256: null, dryRunCompletedAt: null, blockers: [], approvedAt: null, approvedByUserId: null, committedAt: null, verifiedAt: null, verifiedByUserId: null, revert: null };
@@ -47,6 +47,7 @@ function fake(b: ImportBatch) {
     .on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', categories: [], parity: reportParity } })
     .on(`GET /imports/${BID}/user-mappings`, { status: 200, body: { users: [], ponds: [], unmapped: 0, complete: true } })
     .on(`GET /imports/${BID}/parity`, { status: 200, body: parity })
+    .on(`GET /imports/${BID}/deal-stages`, { status: 200, body: { stages: [], unmappedDeals: 0, dealStageMap: {}, importedNow: 0, ignoredNow: 0, plannedNow: 0, approvalCleared: false } })
     .on(`PUT /imports/${BID}/parity`, { status: 200, body: { ...parity, blockers: [] } })
     .on('GET /members', { status: 200, body: { members: [], invites: [] } })
     .on('GET /ponds', { status: 200, body: { ponds: [] } });

@@ -14,7 +14,7 @@ import { blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, 
 
 const SNAP = 'b'.repeat(64);
 const BID = '01900000-0000-7000-8000-0000000b0001';
-const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6 };
+const SEQ: Record<ImportCategory, number> = { contacts: 1, ownership: 2, notes: 3, messages: 4, call_recordings: 5, consent: 6, deals: 7, appointments: 8 };
 
 function stage(category: ImportCategory, status: string, over: Partial<ImportStage> = {}): ImportStage {
   return { id: `st-${category}`, category, seq: SEQ[category], status, counts: null, dryRunSha256: null, dryRunCompletedAt: null, blockers: [], approvedAt: null, approvedByUserId: null, committedAt: null, verifiedAt: null, verifiedByUserId: null, revert: null, ...over };
@@ -47,6 +47,7 @@ function importFake(b: ImportBatch) {
     .on(`GET /imports/${BID}`, { status: 200, body: { batch: b } })
     .on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', categories: [] } })
     .on(`GET /imports/${BID}/user-mappings`, { status: 200, body: { users: [], ponds: [], unmapped: 0, complete: true } })
+    .on(`GET /imports/${BID}/deal-stages`, { status: 200, body: { stages: [], unmappedDeals: 0, dealStageMap: {}, importedNow: 0, ignoredNow: 0, plannedNow: 0, approvalCleared: false } })
     .on('GET /members', { status: 200, body: { members: [], invites: [] } })
     .on('GET /ponds', { status: 200, body: { ponds: [] } });
 }
@@ -498,13 +499,12 @@ describe('people brought in unassigned (owner decision B4)', () => {
   });
 });
 
-// Owner decision B7 (2026-11-11): Follow Up Boss tasks and appointments are counted, never imported, and the page
-// says so plainly: on the import page from "Count what's there" on, and in the final report.
-describe('tasks and appointments that do not come over (owner decision B7)', () => {
-  const sentence = "Follow Up Boss has 1,240 tasks and 85 appointments. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
+// B7 amended 2026-11-21: tasks are counted and never imported. The page says so from "Count what's there" on.
+describe('tasks that do not come over (owner decision B7)', () => {
+  const sentence = "Follow Up Boss has 1,240 tasks. Realty OS doesn't bring tasks over: finish or note the open ones in Follow Up Boss before you switch.";
 
-  it('E233 right after "Count what\'s there" the import page says plainly that tasks and appointments do not come over', async () => {
-    const created = batch([stage('contacts', 'pending')], { status: 'connection_test', snapshotSha256: null, snapshotAt: null, notImported: { tasks: 1240, appointments: 85, countedAt: 'connection_test', lines: [sentence] } } as Partial<ImportBatch>);
+  it('E233 right after "Count what\'s there" the import page says plainly that tasks do not come over', async () => {
+    const created = batch([stage('contacts', 'pending')], { status: 'connection_test', snapshotSha256: null, snapshotAt: null, notImported: { tasks: 1240, countedAt: 'connection_test', lines: [sentence] } } as Partial<ImportBatch>);
     const fake = importFake(created)
       .on('GET /imports', { status: 200, body: { batches: [] } })
       .on('POST /imports', { status: 201, body: { batch: created } });
@@ -517,9 +517,9 @@ describe('tasks and appointments that do not come over (owner decision B7)', () 
     expect(screen.getByText('1,200 contacts in Follow Up Boss')).toBeInTheDocument();
   });
 
-  it('E233 the final report says it too; a CSV import says nothing about tasks or appointments', async () => {
-    const b = batch([stage('contacts', 'verified', { counts: { ...counts, imported: 1150 } })], { notImported: { tasks: 1240, appointments: 85, countedAt: 'snapshot', lines: [sentence] } } as Partial<ImportBatch>);
-    const fake = importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: { tasks: 1240, appointments: 85, lines: [sentence] }, categories: [] } });
+  it('E233 the final report says it too; a CSV import says nothing about tasks', async () => {
+    const b = batch([stage('contacts', 'verified', { counts: { ...counts, imported: 1150 } })], { notImported: { tasks: 1240, countedAt: 'snapshot', lines: [sentence] } } as Partial<ImportBatch>);
+    const fake = importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: { tasks: 1240, lines: [sentence] }, categories: [] } });
     const first = leadAdminApp(fake, `/imports/${BID}`, 'owner');
     const report = await screen.findByRole('region', { name: 'Not brought over' });
     expect(within(report).getByText(sentence)).toBeInTheDocument();
@@ -528,13 +528,13 @@ describe('tasks and appointments that do not come over (owner decision B7)', () 
     leadAdminApp(importFake(csv), `/imports/${BID}`, 'owner');
     expect(await screen.findByText(/Working from the snapshot taken/)).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: "What doesn't come over" })).toBeNull();
-    expect(screen.queryByText(/tasks or appointments/)).toBeNull();
+    expect(screen.queryByText(/doesn't bring tasks over/)).toBeNull();
   });
 
   // Review F3: from "Count what's there" on, the page showed a "Report" section holding an empty card and the same
   // sentence a second time ("Not brought over"), before anything had been checked or imported.
   it('E233 until something is imported it is said once, under "What doesn\'t come over": no empty report and no second copy (review F3)', async () => {
-    const left = { tasks: 1240, appointments: 85, lines: [sentence] };
+    const left = { tasks: 1240, lines: [sentence] };
     const report = (categories: unknown[]) => ({ status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: left, categories } });
     const counted = batch([stage('contacts', 'pending'), stage('ownership', 'pending')], { status: 'connection_test', snapshotSha256: null, snapshotAt: null, notImported: { ...left, countedAt: 'connection_test' } } as Partial<ImportBatch>);
     let answered = 0;

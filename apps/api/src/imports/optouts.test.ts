@@ -2,6 +2,7 @@
 // "a STOP in FUB stays a STOP here"). The consent stage is the last one (seq 6), so before this the
 // revocations of a FUB STOP or a CSV "Opted Out" column only took effect after every other stage was
 // committed and verified; with the consent-basis check gone, the contact was textable in between.
+// Deals and appointments are later stages (7 and 8). This fixture has neither, so they are skipped.
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CommsWorld, commsWorld, freshReauth, sendText } from '../comms/testing.js';
@@ -91,7 +92,15 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     await mapAgents(admin, b.id, { ...w, admin }, [{ sourceRef: '99', target: { kind: 'unassigned' } }, { sourceRef: '3', kind: 'pond', target: { kind: 'pond', pondId: w.defaultPondId } }]);
     await commitContacts(b);
     const nb = await batchOf(admin, b.id);
-    expect(nb.stages.filter((s) => s.category !== 'contacts').map((s) => s.status)).toEqual(['pending', 'pending', 'pending', 'pending', 'pending']);
+    expect(nb.stages.filter((s) => s.category !== 'contacts').map((s) => [s.category, s.status])).toEqual([
+      ['ownership', 'pending'],
+      ['notes', 'pending'],
+      ['messages', 'pending'],
+      ['call_recordings', 'pending'],
+      ['consent', 'pending'],
+      ['deals', 'skipped'],
+      ['appointments', 'skipped'],
+    ]);
 
     const bob = (await q<{ id: string }>("SELECT id FROM contacts WHERE tenant_id = $1 AND display_name = 'Bob Unsub'", [w.tenantId]))[0]!;
     const carla = (await q<{ id: string }>("SELECT id FROM contacts WHERE tenant_id = $1 AND display_name = 'Carla Dnc'", [w.tenantId]))[0]!;

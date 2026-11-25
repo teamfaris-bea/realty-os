@@ -239,9 +239,13 @@ export function simulateCommit(input: ExistingIndexInput, items: readonly Commit
         ownerUserId: t !== 'unassigned' && 'userId' in t ? t.userId : null,
         ownershipSeq: c.ownershipSeq + 1,
       });
-    } else if (a.kind === 'insert_history' && 'externalId' in rec && rec.category !== 'contacts') {
+    } else if (a.kind === 'insert_history' && 'externalId' in rec && rec.category !== 'contacts' && rec.externalId !== null) {
       const entityType = rec.category === 'notes' ? 'note' : rec.category === 'messages' ? 'message' : 'call';
       refs.push({ entityType, externalId: rec.externalId, entityId: ids.next<'NoteId'>() });
+    } else if (a.kind === 'insert_deal' && rec.category === 'deals') {
+      refs.push({ entityType: 'deal', externalId: rec.externalId, entityId: ids.next<'NoteId'>() });
+    } else if (a.kind === 'insert_appointment' && rec.category === 'appointments') {
+      refs.push({ entityType: 'appointment', externalId: rec.externalId, entityId: ids.next<'NoteId'>() });
     } else if (a.kind === 'record_consent') {
       for (const ad of a.fields.addresses) {
         const k = testKey(ad.kind, ad.address);

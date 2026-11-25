@@ -375,8 +375,8 @@ describe('stage vocabulary', () => {
   // Supports R-IMPORT-3 (the commit-order guard itself is a DB trigger, tested by db/client / api/imports).
   it('stage seq is fixed by category (contacts 1 … consent 6), matching the import_stages CHECK', async () => {
     const { CATEGORIES, categorySeq, isCategory } = await import('./index.js');
-    expect(CATEGORIES.map(categorySeq)).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(CATEGORIES).toEqual(['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent']);
-    expect([isCategory('notes'), isCategory('deals')]).toEqual([true, false]);
+    expect(CATEGORIES.map(categorySeq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(CATEGORIES).toEqual(['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent', 'deals', 'appointments']);
+    expect([isCategory('notes'), isCategory('deals'), isCategory('tasks')]).toEqual([true, true, false]);
   });
 });

@@ -50,6 +50,8 @@ const RAW: Record<Category, readonly unknown[]> = {
   messages: [...FUB_EXPORT.textMessages, ...FUB_EXPORT.emails],
   call_recordings: FUB_EXPORT.calls,
   consent: FUB_EXPORT.people,
+  deals: [],
+  appointments: [],
 };
 
 /** The fixture mapping with the one unmapped FUB agent ("99") mapped too: a complete mapping. */

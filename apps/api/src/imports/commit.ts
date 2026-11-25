@@ -42,9 +42,11 @@
 import {
   type ContactRef,
   type FubConsentFields,
+  type NormalizedAppointment,
   type NormalizedCall,
   type NormalizedContact,
   type NormalizedConsent,
+  type NormalizedDeal,
   type NormalizedMessage,
   type NormalizedNote,
   type NormalizedOwnership,
@@ -668,6 +670,102 @@ async function applyConsent(c: Ctx, rec: rrepo.RecordRow, n: NormalizedConsent, 
   return { target: { table: first.table, id: first.id }, created };
 }
 
+async function applyDeal(c: Ctx, rec: rrepo.RecordRow, n: NormalizedDeal, plan: Extract<PlanAction, { kind: 'insert_deal' }>): Promise<Applied> {
+  const existing = await w.liveExternalRef(c.tx, c.system, 'deal', n.externalId);
+  if (existing) return { target: { table: 'deals', id: existing }, created: [], duplicate: true };
+  if (n.stage === null || n.side === null) throw new RecordError('STAGE_UNMAPPED');
+  const { id: contactId, seq } = await resolveLive(c, plan.contact);
+  const owner = member(c, plan.ownerUserId);
+  if (owner === null) throw new RecordError('ASSIGNEE_UNMAPPED');
+  const id = c.deps.ids.next<'DealId'>();
+  const entered = n.stageEnteredAt !== null ? toIso(n.stageEnteredAt) : toIso(c.now);
+  const approver = member(c, c.stage.approved_by_user_id);
+  await w.insertDeal(c.tx, {
+    id,
+    name: n.name,
+    side: n.side,
+    stage: n.stage,
+    stageEnteredAt: entered,
+    primaryContactId: contactId,
+    ownerUserId: owner,
+    priceCents: n.priceCents,
+    expectedCloseDate: n.expectedCloseDate,
+    agreementSignedAt: n.agreementSignedAt !== null ? toIso(n.agreementSignedAt) : null,
+    underContractAt: n.underContractAt !== null ? toIso(n.underContractAt) : null,
+    closedAt: n.closedAt !== null ? toIso(n.closedAt) : null,
+    lostReason: n.lostReason,
+    createdByUserId: approver,
+  });
+  const linked = new Set<string>([contactId]);
+  const primary = n.people.find((p) => p.personRef === n.primaryPersonRef) ?? n.people[0];
+  if (primary) await w.insertDealContact(c.tx, id, contactId, primary.role);
+  for (const p of n.people) {
+    if (p.personRef === n.primaryPersonRef) continue;
+    let other: string;
+    try {
+      other = (await resolveLive(c, { pendingPersonRef: p.personRef })).id;
+    } catch {
+      continue;
+    }
+    if (linked.has(other)) continue;
+    linked.add(other);
+    await w.insertDealContact(c.tx, id, other, p.role);
+  }
+  for (const uid of n.memberUserIds) {
+    const m = member(c, uid);
+    if (m !== null && m !== owner) await w.insertDealMember(c.tx, id, m);
+  }
+  for (const date of n.dates) {
+    await w.insertDealDate(c.tx, { id: c.deps.ids.next<'DealId'>(), dealId: id, kind: date.kind, label: date.label, dueOn: date.dueOn });
+  }
+  const fin = n.financials;
+  const writer = approver ?? owner;
+  if (fin && fin.grossCommissionCents !== null && writer !== null) {
+    await w.insertDealFinancials(c.tx, {
+      dealId: id,
+      grossCents: fin.grossCommissionCents,
+      rateBps: fin.commissionRateBps,
+      teamBps: fin.teamSplitBps,
+      agentBps: fin.agentSplitBps,
+      updatedBy: writer,
+    });
+  }
+  await w.insertExternalRef(c.tx, { system: c.system, entityType: 'deal', externalId: n.externalId, entityId: id, batchId: c.batch.id });
+  return { target: { table: 'deals', id }, created: [{ table: 'deals', id, contactId, seq }] };
+}
+
+async function applyAppointment(c: Ctx, rec: rrepo.RecordRow, n: NormalizedAppointment, plan: Extract<PlanAction, { kind: 'insert_appointment' }>): Promise<Applied> {
+  const existing = await w.liveExternalRef(c.tx, c.system, 'appointment', n.externalId);
+  if (existing) return { target: { table: 'appointments', id: existing }, created: [], duplicate: true };
+  const organizer = member(c, plan.organizerUserId);
+  if (organizer === null) throw new RecordError('ASSIGNEE_UNMAPPED');
+  let contactId: string | null = null;
+  let seq: number | undefined;
+  if (plan.contact) {
+    const live = await resolveLive(c, plan.contact);
+    contactId = live.id;
+    seq = live.seq;
+  }
+  const id = c.deps.ids.next<'AppointmentId'>();
+  const outcome = n.outcome;
+  await w.insertAppointment(c.tx, {
+    id,
+    contactId,
+    userId: organizer,
+    kind: n.kind,
+    startsAt: toIso(n.startsAt),
+    endsAt: toIso(n.endsAt),
+    location: n.location,
+    status: n.status,
+    outcome,
+    outcomeNote: n.outcomeNote,
+    outcomeLoggedAt: outcome !== null ? toIso(n.endsAt) : null,
+    outcomeLoggedBy: outcome !== null ? organizer : null,
+  });
+  await w.insertExternalRef(c.tx, { system: c.system, entityType: 'appointment', externalId: n.externalId, entityId: id, batchId: c.batch.id });
+  return { target: { table: 'appointments', id }, created: [{ table: 'appointments', id, contactId: contactId ?? '', ...(seq !== undefined ? { seq } : {}) }] };
+}
+
 async function applyRecord(c: Ctx, rec: rrepo.RecordRow): Promise<Applied> {
   const n = rec.normalized as NormalizedRecord | null;
   const plan = rec.plan as (PlanAction & { mergeIntoContactId?: string }) | null;
@@ -691,6 +789,12 @@ async function applyRecord(c: Ctx, rec: rrepo.RecordRow): Promise<Applied> {
     case 'consent':
       if (plan.kind !== 'record_consent') throw new RecordError('RECORD_MALFORMED');
       return applyConsent(c, rec, n, plan);
+    case 'deals':
+      if (plan.kind !== 'insert_deal') throw new RecordError('RECORD_MALFORMED');
+      return applyDeal(c, rec, n, plan);
+    case 'appointments':
+      if (plan.kind !== 'insert_appointment') throw new RecordError('RECORD_MALFORMED');
+      return applyAppointment(c, rec, n, plan);
   }
 }
 

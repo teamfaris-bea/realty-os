@@ -17,7 +17,7 @@ afterAll(async () => {
 describe('api/imports route table and schemas', () => {
   it('R-PERM-13: every import route is `import.run` (Owner/Admin 🔒) and carries authorize(import.run) (snapshot)', () => {
     const rows = ih.h.app.platform.routeTable.filter((r) => r.url.startsWith('/api/imports') && r.method !== 'HEAD');
-    expect(rows.length).toBe(20); // + GET|PUT /imports/:id/parity (parity module 65)
+    expect(rows.length).toBe(22); // + GET|PUT /imports/:id/deal-stages (FUB deal stage map)
     for (const r of rows) expect([r.url, r.auth, r.authorizes]).toEqual([r.url, 'import.run', 'import.run']);
     expect(rows.map((r) => `${r.method} ${r.url}`).sort()).toMatchSnapshot();
   });

@@ -131,6 +131,55 @@ export async function allPlannedRecords(tx: Tx, stageId: string): Promise<Record
                                  AND dry_run_outcome IS NOT NULL ORDER BY id`.execute(tx)).rows;
 }
 
+const STAGE_UNMAPPED_MARK = '[{"code":"STAGE_UNMAPPED"}]';
+
+/**
+ * Every deal row this import has not written yet (no target deal). A later save of the stage map
+ * re-reads these, including a row an earlier save already planned (`will_import`) or held because
+ * its person was not here yet. Locked in id order. Imported and duplicate rows stay out, so a
+ * second save cannot write them again.
+ */
+export async function unwrittenDeals(tx: Tx, stageId: string): Promise<RecordRow[]> {
+  return (
+    await sql<RecordRow>`SELECT ${COLS} FROM import_records
+      WHERE tenant_id = app.tenant_id() AND stage_id = ${stageId}
+        AND dry_run_outcome IS NOT NULL
+        AND outcome IN ('will_import', 'needs_review', 'rejected')
+        AND target_id IS NULL
+      ORDER BY id
+      FOR UPDATE`.execute(tx)
+  ).rows;
+}
+
+/** How many deal records are waiting because their stage name is not mapped. */
+export async function unmappedDealCount(tx: Tx, stageId: string): Promise<number> {
+  const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM import_records
+    WHERE tenant_id = app.tenant_id() AND stage_id = ${stageId} AND outcome = 'needs_review'
+      AND issues @> ${STAGE_UNMAPPED_MARK}::jsonb`.execute(tx);
+  return r.rows[0]?.n ?? 0;
+}
+
+/** Replace the stored plan of one deal record after its stage choice changes. */
+export async function writeDealResolution(
+  tx: Tx,
+  id: string,
+  row: {
+    normalized: unknown;
+    issues: readonly { code: string; severity: string; field?: string }[];
+    outcome: RecordOutcomeDb;
+    dryRunOutcome: 'will_import' | 'needs_review' | 'rejected' | 'duplicate' | null;
+    plan: unknown;
+    targetTable: string | null;
+    targetId: string | null;
+    created: readonly CreatedRow[];
+  },
+): Promise<void> {
+  await sql`UPDATE import_records SET normalized = ${JSON.stringify(row.normalized)}::jsonb, issues = ${JSON.stringify(row.issues)}::jsonb,
+              outcome = ${row.outcome}, dry_run_outcome = ${row.dryRunOutcome}, plan = ${row.plan === null ? null : JSON.stringify(row.plan)}::jsonb,
+              target_table = ${row.targetTable}, target_id = ${row.targetId}, created_rows = ${JSON.stringify(row.created)}::jsonb
+             WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+}
+
 export async function setReview(tx: Tx, id: string, decision: 'import' | 'merge' | 'reject' | null, mergeInto: string | null): Promise<void> {
   await sql`UPDATE import_records SET review_decision = ${decision}, reviewed_by_user_id = CASE WHEN ${decision}::text IS NULL THEN NULL ELSE app.user_id() END,
               plan = CASE WHEN ${decision}::text = 'merge' THEN plan || jsonb_build_object('mergeIntoContactId', ${mergeInto}::text)
@@ -239,6 +288,8 @@ export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & 
                WHEN 'calls' THEN EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = r.tenant_id AND k.id = r.target_id AND k.import_record_id = r.id)
                WHEN 'consent_events' THEN EXISTS (SELECT 1 FROM consent_events ce WHERE ce.tenant_id = r.tenant_id AND ce.id = r.target_id AND ce.import_record_id = r.id)
                WHEN 'suppressions' THEN EXISTS (SELECT 1 FROM suppressions s WHERE s.tenant_id = r.tenant_id AND s.id = r.target_id AND s.import_record_id = r.id)
+               WHEN 'deals' THEN EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = r.tenant_id AND d.id = r.target_id)
+               WHEN 'appointments' THEN EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = r.tenant_id AND a.id = r.target_id AND a.created_by_kind = 'import')
                ELSE false END))::int AS imported,
            count(*) FILTER (WHERE outcome = 'needs_review' AND dry_run_outcome IS NOT NULL)::int AS needs_review,
            count(*) FILTER (WHERE outcome = 'rejected' AND dry_run_outcome IS NOT NULL)::int AS rejected,

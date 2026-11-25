@@ -49,6 +49,16 @@ export async function dbSide(tx: Tx, rec: RecordRow): Promise<Record<string, unk
       const sp = (await sql<{ reason: string }>`SELECT reason FROM suppressions WHERE tenant_id = app.tenant_id() AND (id = ANY (${ids}::uuid[]) OR import_record_id IN ${contactsRecord})`.execute(tx)).rows;
       return { events: ev.map((e) => `${e.event_type}:${e.channel}:${e.consent_level}`), doNotContact: sp.length > 0 };
     }
+    case 'deals': {
+      const d = (await sql<{ name: string; side: string; stage: string; price_cents: string | null }>`
+        SELECT name, side, stage, price_cents::text FROM deals WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx)).rows[0];
+      return d ? { name: d.name, side: d.side, stage: d.stage, priceCents: d.price_cents === null ? null : Number(d.price_cents) } : null;
+    }
+    case 'appointments': {
+      const a = (await sql<{ kind: string; starts_at: Date; ends_at: Date; status: string }>`
+        SELECT kind, starts_at, ends_at, status FROM appointments WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx)).rows[0];
+      return a ? { kind: a.kind, startsAt: a.starts_at.toISOString(), endsAt: a.ends_at.toISOString(), status: a.status } : null;
+    }
     default:
       return null;
   }

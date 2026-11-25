@@ -54,6 +54,7 @@ const PLAIN_EXACT = new Set([
   'kind',
   'type',
   'stage',
+  'deal_stage_map', // import batch: the owner's FUB deal-stage choices (labels, masked if they contain an email or phone)
   'auto_enroll_stage', // parity module 67: one of the eight stage keys (no PII)
   'intent',
   'purpose',

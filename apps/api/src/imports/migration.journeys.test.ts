@@ -10,12 +10,12 @@
 // Owner decisions of 2026-11-11 (docs/PARITY_PLAN.md §2.2): B4, a member suspended between the ownership approval
 // and its commit (the implementation: any member who can no longer hold leads then) gets none: their people come in
 // unassigned with the reason, the stage verifies, the later stages commit and the report offers "Assign these
-// people", and says what is true of them when it is read (E230-E232); B7, FUB tasks and appointments are
-// counted, never read, and the import says plainly they don't come over (E233).
+// people", and says what is true of them when it is read (E230-E232); B7 amended 2026-11-21, FUB tasks are
+// counted, never read, and the import says plainly they don't come over. Appointments and deals are imported (E233).
 //
 // FUB shapes: the person/note/text/email/call/user fields follow core/import/fub.ts, whose consent flag
 // names are themselves marked VERIFY. Shapes added here that are not read by the importer at all are
-// marked VERIFY too (FUB `tasks` and `appointments`, which the importer only counts, and a note `type`).
+// marked VERIFY too (FUB `tasks`, which the importer only counts, and a note `type`). Appointments are imported.
 import { randomUUID } from 'node:crypto';
 import type { Category } from '@realty/core/import';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -116,7 +116,7 @@ function account(p: number, seed: number): FubDataset & Record<string, unknown> 
       { id: p * 10 + 3, personId: p + 3, created: '2026-03-06T15:00:00Z', isIncoming: true, duration: 45, outcome: 'Left Message', note: 'Call back after 5pm', userId: 11 },
     ],
     recordings: { [`https://fub.example/rec/${p}1?token=secret`]: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]) },
-    // VERIFY: FUB /tasks and /appointments shapes. The importer has no collection for them (FUB_COLLECTIONS).
+    // VERIFY: FUB /tasks, /appointments and /deals shapes. Tasks are counted only. Appointments are imported.
     tasks: [{ id: p * 10 + 1, personId: p + 1, name: 'Send comps', dueDate: '2026-12-01', assignedUserId: 11, isCompleted: false }],
     appointments: [{ id: p * 10 + 1, title: 'Showing 12 Elm', start: '2026-12-02T17:00:00Z', end: '2026-12-02T18:00:00Z', invitees: [{ personId: p + 1 }, { userId: 11 }] }],
   };
@@ -173,7 +173,7 @@ type UnassignedView = {
 };
 type ReportView = {
   categories: { category: Category; status: string; phase: string; imported: number; rejected: number; lines: string[]; unassigned: UnassignedView | null }[];
-  notImported: { tasks: number | null; appointments: number | null; lines: string[] } | null;
+  notImported: { tasks: number | null; lines: string[] } | null;
 };
 async function report(w: ImportWorld, batchId: string): Promise<ReportView> {
   const r = await call<ReportView>(w.admin, 'GET', `/imports/${batchId}/report`);
@@ -373,23 +373,24 @@ describe('M1 M2 M5: a full staged FUB migration, category by category, then undo
     expect(sup.map((x) => x.first_name)).toEqual(['Pia']);
     const granted = await q<{ consent_level: string }>("SELECT DISTINCT e.consent_level FROM consent_events e WHERE e.tenant_id = $1 AND e.imported AND e.event_type = 'grant'", [w.tenantId]);
     expect(granted.map((g) => g.consent_level)).toEqual(['imported_unverified']);
+    // the fixture's one appointment is a real stage now (deals are empty and skipped at the snapshot)
+    expect((await fullStage(ih, w.admin, b.id, 'appointments')).status).toBe('committed');
     expect((await batchOf(w.admin, b.id)).status).toBe('committed');
   });
 
-  // Owner decision B7 (2026-11-11). Before it this test pinned the gap: FUB tasks and appointments were neither
-  // imported nor mentioned, so an Owner could switch over without knowing their open tasks stayed behind.
-  it('E233 M1: FUB tasks and appointments are counted (never read) and the Imports page and the final report say plainly they do not come over', async () => {
+  // B7 amended 2026-11-21. Tasks stay behind and the page says so. Appointments are read and imported.
+  it('E233 M1: FUB tasks are counted (never read) and the page says they do not come over; appointments are listed', async () => {
     const bb = (await batchOf(w.admin, b.id)) as BatchView & { notImported: unknown };
-    // what the importer read: the six collections it imports; tasks and appointments were only counted
-    expect(new Set(ih.fub.calls.filter((c) => c.op === 'list').map((c) => c.collection))).toEqual(new Set(['people', 'notes', 'textMessages', 'emails', 'calls', 'users']));
-    const counted = ih.fub.calls.filter((c) => c.collection === 'tasks' || c.collection === 'appointments');
-    expect(counted.length).toBeGreaterThan(0);
-    expect(counted.every((c) => c.op === 'count')).toBe(true);
-    const sentence = "Follow Up Boss has 1 task and 1 appointment. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
-    expect(bb.notImported).toEqual({ tasks: 1, appointments: 1, countedAt: 'snapshot', lines: [sentence] });
-    expect((await report(w, b.id)).notImported).toEqual({ tasks: 1, appointments: 1, lines: [sentence] });
-    // nothing about them changed what is imported: the connection test still lists only the imported categories
-    expect(bb.connectionTest.join(' ')).not.toMatch(/task|appointment/i);
+    expect(new Set(ih.fub.calls.filter((c) => c.op === 'list').map((c) => c.collection))).toEqual(new Set(['people', 'notes', 'textMessages', 'emails', 'calls', 'users', 'appointments', 'deals']));
+    const tasks = ih.fub.calls.filter((c) => c.collection === 'tasks');
+    expect(tasks.length).toBeGreaterThan(0);
+    expect(tasks.every((c) => c.op === 'count')).toBe(true);
+    expect(ih.fub.calls.some((c) => c.collection === 'appointments' && c.op === 'list')).toBe(true);
+    const sentence = "Follow Up Boss has 1 task. Realty OS doesn't bring tasks over: finish or note the open ones in Follow Up Boss before you switch.";
+    expect(bb.notImported).toEqual({ tasks: 1, countedAt: 'snapshot', lines: [sentence] });
+    expect((await report(w, b.id)).notImported).toEqual({ tasks: 1, lines: [sentence] });
+    expect(bb.connectionTest.join(' ')).not.toMatch(/\btasks?\b/i);
+    expect(bb.connectionTest.join(' ')).toMatch(/1 appointment found/);
     expect(bb.status).toBe('committed');
   });
 
@@ -429,6 +430,7 @@ describe('M1 M2 M5: a full staged FUB migration, category by category, then undo
       expect([cat, a]).toEqual([cat, [{ actor_user_id: w.admin.userId, reason: `${cat.toUpperCase()}_REVERT_STARTED` }]]);
       return st;
     };
+    await undo('appointments'); // newest committed stage (deals are empty and were skipped)
     await undo('consent');
     expect(await rows()).toEqual(start);
     // imported grants voided, opt-outs and DNC kept
@@ -562,7 +564,7 @@ describe('M2: a member suspended between the ownership approval and its commit (
     const stored = (await q<{ verification: { recount: Record<string, unknown>; documented: unknown } }>("SELECT verification FROM import_stages WHERE batch_id = $1 AND category = 'ownership'", [b.id]))[0]!.verification;
     expect(stored.recount).toMatchObject({ approved: v.view.approved, expected: v.view.expected, db: v.view.db });
     expect(stored.documented).toEqual({ unassigned: 2, kept: 0 });
-    for (const cat of ['notes', 'messages', 'call_recordings', 'consent'] as const) {
+    for (const cat of ['notes', 'messages', 'call_recordings', 'consent', 'appointments'] as const) {
       const d = await dryRunStage(ih, w.admin, b.id, cat);
       for (const r of (await records(w.admin, b.id, cat)).filter((x) => x.dryRunOutcome === 'needs_review')) await call(w.admin, 'POST', `/imports/${b.id}/records/${r.id}/review`, { decision: 'import' });
       expect([cat, (await approve(w.admin, b.id, cat, d.dryRunSha256 as string)).status]).toEqual([cat, 200]);
@@ -732,7 +734,7 @@ describe('review F3: people merged, or given an owner, between the contacts comm
     return ids;
   }
   async function laterStagesCommit(w: ImportWorld, batchId: string) {
-    for (const cat of ['notes', 'messages', 'call_recordings', 'consent'] as const) {
+    for (const cat of ['notes', 'messages', 'call_recordings', 'consent', 'appointments'] as const) {
       const d = await dryRunStage(ih, w.admin, batchId, cat);
       for (const r of (await records(w.admin, batchId, cat)).filter((x) => x.dryRunOutcome === 'needs_review')) await call(w.admin, 'POST', `/imports/${batchId}/records/${r.id}/review`, { decision: 'import' });
       expect([cat, (await approve(w.admin, batchId, cat, d.dryRunSha256 as string)).status]).toEqual([cat, 200]);

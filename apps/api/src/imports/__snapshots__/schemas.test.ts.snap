@@ -62,12 +62,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
               {
                 "additionalProperties": false,
                 "properties": {
-                  "appointments": {
-                    "type": [
-                      "number",
-                      "null",
-                    ],
-                  },
                   "countedAt": {
                     "anyOf": [
                       {
@@ -86,13 +80,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                   "keptFrom": {
                     "additionalProperties": false,
                     "properties": {
-                      "appointments": {
-                        "enum": [
-                          "connection_test",
-                          "snapshot",
-                        ],
-                        "type": "string",
-                      },
                       "tasks": {
                         "enum": [
                           "connection_test",
@@ -118,7 +105,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 },
                 "required": [
                   "tasks",
-                  "appointments",
                   "countedAt",
                   "lines",
                 ],
@@ -227,6 +213,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                     "messages",
                     "call_recordings",
                     "consent",
+                    "deals",
+                    "appointments",
                   ],
                   "type": "string",
                 },
@@ -439,12 +427,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
               {
                 "additionalProperties": false,
                 "properties": {
-                  "appointments": {
-                    "type": [
-                      "number",
-                      "null",
-                    ],
-                  },
                   "countedAt": {
                     "anyOf": [
                       {
@@ -463,13 +445,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                   "keptFrom": {
                     "additionalProperties": false,
                     "properties": {
-                      "appointments": {
-                        "enum": [
-                          "connection_test",
-                          "snapshot",
-                        ],
-                        "type": "string",
-                      },
                       "tasks": {
                         "enum": [
                           "connection_test",
@@ -495,7 +470,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 },
                 "required": [
                   "tasks",
-                  "appointments",
                   "countedAt",
                   "lines",
                 ],
@@ -604,6 +578,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                     "messages",
                     "call_recordings",
                     "consent",
+                    "deals",
+                    "appointments",
                   ],
                   "type": "string",
                 },
@@ -842,12 +818,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 {
                   "additionalProperties": false,
                   "properties": {
-                    "appointments": {
-                      "type": [
-                        "number",
-                        "null",
-                      ],
-                    },
                     "countedAt": {
                       "anyOf": [
                         {
@@ -866,13 +836,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                     "keptFrom": {
                       "additionalProperties": false,
                       "properties": {
-                        "appointments": {
-                          "enum": [
-                            "connection_test",
-                            "snapshot",
-                          ],
-                          "type": "string",
-                        },
                         "tasks": {
                           "enum": [
                             "connection_test",
@@ -898,7 +861,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                   },
                   "required": [
                     "tasks",
-                    "appointments",
                     "countedAt",
                     "lines",
                   ],
@@ -1007,6 +969,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                       "messages",
                       "call_recordings",
                       "consent",
+                      "deals",
+                      "appointments",
                     ],
                     "type": "string",
                   },
@@ -1217,12 +1181,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
               {
                 "additionalProperties": false,
                 "properties": {
-                  "appointments": {
-                    "type": [
-                      "number",
-                      "null",
-                    ],
-                  },
                   "countedAt": {
                     "anyOf": [
                       {
@@ -1241,13 +1199,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                   "keptFrom": {
                     "additionalProperties": false,
                     "properties": {
-                      "appointments": {
-                        "enum": [
-                          "connection_test",
-                          "snapshot",
-                        ],
-                        "type": "string",
-                      },
                       "tasks": {
                         "enum": [
                           "connection_test",
@@ -1273,7 +1224,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 },
                 "required": [
                   "tasks",
-                  "appointments",
                   "countedAt",
                   "lines",
                 ],
@@ -1382,6 +1332,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                     "messages",
                     "call_recordings",
                     "consent",
+                    "deals",
+                    "appointments",
                   ],
                   "type": "string",
                 },
@@ -1590,12 +1542,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
               {
                 "additionalProperties": false,
                 "properties": {
-                  "appointments": {
-                    "type": [
-                      "number",
-                      "null",
-                    ],
-                  },
                   "countedAt": {
                     "anyOf": [
                       {
@@ -1614,13 +1560,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                   "keptFrom": {
                     "additionalProperties": false,
                     "properties": {
-                      "appointments": {
-                        "enum": [
-                          "connection_test",
-                          "snapshot",
-                        ],
-                        "type": "string",
-                      },
                       "tasks": {
                         "enum": [
                           "connection_test",
@@ -1646,7 +1585,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 },
                 "required": [
                   "tasks",
-                  "appointments",
                   "countedAt",
                   "lines",
                 ],
@@ -1755,6 +1693,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                     "messages",
                     "call_recordings",
                     "consent",
+                    "deals",
+                    "appointments",
                   ],
                   "type": "string",
                 },
@@ -1900,6 +1840,113 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
     },
     "required": [
       "batch",
+    ],
+    "type": "object",
+  },
+  "DealStagesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "approvalCleared": {
+        "type": "boolean",
+      },
+      "dealStageMap": {
+        "additionalProperties": {
+          "enum": [
+            "prospect",
+            "agreement_signed",
+            "active",
+            "under_contract",
+            "closed",
+            "lost",
+            "ignore",
+          ],
+          "type": "string",
+        },
+        "propertyNames": {
+          "type": "string",
+        },
+        "type": "object",
+      },
+      "ignoredNow": {
+        "type": "number",
+      },
+      "importedNow": {
+        "type": "number",
+      },
+      "plannedNow": {
+        "type": "number",
+      },
+      "stages": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "choice": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "prospect",
+                    "agreement_signed",
+                    "active",
+                    "under_contract",
+                    "closed",
+                    "lost",
+                    "ignore",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "deals": {
+              "type": "number",
+            },
+            "label": {
+              "type": "string",
+            },
+            "suggested": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "prospect",
+                    "agreement_signed",
+                    "active",
+                    "under_contract",
+                    "closed",
+                    "lost",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+          },
+          "required": [
+            "label",
+            "deals",
+            "suggested",
+            "choice",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "unmappedDeals": {
+        "type": "number",
+      },
+    },
+    "required": [
+      "stages",
+      "unmappedDeals",
+      "dealStageMap",
+      "importedNow",
+      "ignoredNow",
+      "plannedNow",
+      "approvalCleared",
     ],
     "type": "object",
   },
@@ -3068,6 +3115,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
                 "messages",
                 "call_recordings",
                 "consent",
+                "deals",
+                "appointments",
               ],
               "type": "string",
             },
@@ -3228,12 +3277,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
           {
             "additionalProperties": false,
             "properties": {
-              "appointments": {
-                "type": [
-                  "number",
-                  "null",
-                ],
-              },
               "lines": {
                 "items": {
                   "type": "string",
@@ -3249,7 +3292,6 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             },
             "required": [
               "tasks",
-              "appointments",
               "lines",
             ],
             "type": "object",
@@ -3718,6 +3760,7 @@ exports[`api/imports route table and schemas > R-PERM-13: every import route is 
 [
   "GET /api/imports",
   "GET /api/imports/:id",
+  "GET /api/imports/:id/deal-stages",
   "GET /api/imports/:id/parity",
   "GET /api/imports/:id/report",
   "GET /api/imports/:id/stages/:category/records",
@@ -3734,6 +3777,7 @@ exports[`api/imports route table and schemas > R-PERM-13: every import route is 
   "POST /api/imports/:id/stages/:category/skip",
   "POST /api/imports/:id/stages/:category/verify",
   "PUT /api/imports/:id/csv-mapping",
+  "PUT /api/imports/:id/deal-stages",
   "PUT /api/imports/:id/parity",
   "PUT /api/imports/:id/user-mappings",
 ]
