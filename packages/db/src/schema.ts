@@ -932,6 +932,19 @@ export interface ConversationsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.crm_read_tokens (table) */
+export interface CrmReadTokensTable {
+  tenant_id: string;
+  id: string;
+  name: string;
+  token_hash: Buffer;
+  token_prefix: string;
+  created_by_user_id: string;
+  created_at: Generated<Timestamp>;
+  revoked_at: Timestamp | null;
+  revoked_by_user_id: string | null;
+}
+
 /** public.custom_field_defs (table) */
 export interface CustomFieldDefsTable {
   tenant_id: string;
@@ -3122,6 +3135,7 @@ export interface DB {
   contact_timeline: ContactTimelineTable;
   contacts: ContactsTable;
   conversations: ConversationsTable;
+  crm_read_tokens: CrmReadTokensTable;
   custom_field_defs: CustomFieldDefsTable;
   deal_contacts: DealContactsTable;
   deal_dates: DealDatesTable;
@@ -3304,6 +3318,7 @@ export const TABLE_NAMES = [
   'contact_tags',
   'contacts',
   'conversations',
+  'crm_read_tokens',
   'custom_field_defs',
   'deal_contacts',
   'deal_dates',
